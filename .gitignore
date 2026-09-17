@@ -33,3 +33,6 @@ build/
 
 # Downloaded by the podspec's prepare_command, not authored here.
 packages/react-native/Bugsee.xcframework/
+
+.stryker-tmp/
+reports/

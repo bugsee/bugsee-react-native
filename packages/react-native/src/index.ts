@@ -18,8 +18,6 @@ const KNOWN_STATUSES: ReadonlySet<number> = new Set(Object.values(Status));
 export type LaunchOptions = Record<string, unknown>;
 
 class Bugsee {
-  private attached = false;
-
   /**
    * Starts the SDK. Resolves to whether the native side actually launched —
    * it can decline (already running, token rejected) without that being an
@@ -44,15 +42,14 @@ class Bugsee {
    * Wires up the JS layer when the native SDK launched itself — on Android,
    * from `com.bugsee.app-token` manifest metadata. Deliberately makes no
    * native launch call; doing so would start a second session.
+   *
+   * A no-op today: the JS-side components it will wire (console, exceptions,
+   * network, lifecycle) do not exist yet. It carries no `attached` flag,
+   * because the guard that matters — not registering global handlers twice —
+   * belongs in those components, where the double registration would happen,
+   * not in a facade field nothing reads.
    */
-  async attach(): Promise<void> {
-    this.attached = true;
-  }
-
-  /** Whether {@link attach} has run. */
-  get isAttached(): boolean {
-    return this.attached;
-  }
+  async attach(): Promise<void> {}
 
   /**
    * The SDK's current status. An unrecognised native value reports as
