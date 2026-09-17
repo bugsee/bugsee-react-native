@@ -194,10 +194,10 @@ The task that proves the parts fit. Unit tests cannot: they mock the bridge, and
 
 **Files:** `.github/workflows/ci.yml`
 
-- [ ] Lint, typecheck, unit, Stryker with a failing threshold.
-- [ ] Android: assemble the example app.
-- [ ] iOS: build the example, **then assert the framework is embedded**. The assertion is the point.
-- [ ] Matrix across RN 0.81.x, 0.83.x, 0.86.x, 0.87.x. Only the 0.87 leg exercises SPM — SPM support for apps does not exist before 0.87, so 0.81-0.86 are CocoaPods-only.
+- [x] Lint, typecheck, unit, Stryker with a failing threshold (break 90; currently 97.69, shipped source 100).
+- [x] Android: assemble the example app.
+- [x] iOS: build the example, **then assert the framework is embedded**. The assertion is the point.
+- [x] Matrix across RN 0.81.x, 0.83.x, 0.86.x, 0.87.x. Only the 0.87 leg exercises SPM — SPM support for apps does not exist before 0.87, so 0.81-0.86 are CocoaPods-only.
 
   **Already established against RN 0.81.6** (probe, not a build — the matrix
   still has to compile and run):
@@ -219,7 +219,9 @@ The task that proves the parts fit. Unit tests cannot: they mock the bridge, and
 
   Still unproven on 0.81: the Android Gradle build, the iOS app build, and
   anything that runs on a device.
-- [ ] **Commit** — `ci: build both platforms and assert the iOS framework is embedded`
+- [x] **Commit** — `ci: build both platforms and assert the iOS framework is embedded`
+
+**Not yet observed green on GitHub.** The workflow is actionlint-clean and each step was run locally, but no push has exercised it end to end — in particular the per-leg `react-native@~0.8x.0` pin and the `spm add --deintegrate` step have never run in CI.
 
 ### Phase 1 review gate
 
