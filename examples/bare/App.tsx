@@ -101,19 +101,24 @@ export default function App() {
         await loggedLaunched;
 
         // relaunch() is the one lifecycle call whose two platforms settle
-        // through different SDK machinery: Android hands back a boolean,
-        // iOS reports through a `started:` completion block. A promise that
-        // never settles looks identical to a slow one, so the e2e asserts
-        // this line appears at all, not just what it says.
-        const relaunched = await Bugsee.relaunch(
-          endpointOption(credentials.endpoint),
-        );
-        console.log(`BUGSEE_E2E relaunch() resolved ${String(relaunched)}`);
+        // through different SDK machinery: Android hands back a boolean, iOS
+        // reports through a `started:` completion block that the SDK can fail
+        // to invoke. What the e2e asserts is that the promise SETTLES -- a
+        // promise that never settles is indistinguishable from a slow one,
+        // and no other check in this repo would notice.
+        try {
+          const relaunched = await Bugsee.relaunch(
+            endpointOption(credentials.endpoint),
+          );
+          console.log(`BUGSEE_E2E relaunch() settled resolved=${String(relaunched)}`);
+        } catch (relaunchCause) {
+          console.log(`BUGSEE_E2E relaunch() settled rejected=${String(relaunchCause)}`);
+        }
 
-        // Asserted separately from the status poll: relaunch completes in
-        // about 10ms, so a 100ms poll never sees the Stopping/Launching
-        // transition and logs no change at all. Reading the status here is
-        // what proves capture actually came back up.
+        // Asserted separately from the status poll: a successful relaunch
+        // completes in about 10ms, so the 100ms poll observes no change and
+        // logs nothing. Reading the status here is what proves capture
+        // actually came back up.
         console.log(
           `BUGSEE_E2E post-relaunch status=${await Bugsee.getStatus()}`,
         );

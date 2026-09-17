@@ -46,9 +46,12 @@ const STEPS: readonly Step[] = [
     // so a path that never invokes it leaves the JS promise pending forever
     // -- indistinguishable from slowness, and invisible to every other check
     // in this repo. Android settles from its own callback.
-    name: 'relaunch() resolved',
-    pattern: /BUGSEE_E2E relaunch\(\) resolved (true|false)/,
-    timeoutMs: 20_000,
+    name: 'relaunch() settled',
+    pattern: /BUGSEE_E2E relaunch\(\) settled (resolved|rejected)=/,
+    // Longer than the bridge's own 30s no-report timeout, so a hang shows up
+    // as that timeout's rejection rather than as this step expiring -- the
+    // two mean different things and should not look the same.
+    timeoutMs: 45_000,
   },
   {
     // relaunch stops and starts the SDK, so capture must come back up.

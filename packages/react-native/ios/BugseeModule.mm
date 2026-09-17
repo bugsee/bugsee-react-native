@@ -58,18 +58,40 @@ RCT_EXPORT_MODULE(Bugsee)
     // signature. optionsFrom: converts the same dictionary, and the started:
     // overload reports what actually happened.
     //
-    // This promise settles ONLY when the SDK invokes started:, so a path that
-    // skipped it would hang forever with no error. Verified against 7.0.0-beta1
-    // that every path invokes it exactly once: no app token -> NO; then via
-    // stop: into launchWithToken:options:started:, which answers NO while
-    // Stopping, NO for an invalid token, YES for a deferred background launch,
-    // NO when a stop overtook the start, and otherwise YES from
-    // finishLaunchSequenceWithEpoch:completion:. The example's e2e asserts it
-    // settles at all -- a hang is otherwise indistinguishable from slowness.
+    // The timeout is not defensive decoration. relaunchWithOptions:started:
+    // reaches its completion through [Bugsee stop:], whose own completion runs
+    // inside -stopRecording:. When the preceding launch never brought capture
+    // up — an invalid app token does this — that callback does not arrive, and
+    // started: is never invoked. Reproduced on a simulator: `relaunch()` never
+    // settles, and a promise that never settles is indistinguishable from a
+    // slow one. See bugsee/bugsee-cocoa (SDK-side fix); until then a wrapper
+    // must not hand JS a promise that can hang forever.
+    __block BOOL settled = NO;
+    void (^settleOnce)(BOOL, BOOL) = ^(BOOL known, BOOL success) {
+      if (settled) {
+        return;
+      }
+      settled = YES;
+      if (known) {
+        resolve(@(success));
+      } else {
+        reject(@"E_RELAUNCH_NO_REPORT",
+               @"Bugsee.relaunch did not report completion within 30s. The SDK "
+               @"may or may not have restarted; call getStatus() to find out.",
+               nil);
+      }
+    };
+
     [Bugsee relaunchWithOptions:[BugseeOptions optionsFrom:options]
                         started:^(BOOL success) {
-                          resolve(@(success));
+                          settleOnce(YES, success);
                         }];
+
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{
+          settleOnce(NO, NO);
+        });
   });
 }
 
