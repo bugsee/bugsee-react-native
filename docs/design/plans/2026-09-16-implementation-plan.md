@@ -198,6 +198,27 @@ The task that proves the parts fit. Unit tests cannot: they mock the bridge, and
 - [ ] Android: assemble the example app.
 - [ ] iOS: build the example, **then assert the framework is embedded**. The assertion is the point.
 - [ ] Matrix across RN 0.81.x, 0.83.x, 0.86.x, 0.87.x. Only the 0.87 leg exercises SPM — SPM support for apps does not exist before 0.87, so 0.81-0.86 are CocoaPods-only.
+
+  **Already established against RN 0.81.6** (probe, not a build — the matrix
+  still has to compile and run):
+  - iOS codegen accepts our `codegenConfig` and emits the collision fix,
+    `@"Bugsee": @"BugseeModule"`, into `RCTModuleProviders.mm`.
+  - `NativeBugseeSpec` ObjC protocol generates with the expected methods.
+  - Android codegen honours `javaPackageName`, emitting into
+    `com/bugsee/reactnative/`. The app-level JS executor hardcodes
+    `com.facebook.fbreact.specs` in **both** 0.81 and 0.87 — only the Gradle
+    task honours the setting, so probe through `generate-specs-cli.js`, not
+    `generate-codegen-artifacts.js`, or the result is misleading.
+  - The generated Java abstract signatures are identical to 0.87's; 0.81
+    additionally annotates them `@ReactMethod` / `@DoNotStrip`, which is
+    additive and does not affect the subclass.
+  - `BaseReactPackage` with abstract `getModule` exists in 0.81.
+  - `yarn typecheck` passes against 0.81's types; the
+    `react-native-legacy-deep-imports` condition is inert there (0.81 exposes
+    `./Libraries/*.d.ts` with a working `default`) rather than harmful.
+
+  Still unproven on 0.81: the Android Gradle build, the iOS app build, and
+  anything that runs on a device.
 - [ ] **Commit** — `ci: build both platforms and assert the iOS framework is embedded`
 
 ### Phase 1 review gate
