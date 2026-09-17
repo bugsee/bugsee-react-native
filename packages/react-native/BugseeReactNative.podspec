@@ -13,7 +13,16 @@ Pod::Spec.new do |s|
   # lands in <app>/node_modules/LICENSE and CocoaPods warns it cannot be read.
   s.license      = { :type => 'Commercial', :text => 'See LICENSE at https://www.bugsee.com/terms' }
   s.author       = 'Bugsee'
-  s.platforms    = { :ios => '15.0' }
+  # React Native's floor, read from React Native, so it tracks whichever
+  # version the app is on rather than drifting. RN defines this top-level
+  # helper in scripts/react_native_pods.rb, which every RN Podfile requires,
+  # so it is in scope by the time CocoaPods evaluates this podspec; the
+  # literal is the fallback for evaluation outside an app (`pod spec lint`).
+  # Bugsee itself supports 15.0 and below -- down to 13.0 -- but React-Core
+  # does not, so an app can never actually sit lower than this.
+  s.platforms    = {
+    :ios => defined?(min_ios_version_supported) ? min_ios_version_supported : '15.1'
+  }
   s.source       = { :path => '.' }
 
   s.source_files = 'ios/**/*.{h,m,mm}'
