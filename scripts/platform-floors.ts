@@ -138,3 +138,64 @@ export function parsePeerFloor(packageJson: string): string {
   }
   return captured;
 }
+
+/** The exact SPM tag a `Package.swift` pins `bugsee/spm` to. */
+export function parseSpmPin(manifest: string): string {
+  const captured = /url:\s*"[^"]*bugsee\/spm"\s*,\s*exact:\s*"([^"]+)"/
+    .exec(manifest)?.[1];
+  if (!captured) {
+    throw new Error(
+      'no exact bugsee/spm pin found. SwiftPM will not resolve a prerelease ' +
+        'through a version range, so the pin must be `exact:`.',
+    );
+  }
+  return captured;
+}
+
+/** The version a `Package.resolved` has locked `bugsee/spm` at. */
+export function parseResolvedPin(resolved: string): string {
+  const pins = (JSON.parse(resolved) as {
+    pins?: { identity?: string; state?: { version?: string } }[];
+  }).pins;
+  const captured = pins?.find((p) => p.identity === 'spm')?.state?.version;
+  if (!captured) throw new Error('no resolved version for the spm package');
+  return captured;
+}
+
+/** The Java source/target level an Android `build.gradle` compiles at. */
+export function parseGradleJavaLevel(buildGradle: string): string[] {
+  const levels = [...buildGradle.matchAll(
+    /^\s*(?:source|target)Compatibility\s+JavaVersion\.([A-Z0-9_]+)\s*$/gm,
+  )].map((m) => m[1] as string);
+  if (levels.length === 0) {
+    throw new Error('no source/targetCompatibility declared in build.gradle');
+  }
+  return levels;
+}
+
+/** The `spm.name` a react-native.config.js pins. */
+export function parseSpmName(config: string): string {
+  const captured = /spm:\s*\{[^}]*?name:\s*['"]([^'"]+)['"]/s.exec(config)?.[1];
+  if (!captured) {
+    throw new Error(
+      'no spm.name pinned in react-native.config.js. Without it the ' +
+        'autolinker derives a name, and a derived name that collides with ' +
+        "RN's reserved list is renamed silently.",
+    );
+  }
+  return captured;
+}
+
+/** The library product a `Package.swift` exposes. */
+export function parseSwiftProduct(manifest: string): string {
+  const captured = /\.library\(\s*name:\s*"([^"]+)"/.exec(manifest)?.[1];
+  if (!captured) throw new Error('no library product declared in Package.swift');
+  return captured;
+}
+
+/** The react-native versions a CI workflow's compat matrix actually builds. */
+export function parseCiCompatMatrix(workflow: string): string[] {
+  const line = /react-native:\s*\[([^\]]+)\]/.exec(workflow)?.[1];
+  if (!line) throw new Error('no react-native matrix found in the workflow');
+  return [...line.matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1] as string);
+}

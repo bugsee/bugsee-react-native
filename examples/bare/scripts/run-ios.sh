@@ -43,6 +43,14 @@ xcodebuild \
 # with the repo root as its working directory, so "$APP" -- written relative to
 # examples/bare -- would resolve against the wrong directory and report "no
 # such app bundle" for every build, sound or not.
+# Node strips types from a .ts entry point without a flag only from 22.18. On
+# an older Node this dies with ERR_UNKNOWN_FILE_EXTENSION and exit 1 -- the
+# same code a genuine embed failure uses -- so check first and say so plainly.
+node -e 'const [maj,min]=process.versions.node.split(".").map(Number);
+  if (maj<22 || (maj===22 && min<18)) {
+    console.error(`Node ${process.versions.node} cannot run the embed check; 22.18+ required.`);
+    process.exit(2);
+  }'
 node ../../scripts/cli-assert-framework-embedded.ts "$APP"
 
 xcrun devicectl device install app --device "$DEVICE" "$APP"

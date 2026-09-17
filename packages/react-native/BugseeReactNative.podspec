@@ -41,14 +41,21 @@ Pod::Spec.new do |s|
   # does embed and sign a vendored framework correctly, which is the whole
   # reason this path exists.
   s.vendored_frameworks = "Bugsee.xcframework"
+  # The cache is keyed by VERSION, not by mere presence. Checking only that a
+  # directory exists means a version bump never replaces an already-downloaded
+  # xcframework: `pod install` succeeds, CI goes green, and the app ships the
+  # previous SDK. The stamp file records what was unpacked.
   s.prepare_command = <<-CMD
     set -e
     VERSION="#{native['ios']['sdk']}"
-    if [ ! -d "Bugsee.xcframework" ]; then
+    STAMP=".bugsee-xcframework-version"
+    if [ ! -d "Bugsee.xcframework" ] || [ "$(cat "${STAMP}" 2>/dev/null)" != "${VERSION}" ]; then
+      rm -rf "Bugsee.xcframework"
       curl -sSfL -o /tmp/Bugsee-${VERSION}.zip \
         "https://download.bugsee.com/sdk/ios/spm/Bugsee-${VERSION}.zip"
       unzip -q -o /tmp/Bugsee-${VERSION}.zip -d .
       rm -f /tmp/Bugsee-${VERSION}.zip
+      printf '%s' "${VERSION}" > "${STAMP}"
     fi
   CMD
 
