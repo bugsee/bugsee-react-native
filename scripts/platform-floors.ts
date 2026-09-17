@@ -46,6 +46,30 @@ export const IOS_FLOOR = {
 } as const;
 
 /**
+ * The React Native versions this wrapper supports.
+ *
+ * 0.81 rather than 0.82 (the first New-Architecture-only release) or 0.83.
+ * The floor is a reach decision, and the reach is not linear: a week of npm
+ * downloads puts 0.83+ at 60% of the ecosystem and 0.81+ at 83%, because
+ * Expo SDK 54 ships 0.81 and Expo skipped 0.82 entirely. Every step below
+ * 0.81 buys about a point.
+ *
+ * 0.81 still allows opting out of the New Architecture, so support is
+ * conditional on it being enabled — which it is by default from 0.76. That
+ * is a documented requirement, NOT a legacy bridge fallback; there is no
+ * second module implementation and there must not be one.
+ *
+ * 0.80 is the hard technical floor: `codegenConfig.ios.modulesProvider`,
+ * which is how the TurboModule avoids colliding with the SDK's own `Bugsee`
+ * class, does not exist before it. 0.81 clears that with a version to spare.
+ */
+export const REACT_NATIVE_SUPPORT = {
+  floor: '0.81.0',
+  /** What CI builds. 0.81-0.86 are CocoaPods-only; SPM arrived in 0.87. */
+  matrix: ['0.81', '0.83', '0.86', '0.87'],
+} as const;
+
+/**
  * What React Native forces on anything that links it. SwiftPM rejects a
  * package whose floor is below a product it consumes:
  *
@@ -96,5 +120,21 @@ export function parsePodspecFallback(podspec: string): string {
   const quoted = line ? [...line.matchAll(QUOTED_VERSION)] : [];
   const captured = quoted.at(-1)?.[1];
   if (!captured) throw new Error('no :ios fallback declared in the podspec');
+  return captured;
+}
+
+/** The React Native floor a package.json declares, as an exact version. */
+export function parsePeerFloor(packageJson: string): string {
+  const range = (JSON.parse(packageJson) as {
+    peerDependencies?: Record<string, string>;
+  }).peerDependencies?.['react-native'];
+  const captured = range?.match(/^>=\s*(\d+\.\d+\.\d+)$/)?.[1];
+  if (!captured) {
+    throw new Error(
+      `peerDependencies["react-native"] must be a ">=x.y.z" floor, got ` +
+        `${JSON.stringify(range)}. A looser range would claim support for ` +
+        `versions CI never builds.`,
+    );
+  }
   return captured;
 }

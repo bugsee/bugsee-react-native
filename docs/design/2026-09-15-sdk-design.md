@@ -23,7 +23,7 @@ The single most important finding behind this design: **iOS 7.x and Android 7.x 
 ## 3. Non-goals
 
 - Backwards compatibility with `react-native-bugsee` v2. This is a clean break (§4.1).
-- Supporting React Native below 0.83, or the legacy architecture.
+- Supporting React Native below 0.81, or the legacy architecture.
 - CocoaPods distribution of the native iOS SDK. Bugsee stopped publishing pods in September 2026; iOS is SPM-only permanently.
 - Designing the unified cross-SDK exception format. That is a separate, larger piece of work (§14.3).
 - Reusing `@bugsee/core` from the `javascript/` monorepo. That SDK's own design states React Native is out of scope and served by a separate SDK.
@@ -48,9 +48,15 @@ Android 7.x makes the `com.bugsee.android.gradle` plugin mandatory and it cannot
 
 Build hooks run `bugsee-cli sourcemaps inject` then `debug-files upload --type sourcemaps`; the runtime reads `globalThis._bugseeDebugIds` and attaches `debug_ids` to the exception payload. Verified supported end to end: `worker/symbolfiles/sourcemap.py` keys on `debug_id` / `debugId` / `uuid`, and `worker/crash/managed/reactnative.py` (`_collect_debug_ids`, `_symbolicate`) tries debug IDs **before** the legacy `build_id`.
 
-### 4.5 React Native floor: 0.83, New Architecture only
+### 4.5 React Native floor: 0.81, New Architecture required
 
-The legacy architecture was disabled in 0.82, removed from the codebase in 0.83, and the bridge deleted in 0.85. A 0.83 floor covers the three maintained lines (0.83.x, 0.86.x, 0.87.x) and means a single native source set per platform, a TurboModule spec with no legacy fallback, and no interop shims.
+The floor is a reach decision, and reach is not linear in the version number. A week of npm downloads puts 0.83+ at **60%** of the ecosystem and 0.81+ at **83%** — a 23-point step — because Expo SDK 54 ships 0.81 and Expo skipped 0.82 entirely (SDK 55 → 0.83, SDK 56 → 0.85). Every step below 0.81 buys roughly one point. Crash reporting is also the wrong product to gate on an upgrade: customers stuck on an older line need it more than customers on the latest.
+
+0.82 is the first release that refuses to run the legacy architecture; 0.83 began deleting legacy classes, though `ReactInstanceManager` is still present and merely `@Deprecated` as of 0.87. So New-Architecture-only does not force 0.83 — it forces 0.82, and 0.82 costs 23 points of reach for one version of purity.
+
+0.81 still permits opting out of the New Architecture, so support there is **conditional on it being enabled** — the default since 0.76. That is a documented requirement, not a legacy fallback: still one native source set per platform, a TurboModule spec with no legacy path, and no interop shims.
+
+0.80 is the hard technical floor. `codegenConfig.ios.modulesProvider`, which is how the TurboModule avoids colliding with the SDK's own `Bugsee` class (§6.4), does not exist before 0.80. 0.81 clears it with a version to spare.
 
 ---
 
@@ -84,7 +90,7 @@ This deviates from `javascript/`, which uses pnpm. The deviation is deliberate: 
 
 **Build tooling:** `react-native-builder-bob` with the `codegen` target; Turbo for task orchestration.
 
-**Examples are committed; their build output is not.** The existing repo checks in `.gradle/` lock files and `.cxx/` CMake output under `src/app/`. The examples are the integration surface, not demos: the bare app proves autolinking plus `spm_dependency`, and the Expo app proves the config plugin survives `prebuild --clean`. They are written fresh, using the current sample app as a reference for screen coverage (home, attributes, secure views, identity, events/traces, console, feedback, exceptions, network) plus new screens for the 7.x capabilities (breadcrumbs, notify, APM, blackout, status/lifecycle, reports).
+**Examples are committed; their build output is not.** The existing repo checks in `.gradle/` lock files and `.cxx/` CMake output under `src/app/`. The examples are the integration surface, not demos: the bare app proves autolinking on both iOS delivery paths (vendored podspec, and `Package.swift` on 0.87), and the Expo app proves the config plugin survives `prebuild --clean`. They are written fresh, using the current sample app as a reference for screen coverage (home, attributes, secure views, identity, events/traces, console, feedback, exceptions, network) plus new screens for the 7.x capabilities (breadcrumbs, notify, APM, blackout, status/lifecycle, reports).
 
 **No `src/lib/` nesting.** Today the library sits three levels down with the sample app as a sibling and shell scripts shuffling between them. Flattening to `packages/*` lets `npm publish` run from the package directory, which removes `scripts/build.sh` and `scripts/release.sh` entirely.
 
@@ -124,7 +130,7 @@ The wrapper still prefers `addSecureView(nativeView)` where a protected componen
 
 ### 6.3 TurboModule spec
 
-Typed `EventEmitter<T>` members (available in codegen from RN 0.76, so safe at a 0.83 floor) replace the string-named `bgs*Event` channels and the `addListener`/`removeListeners` boilerplate. Filter round-trips keep their async request/reply shape — both native SDKs hand filters a completion callback, so the asynchrony is inherent — but become typed and keyed by request id rather than untyped `UnsafeObject` over a device emitter.
+Typed `EventEmitter<T>` members (available in codegen from RN 0.76, so safe at a 0.81 floor) replace the string-named `bgs*Event` channels and the `addListener`/`removeListeners` boilerplate. Filter round-trips keep their async request/reply shape — both native SDKs hand filters a completion callback, so the asynchrony is inherent — but become typed and keyed by request id rather than untyped `UnsafeObject` over a device emitter.
 
 ### 6.4 Android module
 
@@ -136,21 +142,47 @@ Typed `EventEmitter<T>` members (available in codegen from RN 0.76, so safe at a
 
 ### 6.5 iOS module
 
-- `s.platforms = { ios: "13.0" }`.
-- **No `s.dependency 'Bugsee'`** — no pod exists. Instead:
+> **Corrected after the distribution spike.** This section originally specified
+> `spm_dependency` and an iOS floor of 13.0. Both were wrong; what follows is
+> what was actually built and run on device.
 
-```ruby
-spm_dependency(s, url: 'https://github.com/bugsee/spm',
-  requirement: { kind: 'exactVersion', version: '7.0.0-beta1' },
-  products: ['Bugsee'])
-```
-
-- The helper lives in `react_native_pods.rb` and passes `requirement` verbatim into `Xcodeproj`'s `XCRemoteSwiftPackageReference`, so Xcode's own requirement kinds apply. `SPM.apply_on_post_install(installer)` is invoked from `react_native_post_install`, so it fires for bare RN and Expo prebuild alike.
-- `exactVersion` is mandatory: SwiftPM will not admit a prerelease into a `from:` or `upToNextMajor` range.
-- The helper warns about static linking with Swift packages. Bugsee's SPM slice is built from the `BugseeDynamic` target, so it is a **dynamic** xcframework and should avoid that class of error. **This needs empirical confirmation on a real app** (§15).
-- The feedback package declares its own `spm_dependency` on `github.com/bugsee/feedback-spm` at the same exact tag; `feedback-spm` itself pins `bugsee/spm` exactly, so the two move in lockstep.
-- Bridge is ObjC++ (`.mm`) implementing the generated `NativeBugseeSpec`; TurboModules require C++ interop.
-- **Forward compatibility:** when React Native's own CocoaPods→SPM migration lands (CocoaPods trunk goes read-only 2026-12-02), the wrapper will need a `Package.swift` so it can be consumed by a pod-less app. The iOS bridge sources are laid out so that is a packaging change, not a rewrite.
+- `s.platforms` reads React Native's own `min_ios_version_supported` (15.1 from
+  RN 0.76 onward) rather than a literal, so the pod tracks the app's RN
+  version. The SDK binary supports 13.0, but no RN app can reach it — see §4.5.
+- **No `s.dependency 'Bugsee'`** — no pod exists, and none ever will.
+- **`spm_dependency` does not work here.** It attaches the package product to
+  the Pods project target, and nothing then embeds the framework into the app.
+  Both outcomes were reproduced on a real app:
+  - static pods: `Undefined symbols: _OBJC_CLASS_$_Bugsee` at link time;
+  - `USE_FRAMEWORKS=dynamic`: links, but the framework is never embedded, so
+    the app dyld-crashes on launch.
+  The earlier claim that a dynamic xcframework "should avoid that class of
+  error" was inference from reading the helper, and it was wrong.
+- **Two delivery paths instead**, because the wrapper must serve both:
+  - **CocoaPods** — the podspec vendors the xcframework directly
+    (`s.vendored_frameworks`), fetched by `prepare_command` from the same
+    stable zip URL the SPM channel publishes. CocoaPods embeds and signs a
+    vendored framework correctly, which is the whole reason this path exists.
+  - **SPM** — a hand-written `ios/Package.swift`, because React Native treats
+    a dependency shipping its own manifest as *self-managed* and references it
+    directly. Load-bearing details are documented in the file itself: the
+    product name must equal `spm.name` in `react-native.config.js`
+    (`toSwiftName('@bugsee/react-native')` yields the reserved `ReactNative`);
+    `DEBUG`/`NDEBUG` change ShadowNode layout, so omitting them links in Debug
+    and fails in Release; `react-native-spm-prefix.h` must be force-included;
+    and `cxxLanguageStandard: .cxx20` is mandatory, since SwiftPM defaults to
+    gnu++14 while React Native's headers are C++20.
+  - SPM applies to **RN 0.87 only**. 0.81-0.86 ship just
+    `scripts/cocoapods/spm.rb` and are CocoaPods-only.
+- The TurboModule name collides with the SDK: `getEnforcing('Bugsee')` fails
+  because RN's fallback `NSClassFromString(@"Bugsee")` resolves to the SDK's
+  own class. Fixed with `codegenConfig.ios.modulesProvider`, which is also
+  what sets the hard RN floor at 0.80 (§4.5).
+- Bridge is ObjC++ (`.mm`) implementing the generated `NativeBugseeSpec`;
+  TurboModules require C++ interop.
+- Pure marshalling lives in a nested `ios/Support` SwiftPM package so it can be
+  tested against the real framework without React Native, codegen, an Xcode
+  project or a device.
 
 ---
 
@@ -317,10 +349,10 @@ Three implementation constraints:
 `plugin/src` compiled to `plugin/build`, exposed as `@bugsee/react-native/app.plugin.js`.
 
 - **Android:** `withSettingsGradle` adds `mavenCentral()` to `pluginManagement` — the plugin marker is on Maven Central, **not** the Gradle Plugin Portal; `withProjectBuildGradle` applies `com.bugsee.android.gradle`; `withDangerousMod` writes `android/bugsee.properties`; `withAndroidManifest` optionally writes the `com.bugsee.app-token` meta-data for 7.x manifest auto-launch.
-- **iOS:** `withXcodeProject` inserts the source-map build phase after *Bundle React Native code and images*, and `withDangerousMod` inserts the dSYM scheme post-action (§11.2). No Xcode surgery is needed for the SDK itself — `spm_dependency` injects the package reference at `pod install`.
+- **iOS:** `withXcodeProject` inserts the source-map build phase after *Bundle React Native code and images*, and `withDangerousMod` inserts the dSYM scheme post-action (§11.2). No Xcode surgery is needed for the SDK itself — the podspec vendors the xcframework at `pod install`.
 - **Options:** `appToken`, `uploadSourcemaps`, `uploadSymbols`, `nativeCrashReporting`, `gradlePluginVersion`, `autoLaunch`.
 
-The feedback package needs no plugin: autolinking picks up its Gradle dependency and its podspec carries its own `spm_dependency`.
+The feedback package needs no plugin: autolinking picks up its Gradle dependency, and its podspec vendors its own xcframework the same way (§6.5).
 
 ### 11.1 Android — mapping.txt and native debug symbols
 
@@ -373,7 +405,7 @@ So iOS ends up with **two** build-time integrations, at different stages for dif
 
 ## 13. CI and release
 
-GitHub Actions on `bugsee/bugsee-react-native`, matrixed across RN 0.83.x / 0.86.x / 0.87.x. Jobs: lint + typecheck + unit; option-manifest parity; codegen freshness; Android example build and test; iOS example build on macOS (which is what proves `spm_dependency` resolves the pinned beta); and `expo prebuild --clean` followed by a build, which is the only thing that proves the config plugin survives regeneration.
+GitHub Actions on `bugsee/bugsee-react-native`, matrixed across RN 0.81.x / 0.83.x / 0.86.x / 0.87.x. Jobs: lint + typecheck + unit; option-manifest parity; codegen freshness; declared-floor drift (`scripts/platform-floors.ts`); Android example build and test; iOS example build on macOS, asserting `Bugsee.framework` is actually embedded — the build alone proved nothing in the spike, since the `spm_dependency` variant built cleanly and then dyld-crashed; and `expo prebuild --clean` followed by a build, which is the only thing that proves the config plugin survives regeneration.
 
 Release via Changesets, matching `javascript/` and `rrweb`. Because the iOS SDK is beta, the package ships as `1.0.0-beta.N` on the **`beta`** npm dist-tag; `latest` stays unpublished until iOS reaches GA, so nobody installs a beta by accident.
 
@@ -400,7 +432,7 @@ Work outside this repository that this design depends on or has surfaced.
 
 ## 15. Open questions
 
-- **`spm_dependency` with a dynamic xcframework needs empirical validation** on a real RN app, including under Expo prebuild and with `USE_FRAMEWORKS` unset. Everything in §6.5 follows from reading the RN helper and the iOS build scripts; it has not been run.
+- ~~**`spm_dependency` with a dynamic xcframework needs empirical validation**~~ — **settled.** It was run, it fails, and §6.5 now records both failure modes and the two-path design that replaced it. Validated on an iPhone XS reaching `BugseeStatusLaunched`. What remains unproven is Expo prebuild, which has still not been exercised.
 - **Whether the source-map upload should be its own package.** Sentry splits `@sentry/expo-upload-sourcemaps` because EAS Build invokes it as a standalone hook outside the config plugin. Starting in-package, to be split only if EAS forces it.
 - **`bugsee-cli` npm packaging timeline**, which gates §9.2.
 
@@ -424,7 +456,9 @@ Work outside this repository that this design depends on or has surfaced.
 | FrameRate | Low 1, Medium 2, High 3, Raw 4 | Low 1, Medium 2, High 3 | `Raw` Android-only |
 | VideoMode | None 0, V1 1, V2 2, Fullscreen 20, DirectBuffers 21 | — | Android-only; V3 removed |
 
-**React Native.** npm latest 0.87.1 (2026-08-26); maintained lines 0.83.10, 0.86.3, 0.87.1. Legacy architecture disabled in 0.82, removed from the codebase in 0.83, bridge deleted in 0.85. CocoaPods trunk goes permanently read-only 2026-12-02.
+**React Native.** npm latest 0.87.1 (2026-08-26); maintained lines 0.83.10, 0.86.3, 0.87.1. Legacy architecture could no longer be opted into from **0.82**; **0.83** began removing legacy classes, but removal is incomplete — `ReactInstanceManager` still ships in 0.87, `@Deprecated`. (An earlier draft of this document said legacy was removed in 0.83 and the bridge deleted in 0.85; both were wrong.) Minimum iOS has been **15.1 since 0.76**; RN's SPM tooling hardcodes `.iOS(.v15)` separately, so its two delivery paths disagree by a point release. SPM support for apps arrived in **0.87** — 0.83-0.86 ship only `scripts/cocoapods/spm.rb`, the `spm_dependency` helper, which §6.5 disproves. CocoaPods trunk goes permanently read-only 2026-12-02.
+
+Weekly npm downloads by minor (Sept 2026), cumulative from newest: 0.87 4.7%, 0.86 35.7%, 0.85 47.8%, 0.84 50.2%, 0.83 60.1%, 0.82 61.1%, **0.81 83.0%**, 0.80 84.0%, 0.76 92.7%. Expo mapping: SDK 54 → 0.81, SDK 55 → 0.83, SDK 56 → 0.85.
 
 ## Appendix B: stale prior art
 

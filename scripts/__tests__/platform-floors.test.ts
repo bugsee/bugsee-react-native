@@ -2,9 +2,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   IOS_FLOOR,
+  REACT_NATIVE_SUPPORT,
   REACT_NATIVE_FLOORS,
   SDK_FLOORS,
   parseGradleMinSdk,
+  parsePeerFloor,
   parsePodspecFallback,
   parseSwiftPlatform,
 } from '../platform-floors';
@@ -94,5 +96,35 @@ describe('where React Native binds, the floor is React Native\'s', () => {
   it('the podspec fallback matches RN\'s CocoaPods floor', () => {
     expect(parsePodspecFallback(read('BugseeReactNative.podspec')))
       .toBe(IOS_FLOOR.podFallback);
+  });
+});
+
+describe('the React Native floor', () => {
+  it('is what package.json declares to consumers', () => {
+    expect(parsePeerFloor(read('package.json'))).toBe(REACT_NATIVE_SUPPORT.floor);
+  });
+
+  // Claiming a floor CI never builds is how "supported" quietly becomes
+  // "untested". The lowest matrix entry must be the floor itself.
+  it('is the lowest version CI builds', () => {
+    const lowest = [...REACT_NATIVE_SUPPORT.matrix].sort((a, b) =>
+      Number(a.split('.')[1]) - Number(b.split('.')[1]),
+    )[0];
+    expect(REACT_NATIVE_SUPPORT.floor.startsWith(`${lowest}.`)).toBe(true);
+  });
+
+  // 0.80 is the hard technical floor: codegenConfig.ios.modulesProvider, the
+  // fix for the TurboModule name colliding with the SDK's Bugsee class, does
+  // not exist before it.
+  it('stays above the modulesProvider floor', () => {
+    const minor = Number(REACT_NATIVE_SUPPORT.floor.split('.')[1]);
+    expect(minor).toBeGreaterThanOrEqual(80);
+  });
+
+  it('rejects a range too loose to correspond to a tested version', () => {
+    expect(() => parsePeerFloor('{"peerDependencies":{"react-native":"*"}}'))
+      .toThrow(/floor/);
+    expect(() => parsePeerFloor('{"peerDependencies":{"react-native":"^0.81.0"}}'))
+      .toThrow(/floor/);
   });
 });
