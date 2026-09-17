@@ -26,3 +26,10 @@ build/
 .build/
 .swiftpm/
 *.xcodeproj/
+# ...except an example app's, which is a real, hand-maintained project and has
+# to be checked in for anyone to build it. Re-including the excluded directory
+# itself works; re-including a file under an excluded parent would not.
+!examples/*/ios/*.xcodeproj/
+
+# Downloaded by the podspec's prepare_command, not authored here.
+packages/react-native/Bugsee.xcframework/
