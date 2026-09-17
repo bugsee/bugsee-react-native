@@ -22,6 +22,14 @@
   "codegenConfig": {
     "name": "RNBugseeSpec",
     "type": "modules",
-    "jsSrcsDir": "src"
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.bugsee.reactnative"
+    },
+    "ios": {
+      "modulesProvider": {
+        "Bugsee": "BugseeModule"
+      }
+    }
   }
 }
