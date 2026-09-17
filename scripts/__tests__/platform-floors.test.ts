@@ -126,15 +126,10 @@ describe('the React Native floor', () => {
     expect(parsePeerFloor(read('package.json'))).toBe(REACT_NATIVE_SUPPORT.floor);
   });
 
-  // Claiming a floor CI never builds is how "supported" quietly becomes
-  // "untested". The lowest matrix entry must be the floor itself.
-  it('is the lowest version CI builds', () => {
-    const lowest = [...REACT_NATIVE_SUPPORT.matrix].sort((a, b) =>
-      Number(a.split('.')[1]) - Number(b.split('.')[1]),
-    )[0];
-    expect(REACT_NATIVE_SUPPORT.floor.startsWith(`${lowest}.`)).toBe(true);
-  });
-
+  // NOTE: whether the floor is a version CI actually builds is asserted in
+  // single-source.test.ts, which reads .github/workflows/ci.yml. This file
+  // used to "check" it by comparing the constant to itself, which passed with
+  // the workflow cut down to a single version.
   // 0.80 is the hard technical floor: codegenConfig.ios.modulesProvider, the
   // fix for the TurboModule name colliding with the SDK's Bugsee class, does
   // not exist before it.

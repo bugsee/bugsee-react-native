@@ -36,3 +36,4 @@ packages/react-native/Bugsee.xcframework/
 
 .stryker-tmp/
 reports/
+packages/react-native/.bugsee-xcframework-version

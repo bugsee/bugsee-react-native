@@ -10,8 +10,10 @@
     "test": "jest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
-    "mutate": "stryker run",
-    "assert:ios-embed": "node scripts/cli-assert-framework-embedded.ts"
+    "mutate": "yarn mutate:src && yarn mutate:scripts",
+    "assert:ios-embed": "node scripts/cli-assert-framework-embedded.ts",
+    "mutate:src": "stryker run stryker.src.json",
+    "mutate:scripts": "stryker run stryker.scripts.json"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -33,5 +35,8 @@
       "/node_modules/",
       "/examples/"
     ]
+  },
+  "engines": {
+    "node": ">= 22.18.0"
   }
 }
