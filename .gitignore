@@ -20,3 +20,6 @@ Pods/
 # Never commit credentials
 bugsee.properties
 .env
+.gradle/
+local.properties
+build/
