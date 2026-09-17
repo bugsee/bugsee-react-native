@@ -11,6 +11,16 @@ import type { UnsafeObject } from 'react-native/Libraries/Types/CodegenTypes';
  * model that produces the map lives in JS (Phase 2).
  */
 export interface Spec extends TurboModule {
+  /**
+   * Registers the wrapper identity with the SDK.
+   *
+   * Separate from `launch` because both SDKs take the wrapper through
+   * `setWrapper`, not through launch options, and because the identity is
+   * gathered in JS — the React Native version, the engine and the build
+   * configuration are JS-side facts. Call before `launch`: the SDK reads the
+   * wrapper while building a report's environment.
+   */
+  setWrapperInfo(identity: UnsafeObject): void;
   launch(token: string, options: UnsafeObject): Promise<boolean>;
   relaunch(options: UnsafeObject): Promise<boolean>;
   stop(): Promise<boolean>;

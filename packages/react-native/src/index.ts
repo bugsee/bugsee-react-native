@@ -1,4 +1,7 @@
 import NativeBugsee from './NativeBugsee';
+import { PACKAGE_VERSION } from './version';
+import { collectWrapperFacts } from './wrapper/collect';
+import { wrapperIdentity } from './wrapper/identity';
 
 /**
  * Mirrors the SDKs' own status enum. Both platforms bring capture up off the
@@ -25,11 +28,28 @@ class Bugsee {
    */
   async launch(token: string, options: LaunchOptions = {}): Promise<boolean> {
     assertUsableToken(token);
+    // Registered before launching, not after: the SDK reads the wrapper while
+    // composing a report's environment, and a crash during start-up would
+    // otherwise produce a report that does not say what wrapper it came from.
+    this.registerWrapper();
     return NativeBugsee.launch(token, options);
+  }
+
+  /**
+   * Tells the SDK what wrapper it is running under.
+   *
+   * Idempotent and cheap, so `launch` and `relaunch` can both call it; the
+   * SDK replaces whatever was registered.
+   */
+  private registerWrapper(): void {
+    NativeBugsee.setWrapperInfo(
+      wrapperIdentity(collectWrapperFacts(PACKAGE_VERSION)),
+    );
   }
 
   /** Restarts an already-launched session with a new set of options. */
   async relaunch(options: LaunchOptions = {}): Promise<boolean> {
+    this.registerWrapper();
     return NativeBugsee.relaunch(options);
   }
 
@@ -90,6 +110,8 @@ function assertUsableToken(token: string): void {
   }
 }
 
+export { WRAPPER_TYPE } from './wrapper/identity';
+export { PACKAGE_VERSION } from './version';
 export { BugseeLaunchOptions } from './options/BugseeLaunchOptions';
 export { AndroidLaunchOptions } from './options/AndroidLaunchOptions';
 export { IOSLaunchOptions } from './options/IOSLaunchOptions';

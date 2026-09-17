@@ -25,6 +25,11 @@ describe('endpointFor(ios)', () => {
       .toEqual({ [IOS_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v2' });
   });
 
+  it('strips a run of trailing slashes, not just one', () => {
+    expect(endpointFor('ios', 'https://apidev.bugsee.com///'))
+      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v2' });
+  });
+
   it('normalises a trailing slash after /v2', () => {
     expect(endpointFor('ios', 'https://apidev.bugsee.com/v2/'))
       .toEqual({ [IOS_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v2' });
@@ -59,6 +64,14 @@ describe('endpointFor(android)', () => {
     expect(ANDROID_ENDPOINT_KEY).not.toBe(IOS_ENDPOINT_KEY);
     expect(ANDROID_ENDPOINT_KEY).toBe('com.bugsee.option.$$ENDPOINT');
     expect(IOS_ENDPOINT_KEY).toBe('endpoint');
+  });
+});
+
+describe('an unrecognised platform', () => {
+  it('is refused rather than treated as iOS', () => {
+    expect(() => endpointFor('web' as 'ios', 'https://x.test'))
+      .toThrow(/ios.*android|android.*ios/);
+    expect(() => endpointFor('' as 'ios', 'https://x.test')).toThrow();
   });
 });
 

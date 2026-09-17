@@ -83,6 +83,13 @@ describe('reading back what the SDK reports', () => {
     expect(options.endpoint).toBe('https://apidev.bugsee.com/v2');
   });
 
+  it('ignores a null report, which is what a bridge sends for "nothing"', () => {
+    const options = new AndroidLaunchOptions();
+    options.captureLogs = true;
+    BugseeLaunchOptions.refreshFrom(options, null as never);
+    expect(options.captureLogs).toBe(true);
+  });
+
   it('ignores a report that is not an object', () => {
     const options = new AndroidLaunchOptions();
     options.captureLogs = true;

@@ -125,6 +125,25 @@ describe('$localOptions', () => {
   });
 });
 
+describe('local options', () => {
+  // The same delete-on-undefined rule as native options, on the other map.
+  it('are deleted by undefined', () => {
+    const o = new TestOptions();
+    o.localOnly = 'x';
+    o.localOnly = undefined;
+    expect(o.localOnly).toBeUndefined();
+    expect(BugseeLaunchOptions.localSettings(o)).toEqual({});
+  });
+
+  it('are reported separately from the native payload', () => {
+    const o = new TestOptions();
+    o.localOnly = 'x';
+    expect(BugseeLaunchOptions.localSettings(o)).toEqual({
+      'bugsee.local.thing': 'x',
+    });
+  });
+});
+
 describe('serialize', () => {
   it('returns a plain object, not the live map', () => {
     const o = new TestOptions();
