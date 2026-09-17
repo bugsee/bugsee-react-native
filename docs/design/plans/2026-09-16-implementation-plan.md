@@ -6,7 +6,7 @@
 
 **Architecture:** A yarn-4 workspace with two publishable packages. A TypeScript facade over a TurboModule spec; one Android source set; an iOS bridge delivered two ways (hand-written `ios/Package.swift` for RN's SPM autolinking, podspec vendoring the same xcframework for CocoaPods apps). A single `BugseeWrapper` implementation per platform is the integration seam for identity, lifecycle, secure rectangles and report handling.
 
-**Tech Stack:** TypeScript 5, React Native ≥0.83 (New Architecture only), yarn 4 (`nodeLinker: node-modules`), Turbo, `react-native-builder-bob`, Jest, Stryker, Java 17 / AGP 8, ObjC++.
+**Tech Stack:** TypeScript 5, React Native ≥0.81 (New Architecture required), yarn 4 (`nodeLinker: node-modules`), Turbo, `react-native-builder-bob`, Jest, Stryker, Java 17 / AGP 8, ObjC++.
 
 **Spec:** `docs/design/2026-09-15-sdk-design.md`
 
@@ -16,7 +16,7 @@
 
 Every phase's requirements implicitly include this section.
 
-- React Native floor **0.83.0**, New Architecture only. No `oldarch` source set, no legacy bridge fallback.
+- React Native floor **0.81.0**, New Architecture required. No `oldarch` source set, no legacy bridge fallback. 0.81 still allows opting out of the New Architecture; that is a documented requirement on the consumer, not a second code path. Hard technical floor is 0.80 (`codegenConfig.ios.modulesProvider`).
 - Android SDK **7.2.0**, Gradle plugin **4.0.6**, pinned exactly. The plugin marker resolves from **Maven Central**, not the Gradle Plugin Portal.
 - iOS SDK **7.0.0-beta1** from `https://github.com/bugsee/spm`, requirement `exact`. SwiftPM will not admit a prerelease into a range.
 - Package `@bugsee/react-native`. `toSwiftName` maps it to `ReactNative`, which is **reserved**, so `react-native.config.js` pins `spm: { name: 'BugseeReactNative' }` and the SPM product name must match exactly.
@@ -197,7 +197,7 @@ The task that proves the parts fit. Unit tests cannot: they mock the bridge, and
 - [ ] Lint, typecheck, unit, Stryker with a failing threshold.
 - [ ] Android: assemble the example app.
 - [ ] iOS: build the example, **then assert the framework is embedded**. The assertion is the point.
-- [ ] Matrix across RN 0.83.x, 0.86.x, 0.87.x.
+- [ ] Matrix across RN 0.81.x, 0.83.x, 0.86.x, 0.87.x. Only the 0.87 leg exercises SPM — SPM support for apps does not exist before 0.87, so 0.81-0.86 are CocoaPods-only.
 - [ ] **Commit** — `ci: build both platforms and assert the iOS framework is embedded`
 
 ### Phase 1 review gate
