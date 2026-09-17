@@ -37,6 +37,20 @@ describe('the example wires the embed assertion to a path it can resolve', () =>
     expect(source).toMatch(/cli-assert-framework-embedded\.ts/);
   });
 
+  // A textual "no --cwd" check does not stop the path being wrong in some
+  // other way: a sound build plus a wrong path exits 2, which reads as "your
+  // build is missing" rather than "your script is misconfigured".
+  it('passes the path xcodebuild is configured to write', () => {
+    const script = scripts['assert:ios-embed'] ?? '';
+    const workflow = readFileSync(
+      join(__dirname, '..', '..', '.github', 'workflows', 'ci.yml'),
+      'utf8',
+    );
+    // -derivedDataPath build, so products land under <that>/Build/Products.
+    expect(workflow).toMatch(/-derivedDataPath build/);
+    expect(script).toMatch(/ios\/build\/Build\/Products\/Debug-iphoneos\//);
+  });
+
   // One implementation of this check, not two. There used to be a second copy
   // as a shell script, and only one of them was tested.
   it('has no second copy of the assertion', () => {

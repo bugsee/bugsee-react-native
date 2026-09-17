@@ -76,6 +76,94 @@ jobs:
         working-directory: examples/bare/android
         run: ./gradlew assembleDebug
 
+  ios-unit:
+    name: ios unit (BugseeRNSupport)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      # The only ObjC tests in the repo, and they used to run nowhere. They
+      # cover the marshalling helpers and the main-thread hop -- removing the
+      # hop is otherwise undetectable, since the device e2e passes without it.
+      #
+      # xcodebuild, not `swift test`: SwiftPM builds this for macOS and the
+      # xcframework has no macOS slice.
+      # Selected by UDID rather than by name+OS: `OS=latest` resolves to the
+      # newest runtime installed, which need not have the named device, and
+      # xcodebuild then fails listing every destination it will not use.
+      - name: Test the Support package
+        working-directory: packages/react-native/ios/Support
+        run: |
+          UDID="$(xcrun simctl list devices available -j | jq -r '[.devices[][]][0].udid')"
+          test -n "$UDID" && test "$UDID" != null
+          xcodebuild test -scheme BugseeRNSupport -destination "id=$UDID"
+
+  ios-e2e:
+    name: ios e2e (simulator)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace bugsee-example-bare credentials
+
+      - name: Boot a simulator
+        id: sim
+        run: |
+          UDID="$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name | startswith("iPhone 16"))][0].udid')"
+          test -n "$UDID" && test "$UDID" != null
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Install pods
+        working-directory: examples/bare/ios
+        run: pod install
+
+      - name: Build for the simulator
+        working-directory: examples/bare/ios
+        run: |
+          xcodebuild \
+            -workspace BareExample.xcworkspace \
+            -scheme BareExample \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -configuration Debug \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Install the app
+        run: |
+          xcrun simctl install "${{ steps.sim.outputs.udid }}" \
+            examples/bare/ios/build/Build/Products/Debug-iphonesimulator/BareExample.app
+
+      - name: Start Metro
+        working-directory: examples/bare
+        run: |
+          yarn start &
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:8081/status && break
+            sleep 1
+          done
+
+      # The only job that proves the SDK RUNS. Every other job passes with
+      # `launch` gutted to `resolve(@YES)`: the build succeeds and the
+      # framework is still embedded and linked. Verified by doing exactly
+      # that -- the embed assertion stayed green and this went red.
+      #
+      # A simulator is not a substitute for the handset: it cannot catch a
+      # code-signing or embedding fault on real hardware. It is the only iOS
+      # target CI has, and it runs the real SDK.
+      - name: Reach Status.Launched
+        working-directory: examples/bare
+        env:
+          E2E_PLATFORM: ios
+          E2E_IOS_TARGET: simulator
+          IOS_SIMULATOR_ID: ${{ steps.sim.outputs.udid }}
+        run: yarn e2e
+
   ios:
     name: ios (${{ matrix.delivery }})
     runs-on: macos-15
