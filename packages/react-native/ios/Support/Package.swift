@@ -3,10 +3,18 @@ import PackageDescription
 
 /// Pure marshalling shared by the iOS bridge.
 ///
-/// A package of its own so `swift test` can exercise it against the real
-/// Bugsee framework without React Native, codegen, an Xcode project or a
-/// device. The TurboModule that calls into it needs all four, and is covered
-/// by the example app instead.
+/// A package of its own so its tests can exercise it against the real Bugsee
+/// framework without React Native, codegen or a device.
+///
+/// Run them with:
+///
+///     xcodebuild test -scheme BugseeRNSupport \
+///       -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest'
+///
+/// NOT `swift test`: that builds for arm64-apple-macosx, and the xcframework
+/// ships no macOS slice, so it fails with "'Bugsee/Bugsee.h' file not found".
+/// An earlier version of this comment claimed `swift test` worked; it never
+/// did, and CI ran these tests nowhere at all.
 let package = Package(
   name: "BugseeRNSupport",
   // 15.0, matching the rest of the wrapper rather than the SDK's own 13.0.

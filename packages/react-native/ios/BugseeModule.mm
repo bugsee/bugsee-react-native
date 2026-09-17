@@ -11,9 +11,11 @@
 // headers arrive flat; under SPM it is a separate target and they arrive under
 // the module's own directory.
 #if __has_include(<BugseeRNSupport/BGSRNTokens.h>)
+#import <BugseeRNSupport/BGSRNMainThread.h>
 #import <BugseeRNSupport/BGSRNStatusMapper.h>
 #import <BugseeRNSupport/BGSRNTokens.h>
 #else
+#import "BGSRNMainThread.h"
 #import "BGSRNStatusMapper.h"
 #import "BGSRNTokens.h"
 #endif
@@ -29,17 +31,6 @@ RCT_EXPORT_MODULE(Bugsee)
   return YES;
 }
 
-/// Runs `block` on the main thread, without deadlocking if already there.
-/// dispatch_sync onto the main queue from the main thread is a hard deadlock,
-/// and RN does sometimes invoke a TurboModule method on the main thread.
-static void BGSRunOnMain(dispatch_block_t block) {
-  if ([NSThread isMainThread]) {
-    block();
-  } else {
-    dispatch_async(dispatch_get_main_queue(), block);
-  }
-}
-
 - (void)launch:(NSString *)token
        options:(NSDictionary *)options
        resolve:(RCTPromiseResolveBlock)resolve
@@ -48,7 +39,7 @@ static void BGSRunOnMain(dispatch_block_t block) {
     reject(@"E_TOKEN", @"Bugsee.launch requires a non-empty app token", nil);
     return;
   }
-  BGSRunOnMain(^{
+  BGSRNRunOnMain(^{
     // launchWithToken: returns the instance, or nil when the SDK declines —
     // already running, or the token was rejected. Declining is a normal
     // outcome, so it resolves false rather than rejecting.
@@ -60,15 +51,22 @@ static void BGSRunOnMain(dispatch_block_t block) {
 - (void)relaunch:(NSDictionary *)options
          resolve:(RCTPromiseResolveBlock)resolve
           reject:(RCTPromiseRejectBlock)reject {
-  BGSRunOnMain(^{
-    [Bugsee relaunchWithDictionaryOptions:options];
-    resolve(@YES);
+  BGSRNRunOnMain(^{
+    // NOT relaunchWithDictionaryOptions:, which is void — the bridge would
+    // have to resolve an unconditional YES, so `relaunch` would mean "the
+    // call was made" on iOS and "the SDK restarted" on Android, for one JS
+    // signature. optionsFrom: converts the same dictionary, and the started:
+    // overload reports what actually happened.
+    [Bugsee relaunchWithOptions:[BugseeOptions optionsFrom:options]
+                        started:^(BOOL success) {
+                          resolve(@(success));
+                        }];
   });
 }
 
 - (void)stop:(RCTPromiseResolveBlock)resolve
       reject:(RCTPromiseRejectBlock)reject {
-  BGSRunOnMain(^{
+  BGSRNRunOnMain(^{
     [Bugsee stop:^{
       resolve(@YES);
     }];
@@ -77,7 +75,7 @@ static void BGSRunOnMain(dispatch_block_t block) {
 
 - (void)getStatus:(RCTPromiseResolveBlock)resolve
            reject:(RCTPromiseRejectBlock)reject {
-  BGSRunOnMain(^{
+  BGSRNRunOnMain(^{
     Bugsee *instance = [Bugsee sharedInstance];
     // No instance means the SDK was never launched, which is Stopped.
     BugseeStatus status = instance ? instance.status : BugseeStatusStopped;
@@ -86,7 +84,7 @@ static void BGSRunOnMain(dispatch_block_t block) {
 }
 
 - (void)testCrash {
-  BGSRunOnMain(^{
+  BGSRNRunOnMain(^{
     [Bugsee testCrash];
   });
 }
