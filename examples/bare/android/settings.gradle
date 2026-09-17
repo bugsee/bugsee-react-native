@@ -1,0 +1,17 @@
+pluginManagement {
+    includeBuild("../node_modules/@react-native/gradle-plugin")
+    // Without an explicit block Gradle looks only at the Plugin Portal, and
+    // the Bugsee plugin's marker is published to Maven Central. The failure is
+    // "Plugin [id: 'com.bugsee.android.gradle', version: '4.0.6'] was not
+    // found", which reads like a wrong version rather than a wrong repository.
+    repositories {
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+    }
+}
+plugins { id("com.facebook.react.settings") }
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+rootProject.name = 'BareExample'
+include ':app'
+includeBuild('../node_modules/@react-native/gradle-plugin')

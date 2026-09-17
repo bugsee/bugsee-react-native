@@ -1,0 +1,49 @@
+buildscript {
+    ext {
+        buildToolsVersion = "37.0.0"
+        minSdkVersion = 24
+        compileSdkVersion = 37
+        targetSdkVersion = 36
+        ndkVersion = "27.1.12297006"
+        kotlinVersion = "2.2.0"
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+    }
+}
+
+plugins {
+    // Mandatory for Bugsee Android 7.x, and the one piece of the integration
+    // autolinking cannot supply — a Gradle plugin has to be declared by the
+    // app. Version pinned to native-versions.json's android.gradlePlugin; the
+    // `plugins` block cannot read a file, so the pin is checked below instead
+    // of being interpolated.
+    //
+    // Resolved here, applied in app/build.gradle: applied to the root project
+    // it fails configuration with "Must apply 'com.android.application' or
+    // 'com.android.library' first!", since it hangs its tasks off an Android
+    // variant. The token file still belongs to this directory, the root
+    // project, not to app/.
+    id 'com.bugsee.android.gradle' version '4.0.6' apply false
+}
+
+// The token lives in bugsee.properties next to this file — the *root* Gradle
+// project, not :app — under the unprefixed key `app_token`. It is generated
+// from the environment by ../scripts/write-credentials.mjs and gitignored.
+
+def pinned = new groovy.json.JsonSlurper()
+        .parse(file("../../../native-versions.json")).android.gradlePlugin
+def applied = '4.0.6'
+if (pinned != applied) {
+    throw new GradleException(
+            "Bugsee Gradle plugin is pinned to ${pinned} in native-versions.json " +
+            "but this build applies ${applied}.")
+}
+
+apply plugin: "com.facebook.react.rootproject"
