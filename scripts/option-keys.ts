@@ -74,3 +74,96 @@ export function parseJavaEnum(source: string): Record<string, number> {
   }
   return constants;
 }
+
+/** One option, in the shape `bugsee/specs` sdk/options/manifest.md defines. */
+export interface ManifestOption {
+  key: string;
+  type: 'boolean' | 'int' | 'float' | 'string' | 'enum' | 'map' | 'list';
+  default: unknown;
+  module: string;
+  hidden: boolean;
+  enum?: { name: string; values: Record<string, number> };
+}
+
+/** A whole manifest, format version 1. */
+export interface OptionsManifest {
+  manifestVersion: 1;
+  sdk: 'android' | 'ios' | 'rust' | 'js';
+  sdkVersion: string;
+  buildConfiguration: string;
+  generatedAt: string;
+  options: ManifestOption[];
+}
+
+const JAVA_TYPES: Record<string, ManifestOption['type']> = {
+  'boolean': 'boolean',
+  'Boolean': 'boolean',
+  'int': 'int',
+  'Integer': 'int',
+  'long': 'int',
+  'Long': 'int',
+  'float': 'float',
+  'Float': 'float',
+  'double': 'float',
+  'Double': 'float',
+  'String': 'string',
+  'Map': 'map',
+  'List': 'list',
+};
+
+/**
+ * Reads Android's `OptionsDescriptors` registrations into manifest options.
+ *
+ * `type` is the SDK's DECLARED type, never inferred from the default — the
+ * manifest spec is explicit about that, and inferring would turn every
+ * `Integer` default of 0 into something indistinguishable from a float.
+ */
+export function parseAndroidDescriptors(
+  source: string,
+  keysByConstant: Record<string, string>,
+  enums: Record<string, Record<string, number>>,
+): ManifestOption[] {
+  const options: ManifestOption[] = [];
+  for (const m of source.matchAll(
+    /createAndRegister\(\s*(?:Options\.(\w+)|"([^"]+)")\s*,\s*(\w+)\.class\s*,\s*([^;]*?)\s*\)\s*;/g,
+  )) {
+    const key = m[1] ? keysByConstant[m[1] as string] : (m[2] as string);
+    if (key === undefined) continue;
+
+    const declared = m[3] as string;
+    const rest = (m[4] as string).split(',').map((part) => part.trim());
+    const rawDefault = rest[0] ?? 'null';
+    // The optional fourth argument marks an internal option.
+    const hidden = rest[1] === 'true';
+
+    const enumValues = enums[declared];
+    options.push({
+      key,
+      type: enumValues ? 'enum' : (JAVA_TYPES[declared] ?? 'string'),
+      default: parseJavaLiteral(rawDefault),
+      module: 'bugsee-android',
+      hidden,
+      ...(enumValues
+        ? { enum: { name: declared, values: enumValues } }
+        : {}),
+    });
+  }
+  if (options.length === 0) {
+    throw new Error('no descriptors found; the parser missed the source');
+  }
+  return options;
+}
+
+/** A Java literal as JSON. Enum defaults become the CONSTANT NAME, per spec. */
+function parseJavaLiteral(raw: string): unknown {
+  if (raw === 'null') return null;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (/^-?\d+$/.test(raw)) return Number(raw);
+  if (/^-?\d*\.\d+f?$/.test(raw)) return Number(raw.replace(/f$/, ''));
+  const quoted = /^"(.*)"$/.exec(raw);
+  if (quoted) return quoted[1];
+  // `VideoQuality.Default` -> "Default": the spec stores the constant name.
+  const enumConstant = /^\w+\.(\w+)$/.exec(raw);
+  return enumConstant ? enumConstant[1] : raw;
+}

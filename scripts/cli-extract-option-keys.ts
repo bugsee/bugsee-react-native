@@ -7,10 +7,12 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  parseAndroidDescriptors,
   parseAndroidKeys,
   parseIosKeys,
   parseJavaEnum,
   splitByPlatform,
+  type OptionsManifest,
 } from './option-keys.ts';
 
 const home = process.env.HOME ?? '';
@@ -49,6 +51,43 @@ const enumsOut = join(
   'option-enums.json',
 );
 writeFileSync(enumsOut, `${JSON.stringify(enums, null, 2)}\n`);
+
+// An Android manifest in the shape bugsee/specs sdk/options/manifest.md
+// defines, so that swapping to the SDK's own published manifest is a change of
+// SOURCE and not of format. Status there is still "Proposed -- no SDK
+// publishes a manifest yet"; this stands in until one does.
+const androidConstants = Object.fromEntries(
+  [...readFileSync(
+    join(androidRoot, 'library/src/main/java/com/bugsee/library/contracts/options/Options.java'),
+    'utf8',
+  ).matchAll(/String (\w+)\s*=\s*"(com\.bugsee\.option[^"]*)"/g)]
+    .map((m) => [m[1] as string, m[2] as string]),
+);
+
+const nativeVersions = JSON.parse(
+  readFileSync(join(import.meta.dirname, '..', 'native-versions.json'), 'utf8'),
+) as { android: { sdk: string }; ios: { sdk: string } };
+
+const manifest: OptionsManifest = {
+  manifestVersion: 1,
+  sdk: 'android',
+  sdkVersion: nativeVersions.android.sdk,
+  buildConfiguration: 'release',
+  generatedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+  options: parseAndroidDescriptors(
+    readFileSync(join(
+      androidRoot, 'library/src/main/java/com/bugsee/library/options/OptionsDescriptors.java',
+    ), 'utf8'),
+    androidConstants,
+    enums,
+  ),
+};
+const manifestOut = join(
+  import.meta.dirname, '..', 'packages', 'react-native', 'src', 'options',
+  'android-options-manifest.json',
+);
+writeFileSync(manifestOut, `${JSON.stringify(manifest, null, 2)}\n`);
+console.log(`android manifest: ${manifest.options.length} options -> ${manifestOut}`);
 
 console.log(
   `shared ${keys.shared.length}, iOS-only ${keys.ios.length}, ` +

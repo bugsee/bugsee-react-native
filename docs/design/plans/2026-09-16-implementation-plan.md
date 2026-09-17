@@ -289,7 +289,28 @@ Both are pinned by issue number at each site, so `git grep bugsee-cocoa#`
 finds everything to remove.
 
 - [ ] **2.6** Device integration: launch with a non-default option on both devices and assert via `getLaunchOptions()` that it took effect.
-- [ ] **2.7 (deferred dependency)** Manifest parity gate against `bugsee/specs` `sdk/options/`. **Blocked:** neither SDK publishes a manifest yet, and both need a complete descriptor enumerator first (plus a value-type tag on Apple). Ship a committed fixture and a test that reads it; swap to the published manifest when it exists.
+- [x] **2.7** Manifest parity gate against `bugsee/specs` `sdk/options/`.
+
+  The spec now EXISTS (`sdk/options/manifest.md`, format version 1) and
+  independently confirms the enum trap: `enum.values` carries "the SDK's
+  internal value — never its ordinal". Its status is still **Proposed — no SDK
+  publishes a manifest yet**, so the gate reads a committed manifest generated
+  from the Android SDK sources *in exactly that shape* (77 options, with
+  declared types, defaults and enum constants).
+
+  Swapping to a published manifest at
+  `https://download.bugsee.com/sdk/options/android/<version>.json` is then a
+  change of SOURCE, not of format, and the assertions stand unchanged.
+
+  Proved to bite: bumping `native-versions.json` without regenerating,
+  removing an enum key from the bridge's coercion table, and drifting a TS
+  enum value each fail it.
+
+  **Still blocked for iOS.** A spec-shaped manifest cannot be generated from
+  the Apple sources: the spec's own Producer requirements note that
+  `valueClass` collapses bool, int, float and enum into `NSNumber`, so an
+  explicit value-type tag must be added to the SDK first. Until then the iOS
+  side is checked by the key fixture only, not by type or default. **Blocked:** neither SDK publishes a manifest yet, and both need a complete descriptor enumerator first (plus a value-type tag on Apple). Ship a committed fixture and a test that reads it; swap to the published manifest when it exists.
 - [ ] Review gate.
 
 ---

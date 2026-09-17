@@ -56,6 +56,30 @@ describe('parseSignatures', () => {
       .toEqual([{ name: 'stop', parameters: ['Map<String, Object>'] }]);
   });
 
+  // The paren-depth tracking exists for exactly this: a comma INSIDE an
+  // annotation's arguments is not a parameter separator. Without it the list
+  // splits in the wrong place and both halves lose their types.
+  it('does not split on a comma inside an annotation', () => {
+    expect(parseSignatures(
+      'public void stop(@Size(min = 1, max = 2) Promise p);', NAMES,
+    )).toEqual([{ name: 'stop', parameters: ['Promise'] }]);
+  });
+
+  it('keeps two parameters apart when one is annotated with arguments', () => {
+    expect(parseSignatures(
+      'public void launch(@Size(min = 1, max = 2) String token, ReadableMap options, Promise p);',
+      NAMES,
+    )).toEqual([
+      { name: 'launch', parameters: ['String', 'ReadableMap', 'Promise'] },
+    ]);
+  });
+
+  it('handles a generic nested inside an annotated parameter', () => {
+    expect(parseSignatures(
+      'public void stop(@Nullable Map<String, List<Integer>> m);', NAMES,
+    )).toEqual([{ name: 'stop', parameters: ['Map<String, List<Integer>>'] }]);
+  });
+
   it('strips an annotation that carries arguments', () => {
     expect(parseSignatures('public void stop(@Nullable(x = 1) Promise p);', NAMES))
       .toEqual([{ name: 'stop', parameters: ['Promise'] }]);
