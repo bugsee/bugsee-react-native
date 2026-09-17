@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  IOS_FLOOR,
   REACT_NATIVE_FLOORS,
   SDK_FLOORS,
   parseGradleMinSdk,
@@ -56,11 +57,22 @@ describe('the wrapper does not raise the floor above the SDK it wraps', () => {
       .toBe(SDK_FLOORS.androidMinSdk);
   });
 
-  // BugseeRNSupport depends on bugsee/spm and nothing else -- no React. There
-  // is therefore nothing forcing it above the SDK's own 13.0.
-  it('ios/Support/Package.swift declares the SDK deployment target', () => {
-    expect(parseSwiftPlatform(read('ios', 'Support', 'Package.swift')))
-      .toBe(SDK_FLOORS.iosDeploymentTarget);
+});
+
+describe('iOS sits at 15 everywhere, deliberately', () => {
+  // BugseeRNSupport links no React, so it *could* sit at the SDK's 13.0. It
+  // does not, because no RN app can reach 13.0 anyway -- see IOS_FLOOR.
+  it('ios/Support/Package.swift declares the wrapper floor, not the SDK\'s', () => {
+    const declared = parseSwiftPlatform(read('ios', 'Support', 'Package.swift'));
+    expect(declared).toBe(IOS_FLOOR.spm);
+    expect(declared).not.toBe(SDK_FLOORS.iosDeploymentTarget);
+  });
+
+  it('the wrapper floor is exactly what React Native imposes', () => {
+    expect(IOS_FLOOR.spm).toBe(REACT_NATIVE_FLOORS.iosSpmDeploymentTarget);
+    expect(IOS_FLOOR.podFallback).toBe(
+      REACT_NATIVE_FLOORS.iosPodDeploymentTargetFallback,
+    );
   });
 });
 
@@ -69,7 +81,7 @@ describe('where React Native binds, the floor is React Native\'s', () => {
   // declares .iOS(.v15), and SwiftPM fails the build rather than resolve it.
   it('ios/Package.swift matches RN\'s generated package', () => {
     expect(parseSwiftPlatform(read('ios', 'Package.swift')))
-      .toBe(REACT_NATIVE_FLOORS.iosSpmDeploymentTarget);
+      .toBe(IOS_FLOOR.spm);
   });
 
   // The podspec reads RN's own min_ios_version_supported at install time, so
@@ -81,6 +93,6 @@ describe('where React Native binds, the floor is React Native\'s', () => {
 
   it('the podspec fallback matches RN\'s CocoaPods floor', () => {
     expect(parsePodspecFallback(read('BugseeReactNative.podspec')))
-      .toBe(REACT_NATIVE_FLOORS.iosPodDeploymentTargetFallback);
+      .toBe(IOS_FLOOR.podFallback);
   });
 });
