@@ -52,12 +52,19 @@ android {
     compileSdk 35
 
     defaultConfig {
-        minSdk 24
+        // The Bugsee Android SDK supports API 21+ and defends that floor
+        // deliberately (its own build pins androidx.webkit to 1.14.0 because
+        // 1.15.0+ require 23/24). A wrapper must not raise the floor above the
+        // SDK it wraps.
+        minSdk 21
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        // Matches the SDK, which compiles at 1.8 throughout (and pins
+        // jvmTarget to JVM_1_8). Emitting newer bytecode from the wrapper than
+        // the library it bridges to buys nothing and narrows who can consume it.
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 
     if (standalone) {
