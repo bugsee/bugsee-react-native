@@ -79,11 +79,10 @@ public class BugseeModule extends NativeBugseeSpec {
     /**
      * Flattens the JS options map into what the SDK takes.
      *
-     * <p>Only the scalar types Phase 1 needs. The typed options model, the
-     * `com.bugsee.option.*` keys and the number→enum coercion each option
-     * needs arrive in Phase 2; until then an unrecognised value is dropped
-     * rather than guessed at, because a wrong coercion would look like the
-     * option was honoured.
+     * <p>An unrecognised value is dropped rather than guessed at: a wrong
+     * coercion would look like the option was honoured. Numbers go through
+     * {@link BugseeOptionEnums}, because an enum-typed option arriving as a
+     * bare number is ignored by the SDK's Map path.
      */
     private static Map<String, Serializable> toOptions(@Nullable final ReadableMap options) {
         final Map<String, Serializable> result = new HashMap<>();
@@ -98,7 +97,16 @@ public class BugseeModule extends NativeBugseeSpec {
                     result.put(key, options.getBoolean(key));
                     break;
                 case Number:
-                    result.put(key, options.getDouble(key));
+                    // Enum-typed keys arrive as their internal value and must
+                    // become enum instances: the SDK's Map path does not
+                    // coerce, so a bare number is ignored. null means the
+                    // value names no constant, and the option is dropped
+                    // rather than guessed at.
+                    final Serializable number =
+                            BugseeOptionEnums.numberFor(key, options.getDouble(key));
+                    if (number != null) {
+                        result.put(key, number);
+                    }
                     break;
                 case String:
                     result.put(key, options.getString(key));
