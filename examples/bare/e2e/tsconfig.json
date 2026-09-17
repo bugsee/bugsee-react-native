@@ -1,0 +1,12 @@
+{
+  // The e2e is Node code that drives adb and devicectl; it never runs inside
+  // the app, so it uses the workspace's base config rather than the example's
+  // React Native one.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "types": ["node", "jest"]
+  },
+  "include": ["*.ts"]
+}
