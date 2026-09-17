@@ -123,6 +123,25 @@ public class BugseeOptionEnumsTest {
                 "com.bugsee.option.capture.video.mode", Double.POSITIVE_INFINITY));
     }
 
+    /**
+     * Outbound must use the same numbers as inbound, or a round trip hands JS
+     * a different constant than the one actually in effect.
+     */
+    @Test
+    public void wireValueRoundTripsEveryConstant() {
+        assertEquals(1.0, BugseeOptionEnums.wireValue(LogLevel.Error), 0.0);
+        assertEquals(20.0, BugseeOptionEnums.wireValue(VideoMode.Fullscreen), 0.0);
+        assertEquals(21.0, BugseeOptionEnums.wireValue(VideoMode.DirectBuffers), 0.0);
+        assertEquals(5.0, BugseeOptionEnums.wireValue(IssueSeverity.Blocker), 0.0);
+        assertEquals(0.0, BugseeOptionEnums.wireValue(VideoQuality.Default), 0.0);
+        assertEquals(4.0, BugseeOptionEnums.wireValue(FrameRate.Raw), 0.0);
+    }
+
+    @Test
+    public void wireValueRefusesSomethingThatIsNotAnOptionEnum() {
+        assertEquals(-1.0, BugseeOptionEnums.wireValue("not an enum"), 0.0);
+    }
+
     @Test
     public void knowsExactlyTheEnumTypedKeys() {
         assertEquals(7, BugseeOptionEnums.enumKeys().size());

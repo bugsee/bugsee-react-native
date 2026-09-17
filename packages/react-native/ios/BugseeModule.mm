@@ -124,6 +124,18 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
+- (void)getLaunchOptions:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject {
+  BGSRNRunOnMain(^{
+    // NOTE: iOS returns only the options that DIFFER from its defaults
+    // (+getLaunchOptions is [options userOptions]), so unlike Android this
+    // cannot answer a getter the app never set. BugseeOptions -dictionary
+    // holds the resolved set and is public, but there is no public way to
+    // reach the live options object, so the wrapper cannot get at it.
+    resolve([Bugsee getLaunchOptions] ?: @{});
+  });
+}
+
 - (void)testCrash {
   BGSRNRunOnMain(^{
     [Bugsee testCrash];
