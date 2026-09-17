@@ -78,4 +78,17 @@ function assertUsableToken(token: string): void {
   }
 }
 
+export { BugseeLaunchOptions } from './options/BugseeLaunchOptions';
+export { AndroidLaunchOptions } from './options/AndroidLaunchOptions';
+export { IOSLaunchOptions } from './options/IOSLaunchOptions';
+export { createDefaultLaunchOptions } from './options/createDefaultLaunchOptions';
+export { endpointFor } from './options/endpoint';
+export {
+  FrameRate,
+  IssueSeverity,
+  LogLevel,
+  VideoMode,
+  VideoQuality,
+} from './options/enums';
+
 export default new Bugsee();

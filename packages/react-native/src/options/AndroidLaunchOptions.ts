@@ -1,7 +1,22 @@
 import { BugseeLaunchOptions } from './BugseeLaunchOptions';
+import { ANDROID_ENDPOINT_KEY, endpointFor } from './endpoint';
 
 /** Launch options for Android, adding the keys only that SDK accepts. */
 export class AndroidLaunchOptions extends BugseeLaunchOptions {
+  /**
+   * The API endpoint override.
+   *
+   * Reads back what the SDK will actually receive rather than what
+   * was assigned, because the two differ on iOS.
+   */
+  get endpoint(): string | undefined {
+    return this.$get(ANDROID_ENDPOINT_KEY);
+  }
+  set endpoint(value: string | undefined) {
+    const payload = endpointFor('android', value);
+    this.$set(ANDROID_ENDPOINT_KEY, payload[ANDROID_ENDPOINT_KEY]);
+  }
+
   get videoMode(): number | undefined {
     return this.$get('com.bugsee.option.capture.video.mode');
   }
