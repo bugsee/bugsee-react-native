@@ -9,8 +9,43 @@ plugins {
     id 'com.android.library'
 }
 
-def nativeVersions = new groovy.json.JsonSlurper()
-        .parse(file("${rootDir}/native-versions.json"))
+// Finding the single version source takes more care than it looks like it
+// should. `rootDir` is the app's root project, not this repo's, so that is out.
+// And `projectDir` inside an app is the *autolink symlink*
+// (<app>/node_modules/@bugsee/react-native/android), so walking up from it
+// lands in <app>/node_modules, not in this repo. Canonicalise first, then walk
+// up until the file appears.
+def nativeVersionsFile = { ->
+    def dir = projectDir.canonicalFile
+    while (dir != null) {
+        def candidate = new File(dir, 'native-versions.json')
+        if (candidate.isFile()) {
+            return candidate
+        }
+        dir = dir.parentFile
+    }
+    throw new GradleException(
+            "native-versions.json not found above ${projectDir.canonicalFile}. " +
+            "Every pinned native version comes from that one file.")
+}()
+def nativeVersions = new groovy.json.JsonSlurper().parse(nativeVersionsFile)
+
+// Two builds consume this file.
+//
+// Inside an app, React Native's autolinking includes the module and the app's
+// settings.gradle has already substituted in `com.facebook.react`, which runs
+// codegen and puts react-android on the compile classpath. That is the real
+// configuration and the default here.
+//
+// The repo-root build exists only to run the marshalling unit tests without
+// first building an app, and has neither the plugin nor an app to resolve
+// react-android from. It sets `bugsee.standalone=true`, and this file then
+// drops the TurboModule — the one source that needs both — from the source
+// set. The tests cover the plain-Java classes, which are all that build is for.
+def standalone = providers.gradleProperty('bugsee.standalone').getOrElse('false') == 'true'
+if (!standalone) {
+    apply plugin: 'com.facebook.react'
+}
 
 android {
     namespace 'com.bugsee.reactnative'
@@ -23,6 +58,15 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+
+    if (standalone) {
+        sourceSets {
+            main {
+                java.exclude 'com/bugsee/reactnative/BugseeModule.java'
+                java.exclude 'com/bugsee/reactnative/BugseePackage.java'
+            }
+        }
     }
 
     testOptions {
@@ -40,5 +84,8 @@ dependencies {
     // For @Nullable/@NonNull. The SDK exposes these types in its own public
     // API, so a consumer has androidx.annotation on the classpath regardless.
     implementation 'androidx.annotation:annotation:1.9.1'
+    if (!standalone) {
+        implementation 'com.facebook.react:react-android'
+    }
     testImplementation 'junit:junit:4.13.2'
 }
