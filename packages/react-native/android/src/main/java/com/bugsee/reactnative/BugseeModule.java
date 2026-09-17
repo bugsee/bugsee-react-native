@@ -9,6 +9,7 @@ import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableMapKeySetIterator;
+import com.facebook.react.bridge.ReadableType;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.module.annotations.ReactModule;
 
@@ -71,6 +72,51 @@ public class BugseeModule extends NativeBugseeSpec {
     @Override
     public void getStatus(final Promise promise) {
         promise.resolve(BugseeStatusMapper.toWire(Bugsee.getStatus()));
+    }
+
+    @Override
+    public void setWrapperInfo(final ReadableMap identity) {
+        if (identity == null) {
+            Bugsee.setWrapper(null);
+            return;
+        }
+        final ReadableMap context = identity.hasKey("context")
+                ? identity.getMap("context")
+                : null;
+        Bugsee.setWrapper(new BugseeReactNativeWrapper(
+                string(identity, "type", "unknown"),
+                string(identity, "version", "unknown"),
+                identity.hasKey("build") ? identity.getString("build") : null,
+                toStringMap(context)));
+    }
+
+    private static String string(
+            @NonNull final ReadableMap map,
+            @NonNull final String key,
+            @NonNull final String fallback
+    ) {
+        final String value = map.hasKey(key) ? map.getString(key) : null;
+        return value == null ? fallback : value;
+    }
+
+    /**
+     * The SDK types context as string-to-string. A non-string value would be
+     * dropped rather than stringified: a number rendered as "1" is
+     * indistinguishable from a version the wrapper actually reported.
+     */
+    private static Map<String, String> toStringMap(@Nullable final ReadableMap map) {
+        final Map<String, String> result = new HashMap<>();
+        if (map == null) {
+            return result;
+        }
+        final ReadableMapKeySetIterator keys = map.keySetIterator();
+        while (keys.hasNextKey()) {
+            final String key = keys.nextKey();
+            if (map.getType(key) == ReadableType.String) {
+                result.put(key, map.getString(key));
+            }
+        }
+        return result;
     }
 
     @Override

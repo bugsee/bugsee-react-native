@@ -40,6 +40,14 @@ export function endpointFor(
   if (platform === 'android') {
     return { [ANDROID_ENDPOINT_KEY]: trimmed };
   }
+  if (platform !== 'ios') {
+    // Not "assume iOS": a wrong platform string would then produce an iOS
+    // payload that the other SDK silently ignores, which looks like the
+    // endpoint simply not working.
+    throw new Error(
+      `endpointFor expects "ios" or "android", got ${JSON.stringify(platform)}`,
+    );
+  }
 
   // Strip a trailing slash first, so a value ending in "/" does not become
   // "…//v2" and one ending in "/v2/" is recognised as already versioned.

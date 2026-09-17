@@ -12,13 +12,25 @@
 // the module's own directory.
 #if __has_include(<BugseeRNSupport/BGSRNTokens.h>)
 #import <BugseeRNSupport/BGSRNMainThread.h>
+#import <BugseeRNSupport/BGSRNWrapper.h>
 #import <BugseeRNSupport/BGSRNStatusMapper.h>
 #import <BugseeRNSupport/BGSRNTokens.h>
 #else
 #import "BGSRNMainThread.h"
+#import "BGSRNWrapper.h"
 #import "BGSRNStatusMapper.h"
 #import "BGSRNTokens.h"
 #endif
+
+/// The conformance lives here rather than in the Support package so that the
+/// package stays buildable and testable without the SDK's headers. BGSRNWrapper
+/// already declares every property the protocol requires; this states that it
+/// satisfies the contract.
+@interface BGSRNWrapper (BugseeConformance) <BugseeWrapper>
+@end
+
+@implementation BGSRNWrapper (BugseeConformance)
+@end
 
 @implementation BugseeModule
 
@@ -29,6 +41,15 @@ RCT_EXPORT_MODULE(Bugsee)
 /// hops below cover the method calls, which it does not.
 + (BOOL)requiresMainQueueSetup {
   return YES;
+}
+
+- (void)setWrapperInfo:(NSDictionary *)identity {
+  BGSRNRunOnMain(^{
+    // The SDK holds the wrapper for the process's lifetime and reads it while
+    // composing a report's environment, so this must be registered before
+    // launch rather than alongside it.
+    [Bugsee setWrapper:(id<BugseeWrapper>)[BGSRNWrapper wrapperWithIdentity:identity]];
+  });
 }
 
 - (void)launch:(NSString *)token
