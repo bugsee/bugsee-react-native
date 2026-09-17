@@ -162,7 +162,8 @@ export abstract class BugseeLaunchOptions {
    * What this can answer differs by platform, and the wrapper does not
    * paper over it: Android merges its own defaults with the app's overrides
    * and answers even before launch, while iOS reports only what differs from
-   * its defaults, so an option the app never set stays unanswered there.
+   * its defaults, so an option the app never set stays unanswered there
+   * (bugsee/bugsee-cocoa#100).
    */
   static refreshFrom(
     options: BugseeLaunchOptions,
