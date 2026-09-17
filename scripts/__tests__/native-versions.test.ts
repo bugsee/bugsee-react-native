@@ -30,6 +30,24 @@ describe('readNativeVersions', () => {
       .toThrow(/android\.sdk/);
   });
 
+  // Two-digit components are real (7.10.0, 0.81.10). A regex accepting only
+  // single digits would reject them as "not exact".
+  it('accepts multi-digit version components', () => {
+    expect(() => readNativeVersions({ ...valid, android: { ...valid.android, sdk: '7.10.0' } }))
+      .not.toThrow();
+    expect(() => readNativeVersions({ ...valid, android: { ...valid.android, sdk: '10.2.30' } }))
+      .not.toThrow();
+  });
+
+  // The message is the whole product of a CI failure: it has to say what is
+  // wrong and why the rule exists, or the next person just loosens the regex.
+  it('explains why a range cannot work, not merely that it failed', () => {
+    expect(() => readNativeVersions({ ...valid, ios: { ...valid.ios, sdk: '^7.0.0' } }))
+      .toThrow(/SwiftPM will not resolve a prerelease/);
+    expect(() => readNativeVersions({ ...valid, ios: { ...valid.ios, sdk: '^7.0.0' } }))
+      .toThrow(/7\.0\.0-beta1/);
+  });
+
   it('accepts a prerelease, which the iOS pin currently is', () => {
     expect(() => readNativeVersions({ ...valid, ios: { ...valid.ios, sdk: '8.0.0-rc.2' } }))
       .not.toThrow();

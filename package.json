@@ -8,14 +8,23 @@
   ],
   "scripts": {
     "test": "jest",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "mutate": "stryker run",
+    "assert:ios-embed": "ts-node --compiler-options {\"module\":\"commonjs\"} scripts/cli-assert-framework-embedded.ts"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/jest-runner": "^10.0.0",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.10.2",
+    "eslint": "^10.10.0",
     "jest": "^29.7.0",
     "ts-jest": "^29.2.5",
-    "typescript": "~5.6.3"
+    "ts-node": "^10.9.2",
+    "typescript": "~5.6.3",
+    "typescript-eslint": "^8.70.0"
   },
   "jest": {
     "preset": "ts-jest",

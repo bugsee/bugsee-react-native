@@ -6,6 +6,19 @@ jest.mock('../NativeBugsee', () => require('../__mocks__/native').nativeMock);
 beforeEach(() => native.reset());
 
 describe('launch', () => {
+  // The signature says string, but the call arrives from untyped JS just as
+  // often as from TypeScript. A non-string must be rejected here rather than
+  // reaching the bridge and failing as something less legible.
+  it.each([undefined, null, 42, {}, []])(
+    'rejects the non-string token %p before touching the bridge',
+    async (token) => {
+      await expect(Bugsee.launch(token as unknown as string)).rejects.toThrow(
+        /non-empty app token/,
+      );
+      expect(native.launch).not.toHaveBeenCalled();
+    },
+  );
+
   it('forwards the token and defaults options to an empty object', async () => {
     await expect(Bugsee.launch('tok')).resolves.toBe(true);
     expect(native.launch).toHaveBeenCalledWith('tok', {});
@@ -72,9 +85,10 @@ describe('attach', () => {
     expect(native.relaunch).not.toHaveBeenCalled();
   });
 
-  it('is idempotent', async () => {
+  it('is idempotent, and still never launches', async () => {
     await Bugsee.attach();
     await expect(Bugsee.attach()).resolves.toBeUndefined();
+    expect(native.launch).not.toHaveBeenCalled();
   });
 });
 

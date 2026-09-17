@@ -29,6 +29,28 @@ describe('parsers', () => {
     expect(parseSwiftPlatform('platforms: [.tvOS(.v14), .iOS(.v13)],')).toBe('13.0');
   });
 
+  // These parsers decide whether CI notices a floor change at all. A pattern
+  // that quietly matches the wrong line reports success on a drifted build.
+  it('tolerates spacing variations in a Swift manifest', () => {
+    expect(parseSwiftPlatform('platforms:[.iOS(.v15)],')).toBe('15.0');
+    expect(parseSwiftPlatform('platforms:   [.iOS(.v15)],')).toBe('15.0');
+  });
+
+  it('reads minSdk regardless of the spacing around it', () => {
+    expect(parseGradleMinSdk('    minSdk   21\n')).toBe(21);
+    expect(parseGradleMinSdk('    minSdk 21   \n')).toBe(21);
+  });
+
+  // Anchored to the line start, so a differently-named setting that merely
+  // ends in "minSdk" cannot be read as the library's own floor.
+  it('does not read a different setting that ends in minSdk', () => {
+    expect(parseGradleMinSdk('  targetminSdk 24\n  minSdk 21\n')).toBe(21);
+  });
+
+  it('reads the podspec floor with no space before the arrow', () => {
+    expect(parsePodspecFallback("{ :ios=>'15.1' }")).toBe('15.1');
+  });
+
   it('reads a plain podspec floor', () => {
     expect(parsePodspecFallback("s.platforms = { :ios => '15.1' }")).toBe('15.1');
   });
@@ -121,9 +143,36 @@ describe('the React Native floor', () => {
     expect(minor).toBeGreaterThanOrEqual(80);
   });
 
+  // Two-digit minors and patches are already here (0.81.10 exists), so a
+  // regex that only accepts single digits silently rejects real versions.
+  it('accepts multi-digit version components', () => {
+    expect(parsePeerFloor('{"peerDependencies":{"react-native":">=0.81.10"}}'))
+      .toBe('0.81.10');
+    expect(parsePeerFloor('{"peerDependencies":{"react-native":">=10.11.12"}}'))
+      .toBe('10.11.12');
+  });
+
+  // Unanchored, these would accept a compound range and report only the part
+  // that happened to match -- claiming a floor nobody declared.
+  it('rejects a compound range that merely contains a floor', () => {
+    expect(() => parsePeerFloor('{"peerDependencies":{"react-native":"~0.5 >=0.81.0"}}'))
+      .toThrow(/floor/);
+    expect(() => parsePeerFloor('{"peerDependencies":{"react-native":">=0.81.0 <2"}}'))
+      .toThrow(/floor/);
+  });
+
+  it('rejects a missing react-native peer entry outright', () => {
+    expect(() => parsePeerFloor('{"peerDependencies":{}}')).toThrow(/floor/);
+    expect(() => parsePeerFloor('{}')).toThrow(/floor/);
+  });
+
   it('rejects a range too loose to correspond to a tested version', () => {
     expect(() => parsePeerFloor('{"peerDependencies":{"react-native":"*"}}'))
       .toThrow(/floor/);
+    expect(() => parsePeerFloor('{"peerDependencies":{"react-native":"*"}}'))
+      .toThrow(/looser range/);
+    expect(() => parsePeerFloor('{"peerDependencies":{"react-native":"*"}}'))
+      .toThrow(/CI never builds/);
     expect(() => parsePeerFloor('{"peerDependencies":{"react-native":"^0.81.0"}}'))
       .toThrow(/floor/);
   });
