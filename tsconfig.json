@@ -1,4 +1,12 @@
 {
   "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // Typecheck-only project, so this is safe here and must NOT move into the
+    // base config the package build extends. The CLI script imports a sibling
+    // with an explicit .ts specifier because it runs through Node's native
+    // type stripping rather than a build step, and Node's ESM resolver will
+    // not infer the extension.
+    "allowImportingTsExtensions": true
+  },
   "include": ["scripts/**/*.ts", "packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"]
 }

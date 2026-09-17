@@ -4,7 +4,12 @@
  * unit-tested and mutation-tested.
  */
 import { existsSync } from 'node:fs';
-import { explain, inspect } from './assert-framework-embedded';
+import {
+  explain,
+  inspect,
+  installNames,
+  realEnv,
+} from './assert-framework-embedded.ts';
 
 const [appPath, name = 'Bugsee'] = process.argv.slice(2);
 
@@ -20,6 +25,15 @@ if (!existsSync(appPath)) {
 const problem = explain(inspect(appPath, name), name);
 if (problem) {
   console.error(`FAIL ${problem}`);
+  // Dump what each binary actually links. Without this the failure says only
+  // that something is missing, and the next step is always to run otool by
+  // hand on a machine that may not be to hand -- CI especially.
+  for (const binary of realEnv.binariesIn(appPath)) {
+    console.error(`  --- ${binary}`);
+    for (const installName of installNames(realEnv.otool(binary))) {
+      console.error(`      ${installName}`);
+    }
+  }
   process.exit(1);
 }
 console.log(`OK ${name}.framework is embedded in and linked by ${appPath}`);

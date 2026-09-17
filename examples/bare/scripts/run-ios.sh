@@ -36,7 +36,9 @@ xcodebuild \
 
 # Before installing, not after: an app that builds without the framework is the
 # false pass this whole phase exists to rule out.
-./scripts/assert-ios-embed.sh "$APP"
+# One implementation of this check, in scripts/assert-framework-embedded.ts,
+# where it is unit- and mutation-tested. It used to be a second shell copy.
+yarn --cwd ../.. assert:ios-embed "$APP"
 
 xcrun devicectl device install app --device "$DEVICE" "$APP"
 

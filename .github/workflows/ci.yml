@@ -1,0 +1,128 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never a real token. The example reads credentials at runtime; CI only
+  # builds, so a well-formed placeholder is enough and nothing secret is
+  # needed to prove the native plumbing compiles and links.
+  BUGSEE_TOKEN_IOS: 00000000-0000-4000-8000-000000000000
+  BUGSEE_TOKEN_ANDROID: 00000000-0000-4000-8000-000000000000
+
+jobs:
+  js:
+    name: lint, typecheck, unit, mutation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn lint
+      - run: yarn typecheck
+      - run: yarn test
+      # Fails the build under the threshold in stryker.config.json. The point
+      # is not the number: tests that assert nothing still pass, and this is
+      # what notices.
+      - run: yarn mutate
+
+  android:
+    name: android (RN ${{ matrix.react-native }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        react-native: ['0.81', '0.83', '0.86', '0.87']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: corepack enable
+      - run: yarn install --immutable
+      # The floor is only meaningful if the lowest version is actually built,
+      # so the example is pinned per leg rather than always tracking latest.
+      - name: Pin the example to RN ${{ matrix.react-native }}
+        if: matrix.react-native != '0.87'
+        run: yarn workspace bugsee-example-bare add -D react-native@~${{ matrix.react-native }}.0
+      - run: yarn workspace bugsee-example-bare credentials
+      # The library's own unit tests, from the root build.
+      - run: ./gradlew :bugsee-android-bridge:testDebugUnitTest
+      # The example carries its own wrapper and settings; the root build knows
+      # nothing about it, so it is built from its own directory.
+      - name: Assemble the example
+        working-directory: examples/bare/android
+        run: ./gradlew assembleDebug
+
+  ios:
+    name: ios (RN ${{ matrix.react-native }}, ${{ matrix.delivery }})
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # SPM support for apps does not exist before 0.87 — 0.81-0.86 ship
+          # only scripts/cocoapods/spm.rb, the spm_dependency helper the spike
+          # disproved. So the SPM leg runs on 0.87 alone.
+          - react-native: '0.81'
+            delivery: cocoapods
+          - react-native: '0.83'
+            delivery: cocoapods
+          - react-native: '0.86'
+            delivery: cocoapods
+          - react-native: '0.87'
+            delivery: cocoapods
+          - react-native: '0.87'
+            delivery: spm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --immutable
+      - name: Pin the example to RN ${{ matrix.react-native }}
+        if: matrix.react-native != '0.87'
+        run: yarn workspace bugsee-example-bare add -D react-native@~${{ matrix.react-native }}.0
+      - run: yarn workspace bugsee-example-bare credentials
+
+      - name: Install pods
+        if: matrix.delivery == 'cocoapods'
+        working-directory: examples/bare/ios
+        run: pod install
+
+      - name: Migrate to SPM
+        if: matrix.delivery == 'spm'
+        working-directory: examples/bare
+        run: npx react-native spm add --deintegrate --yes
+
+      - name: Build
+        working-directory: examples/bare/ios
+        run: |
+          xcodebuild \
+            -workspace BareExample.xcworkspace \
+            -scheme BareExample \
+            -destination 'generic/platform=iOS' \
+            -configuration Debug \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      # The whole point of this job. The spm_dependency variant built cleanly
+      # and then dyld-crashed on the device, so a green build proves nothing
+      # on its own — only that the framework is embedded AND linked does.
+      - name: Assert Bugsee.framework is embedded and linked
+        run: yarn assert:ios-embed examples/bare/ios/build/Build/Products/Debug-iphoneos/BareExample.app
