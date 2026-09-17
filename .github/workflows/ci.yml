@@ -115,8 +115,12 @@ jobs:
       - name: Credentials
         id: creds
         env:
+          # iOS only: this job builds no Android app, and write-credentials
+          # accepts either token alone. Aliasing the Android variable to the
+          # iOS secret wrote the iOS token into android/bugsee.properties
+          # under the Android name -- inert here, and a trap if this job's
+          # scope ever grows.
           BUGSEE_TOKEN_IOS: ${{ secrets.BUGSEE_TOKEN_IOS }}
-          BUGSEE_TOKEN_ANDROID: ${{ secrets.BUGSEE_TOKEN_IOS }}
           BUGSEE_ENDPOINT: ${{ secrets.BUGSEE_ENDPOINT }}
         run: |
           if [ -z "${BUGSEE_TOKEN_IOS}" ]; then
