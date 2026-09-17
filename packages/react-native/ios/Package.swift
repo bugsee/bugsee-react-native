@@ -31,6 +31,12 @@ import PackageDescription
 //     sets CLANG_CXX_LANGUAGE_STANDARD on every pod.
 let package = Package(
   name: "BugseeReactNative",
+  // 15.0 is React Native's floor, not Bugsee's -- the SDK itself goes down to
+  // 13.0 and ios/Support does. This target consumes React-GeneratedCode, whose
+  // manifest declares .iOS(.v15), and SwiftPM refuses the graph rather than
+  // resolve it: "The package product 'X' requires minimum platform version
+  // 15.0 for the iOS platform, but this target supports 13.0". So this number
+  // tracks React Native; do not lower it to match the SDK.
   platforms: [.iOS(.v15)],
   products: [
     .library(name: "BugseeReactNative", targets: ["BugseeReactNative"])

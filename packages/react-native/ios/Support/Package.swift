@@ -9,7 +9,11 @@ import PackageDescription
 /// by the example app instead.
 let package = Package(
   name: "BugseeRNSupport",
-  platforms: [.iOS(.v15)],
+  // 13.0, matching the Bugsee SDK itself (`LC_BUILD_VERSION minos` in the
+  // xcframework, and `.iOS(.v13)` in bugsee/spm). Nothing here links React, so
+  // nothing forces this above the SDK -- and a wrapper that raised the floor
+  // would drop devices the SDK still supports, silently.
+  platforms: [.iOS(.v13)],
   products: [
     .library(name: "BugseeRNSupport", targets: ["BugseeRNSupport"])
   ],
