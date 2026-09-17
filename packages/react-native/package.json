@@ -1,0 +1,27 @@
+{
+  "name": "@bugsee/react-native",
+  "version": "0.0.0",
+  "description": "Bugsee SDK for React Native",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://www.bugsee.com",
+  "main": "src/index.ts",
+  "files": [
+    "src",
+    "android",
+    "ios",
+    "react-native.config.js",
+    "*.podspec"
+  ],
+  "peerDependencies": {
+    "react": "*",
+    "react-native": ">=0.83.0"
+  },
+  "devDependencies": {
+    "react-native": "0.87.1"
+  },
+  "codegenConfig": {
+    "name": "RNBugseeSpec",
+    "type": "modules",
+    "jsSrcsDir": "src"
+  }
+}

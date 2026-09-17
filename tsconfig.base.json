@@ -4,6 +4,11 @@
     "lib": ["ES2022"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    // RN 0.87 sets exports["./Libraries/*"].types to null, so deep imports
+    // into react-native resolve to .js with no declarations. This condition is
+    // RN's own sanctioned opt-in to the typed deep-import surface, which is
+    // where codegen types such as UnsafeObject live.
+    "customConditions": ["react-native-legacy-deep-imports"],
     "resolveJsonModule": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
