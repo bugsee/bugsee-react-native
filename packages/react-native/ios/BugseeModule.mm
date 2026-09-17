@@ -64,8 +64,13 @@ RCT_EXPORT_MODULE(Bugsee)
     // up — an invalid app token does this — that callback does not arrive, and
     // started: is never invoked. Reproduced on a simulator: `relaunch()` never
     // settles, and a promise that never settles is indistinguishable from a
-    // slow one. See bugsee/bugsee-cocoa (SDK-side fix); until then a wrapper
-    // must not hand JS a promise that can hang forever.
+    // slow one.
+    //
+    // TEMPORARY, tracked by bugsee/bugsee-cocoa#99: once started: is
+    // guaranteed to fire exactly once on every path, delete `settled`, the
+    // dispatch_after and the E_RELAUNCH_NO_REPORT rejection, and resolve
+    // straight from the callback. Until then a wrapper must not hand JS a
+    // promise that can hang forever.
     // `settled` is guarded by the main queue, not by luck: every writer below
     // runs there. The SDK invokes started: on whatever thread its stop
     // completion happens to use, so without the hop that callback and the
@@ -121,6 +126,21 @@ RCT_EXPORT_MODULE(Bugsee)
     // No instance means the SDK was never launched, which is Stopped.
     BugseeStatus status = instance ? instance.status : BugseeStatusStopped;
     resolve(@(BGSRNStatusToWire(status)));
+  });
+}
+
+- (void)getLaunchOptions:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject {
+  BGSRNRunOnMain(^{
+    // NOTE, tracked by bugsee/bugsee-cocoa#100: iOS returns only the options
+    // that DIFFER from its defaults (+getLaunchOptions is [options
+    // userOptions]), so unlike Android this cannot answer a getter the app
+    // never set. BugseeOptions -dictionary holds the resolved set and is
+    // public, but nothing public hands out the live options object. When the
+    // SDK exposes the effective set, this returns it and the platform caveats
+    // in NativeBugsee.ts, index.ts and BugseeLaunchOptions.refreshFrom go
+    // away with it.
+    resolve([Bugsee getLaunchOptions] ?: @{});
   });
 }
 

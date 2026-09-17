@@ -15,6 +15,19 @@ export interface Spec extends TurboModule {
   relaunch(options: UnsafeObject): Promise<boolean>;
   stop(): Promise<boolean>;
   getStatus(): Promise<number>;
+  /**
+   * The options the SDK reports as being in effect.
+   *
+   * The two platforms do NOT agree on what this means, and the difference is
+   * visible to callers: Android returns the merged set — its own defaults with
+   * the app's overrides on top, valid even before launch — while iOS returns
+   * only the options that differ from its defaults, so its defaults are not
+   * reachable at all. See `refreshFrom` in the options model.
+   *
+   * The iOS half is tracked by bugsee/bugsee-cocoa#100; when it lands, this
+   * note and the ones it points at should go.
+   */
+  getLaunchOptions(): Promise<UnsafeObject>;
   testCrash(): void;
 }
 

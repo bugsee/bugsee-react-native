@@ -15,6 +15,15 @@ const scripts = (JSON.parse(read('package.json')) as {
 // This shipped, and CI did not notice, because CI called the root script with
 // its own root-relative path while developers called this one. The workflow
 // now runs this exact script; these tests stop the invocation drifting back.
+/** Drops // and block comments, so prose about a rule is not read as the rule. */
+function codeOf(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join('\n');
+}
+
 describe('the example wires the embed assertion to a path it can resolve', () => {
     // Comments in these files explain the --cwd trap by name, so a naive
   // search matches the warning rather than the mistake. Check what runs.
@@ -49,6 +58,18 @@ describe('the example wires the embed assertion to a path it can resolve', () =>
     // -derivedDataPath build, so products land under <that>/Build/Products.
     expect(workflow).toMatch(/-derivedDataPath build/);
     expect(script).toMatch(/ios\/build\/Build\/Products\/Debug-iphoneos\//);
+  });
+
+  // Same rule for the endpoint: the example carried its own copy of the
+  // iOS "/v2" normalisation, which is the library's job and is tested there.
+  // The intent is that the example does not carry the rule, not that it calls
+  // one particular function: reaching it through the typed options accessor
+  // is better than calling endpointFor directly, and an assertion naming the
+  // function went stale the moment the example improved.
+  it('does not re-implement endpoint normalisation', () => {
+    const code = codeOf(read('App.tsx'));
+    expect(code).toMatch(/endpointFor|\.endpoint\s*=/);
+    expect(code).not.toMatch(/v2/);
   });
 
   // One implementation of this check, not two. There used to be a second copy

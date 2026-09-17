@@ -273,8 +273,44 @@ Spawn a reviewer subagent. It must independently verify the embed assertion, the
 - [ ] **2.3** Enum coercion on the Android bridge — a per-key number→enum table using `fromIntValue`/`fromRawValue`. Tests pin `LogLevel.Error → 1` (ordinal 0) and `VideoMode.Fullscreen → 20` (ordinal 3). **Mutate:** switch the table to `values()[n]`; both must fail.
 - [ ] **2.4** `endpoint` normalisation — Android to `$$ENDPOINT` passthrough, iOS to `endpoint` with `/v2` appended when absent. Tests both directions, including an input that already carries `/v2`.
 - [ ] **2.5** Defaults read back from `getLaunchOptions()` after launch, so hardcoded values only answer pre-launch.
+**Waiting on SDK fixes, both in progress.** Two workarounds in this phase are
+temporary and should be removed rather than inherited:
+
+- `bugsee/bugsee-cocoa#99` — `relaunchWithOptions:started:` can never invoke
+  `started:`, so the iOS bridge settles the promise itself after 30s with
+  `E_RELAUNCH_NO_REPORT`. When fixed: delete the `settled` flag, the
+  `dispatch_after` and the rejection, and resolve straight from the callback.
+- `bugsee/bugsee-cocoa#100` — `getLaunchOptions` returns only user-set
+  options, so an iOS getter cannot answer for an option the app never set.
+  When fixed: the bridge returns the effective set and the platform caveats in
+  `NativeBugsee.ts`, `index.ts` and `BugseeLaunchOptions.refreshFrom` go away.
+
+Both are pinned by issue number at each site, so `git grep bugsee-cocoa#`
+finds everything to remove.
+
 - [ ] **2.6** Device integration: launch with a non-default option on both devices and assert via `getLaunchOptions()` that it took effect.
-- [ ] **2.7 (deferred dependency)** Manifest parity gate against `bugsee/specs` `sdk/options/`. **Blocked:** neither SDK publishes a manifest yet, and both need a complete descriptor enumerator first (plus a value-type tag on Apple). Ship a committed fixture and a test that reads it; swap to the published manifest when it exists.
+- [x] **2.7** Manifest parity gate against `bugsee/specs` `sdk/options/`.
+
+  The spec now EXISTS (`sdk/options/manifest.md`, format version 1) and
+  independently confirms the enum trap: `enum.values` carries "the SDK's
+  internal value — never its ordinal". Its status is still **Proposed — no SDK
+  publishes a manifest yet**, so the gate reads a committed manifest generated
+  from the Android SDK sources *in exactly that shape* (77 options, with
+  declared types, defaults and enum constants).
+
+  Swapping to a published manifest at
+  `https://download.bugsee.com/sdk/options/android/<version>.json` is then a
+  change of SOURCE, not of format, and the assertions stand unchanged.
+
+  Proved to bite: bumping `native-versions.json` without regenerating,
+  removing an enum key from the bridge's coercion table, and drifting a TS
+  enum value each fail it.
+
+  **Still blocked for iOS.** A spec-shaped manifest cannot be generated from
+  the Apple sources: the spec's own Producer requirements note that
+  `valueClass` collapses bool, int, float and enum into `NSNumber`, so an
+  explicit value-type tag must be added to the SDK first. Until then the iOS
+  side is checked by the key fixture only, not by type or default. **Blocked:** neither SDK publishes a manifest yet, and both need a complete descriptor enumerator first (plus a value-type tag on Apple). Ship a committed fixture and a test that reads it; swap to the published manifest when it exists.
 - [ ] Review gate.
 
 ---

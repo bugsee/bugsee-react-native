@@ -28,7 +28,12 @@ echo "    resolved ${ACTUAL}"
 
 # A package shaped like ours, carrying the real codegenConfig and the real spec.
 mkdir -p pkg/src
-cp "$REPO"/packages/react-native/src/*.ts pkg/src/
+# -R, not src/*.ts: the source tree has subdirectories (options/, wrapper/),
+# and copying only the top level leaves index.ts importing modules that are
+# not there. Tests are excluded because they need jest types this probe has
+# no reason to install.
+cp -R "$REPO"/packages/react-native/src/. pkg/src/
+rm -rf pkg/src/__tests__ pkg/src/__mocks__ pkg/src/*/__tests__
 node -e "
   const p = require('$REPO/packages/react-native/package.json');
   require('fs').writeFileSync('pkg/package.json', JSON.stringify({
@@ -86,7 +91,9 @@ node "$REPO/scripts/cli-check-java-signatures.ts" \
   "$REPO/packages/react-native/android/src/main/java/com/bugsee/reactnative/BugseeModule.java"
 
 echo "--- typecheck against ${ACTUAL}'s types"
-mkdir -p tscheck && cp "$REPO"/packages/react-native/src/*.ts tscheck/
+mkdir -p tscheck
+cp -R "$REPO"/packages/react-native/src/. tscheck/
+rm -rf tscheck/__tests__ tscheck/__mocks__ tscheck/*/__tests__
 node -e "
   const fs = require('fs');
   // Strip comments: the repo's tsconfig is JSONC, JSON.parse is not.

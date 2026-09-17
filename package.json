@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "test": "jest",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.example.json",
     "lint": "eslint .",
     "mutate": "yarn mutate:src && yarn mutate:scripts",
     "assert:ios-embed": "node scripts/cli-assert-framework-embedded.ts",

@@ -1,4 +1,9 @@
-import { format, parseSignatures, unimplemented } from '../java-signatures';
+import {
+  abstractMethodNames,
+  format,
+  parseSignatures,
+  unimplemented,
+} from '../java-signatures';
 
 const NAMES = ['launch', 'relaunch', 'stop', 'getStatus', 'testCrash'] as const;
 
@@ -56,6 +61,30 @@ describe('parseSignatures', () => {
       .toEqual([{ name: 'stop', parameters: ['Map<String, Object>'] }]);
   });
 
+  // The paren-depth tracking exists for exactly this: a comma INSIDE an
+  // annotation's arguments is not a parameter separator. Without it the list
+  // splits in the wrong place and both halves lose their types.
+  it('does not split on a comma inside an annotation', () => {
+    expect(parseSignatures(
+      'public void stop(@Size(min = 1, max = 2) Promise p);', NAMES,
+    )).toEqual([{ name: 'stop', parameters: ['Promise'] }]);
+  });
+
+  it('keeps two parameters apart when one is annotated with arguments', () => {
+    expect(parseSignatures(
+      'public void launch(@Size(min = 1, max = 2) String token, ReadableMap options, Promise p);',
+      NAMES,
+    )).toEqual([
+      { name: 'launch', parameters: ['String', 'ReadableMap', 'Promise'] },
+    ]);
+  });
+
+  it('handles a generic nested inside an annotated parameter', () => {
+    expect(parseSignatures(
+      'public void stop(@Nullable Map<String, List<Integer>> m);', NAMES,
+    )).toEqual([{ name: 'stop', parameters: ['Map<String, List<Integer>>'] }]);
+  });
+
   it('strips an annotation that carries arguments', () => {
     expect(parseSignatures('public void stop(@Nullable(x = 1) Promise p);', NAMES))
       .toEqual([{ name: 'stop', parameters: ['Promise'] }]);
@@ -98,5 +127,26 @@ describe('unimplemented', () => {
 
   it('formats a signature the way a reader can act on', () => {
     expect(format({ name: 'stop', parameters: ['Promise'] })).toBe('stop(Promise)');
+  });
+});
+
+describe('abstractMethodNames', () => {
+  it('finds every abstract method the spec declares', () => {
+    expect(abstractMethodNames(GENERATED).sort())
+      .toEqual(['launch', 'stop', 'testCrash']);
+  });
+
+  // The regression this replaces: a hardcoded list of five kept passing after
+  // the spec grew a sixth method, reporting "all 5 generated signatures".
+  it('picks up a newly added method without being told', () => {
+    const grown = GENERATED.replace(
+      '  public abstract void testCrash();',
+      '  public abstract void testCrash();\n  public abstract void getLaunchOptions(Promise promise);',
+    );
+    expect(abstractMethodNames(grown)).toContain('getLaunchOptions');
+  });
+
+  it('ignores concrete methods on the implementation', () => {
+    expect(abstractMethodNames(IMPLEMENTED)).toEqual([]);
   });
 });

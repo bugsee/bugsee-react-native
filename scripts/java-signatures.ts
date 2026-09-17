@@ -76,6 +76,20 @@ function parameterType(declaration: string): string {
   return cleaned.split(/\s+/).slice(0, -1).join(' ');
 }
 
+/**
+ * Every abstract method a generated spec declares.
+ *
+ * Derived rather than listed: a hardcoded list silently stops covering a
+ * method the moment the spec grows one. `getLaunchOptions` was added in
+ * Phase 2 and the check went on reporting "all 5 generated signatures".
+ */
+export function abstractMethodNames(java: string): string[] {
+  return [...new Set(
+    [...java.matchAll(/\babstract\s[^;{()]*?\b([a-zA-Z_]\w*)\s*\(/g)]
+      .map((m) => m[1] as string),
+  )];
+}
+
 export function parseSignatures(java: string, names: readonly string[]): Signature[] {
   const wanted = new Set(names);
   const found: Signature[] = [];

@@ -61,6 +61,18 @@ class Bugsee {
     return KNOWN_STATUSES.has(raw) ? (raw as Status) : Status.Stopped;
   }
 
+  /**
+   * The options the SDK reports as being in effect.
+   *
+   * What that means differs by platform, and the difference is not hidden:
+   * Android merges its own defaults with the app's overrides and answers even
+   * before launch; iOS reports only what differs from its defaults, so an
+   * option the app never set is absent there (bugsee/bugsee-cocoa#100).
+   */
+  async getLaunchOptions(): Promise<Record<string, unknown>> {
+    return (await NativeBugsee.getLaunchOptions()) as Record<string, unknown>;
+  }
+
   /** Crashes natively, to verify crash reporting is wired up. */
   testNativeCrash(): void {
     NativeBugsee.testCrash();
@@ -77,5 +89,18 @@ function assertUsableToken(token: string): void {
     throw new Error('Bugsee.launch requires a non-empty app token');
   }
 }
+
+export { BugseeLaunchOptions } from './options/BugseeLaunchOptions';
+export { AndroidLaunchOptions } from './options/AndroidLaunchOptions';
+export { IOSLaunchOptions } from './options/IOSLaunchOptions';
+export { createDefaultLaunchOptions } from './options/createDefaultLaunchOptions';
+export { endpointFor } from './options/endpoint';
+export {
+  FrameRate,
+  IssueSeverity,
+  LogLevel,
+  VideoMode,
+  VideoQuality,
+} from './options/enums';
 
 export default new Bugsee();
