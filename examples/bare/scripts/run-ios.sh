@@ -38,7 +38,12 @@ xcodebuild \
 # false pass this whole phase exists to rule out.
 # One implementation of this check, in scripts/assert-framework-embedded.ts,
 # where it is unit- and mutation-tested. It used to be a second shell copy.
-yarn --cwd ../.. assert:ios-embed "$APP"
+#
+# Invoked directly rather than through `yarn --cwd ../..`: --cwd runs the child
+# with the repo root as its working directory, so "$APP" -- written relative to
+# examples/bare -- would resolve against the wrong directory and report "no
+# such app bundle" for every build, sound or not.
+node ../../scripts/cli-assert-framework-embedded.ts "$APP"
 
 xcrun devicectl device install app --device "$DEVICE" "$APP"
 
