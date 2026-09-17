@@ -8,7 +8,7 @@
     "credentials": "node scripts/write-credentials.mjs",
     "device:android": "./scripts/run-android.sh",
     "device:ios": "./scripts/run-ios.sh",
-    "assert:ios-embed": "yarn --cwd ../.. assert:ios-embed ios/build/Build/Products/Debug-iphoneos/BareExample.app",
+    "assert:ios-embed": "node ../../scripts/cli-assert-framework-embedded.ts ios/build/Build/Products/Debug-iphoneos/BareExample.app",
     "e2e": "jest --config e2e/jest.config.js"
   },
   "dependencies": {

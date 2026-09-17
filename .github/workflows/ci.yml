@@ -121,5 +121,10 @@ jobs:
       # The whole point of this job. The spm_dependency variant built cleanly
       # and then dyld-crashed on the device, so a green build proves nothing
       # on its own — only that the framework is embedded AND linked does.
+      #
+      # Through the example's OWN script rather than the root one with an
+      # explicit path, so CI exercises the invocation a developer actually
+      # runs. When the two differed, a broken working directory in the local
+      # path stayed green here for two pushes.
       - name: Assert Bugsee.framework is embedded and linked
-        run: yarn assert:ios-embed examples/bare/ios/build/Build/Products/Debug-iphoneos/BareExample.app
+        run: yarn workspace bugsee-example-bare assert:ios-embed
