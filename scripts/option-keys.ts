@@ -51,3 +51,26 @@ export function splitByPlatform(ios: string[], android: string[]): PlatformKeys 
     android: android.filter((k) => !iosSet.has(k)).sort(),
   };
 }
+
+/**
+ * The constants of one option enum, as `{ Name: internalValue }`.
+ *
+ * Reads the value from the constructor argument, NOT the declaration order.
+ * The two diverge on four of the five option enums. A pattern that excludes
+ * digits also silently drops `V1` and `V2` from VideoMode, which makes
+ * `Fullscreen` look like ordinal 1 rather than 3 -- that mistake was made
+ * here before this was a parser.
+ */
+export function parseJavaEnum(source: string): Record<string, number> {
+  const body = source.slice(source.indexOf('{'));
+  const constants: Record<string, number> = {};
+  for (const m of body.matchAll(
+    /^\s{4}([A-Za-z_][A-Za-z0-9_]*)\(\s*(?:\(byte\)\s*)?(-?\d+)\s*\)\s*[,;]/gm,
+  )) {
+    constants[m[1] as string] = Number(m[2]);
+  }
+  if (Object.keys(constants).length === 0) {
+    throw new Error('no enum constants found; the parser missed the source');
+  }
+  return constants;
+}

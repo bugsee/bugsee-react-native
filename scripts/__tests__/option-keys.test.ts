@@ -1,4 +1,9 @@
-import { parseAndroidKeys, parseIosKeys, splitByPlatform } from '../option-keys';
+import {
+  parseAndroidKeys,
+  parseIosKeys,
+  parseJavaEnum,
+  splitByPlatform,
+} from '../option-keys';
 
 describe('parseIosKeys', () => {
   // Shape taken from BugseeOptions.m. The header only declares the symbols;
@@ -67,5 +72,34 @@ describe('splitByPlatform', () => {
   it('refuses to guess when a side is empty', () => {
     expect(() => splitByPlatform([], android)).toThrow(/empty/i);
     expect(() => splitByPlatform(ios, [])).toThrow(/empty/i);
+  });
+});
+
+describe('parseJavaEnum', () => {
+  it('reads the constructor value, not the declaration order', () => {
+    expect(parseJavaEnum(`
+public enum VideoMode {
+    None(0),
+    V1(1),
+    V2(2),
+    Fullscreen(20),
+    DirectBuffers(21);
+}`)).toEqual({ None: 0, V1: 1, V2: 2, Fullscreen: 20, DirectBuffers: 21 });
+  });
+
+  // A name class without digits drops V1 and V2, which makes Fullscreen look
+  // like ordinal 1 instead of 3. That mistake was actually made.
+  it('keeps constants whose names contain digits', () => {
+    expect(Object.keys(parseJavaEnum('enum X {\n    V1(1),\n    V2(2);\n}')))
+      .toEqual(['V1', 'V2']);
+  });
+
+  it('unwraps a byte cast, as LogLevel uses', () => {
+    expect(parseJavaEnum('enum X {\n    Error((byte)1),\n    Warning((byte)2);\n}'))
+      .toEqual({ Error: 1, Warning: 2 });
+  });
+
+  it('refuses to return an empty map', () => {
+    expect(() => parseJavaEnum('enum X { }')).toThrow(/missed the source/);
   });
 });
