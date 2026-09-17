@@ -1,0 +1,25 @@
+// Standalone build for the Android bridge's unit tests. In a real app the
+// module is pulled in by React Native autolinking, which supplies its own
+// settings; this exists so `./gradlew test` can run the marshalling tests in
+// CI without first building an example app.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    plugins {
+        // Pinned here rather than in the module, so the standalone test build
+        // and a consuming app cannot disagree about AGP.
+        id 'com.android.library' version '8.6.0'
+    }
+}
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'bugsee-react-native'
+include ':bugsee-android-bridge'
+project(':bugsee-android-bridge').projectDir = file('packages/react-native/android')

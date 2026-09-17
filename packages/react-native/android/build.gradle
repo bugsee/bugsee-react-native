@@ -1,0 +1,44 @@
+// The Android side of the bridge.
+//
+// Split deliberately: everything in `com.bugsee.reactnative` that translates
+// between the JS wire shape and the Bugsee SDK's types is plain Java with no
+// React Native dependency, so it is unit-testable here without codegen or a
+// device. The TurboModule that calls into it does need React Native and the
+// generated spec, and is exercised by the example app instead.
+plugins {
+    id 'com.android.library'
+}
+
+def nativeVersions = new groovy.json.JsonSlurper()
+        .parse(file("${rootDir}/native-versions.json"))
+
+android {
+    namespace 'com.bugsee.reactnative'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 24
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests.all {
+            useJUnit()
+            testLogging { events 'passed', 'failed', 'skipped' }
+        }
+    }
+}
+
+dependencies {
+    // Pinned from the single version source so the enum values these tests
+    // assert on are the ones that actually ship.
+    api "com.bugsee:bugsee-android:${nativeVersions.android.sdk}"
+    // For @Nullable/@NonNull. The SDK exposes these types in its own public
+    // API, so a consumer has androidx.annotation on the classpath regardless.
+    implementation 'androidx.annotation:annotation:1.9.1'
+    testImplementation 'junit:junit:4.13.2'
+}
