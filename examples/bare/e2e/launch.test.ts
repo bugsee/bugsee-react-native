@@ -41,6 +41,15 @@ const STEPS: readonly Step[] = [
     timeoutMs: 10_000,
   },
   {
+    // Task 2.6: the SDK reports back the non-default duration the app set, so
+    // the typed options model demonstrably reached it. Asserting the value
+    // and not merely the key's presence -- an SDK echoing its own default
+    // would also produce a key.
+    name: 'option took effect',
+    pattern: /BUGSEE_E2E effective duration=90/,
+    timeoutMs: 15_000,
+  },
+  {
     // That relaunch SETTLES is the assertion; what it resolves to is
     // secondary. iOS settles through the SDK's `started:` completion block,
     // so a path that never invokes it leaves the JS promise pending forever
