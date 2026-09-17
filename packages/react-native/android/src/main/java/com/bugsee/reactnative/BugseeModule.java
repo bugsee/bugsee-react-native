@@ -4,10 +4,12 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.bugsee.library.Bugsee;
+import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableMapKeySetIterator;
+import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.module.annotations.ReactModule;
 
 import java.io.Serializable;
@@ -72,8 +74,41 @@ public class BugseeModule extends NativeBugseeSpec {
     }
 
     @Override
+    public void getLaunchOptions(final Promise promise) {
+        // Android's container is valid before launch too, in which case it
+        // holds the SDK's own defaults -- so this answers a getter that the
+        // app has not overridden, without the wrapper hardcoding anything.
+        promise.resolve(toWritableMap(Bugsee.getLaunchOptions().toMap()));
+    }
+
+    @Override
     public void testCrash() {
         Bugsee.testCrash();
+    }
+
+    /** Turns the SDK's option map into something the bridge can return. */
+    private static WritableMap toWritableMap(@Nullable final Map<String, Serializable> options) {
+        final WritableMap result = Arguments.createMap();
+        if (options == null) {
+            return result;
+        }
+        for (final Map.Entry<String, Serializable> entry : options.entrySet()) {
+            final Serializable value = entry.getValue();
+            if (value instanceof Boolean) {
+                result.putBoolean(entry.getKey(), (Boolean) value);
+            } else if (value instanceof Number) {
+                result.putDouble(entry.getKey(), ((Number) value).doubleValue());
+            } else if (value instanceof String) {
+                result.putString(entry.getKey(), (String) value);
+            } else if (value instanceof Enum) {
+                // Enums go back as the number they arrived as -- their
+                // internal value, which is what both platforms speak.
+                result.putDouble(entry.getKey(), BugseeOptionEnums.wireValue(value));
+            }
+            // Anything else has no JS representation; omitted rather than
+            // stringified, which would read as a value the app could set back.
+        }
+        return result;
     }
 
     /**

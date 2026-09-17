@@ -102,6 +102,28 @@ final class BugseeOptionEnums {
         return BY_KEY.containsKey(key);
     }
 
+    /**
+     * The number an enum constant travels back as.
+     *
+     * Its INTERNAL VALUE, found by asking the enum's own converter which value
+     * maps to it -- never {@code ordinal()}, for the same reason the inbound
+     * direction never uses {@code values()[n]}. Round-tripping through the
+     * ordinal would hand JS a different constant than the one in effect.
+     */
+    static double wireValue(@NonNull final Object constant) {
+        for (final Coercion coercion : BY_KEY.values()) {
+            for (int value = 0; value <= MAX_ENUM_VALUE; value++) {
+                if (constant.equals(coercion.apply(value))) {
+                    return value;
+                }
+            }
+        }
+        return -1;
+    }
+
+    /** DirectBuffers, at 21, is the largest value any option enum carries. */
+    private static final int MAX_ENUM_VALUE = 64;
+
     /** Every enum-typed key, so a test can assert the table is complete. */
     @NonNull
     static Set<String> enumKeys() {

@@ -24,6 +24,13 @@ export abstract class BugseeLaunchOptions {
   private readonly localOptions = new Map<string, unknown>();
 
   /**
+   * What the SDK last said is in effect. Read by getters, never serialised:
+   * sending these back would hand the SDK its own defaults as if the app had
+   * chosen them.
+   */
+  private reportedOptions = new Map<string, unknown>();
+
+  /**
    * Writes a native option. `undefined` **deletes** the key rather than
    * storing an empty value: the payload must not carry a key the caller meant
    * to leave alone, or the native side takes it as an explicit override of the
@@ -37,8 +44,18 @@ export abstract class BugseeLaunchOptions {
     this.nativeOptions.set(key, value);
   }
 
+  /**
+   * What the app set, or failing that what the SDK last reported.
+   *
+   * The wrapper hardcodes no defaults. The 6.x implementation did, and
+   * drifted: it shipped `videoMode = V3` after 7.x removed that value. The
+   * SDKs know their own defaults; Android reports them even before launch.
+   */
   protected $get<T>(key: string): T | undefined {
-    return this.nativeOptions.get(key) as T | undefined;
+    if (this.nativeOptions.has(key)) {
+      return this.nativeOptions.get(key) as T;
+    }
+    return this.reportedOptions.get(key) as T | undefined;
   }
 
   /** Writes a JS-only option. `undefined` deletes, as with {@link $set}. */
@@ -135,6 +152,26 @@ export abstract class BugseeLaunchOptions {
    */
   static serialize(options: BugseeLaunchOptions): Record<string, unknown> {
     return Object.fromEntries(options.nativeOptions);
+  }
+
+  /**
+   * Installs the set the SDK reports as being in effect, replacing any
+   * previous report rather than merging — a merge would keep answering with
+   * an option the SDK has since stopped applying.
+   *
+   * What this can answer differs by platform, and the wrapper does not
+   * paper over it: Android merges its own defaults with the app's overrides
+   * and answers even before launch, while iOS reports only what differs from
+   * its defaults, so an option the app never set stays unanswered there.
+   */
+  static refreshFrom(
+    options: BugseeLaunchOptions,
+    reported: Record<string, unknown>,
+  ): void {
+    if (reported === null || typeof reported !== 'object') {
+      return;
+    }
+    options.reportedOptions = new Map(Object.entries(reported));
   }
 
   /** The JS-only settings, handed to the wrapper's components separately. */

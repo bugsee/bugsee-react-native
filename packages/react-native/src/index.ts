@@ -61,6 +61,18 @@ class Bugsee {
     return KNOWN_STATUSES.has(raw) ? (raw as Status) : Status.Stopped;
   }
 
+  /**
+   * The options the SDK reports as being in effect.
+   *
+   * What that means differs by platform, and the difference is not hidden:
+   * Android merges its own defaults with the app's overrides and answers even
+   * before launch; iOS reports only what differs from its defaults, so an
+   * option the app never set is absent there.
+   */
+  async getLaunchOptions(): Promise<Record<string, unknown>> {
+    return (await NativeBugsee.getLaunchOptions()) as Record<string, unknown>;
+  }
+
   /** Crashes natively, to verify crash reporting is wired up. */
   testNativeCrash(): void {
     NativeBugsee.testCrash();
