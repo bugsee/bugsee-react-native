@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
     "mutate": "stryker run",
-    "assert:ios-embed": "ts-node --compiler-options {\"module\":\"commonjs\"} scripts/cli-assert-framework-embedded.ts"
+    "assert:ios-embed": "node scripts/cli-assert-framework-embedded.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
