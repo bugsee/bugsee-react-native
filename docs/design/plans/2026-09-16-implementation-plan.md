@@ -197,7 +197,27 @@ The task that proves the parts fit. Unit tests cannot: they mock the bridge, and
 - [x] Lint, typecheck, unit, Stryker with a failing threshold (break 90; currently 97.69, shipped source 100).
 - [x] Android: assemble the example app.
 - [x] iOS: build the example, **then assert the framework is embedded**. The assertion is the point.
-- [x] Matrix across RN 0.81.x, 0.83.x, 0.86.x, 0.87.x. Only the 0.87 leg exercises SPM — SPM support for apps does not exist before 0.87, so 0.81-0.86 are CocoaPods-only.
+- [x] Matrix across RN 0.81.x, 0.83.x, 0.86.x, 0.87.x — as a **codegen + typecheck** matrix, not an app-build matrix.
+
+  The original plan assumed the example could be re-pinned per leg. It cannot:
+  `examples/bare/android` and `ios` are generated from **one** React Native
+  template, and swapping the npm dependency does not swap the project. Pinning
+  the example to 0.81 and building it fails compiling React Native's *own*
+  `@react-native/gradle-plugin` sources, because the 0.87 template's Kotlin
+  toolchain rejects them — nothing to do with this wrapper. Proven locally
+  before the workflow was written a second time.
+
+  So `scripts/check-rn-compat.sh <version>` runs per leg and asserts, against
+  each real React Native: the `modulesProvider` collision fix is emitted, the
+  `NativeBugseeSpec` protocol generates, `javaPackageName` is honoured, the
+  generated Java signatures still match what `BugseeModule.java` implements,
+  and our TypeScript typechecks. The app builds run on the example's own
+  version, both iOS delivery paths.
+
+  Two version-specific traps the script encodes: 0.83 moved the iOS artefacts
+  under `ReactCodegen/`, so paths are located rather than hardcoded; and from
+  0.83 the generator refuses to run without an `.xcodeproj`, so the probe
+  makes a stub. Only the 0.87 leg exercises SPM — SPM support for apps does not exist before 0.87, so 0.81-0.86 are CocoaPods-only.
 
   **Already established against RN 0.81.6** (probe, not a build — the matrix
   still has to compile and run):
@@ -221,7 +241,15 @@ The task that proves the parts fit. Unit tests cannot: they mock the bridge, and
   anything that runs on a device.
 - [x] **Commit** — `ci: build both platforms and assert the iOS framework is embedded`
 
-**Not yet observed green on GitHub.** The workflow is actionlint-clean and each step was run locally, but no push has exercised it end to end — in particular the per-leg `react-native@~0.8x.0` pin and the `spm add --deintegrate` step have never run in CI.
+**Still to prove in CI:** the `spm add --deintegrate` leg has no local
+equivalent and has never run. Everything else has now been executed locally at
+least once.
+
+**Follow-up worth its own task:** a genuine per-version *app* build needs a
+per-version generated app (`npx @react-native-community/cli init --version
+0.81` and link the workspace package), which is how RN libraries usually do it.
+The compat matrix covers the wrapper's own surface; it does not cover, say, our
+podspec breaking under an older CocoaPods template.
 
 ### Phase 1 review gate
 

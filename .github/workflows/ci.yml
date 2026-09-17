@@ -35,13 +35,27 @@ jobs:
       # what notices.
       - run: yarn mutate
 
-  android:
-    name: android (RN ${{ matrix.react-native }})
+  compat:
+    name: rn compat (${{ matrix.react-native }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         react-native: ['0.81', '0.83', '0.86', '0.87']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Codegen and typecheck against each supported React Native, which is
+      # the surface that is actually ours. The example app cannot stand in for
+      # this: its android/ and ios/ projects come from one version's template,
+      # and swapping the npm dependency does not swap the project.
+      - run: ./scripts/check-rn-compat.sh ${{ matrix.react-native }}
+
+  android:
+    name: android
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,11 +67,6 @@ jobs:
           java-version: 17
       - run: corepack enable
       - run: yarn install --immutable
-      # The floor is only meaningful if the lowest version is actually built,
-      # so the example is pinned per leg rather than always tracking latest.
-      - name: Pin the example to RN ${{ matrix.react-native }}
-        if: matrix.react-native != '0.87'
-        run: yarn workspace bugsee-example-bare add -D react-native@~${{ matrix.react-native }}.0
       - run: yarn workspace bugsee-example-bare credentials
       # The library's own unit tests, from the root build.
       - run: ./gradlew :bugsee-android-bridge:testDebugUnitTest
@@ -68,25 +77,16 @@ jobs:
         run: ./gradlew assembleDebug
 
   ios:
-    name: ios (RN ${{ matrix.react-native }}, ${{ matrix.delivery }})
+    name: ios (${{ matrix.delivery }})
     runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # SPM support for apps does not exist before 0.87 — 0.81-0.86 ship
-          # only scripts/cocoapods/spm.rb, the spm_dependency helper the spike
-          # disproved. So the SPM leg runs on 0.87 alone.
-          - react-native: '0.81'
-            delivery: cocoapods
-          - react-native: '0.83'
-            delivery: cocoapods
-          - react-native: '0.86'
-            delivery: cocoapods
-          - react-native: '0.87'
-            delivery: cocoapods
-          - react-native: '0.87'
-            delivery: spm
+        # Both delivery paths, on the example's own React Native. SPM support
+        # for apps does not exist before 0.87 anyway — 0.81-0.86 ship only
+        # scripts/cocoapods/spm.rb, the spm_dependency helper the spike
+        # disproved — so there is no older SPM leg to run.
+        delivery: [cocoapods, spm]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -94,9 +94,6 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: yarn install --immutable
-      - name: Pin the example to RN ${{ matrix.react-native }}
-        if: matrix.react-native != '0.87'
-        run: yarn workspace bugsee-example-bare add -D react-native@~${{ matrix.react-native }}.0
       - run: yarn workspace bugsee-example-bare credentials
 
       - name: Install pods
