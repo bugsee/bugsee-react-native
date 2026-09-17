@@ -66,8 +66,14 @@ RCT_EXPORT_MODULE(Bugsee)
     // settles, and a promise that never settles is indistinguishable from a
     // slow one. See bugsee/bugsee-cocoa (SDK-side fix); until then a wrapper
     // must not hand JS a promise that can hang forever.
+    // `settled` is guarded by the main queue, not by luck: every writer below
+    // runs there. The SDK invokes started: on whatever thread its stop
+    // completion happens to use, so without the hop that callback and the
+    // timeout could both observe NO and settle the same promise twice --
+    // resolve and reject, on one promise.
     __block BOOL settled = NO;
     void (^settleOnce)(BOOL, BOOL) = ^(BOOL known, BOOL success) {
+      NSCAssert([NSThread isMainThread], @"settleOnce must run on the main queue");
       if (settled) {
         return;
       }
@@ -84,7 +90,11 @@ RCT_EXPORT_MODULE(Bugsee)
 
     [Bugsee relaunchWithOptions:[BugseeOptions optionsFrom:options]
                         started:^(BOOL success) {
-                          settleOnce(YES, success);
+                          // Onto the main queue so this writer and the timeout
+                          // below are serialised on one queue.
+                          dispatch_async(dispatch_get_main_queue(), ^{
+                            settleOnce(YES, success);
+                          });
                         }];
 
     dispatch_after(
