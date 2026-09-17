@@ -3,7 +3,7 @@
  * everything decidable lives in assert-framework-embedded.ts, where it is
  * unit-tested and mutation-tested.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import {
   explain,
   inspect,
@@ -19,6 +19,19 @@ if (!appPath) {
 }
 if (!existsSync(appPath)) {
   console.error(`no such app bundle: ${appPath}`);
+  process.exit(2);
+}
+// A file rather than a bundle would otherwise surface as an unhandled ENOTDIR
+// and exit 1 -- the code that means "the framework is missing", which is a
+// very different thing from "you pointed me at the wrong path".
+if (!statSync(appPath).isDirectory()) {
+  console.error(`not an app bundle (a .app is a directory): ${appPath}`);
+  process.exit(2);
+}
+// The optional second argument is a framework NAME. Taking a path here would
+// quietly check for a framework called "/some/path", and report it missing.
+if (/[/\\.]/.test(name)) {
+  console.error(`not a framework name: ${name}`);
   process.exit(2);
 }
 

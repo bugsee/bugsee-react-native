@@ -76,19 +76,14 @@ SPEC=outj/java/com/bugsee/reactnative/NativeBugseeSpec.java
 [ -f "$SPEC" ] || { echo "FAIL: javaPackageName ignored — no $SPEC"; exit 1; }
 echo "    honours javaPackageName"
 
-# The abstract signatures the shipped BugseeModule.java implements. If codegen
-# changes one, the module stops compiling in a consuming app — and nothing
-# else in CI would notice until someone built one.
-for sig in \
-  'public abstract void launch(String token, ReadableMap options, Promise promise);' \
-  'public abstract void relaunch(ReadableMap options, Promise promise);' \
-  'public abstract void stop(Promise promise);' \
-  'public abstract void getStatus(Promise promise);' \
-  'public abstract void testCrash();'
-do
-  grep -qF "$sig" "$SPEC" || { echo "FAIL: signature changed or missing: $sig"; exit 1; }
-done
-echo "    generated signatures match what BugseeModule.java implements"
+# Compare the generated abstract signatures against what BugseeModule.java
+# ACTUALLY implements. The comparison lives in scripts/java-signatures.ts,
+# where it is unit-tested: it was previously a list of string literals in this
+# script that never opened the module, and then a sed pipeline that silently
+# mangled its input on BSD sed.
+node "$REPO/scripts/cli-check-java-signatures.ts" \
+  "$SPEC" \
+  "$REPO/packages/react-native/android/src/main/java/com/bugsee/reactnative/BugseeModule.java"
 
 echo "--- typecheck against ${ACTUAL}'s types"
 mkdir -p tscheck && cp "$REPO"/packages/react-native/src/*.ts tscheck/

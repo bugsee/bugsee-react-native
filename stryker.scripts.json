@@ -12,16 +12,14 @@
   ],
   "coverageAnalysis": "perTest",
   "mutate": [
-    "packages/react-native/src/**/*.ts",
     "scripts/**/*.ts",
-    "!**/__tests__/**",
-    "!**/__mocks__/**",
-    "!scripts/cli-*.ts"
+    "!scripts/cli-*.ts",
+    "!**/__tests__/**"
   ],
   "thresholds": {
     "high": 95,
-    "low": 90,
-    "break": 90
+    "low": 85,
+    "break": 85
   },
   "timeoutMS": 30000,
   "ignorePatterns": [

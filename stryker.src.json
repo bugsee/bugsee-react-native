@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "yarn",
+  "testRunner": "jest",
+  "jest": {
+    "projectType": "custom",
+    "configFile": "package.json"
+  },
+  "reporters": [
+    "clear-text",
+    "progress"
+  ],
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "packages/react-native/src/**/*.ts",
+    "!**/__tests__/**",
+    "!**/__mocks__/**"
+  ],
+  "thresholds": {
+    "high": 100,
+    "low": 95,
+    "break": 95
+  },
+  "timeoutMS": 30000,
+  "ignorePatterns": [
+    "examples",
+    "**/Pods/**",
+    "**/*.xcframework/**",
+    "**/build/**",
+    "**/.build/**",
+    "**/DerivedData/**",
+    ".stryker-tmp",
+    "**/.gradle/**"
+  ]
+}
