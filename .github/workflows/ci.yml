@@ -90,10 +90,16 @@ jobs:
       # Selected by UDID rather than by name+OS: `OS=latest` resolves to the
       # newest runtime installed, which need not have the named device, and
       # xcodebuild then fails listing every destination it will not use.
+      #
+      # Filtered to an iPhone on an iOS runtime. A GitHub Xcode image installs
+      # watchOS, tvOS and visionOS runtimes too, and simctl returns them in the
+      # same map -- locally 65 of the 100 entries are non-iOS, the first at
+      # index 22. Taking [0] of the flattened list trusts JSON key ordering to
+      # put iOS first, which nothing guarantees.
       - name: Test the Support package
         working-directory: packages/react-native/ios/Support
         run: |
-          UDID="$(xcrun simctl list devices available -j | jq -r '[.devices[][]][0].udid')"
+          UDID="$(xcrun simctl list devices available -j | jq -r '[.devices | to_entries[] | select(.key | test("SimRuntime\\.iOS-")) | .value[] | select(.name | startswith("iPhone"))][0].udid')"
           test -n "$UDID" && test "$UDID" != null
           xcodebuild test -scheme BugseeRNSupport -destination "id=$UDID"
 
@@ -134,7 +140,7 @@ jobs:
       - name: Boot a simulator
         id: sim
         run: |
-          UDID="$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name | startswith("iPhone 16"))][0].udid')"
+          UDID="$(xcrun simctl list devices available -j | jq -r '[.devices | to_entries[] | select(.key | test("SimRuntime\\.iOS-")) | .value[] | select(.name | startswith("iPhone"))][0].udid')"
           test -n "$UDID" && test "$UDID" != null
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
