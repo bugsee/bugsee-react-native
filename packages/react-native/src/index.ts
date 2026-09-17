@@ -67,7 +67,7 @@ class Bugsee {
    * What that means differs by platform, and the difference is not hidden:
    * Android merges its own defaults with the app's overrides and answers even
    * before launch; iOS reports only what differs from its defaults, so an
-   * option the app never set is absent there.
+   * option the app never set is absent there (bugsee/bugsee-cocoa#100).
    */
   async getLaunchOptions(): Promise<Record<string, unknown>> {
     return (await NativeBugsee.getLaunchOptions()) as Record<string, unknown>;
