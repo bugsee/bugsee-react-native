@@ -9,11 +9,13 @@ import PackageDescription
 /// by the example app instead.
 let package = Package(
   name: "BugseeRNSupport",
-  // 13.0, matching the Bugsee SDK itself (`LC_BUILD_VERSION minos` in the
-  // xcframework, and `.iOS(.v13)` in bugsee/spm). Nothing here links React, so
-  // nothing forces this above the SDK -- and a wrapper that raised the floor
-  // would drop devices the SDK still supports, silently.
-  platforms: [.iOS(.v13)],
+  // 15.0, matching the rest of the wrapper rather than the SDK's own 13.0.
+  // Nothing here links React, so this target *could* sit at 13.0 -- but no
+  // React Native app can: RN has floored at 15.1 since 0.76, and every
+  // version with SPM support is above that. A lower number here would only
+  // advertise reach that no consumer can use, and the native SDK is moving
+  // to 15+ as well.
+  platforms: [.iOS(.v15)],
   products: [
     .library(name: "BugseeRNSupport", targets: ["BugseeRNSupport"])
   ],

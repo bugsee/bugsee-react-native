@@ -2,10 +2,16 @@
  * The minimum OS versions this wrapper declares, and where each number comes
  * from.
  *
- * A wrapper must never declare a floor **above** the SDK it wraps: doing so
- * drops devices the SDK itself still supports, and nothing fails at build
- * time to tell you. The only legitimate reason to sit higher is a build-time
- * dependency that refuses to resolve lower — which on iOS is React Native.
+ * The default rule: a wrapper does not declare a floor **above** the SDK it
+ * wraps, because that drops devices the SDK still supports and nothing fails
+ * at build time to tell you. Android follows it — the library sits at the
+ * AAR's own 21 even though React Native apps sit at 24.
+ *
+ * iOS is a deliberate, documented exception. React Native has floored at 15.1
+ * since 0.76 and gained SPM support only in 0.87, so no consumer can reach
+ * the SDK's 13.0 whatever we declare. Sitting at 15 states the truth instead
+ * of advertising unreachable devices. That exception is recorded in IOS_FLOOR
+ * and asserted below; it is not licence to raise a floor anywhere else.
  */
 
 /** What the wrapped Bugsee SDKs actually support. Verified against artefacts. */
@@ -15,8 +21,28 @@ export const SDK_FLOORS = {
    *  require 23/24. */
   androidMinSdk: 21,
   /** `LC_BUILD_VERSION minos` in `Bugsee.xcframework/ios-arm64`, which agrees
-   *  with `platforms: [.iOS(.v13)]` in the bugsee/spm package manifest. */
+   *  with `platforms: [.iOS(.v13)]` in the bugsee/spm package manifest.
+   *  Recorded for provenance only — iOS does not follow the SDK down; see
+   *  IOS_FLOOR. */
   iosDeploymentTarget: '13.0',
+} as const;
+
+/**
+ * The iOS floor this wrapper declares, everywhere.
+ *
+ * Unlike Android, iOS deliberately sits above the SDK's own 13.0, because no
+ * React Native app can reach it: RN has floored at 15.1 since 0.76, and SPM
+ * support did not arrive until 0.87. Declaring 13.0 would only advertise
+ * reach that no consumer can use. The native iOS SDK is moving to 15+ to
+ * match.
+ */
+export const IOS_FLOOR = {
+  /** SwiftPM manifests. RN's codegen templates hardcode `.iOS(.v15)`, and
+   *  SwiftPM refuses a package that sits below a product it consumes. */
+  spm: '15.0',
+  /** CocoaPods fallback only — the podspec reads RN's own
+   *  `min_ios_version_supported` at install time. */
+  podFallback: '15.1',
 } as const;
 
 /**
