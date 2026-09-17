@@ -1,5 +1,4 @@
 import { Platform } from 'react-native';
-import type { BugseeLaunchOptions } from './BugseeLaunchOptions';
 import { AndroidLaunchOptions } from './AndroidLaunchOptions';
 import { IOSLaunchOptions } from './IOSLaunchOptions';
 
@@ -10,10 +9,14 @@ import { IOSLaunchOptions } from './IOSLaunchOptions';
  * drifted: it shipped `videoMode = V3`, a value 7.x removed, and set iOS-only
  * frame-rate keys on Android. The SDKs know their own defaults, and
  * `getLaunchOptions()` reports the resolved set after launch.
+ *
+ * Returns the union rather than the base class: `endpoint` lives on the
+ * subclasses, because its key differs per platform, so a base-typed result
+ * cannot reach the one option most callers set.
  */
 export function createDefaultLaunchOptions(
   platform: string = Platform.OS,
-): BugseeLaunchOptions {
+): AndroidLaunchOptions | IOSLaunchOptions {
   if (platform === 'ios') {
     return new IOSLaunchOptions();
   }

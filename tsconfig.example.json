@@ -1,0 +1,16 @@
+{
+  // The example is an app, not library source: it needs JSX, Node types for
+  // its e2e driver, and JSON imports. It was previously typechecked by
+  // nothing at all — its own RN-template tsconfig does not run under this
+  // TypeScript, and the root project does not include it — which is how two
+  // type errors reached a commit.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node", "jest"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["examples/*/**/*.ts", "examples/*/**/*.tsx", "examples/*/*.d.ts"],
+  "exclude": ["**/node_modules/**", "**/build/**", "**/Pods/**"]
+}

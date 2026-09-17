@@ -10,8 +10,9 @@
 import { useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import Bugsee, {
+  BugseeLaunchOptions,
   Status,
-  endpointFor,
+  createDefaultLaunchOptions,
   type LaunchOptions,
 } from '@bugsee/react-native';
 
@@ -26,13 +27,24 @@ const STATUS_NAMES: Record<number, string> = {
 };
 
 /**
- * The endpoint is the one option whose key differs per platform, and the two
- * disagree about the version segment. That belongs in the library, not here --
- * this file carried its own copy of the rule until the typed options model
- * grew one, and a second copy is a second thing to get wrong.
+ * A recording duration the SDK does not default to, so reading it back proves
+ * the option actually crossed the bridge rather than the SDK reporting its own
+ * default at us. Android defaults to 60.
  */
-function endpointOption(endpoint: string): LaunchOptions {
-  return endpointFor(Platform.OS === 'ios' ? 'ios' : 'android', endpoint);
+const NON_DEFAULT_DURATION = 90;
+
+/**
+ * The launch payload, built through the typed options model.
+ *
+ * The endpoint is the one option whose key differs per platform, and the two
+ * SDKs disagree about the version segment. That belongs in the library, not
+ * here -- this file carried its own copy of the rule until the model grew one.
+ */
+function launchOptions(endpoint: string): LaunchOptions {
+  const options = createDefaultLaunchOptions();
+  options.endpoint = endpoint;
+  options.duration = NON_DEFAULT_DURATION;
+  return BugseeLaunchOptions.serialize(options) as LaunchOptions;
 }
 
 function appToken(): string {
@@ -88,7 +100,7 @@ export default function App() {
         Bugsee.getStatus().then(observe).catch(() => {});
       }, 100);
       try {
-        const launched = await Bugsee.launch(token, endpointOption(credentials.endpoint));
+        const launched = await Bugsee.launch(token, launchOptions(credentials.endpoint));
         console.log(`BUGSEE_E2E launch() resolved ${String(launched)}`);
 
         // Wait for Launched to be LOGGED before relaunching, so the output
@@ -96,6 +108,16 @@ export default function App() {
         // again. Firing relaunch as soon as launch() resolves races the
         // status poll, and the e2e matches its steps in order.
         await loggedLaunched;
+
+        // Task 2.6: the option must have reached the SDK, not merely been
+        // accepted by launch(). Reading it back through getLaunchOptions is
+        // the only thing that shows the difference.
+        const effective = await Bugsee.getLaunchOptions();
+        console.log(
+          `BUGSEE_E2E effective duration=${String(
+            effective['com.bugsee.option.config.duration'],
+          )}`,
+        );
 
         // relaunch() is the one lifecycle call whose two platforms settle
         // through different SDK machinery: Android hands back a boolean, iOS
@@ -105,7 +127,7 @@ export default function App() {
         // and no other check in this repo would notice.
         try {
           const relaunched = await Bugsee.relaunch(
-            endpointOption(credentials.endpoint),
+            launchOptions(credentials.endpoint),
           );
           console.log(`BUGSEE_E2E relaunch() settled resolved=${String(relaunched)}`);
         } catch (relaunchCause) {

@@ -62,13 +62,14 @@ describe('the example wires the embed assertion to a path it can resolve', () =>
 
   // Same rule for the endpoint: the example carried its own copy of the
   // iOS "/v2" normalisation, which is the library's job and is tested there.
+  // The intent is that the example does not carry the rule, not that it calls
+  // one particular function: reaching it through the typed options accessor
+  // is better than calling endpointFor directly, and an assertion naming the
+  // function went stale the moment the example improved.
   it('does not re-implement endpoint normalisation', () => {
-    const app = read('App.tsx');
-    expect(app).toMatch(/endpointFor/);
-    // Executable lines only. A comment explaining the rule is not a second
-    // implementation of it -- checking the raw text matched this file's own
-    // prose, the same false positive as the --cwd guard above.
-    expect(codeOf(app)).not.toMatch(/v2/);
+    const code = codeOf(read('App.tsx'));
+    expect(code).toMatch(/endpointFor|\.endpoint\s*=/);
+    expect(code).not.toMatch(/v2/);
   });
 
   // One implementation of this check, not two. There used to be a second copy
