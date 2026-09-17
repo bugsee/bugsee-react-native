@@ -1,3 +1,8 @@
+// The package entry now exports the options model, which reads Platform.OS,
+// so importing it loads `react-native` -- which jest cannot parse. Mocked to a
+// known platform; this suite is about lifecycle, not about which one.
+jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
+
 import Bugsee, { Status } from '../index';
 import { native } from '../__mocks__/native';
 
