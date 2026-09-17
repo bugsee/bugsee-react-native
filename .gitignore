@@ -23,3 +23,6 @@ bugsee.properties
 .gradle/
 local.properties
 build/
+.build/
+.swiftpm/
+*.xcodeproj/
