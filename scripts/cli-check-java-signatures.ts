@@ -3,9 +3,13 @@
  * Usage: cli-check-java-signatures.ts <NativeBugseeSpec.java> <BugseeModule.java>
  */
 import { readFileSync } from 'node:fs';
-import { format, parseSignatures, unimplemented } from './java-signatures.ts';
+import {
+  abstractMethodNames,
+  format,
+  parseSignatures,
+  unimplemented,
+} from './java-signatures.ts';
 
-const NAMES = ['launch', 'relaunch', 'stop', 'getStatus', 'testCrash'] as const;
 const [specPath, modulePath] = process.argv.slice(2);
 
 if (!specPath || !modulePath) {
@@ -13,8 +17,11 @@ if (!specPath || !modulePath) {
   process.exit(2);
 }
 
-const generated = parseSignatures(readFileSync(specPath, 'utf8'), NAMES);
-const implemented = parseSignatures(readFileSync(modulePath, 'utf8'), NAMES);
+const specSource = readFileSync(specPath, 'utf8');
+// Whatever the spec declares, not a list this script keeps in step by hand.
+const names = abstractMethodNames(specSource);
+const generated = parseSignatures(specSource, names);
+const implemented = parseSignatures(readFileSync(modulePath, 'utf8'), names);
 
 if (generated.length === 0) {
   console.error(`FAIL: no generated signatures found in ${specPath}`);

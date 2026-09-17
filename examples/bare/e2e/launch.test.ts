@@ -46,7 +46,10 @@ const STEPS: readonly Step[] = [
     // and not merely the key's presence -- an SDK echoing its own default
     // would also produce a key.
     name: 'option took effect',
-    pattern: /BUGSEE_E2E effective duration=90/,
+    // Matches the value, not merely the key: an SDK echoing its own default
+    // would also produce a key. `keys=` rides along so a failure shows
+    // whether the SDK reported nothing at all or reported without this one.
+    pattern: /BUGSEE_E2E effective duration=90 /,
     timeoutMs: 15_000,
   },
   {
