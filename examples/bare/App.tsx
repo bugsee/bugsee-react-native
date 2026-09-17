@@ -112,12 +112,21 @@ export default function App() {
         // Task 2.6: the option must have reached the SDK, not merely been
         // accepted by launch(). Reading it back through getLaunchOptions is
         // the only thing that shows the difference.
-        const effective = await Bugsee.getLaunchOptions();
-        console.log(
-          `BUGSEE_E2E effective duration=${String(
-            effective['com.bugsee.option.config.duration'],
-          )}`,
-        );
+        //
+        // Wrapped, and logging either outcome, because a silent absence is
+        // unreadable: a CI run showed this line simply missing while
+        // execution plainly continued past it, and there was no way to tell a
+        // rejection from a value that never printed.
+        try {
+          const effective = await Bugsee.getLaunchOptions();
+          console.log(
+            `BUGSEE_E2E effective duration=${String(
+              effective['com.bugsee.option.config.duration'],
+            )} keys=${Object.keys(effective).length}`,
+          );
+        } catch (optionsCause) {
+          console.log(`BUGSEE_E2E effective threw ${String(optionsCause)}`);
+        }
 
         // relaunch() is the one lifecycle call whose two platforms settle
         // through different SDK machinery: Android hands back a boolean, iOS

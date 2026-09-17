@@ -1,4 +1,9 @@
-import { format, parseSignatures, unimplemented } from '../java-signatures';
+import {
+  abstractMethodNames,
+  format,
+  parseSignatures,
+  unimplemented,
+} from '../java-signatures';
 
 const NAMES = ['launch', 'relaunch', 'stop', 'getStatus', 'testCrash'] as const;
 
@@ -122,5 +127,26 @@ describe('unimplemented', () => {
 
   it('formats a signature the way a reader can act on', () => {
     expect(format({ name: 'stop', parameters: ['Promise'] })).toBe('stop(Promise)');
+  });
+});
+
+describe('abstractMethodNames', () => {
+  it('finds every abstract method the spec declares', () => {
+    expect(abstractMethodNames(GENERATED).sort())
+      .toEqual(['launch', 'stop', 'testCrash']);
+  });
+
+  // The regression this replaces: a hardcoded list of five kept passing after
+  // the spec grew a sixth method, reporting "all 5 generated signatures".
+  it('picks up a newly added method without being told', () => {
+    const grown = GENERATED.replace(
+      '  public abstract void testCrash();',
+      '  public abstract void testCrash();\n  public abstract void getLaunchOptions(Promise promise);',
+    );
+    expect(abstractMethodNames(grown)).toContain('getLaunchOptions');
+  });
+
+  it('ignores concrete methods on the implementation', () => {
+    expect(abstractMethodNames(IMPLEMENTED)).toEqual([]);
   });
 });
