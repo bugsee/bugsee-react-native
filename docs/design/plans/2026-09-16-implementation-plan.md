@@ -241,6 +241,13 @@ The task that proves the parts fit. Unit tests cannot: they mock the bridge, and
   anything that runs on a device.
 - [x] **Commit** — `ci: build both platforms and assert the iOS framework is embedded`
 
+**Human step, blocking the SDK-runs check:** add `BUGSEE_TOKEN_IOS` (and
+optionally `BUGSEE_ENDPOINT`) to the repository's Actions secrets. The iOS e2e
+is the only job that proves the SDK *runs* rather than merely ships, and it
+needs a real app token — with the placeholder the SDK accepts `launch()`, fails
+to bring capture up and settles into Stopped. Until the secret exists the job
+emits a warning annotation and skips that step rather than passing silently.
+
 **Still to prove in CI:** the `spm add --deintegrate` leg has no local
 equivalent and has never run. Everything else has now been executed locally at
 least once.
