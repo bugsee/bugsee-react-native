@@ -57,6 +57,15 @@ RCT_EXPORT_MODULE(Bugsee)
     // call was made" on iOS and "the SDK restarted" on Android, for one JS
     // signature. optionsFrom: converts the same dictionary, and the started:
     // overload reports what actually happened.
+    //
+    // This promise settles ONLY when the SDK invokes started:, so a path that
+    // skipped it would hang forever with no error. Verified against 7.0.0-beta1
+    // that every path invokes it exactly once: no app token -> NO; then via
+    // stop: into launchWithToken:options:started:, which answers NO while
+    // Stopping, NO for an invalid token, YES for a deferred background launch,
+    // NO when a stop overtook the start, and otherwise YES from
+    // finishLaunchSequenceWithEpoch:completion:. The example's e2e asserts it
+    // settles at all -- a hang is otherwise indistinguishable from slowness.
     [Bugsee relaunchWithOptions:[BugseeOptions optionsFrom:options]
                         started:^(BOOL success) {
                           resolve(@(success));

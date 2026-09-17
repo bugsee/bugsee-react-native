@@ -50,6 +50,15 @@ export default function App() {
     let cancelled = false;
     let poll: ReturnType<typeof setInterval> | undefined;
 
+    // Resolved by `observe` the first time it LOGS Launched -- not the first
+    // time a poll sees it. A second, independent poll would return earlier
+    // than this one logs, putting `relaunch() resolved` ahead of `status=2`
+    // in the output, which an ordered e2e cannot match.
+    let announceLaunched: () => void;
+    const loggedLaunched = new Promise<void>(resolve => {
+      announceLaunched = resolve;
+    });
+
     const observe = (next: number) => {
       if (cancelled) {
         return;
@@ -59,6 +68,9 @@ export default function App() {
           // The e2e's marker. Also the only way to see the Launching →
           // Launched transition on a device without attaching a debugger.
           console.log(`BUGSEE_E2E status=${next} (${STATUS_NAMES[next]})`);
+          if (next === Status.Launched) {
+            announceLaunched();
+          }
         }
         return next;
       });
@@ -81,6 +93,30 @@ export default function App() {
       try {
         const launched = await Bugsee.launch(token, endpointOption(credentials.endpoint));
         console.log(`BUGSEE_E2E launch() resolved ${String(launched)}`);
+
+        // Wait for Launched to be LOGGED before relaunching, so the output
+        // order is deterministic: status=2, then relaunch, then status=2
+        // again. Firing relaunch as soon as launch() resolves races the
+        // status poll, and the e2e matches its steps in order.
+        await loggedLaunched;
+
+        // relaunch() is the one lifecycle call whose two platforms settle
+        // through different SDK machinery: Android hands back a boolean,
+        // iOS reports through a `started:` completion block. A promise that
+        // never settles looks identical to a slow one, so the e2e asserts
+        // this line appears at all, not just what it says.
+        const relaunched = await Bugsee.relaunch(
+          endpointOption(credentials.endpoint),
+        );
+        console.log(`BUGSEE_E2E relaunch() resolved ${String(relaunched)}`);
+
+        // Asserted separately from the status poll: relaunch completes in
+        // about 10ms, so a 100ms poll never sees the Stopping/Launching
+        // transition and logs no change at all. Reading the status here is
+        // what proves capture actually came back up.
+        console.log(
+          `BUGSEE_E2E post-relaunch status=${await Bugsee.getStatus()}`,
+        );
       } catch (cause) {
         console.log(`BUGSEE_E2E launch() threw ${String(cause)}`);
         if (!cancelled) {

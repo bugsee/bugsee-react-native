@@ -40,6 +40,24 @@ const STEPS: readonly Step[] = [
     pattern: /BUGSEE_E2E status=2/,
     timeoutMs: 10_000,
   },
+  {
+    // That relaunch SETTLES is the assertion; what it resolves to is
+    // secondary. iOS settles through the SDK's `started:` completion block,
+    // so a path that never invokes it leaves the JS promise pending forever
+    // -- indistinguishable from slowness, and invisible to every other check
+    // in this repo. Android settles from its own callback.
+    name: 'relaunch() resolved',
+    pattern: /BUGSEE_E2E relaunch\(\) resolved (true|false)/,
+    timeoutMs: 20_000,
+  },
+  {
+    // relaunch stops and starts the SDK, so capture must come back up.
+    // Read directly rather than waited for: relaunch completes in about
+    // 10ms, so the 100ms status poll observes no change and logs nothing.
+    name: 'Launched again after relaunch',
+    pattern: /BUGSEE_E2E post-relaunch status=2/,
+    timeoutMs: 20_000,
+  },
 ];
 
 jest.setTimeout(STEPS.reduce((total, step) => total + step.timeoutMs, 60_000));
@@ -65,7 +83,7 @@ describe('example app on a real device', () => {
       );
     }
 
-    const launched = steps[steps.length - 1]!;
+    const launched = steps[1]!;
     console.log(
       `${platform}: Status.Launched ${launched.elapsedMs}ms after the bundle ran\n` +
         `  ${launched.matched?.trim()}`,
