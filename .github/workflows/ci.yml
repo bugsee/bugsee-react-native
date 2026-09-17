@@ -142,6 +142,14 @@ jobs:
         run: |
           UDID="$(xcrun simctl list devices available -j | jq -r '[.devices | to_entries[] | select(.key | test("SimRuntime\\.iOS-")) | .value[] | select(.name | startswith("iPhone"))][0].udid')"
           test -n "$UDID" && test "$UDID" != null
+          # Erased before boot, deliberately. A runner's simulator is not
+          # guaranteed clean: a previous run saw the SDK fail its keychain
+          # write with errSecMissingEntitlement (-34018) and stall at
+          # Launching, on the same device that reached Launched in 2.6s the
+          # run before. Locally, leftover simulator state made two runs of
+          # this same test disagree. Erase, then wait for a full boot.
+          xcrun simctl shutdown "$UDID" || true
+          xcrun simctl erase "$UDID"
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
