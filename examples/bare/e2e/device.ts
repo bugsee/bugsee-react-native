@@ -23,6 +23,19 @@ export const ANDROID_SERIAL =
   process.env.ANDROID_SERIAL ?? 'AMRJCP4718402860'; // WOD_LX1
 export const IOS_DEVICE_ID =
   process.env.IOS_DEVICE_ID ?? '345BA7FE-2C29-5722-892A-BFCB1FD34D0C'; // KRSFT, iPhone XS
+
+/**
+ * Which iOS target to drive. A simulator is not a substitute for the handset
+ * -- it cannot catch a code-signing or embedding fault, and its CPU is the
+ * host's -- but it is the only iOS target CI has, and it does run the real
+ * SDK. Without it every CI job proves the framework is *present* and none
+ * proves it *runs*: gutting `launch` to `resolve(@YES)` keeps them all green.
+ */
+export const IOS_TARGET =
+  process.env.E2E_IOS_TARGET === 'simulator' ? 'simulator' : 'device';
+
+/** Booted simulator to drive; `booted` is whichever one is already running. */
+export const IOS_SIMULATOR_ID = process.env.IOS_SIMULATOR_ID ?? 'booted';
 export const ANDROID_PACKAGE = 'com.bareexample';
 export const IOS_BUNDLE_ID = 'org.reactjs.native.example.BareExample';
 
@@ -114,6 +127,20 @@ async function spawnAndroid(): Promise<ChildProcess> {
 }
 
 function spawnIos(): ChildProcess {
+  if (IOS_TARGET === 'simulator') {
+    // --console-pty, not --console: simctl only streams the app's stdout when
+    // it allocates a pty, and RN's console.log goes to stdout. With --console
+    // the process launches and the log never arrives, which reads exactly
+    // like the SDK failing to start.
+    return spawn('xcrun', [
+      'simctl',
+      'launch',
+      '--console-pty',
+      '--terminate-running-process',
+      IOS_SIMULATOR_ID,
+      IOS_BUNDLE_ID,
+    ]);
+  }
   return spawn('xcrun', [
     'devicectl',
     'device',
