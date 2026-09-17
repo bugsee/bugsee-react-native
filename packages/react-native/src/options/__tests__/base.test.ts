@@ -4,11 +4,11 @@ import { BugseeLaunchOptions } from '../BugseeLaunchOptions';
 // of these tests is that a first-class accessor and setCustomOption write to
 // the same place.
 class TestOptions extends BugseeLaunchOptions {
-  get captureLogs(): boolean | undefined {
-    return this.$get('com.bugsee.option.capture.logs');
+  get probe(): boolean | undefined {
+    return this.$get('com.bugsee.option.probe');
   }
-  set captureLogs(value: boolean | undefined) {
-    this.$set('com.bugsee.option.capture.logs', value);
+  set probe(value: boolean | undefined) {
+    this.$set('com.bugsee.option.probe', value);
   }
 
   get localOnly(): string | undefined {
@@ -22,20 +22,20 @@ class TestOptions extends BugseeLaunchOptions {
 describe('setting and reading back', () => {
   it('round-trips a value through an accessor', () => {
     const o = new TestOptions();
-    o.captureLogs = true;
-    expect(o.captureLogs).toBe(true);
+    o.probe = true;
+    expect(o.probe).toBe(true);
   });
 
   it('reads back undefined for a key never set', () => {
-    expect(new TestOptions().captureLogs).toBeUndefined();
+    expect(new TestOptions().probe).toBeUndefined();
   });
 
   it('keeps false distinct from unset', () => {
     const o = new TestOptions();
-    o.captureLogs = false;
-    expect(o.captureLogs).toBe(false);
+    o.probe = false;
+    expect(o.probe).toBe(false);
     expect(BugseeLaunchOptions.serialize(o)).toEqual({
-      'com.bugsee.option.capture.logs': false,
+      'com.bugsee.option.probe': false,
     });
   });
 });
@@ -46,17 +46,17 @@ describe('undefined deletes', () => {
   // caller meant to leave alone, overriding the SDK's own default.
   it('removes the key from the payload entirely', () => {
     const o = new TestOptions();
-    o.captureLogs = true;
-    o.captureLogs = undefined;
-    expect(o.captureLogs).toBeUndefined();
+    o.probe = true;
+    o.probe = undefined;
+    expect(o.probe).toBeUndefined();
     expect(BugseeLaunchOptions.serialize(o)).toEqual({});
-    expect('com.bugsee.option.capture.logs' in BugseeLaunchOptions.serialize(o))
+    expect('com.bugsee.option.probe' in BugseeLaunchOptions.serialize(o))
       .toBe(false);
   });
 
   it('is a no-op when the key was never set', () => {
     const o = new TestOptions();
-    o.captureLogs = undefined;
+    o.probe = undefined;
     expect(BugseeLaunchOptions.serialize(o)).toEqual({});
   });
 });
@@ -67,21 +67,21 @@ describe('setCustomOption', () => {
   // reachable without a wrapper release.
   it('reaches the same map as a first-class accessor', () => {
     const o = new TestOptions();
-    o.setCustomOption('com.bugsee.option.capture.logs', true);
-    expect(o.captureLogs).toBe(true);
+    o.setCustomOption('com.bugsee.option.probe', true);
+    expect(o.probe).toBe(true);
   });
 
   it('is overwritten by a later accessor write, and vice versa', () => {
     const o = new TestOptions();
-    o.setCustomOption('com.bugsee.option.capture.logs', true);
-    o.captureLogs = false;
+    o.setCustomOption('com.bugsee.option.probe', true);
+    o.probe = false;
     expect(BugseeLaunchOptions.serialize(o)).toEqual({
-      'com.bugsee.option.capture.logs': false,
+      'com.bugsee.option.probe': false,
     });
 
-    o.setCustomOption('com.bugsee.option.capture.logs', true);
+    o.setCustomOption('com.bugsee.option.probe', true);
     expect(BugseeLaunchOptions.serialize(o)).toEqual({
-      'com.bugsee.option.capture.logs': true,
+      'com.bugsee.option.probe': true,
     });
   });
 
@@ -107,31 +107,31 @@ describe('$localOptions', () => {
   it('never appears in the serialized payload', () => {
     const o = new TestOptions();
     o.localOnly = 'x';
-    o.captureLogs = true;
+    o.probe = true;
     expect(o.localOnly).toBe('x');
     expect(BugseeLaunchOptions.serialize(o)).toEqual({
-      'com.bugsee.option.capture.logs': true,
+      'com.bugsee.option.probe': true,
     });
   });
 
   it('is kept separate even when a local key collides with a native one', () => {
     const o = new TestOptions();
-    o.setCustomOption('com.bugsee.option.capture.logs', true);
-    o['$setLocal']('com.bugsee.option.capture.logs', 'local');
+    o.setCustomOption('com.bugsee.option.probe', true);
+    o['$setLocal']('com.bugsee.option.probe', 'local');
     expect(BugseeLaunchOptions.serialize(o)).toEqual({
-      'com.bugsee.option.capture.logs': true,
+      'com.bugsee.option.probe': true,
     });
-    expect(o['$getLocal']('com.bugsee.option.capture.logs')).toBe('local');
+    expect(o['$getLocal']('com.bugsee.option.probe')).toBe('local');
   });
 });
 
 describe('serialize', () => {
   it('returns a plain object, not the live map', () => {
     const o = new TestOptions();
-    o.captureLogs = true;
+    o.probe = true;
     const first = BugseeLaunchOptions.serialize(o);
-    o.captureLogs = false;
-    expect(first).toEqual({ 'com.bugsee.option.capture.logs': true });
+    o.probe = false;
+    expect(first).toEqual({ 'com.bugsee.option.probe': true });
   });
 
   it('returns an empty object for untouched options', () => {

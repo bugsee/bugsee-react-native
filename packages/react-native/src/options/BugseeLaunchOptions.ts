@@ -54,6 +54,72 @@ export abstract class BugseeLaunchOptions {
     return this.localOptions.get(key) as T | undefined;
   }
 
+  // Accessors for options BOTH platforms accept. Platform-specific ones
+  // live on the subclasses, so an iOS-only key is not reachable from an
+  // Android options object.
+
+  get captureLogs(): boolean | undefined {
+    return this.$get('com.bugsee.option.capture.logs');
+  }
+  set captureLogs(value: boolean | undefined) {
+    this.$set('com.bugsee.option.capture.logs', value);
+  }
+
+  get captureLogsLevel(): number | undefined {
+    return this.$get('com.bugsee.option.capture.logs.level');
+  }
+  set captureLogsLevel(value: number | undefined) {
+    this.$set('com.bugsee.option.capture.logs.level', value);
+  }
+
+  get captureNetwork(): boolean | undefined {
+    return this.$get('com.bugsee.option.capture.network');
+  }
+  set captureNetwork(value: boolean | undefined) {
+    this.$set('com.bugsee.option.capture.network', value);
+  }
+
+  get captureBreadcrumbs(): boolean | undefined {
+    return this.$get('com.bugsee.option.capture.breadcrumbs');
+  }
+  set captureBreadcrumbs(value: boolean | undefined) {
+    this.$set('com.bugsee.option.capture.breadcrumbs', value);
+  }
+
+  get captureVideo(): boolean | undefined {
+    return this.$get('com.bugsee.option.capture.video');
+  }
+  set captureVideo(value: boolean | undefined) {
+    this.$set('com.bugsee.option.capture.video', value);
+  }
+
+  get detectAndReportCrash(): boolean | undefined {
+    return this.$get('com.bugsee.option.detect.crash');
+  }
+  set detectAndReportCrash(value: boolean | undefined) {
+    this.$set('com.bugsee.option.detect.crash', value);
+  }
+
+  get detectAndReportHang(): boolean | undefined {
+    return this.$get('com.bugsee.option.detect.hang');
+  }
+  set detectAndReportHang(value: boolean | undefined) {
+    this.$set('com.bugsee.option.detect.hang', value);
+  }
+
+  get wifiOnlyUpload(): boolean | undefined {
+    return this.$get('com.bugsee.option.config.wifi-only-upload');
+  }
+  set wifiOnlyUpload(value: boolean | undefined) {
+    this.$set('com.bugsee.option.config.wifi-only-upload', value);
+  }
+
+  get duration(): number | undefined {
+    return this.$get('com.bugsee.option.config.duration');
+  }
+  set duration(value: number | undefined) {
+    this.$set('com.bugsee.option.config.duration', value);
+  }
   /**
    * Sets any option by its real `com.bugsee.option.*` key, surfaced or not.
    * `undefined` deletes, exactly as a first-class accessor does.
