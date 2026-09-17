@@ -1,7 +1,22 @@
 #import "BugseeModule.h"
 
-@import Bugsee;
-@import BugseeRNSupport;
+// Header imports, not `@import`. This file is ObjC++, and neither delivery path
+// turns on C++ modules — CocoaPods sets CLANG_ENABLE_MODULES for ObjC only, and
+// the SPM target does not pass -fcxx-modules either. A module import here fails
+// with "use of '@import' when C++ modules are disabled", and then with a
+// cascade of undeclared identifiers that hides the real cause.
+#import <Bugsee/Bugsee.h>
+
+// CocoaPods compiles BugseeRNSupport's sources straight into this pod, so its
+// headers arrive flat; under SPM it is a separate target and they arrive under
+// the module's own directory.
+#if __has_include(<BugseeRNSupport/BGSRNTokens.h>)
+#import <BugseeRNSupport/BGSRNStatusMapper.h>
+#import <BugseeRNSupport/BGSRNTokens.h>
+#else
+#import "BGSRNStatusMapper.h"
+#import "BGSRNTokens.h"
+#endif
 
 @implementation BugseeModule
 

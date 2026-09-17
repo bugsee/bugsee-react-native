@@ -8,7 +8,10 @@ Pod::Spec.new do |s|
   s.version      = package['version']
   s.summary      = package['description']
   s.homepage     = package['homepage']
-  s.license      = { :type => 'Commercial', :file => '../../LICENSE' }
+  # No :file — the path would be resolved against this package's directory as
+  # the autolinker symlinks it into an app's node_modules, so `../../LICENSE`
+  # lands in <app>/node_modules/LICENSE and CocoaPods warns it cannot be read.
+  s.license      = { :type => 'Commercial', :text => 'See LICENSE at https://www.bugsee.com/terms' }
   s.author       = 'Bugsee'
   s.platforms    = { :ios => '15.0' }
   s.source       = { :path => '.' }

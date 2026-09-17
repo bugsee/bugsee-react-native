@@ -22,6 +22,13 @@ import PackageDescription
 //
 //  4. There is no prefix header under SPM; react-native-spm-prefix.h is
 //     force-included to replace the .pch CocoaPods generates.
+//
+//  5. cxxLanguageStandard must be set. SwiftPM defaults a C++ target to
+//     gnu++14, and React Native's headers are C++20 — without it the build
+//     fails deep inside RCTConvertHelpers.h with "no template named 'optional'
+//     in namespace 'std'", which reads like a broken toolchain rather than a
+//     missing setting. CocoaPods does not hit this because RN's post-install
+//     sets CLANG_CXX_LANGUAGE_STANDARD on every pod.
 let package = Package(
   name: "BugseeReactNative",
   platforms: [.iOS(.v15)],
@@ -54,5 +61,6 @@ let package = Package(
         .unsafeFlags(["-include", "react-native-spm-prefix.h"]),
       ]
     )
-  ]
+  ],
+  cxxLanguageStandard: .cxx20
 )

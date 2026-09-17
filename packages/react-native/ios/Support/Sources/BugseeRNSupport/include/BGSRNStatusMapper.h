@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
-@import Bugsee;
+// Not `@import Bugsee;`: this header is included from ObjC++, where C++ modules
+// are off on both delivery paths and a module import is a hard error.
+#import <Bugsee/Bugsee.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
