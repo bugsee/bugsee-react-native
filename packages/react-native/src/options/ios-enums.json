@@ -1,0 +1,14 @@
+{
+  "IssueSeverity": {
+    "BugseeSeverityLow": 1,
+    "BugseeSeverityMedium": 2,
+    "BugseeSeverityHigh": 3,
+    "BugseeSeverityCritical": 4,
+    "BugseeSeverityBlocker": 5
+  },
+  "IssueType": {
+    "BGSIssueTypeBug": 0,
+    "BGSIssueTypeCrash": 1,
+    "BGSIssueTypeError": 2
+  }
+}
