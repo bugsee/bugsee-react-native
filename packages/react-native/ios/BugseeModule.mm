@@ -20,6 +20,7 @@
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
 #import "BGSRNStatusMapper.h"
+#import "BGSRNSecureRectangles.h"
 #import "BGSRNTokens.h"
 #endif
 
