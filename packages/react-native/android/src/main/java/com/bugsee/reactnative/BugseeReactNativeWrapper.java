@@ -108,14 +108,16 @@ final class BugseeReactNativeWrapper implements BugseeWrapper {
 
     /**
      * The packed buffer the SDK expects: {@code [version, count, l,t,r,b, ...]}.
-     * Nothing is redacted yet -- Task 3.3 wires real rectangles -- so this
-     * publishes an empty set, which is what a count of 0 means. The version is
-     * held constant BECAUSE the set never changes; changing it per call would
-     * make the SDK re-read an identical set on every frame.
+     *
+     * <p>Read from the process-wide store rather than from this instance: the
+     * SDK pulls 2-3 times a second on a background thread, and the wrapper it
+     * pulls through is replaced when setWrapperInfo runs. See
+     * {@link SecureRectangleStore} for the version contract, which is what
+     * makes the SDK notice a change at all.
      */
     @Override
     public int[] getSecureRectangles(final int display) {
-        return new int[] { 1, 0 };
+        return SecureRectangleStore.shared().snapshot(display);
     }
 
     @Override
