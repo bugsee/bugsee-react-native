@@ -25,10 +25,25 @@ const INT32_MAX = 2_147_483_647;
  *
  * Throws rather than skipping a malformed rectangle: every silent reading of
  * one is a region the caller believes is redacted and is not.
+ *
+ * `scale` converts React Native's density-independent points into the unit the
+ * target SDK takes. The two differ, and the iOS header says so: "Coordinates
+ * are in points in the screen's coordinate space ... (Android uses pixels)".
+ * So iOS passes 1 and Android passes the device pixel ratio. Publishing
+ * unconverted points on a 3x Android device redacts a third of the intended
+ * area -- a leak, in the direction that still looks like it is working.
  */
 export function flattenSecureRectangles(
   rectangles: readonly SecureRectangle[],
+  scale: number = 1,
 ): number[] {
+  if (!Number.isFinite(scale) || scale <= 0) {
+    throw new RangeError(
+      `secure rectangle scale must be a positive, finite number, got ${String(scale)}; ` +
+        `a wrong scale redacts the wrong region while looking like it works`,
+    );
+  }
+
   const flat: number[] = [];
 
   rectangles.forEach((rectangle, index) => {
@@ -49,10 +64,13 @@ export function flattenSecureRectangles(
       );
     }
 
-    const left = Math.floor(x);
-    const top = Math.floor(y);
-    const right = Math.ceil(x + width);
-    const bottom = Math.ceil(y + height);
+    // Scale BEFORE rounding. Rounding in points and scaling afterwards
+    // reintroduces fractional pixel edges, which is the same sub-pixel gap the
+    // outward rounding exists to close.
+    const left = Math.floor(x * scale);
+    const top = Math.floor(y * scale);
+    const right = Math.ceil((x + width) * scale);
+    const bottom = Math.ceil((y + height) * scale);
 
     // After rounding, not before: a sub-pixel sliver rounds out to a real one
     // and should still be redacted, while a genuinely empty region should not
