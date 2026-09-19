@@ -30,7 +30,7 @@ plugins {
     // 'com.android.library' first!", since it hangs its tasks off an Android
     // variant. The token file still belongs to this directory, the root
     // project, not to app/.
-    id 'com.bugsee.android.gradle' version '4.0.6' apply false
+    id 'com.bugsee.android.gradle' version '4.0.7' apply false
 }
 
 // The token lives in bugsee.properties next to this file — the *root* Gradle
@@ -39,7 +39,7 @@ plugins {
 
 def pinned = new groovy.json.JsonSlurper()
         .parse(file("../../../native-versions.json")).android.gradlePlugin
-def applied = '4.0.6'
+def applied = '4.0.7'
 if (pinned != applied) {
     throw new GradleException(
             "Bugsee Gradle plugin is pinned to ${pinned} in native-versions.json " +
