@@ -88,6 +88,14 @@ dependencies {
     // Pinned from the single version source so the enum values these tests
     // assert on are the ones that actually ship.
     api "com.bugsee:bugsee-android:${nativeVersions.android.sdk}"
+    // Native crash detection is a SEPARATE artifact. Without it the SDK looks
+    // correctly integrated and silently reports no native crash at all: a real
+    // SIGSEGV on a device produced a tombstone, no Bugsee report, and no NDK
+    // line in logcat. The only thing the wrapper saw was a RelaunchedAfterCrash
+    // lifecycle event, which comes from ApplicationExitInfo and is not a report.
+    // `api`, not `implementation`, to match the core SDK: an app that wants to
+    // configure NdkOptions needs the types on its own compile classpath.
+    api "com.bugsee:bugsee-android-ndk:${nativeVersions.android.sdk}"
     // For @Nullable/@NonNull. The SDK exposes these types in its own public
     // API, so a consumer has androidx.annotation on the classpath regardless.
     implementation 'androidx.annotation:annotation:1.9.1'
