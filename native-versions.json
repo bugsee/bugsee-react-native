@@ -1,7 +1,7 @@
 {
   "android": {
     "sdk": "7.2.0",
-    "gradlePlugin": "4.0.6"
+    "gradlePlugin": "4.0.7"
   },
   "ios": {
     "sdk": "7.0.0-beta2",
