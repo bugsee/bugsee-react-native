@@ -6,6 +6,7 @@ import {
   SDK_FLOORS,
   parseCiCompatMatrix,
   parseGradleJavaLevel,
+  parseGradleBugseeArtifacts,
   parseGradleMinSdk,
   parseResolvedPin,
   parseSpmName,
@@ -98,5 +99,43 @@ describe('the RN support matrix is the one CI runs', () => {
     const matrix = parseCiCompatMatrix(read('.github', 'workflows', 'ci.yml'));
     expect(matrix.some((m) => REACT_NATIVE_SUPPORT.floor.startsWith(`${m}.`)))
       .toBe(true);
+  });
+});
+
+// A native crash never reaches the SDK without com.bugsee:bugsee-android-ndk:
+// crash detection lives in a SEPARATE artifact, and the core one alone gives
+// an app that looks correctly integrated and silently reports no native crash.
+//
+// Proved on a device, not reasoned about. `run-as <pkg> kill -11 <pid>` on the
+// bare example produced a genuine SIGSEGV (tombstone written, "exited due to
+// signal 11"), and on the relaunch logcat carried no NDK line at all -- no
+// "pending native crash reports", no "Processed N of M". The APK held
+// libbugsee-native.so and none of libbugsee-crashcp / -crashpad-handler /
+// -crashpad-trampoline, and no class in any dex under com/bugsee/library/ndk/.
+// The only thing the wrapper saw was a RelaunchedAfterCrash lifecycle event,
+// which comes from ApplicationExitInfo and is NOT evidence of a report.
+describe('the Android dependency set captures native crashes', () => {
+  const versions = readNativeVersions();
+  const declared = parseGradleBugseeArtifacts(pkg('android', 'build.gradle'));
+  const byArtifact = new Map(declared.map((d) => [d.artifact, d.version]));
+
+  it('declares the core SDK', () => {
+    expect([...byArtifact.keys()]).toContain('bugsee-android');
+  });
+
+  it('declares the NDK module, without which native crashes are lost', () => {
+    expect([...byArtifact.keys()]).toContain('bugsee-android-ndk');
+  });
+
+  // Two Bugsee artifacts resolved to different versions is the one shape worse
+  // than omitting the second: Gradle picks the newer, so the pair that actually
+  // ships is neither of the ones declared here.
+  it('pins every Bugsee artifact to the single version source', () => {
+    expect(declared.length).toBeGreaterThan(0);
+    for (const { artifact, version } of declared) {
+      expect(`${artifact} -> ${version}`)
+        .toBe(`${artifact} -> \${nativeVersions.android.sdk}`);
+    }
+    expect(versions.android.sdk).toMatch(/^\d+\.\d+\.\d+/);
   });
 });

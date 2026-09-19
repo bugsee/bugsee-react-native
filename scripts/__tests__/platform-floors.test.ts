@@ -9,6 +9,7 @@ import {
   parsePeerFloor,
   parsePodspecFallback,
   parseSwiftPlatform,
+  parseGradleBugseeArtifacts,
 } from '../platform-floors';
 
 const pkg = join(__dirname, '..', '..', 'packages', 'react-native');
@@ -176,5 +177,58 @@ describe('the React Native floor', () => {
       .toThrow(/CI never builds/);
     expect(() => parsePeerFloor('{"peerDependencies":{"react-native":"^0.81.0"}}'))
       .toThrow(/floor/);
+  });
+});
+
+describe('parseGradleBugseeArtifacts', () => {
+  it('reads every Bugsee coordinate with its version text', () => {
+    expect(parseGradleBugseeArtifacts([
+      'dependencies {',
+      '    api "com.bugsee:bugsee-android:${nativeVersions.android.sdk}"',
+      '    api "com.bugsee:bugsee-android-ndk:${nativeVersions.android.sdk}"',
+      '}',
+    ].join('\n'))).toEqual([
+      { artifact: 'bugsee-android', version: '${nativeVersions.android.sdk}' },
+      { artifact: 'bugsee-android-ndk', version: '${nativeVersions.android.sdk}' },
+    ]);
+  });
+
+  // The version comes back as written, never resolved. A hardcoded literal that
+  // has drifted from the single source is exactly what this exists to catch, so
+  // returning an evaluated value would defeat the guard it feeds.
+  it('returns a hardcoded version verbatim rather than resolving it', () => {
+    expect(parseGradleBugseeArtifacts('    api "com.bugsee:bugsee-android:7.1.9"'))
+      .toEqual([{ artifact: 'bugsee-android', version: '7.1.9' }]);
+  });
+
+  // A coordinate named in prose is not a declaration. Without the configuration
+  // keyword anchor, the comment above our own `api` line would be parsed as a
+  // second, conflicting dependency.
+  it('ignores a coordinate that only appears in a comment', () => {
+    expect(parseGradleBugseeArtifacts([
+      '// consumers of com.bugsee:bugsee-android-ndk:7.0.0 inherited this',
+      '    api "com.bugsee:bugsee-android:7.2.0"',
+    ].join('\n'))).toEqual([{ artifact: 'bugsee-android', version: '7.2.0' }]);
+  });
+
+  it('accepts single quotes and every dependency configuration', () => {
+    expect(parseGradleBugseeArtifacts([
+      "    implementation 'com.bugsee:bugsee-android-okhttp:7.2.0'",
+      "    compileOnly 'com.bugsee:bugsee-android-compose:7.2.0'",
+      "    runtimeOnly 'com.bugsee:bugsee-android-leak:7.2.0'",
+    ].join('\n')).map((d) => d.artifact))
+      .toEqual(['bugsee-android-okhttp', 'bugsee-android-compose', 'bugsee-android-leak']);
+  });
+
+  // Non-Bugsee dependencies share the line shape; matching them would make the
+  // "pinned to one version source" assertion fail on androidx.
+  it('reads only com.bugsee coordinates', () => {
+    expect(parseGradleBugseeArtifacts(
+      "    implementation 'androidx.annotation:annotation:1.9.1'",
+    )).toEqual([]);
+  });
+
+  it('returns nothing when no dependency is declared', () => {
+    expect(parseGradleBugseeArtifacts('dependencies {\n}')).toEqual([]);
   });
 });

@@ -100,6 +100,14 @@ export function parseSwiftPlatform(manifest: string): string {
   return parts.length === 1 ? `${parts[0]}.0` : parts.join('.');
 }
 
+/**
+ * A `com.bugsee:<artifact>:<version>` coordinate in a Gradle dependency line.
+ * Anchored on the configuration keyword so a coordinate mentioned in a comment
+ * is not mistaken for a declaration.
+ */
+const GRADLE_BUGSEE_DEP =
+  /^\s*(?:api|implementation|compileOnly|runtimeOnly)\s+["']com\.bugsee:([A-Za-z0-9_.-]+):([^"']+)["']/gm;
+
 /** The `minSdk` an Android `build.gradle` declares. */
 export function parseGradleMinSdk(buildGradle: string): number {
   const captured = GRADLE_MIN_SDK.exec(buildGradle)?.[1];
@@ -197,4 +205,22 @@ export function parseCiCompatMatrix(workflow: string): string[] {
   const line = /react-native:\s*\[([^\]]+)\]/.exec(workflow)?.[1];
   if (!line) throw new Error('no react-native matrix found in the workflow');
   return [...line.matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1] as string);
+}
+
+/**
+ * Every `com.bugsee:*` artifact an Android `build.gradle` declares, as
+ * `{ artifact, version }`.
+ *
+ * `version` is the raw text as written, so an interpolation such as
+ * `${nativeVersions.android.sdk}` comes back verbatim rather than resolved --
+ * the point is to catch a hardcoded literal that has drifted from the single
+ * version source, which a resolved value would hide.
+ */
+export function parseGradleBugseeArtifacts(
+  buildGradle: string,
+): { artifact: string; version: string }[] {
+  return [...buildGradle.matchAll(GRADLE_BUGSEE_DEP)].map((m) => ({
+    artifact: m[1] as string,
+    version: m[2] as string,
+  }));
 }
