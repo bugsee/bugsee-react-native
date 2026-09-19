@@ -5,10 +5,19 @@ SDK's committed public surface, and the bridging it requires: does everything
 the Android wrapper contract provides — and the objects it hands us — let us
 build it?
 
-**Answer.** Outbound is sufficient with no gaps. Inbound is sufficient *as
-signal*, but three constraints make parts of it unbridgeable to JavaScript as
-the contract currently stands, and one contract is underspecified. None of
-this blocks the phases we have left; two of them shape the API we expose.
+**Answer.** Yes, with one structural limitation and one thing to write down.
+
+Outbound is sufficient with no gaps. Inbound is sufficient too, once three
+things are understood:
+
+- a **terminating** dispatch cannot consult JavaScript at all (2.1) — the only
+  hard limitation here, and a property of our API rather than a defect;
+- `Report` does not marshal, which costs the wrapper work but blocks nothing:
+  the object maps to a JS proxy and attachments cross as file paths (2.2);
+- `requestData`'s flows are undeclared even internally, so each wrapper derives
+  them by reading SDK internals (2.3).
+
+Nothing here blocks the phases we have left.
 
 Member lists below are extracted mechanically by `scripts/contract-members.ts`
 rather than read by eye.
@@ -74,7 +83,7 @@ therefore best-effort and silently absent on exactly the reports — crashes —
 that embedders care about most. That has to be documented as a property of the
 API, not discovered.
 
-### 2.2 `Report` does not marshal — the real gap
+### 2.2 `Report` does not marshal — and does not need to
 
 This is what "let embedders add attachments and update summary/description"
 runs into. Most of `Report` crosses a bridge cleanly:
@@ -82,20 +91,35 @@ runs into. Most of `Report` crosses a bridge cleanly:
 > `getId` `getType` `getSummary`/`setSummary` `getDescription`/`setDescription`
 > `getEmail`/`setEmail` `getSeverity`/`setSeverity` attributes labels
 
-Two do not:
+Two do not, as values: attachments are written through
+`Attachment.openStream() -> OutputStream`, and screenshots are `Bitmap` /
+`UIImage`. You cannot hand either to JavaScript.
 
-- **Attachments.** Android is `Attachment.openStream() -> OutputStream`. There
-  is no way to hand a JavaScript caller an `OutputStream`. The options are
-  base64 through the bridge (a copy per attachment, on the main JS thread) or a
-  file path. This is the concrete reason the **path-first** attachment model
-  proposed by the Android session matters to us: it is the only shape that
-  crosses a TurboModule without either buffering or inventing a stream in JS.
-- **Screenshots.** `getScreenshot` / `setScreenshot` deal in `Bitmap` and
-  `UIImage`. Same problem, same resolution: a path, or base64 with a size cost.
+**This is not a blocker, and an earlier revision of this document wrongly said
+it was.** The single-object contract is deliberate — one object encapsulating
+the related logic, rather than primitives or maps that would produce
+non-deterministic APIs and long argument lists — and it does not need to
+change for us. Two things follow, and neither requires anything from the SDKs:
 
-So we cannot hand JS a `Report`. We must expose a proxy — an opaque report
-handle plus explicit operations — and the attachment and screenshot operations
-need a file-path shape on both platforms before they can exist at all.
+- **The object shape maps straight through.** We expose a JS report proxy: an
+  opaque handle plus operations, mirroring `Report` rather than flattening it.
+  That preserves the contract's intent on our side of the bridge instead of
+  fighting it.
+- **The stream never has to cross.** `openStream()` writes into storage the SDK
+  owns and truncates on open. So a JS caller names a *file path*, and the
+  wrapper does `createAndAddAttachment(name)` -> `openStream()` -> copy ->
+  close, natively. Screenshots work the same way in reverse: JS supplies a
+  path, the wrapper decodes to a `Bitmap`. On iOS it is more direct still,
+  since `BGSAttachmentContract` already exposes `filePath`.
+
+So a path-based JS attachment API is implementable **today**, on the contract
+as it stands, entirely inside the wrapper. The path-first discussion between
+the SDK teams is about *their* cross-platform parity, not a prerequisite for
+ours.
+
+What remains true is the cost we pay for the mismatch: the wrapper owns a copy
+per attachment, and has to decide where a JS-supplied path may point. Both are
+ours to handle.
 
 ### 2.3 `requestData` is required, underspecified, and on a 500 ms clock
 
@@ -120,9 +144,19 @@ Three things follow, none stated in the contract:
 
 The contract's own documentation describes `requestData` generically —
 "configuration information, user data, or system information" — which does not
-describe its single real caller. This is the one place where the Android
-contract is genuinely insufficient to implement against, and it is a
-documentation gap rather than a missing capability.
+describe its single real caller.
+
+**This is deliberate and should stay that way.** `requestData` is an open,
+*internal* contract between the SDKs and the wrappers, intentionally not tied
+to a flow and intentionally not public API. The generic wording is the design,
+not an oversight.
+
+What is missing is the other half: the flows themselves are undeclared even
+internally. A wrapper implementing `"vh"` has to derive the type string, the
+`String` return, the 500 ms budget and the payload format by reading SDK
+internals — which is how we learned all four. The fix is an internal registry
+of flows: what types exist, what each expects back, and what budget it is held
+to. Not documentation for users; a contract between us.
 
 ---
 
@@ -134,12 +168,11 @@ documentation gap rather than a missing capability.
 
 - Our JS report handler is best-effort and does not run for terminating
   crashes (2.1). Documented, not discovered.
-- A JS-facing `Report` is a proxy, and its attachment and screenshot
-  operations are blocked on a path-based attachment model landing on both
-  platforms (2.2). Until then, a JS embedder can set fields, labels and
-  attributes but cannot add an attachment — which is one of the two things our
-  user named as the point of the callbacks.
+- A JS-facing `Report` is a proxy that mirrors the object rather than
+  flattening it, and its attachment and screenshot operations are path-based,
+  implemented inside the wrapper (2.2). Nothing there is blocked.
 
-**One thing to ask the SDK teams for:** the `"vh"` payload format and its
-500 ms budget, written into the `DataRequestProvider` contract. Every wrapper
-that implements a view hierarchy needs it, and none of them can derive it.
+**One thing to ask the SDK teams for:** an internal declaration of the
+`requestData` flows — for `"vh"`, the payload format, the `String` return and
+the 500 ms budget. Every wrapper implementing a view hierarchy needs all four,
+and each currently derives them by reading SDK internals.
