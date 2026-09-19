@@ -28,12 +28,43 @@ import java.util.Map;
  * is covered by the example app's e2e instead.
  */
 @ReactModule(name = BugseeModule.NAME)
-public class BugseeModule extends NativeBugseeSpec {
+public class BugseeModule extends NativeBugseeSpec implements WrapperEventBus.Sink {
 
     public static final String NAME = "Bugsee";
 
     public BugseeModule(final ReactApplicationContext context) {
         super(context);
+        // Attached here, not on first subscribe: the SDK may emit before any JS
+        // has run, and a listener that only exists once JS asks for it would
+        // miss the launch transitions that a caller most wants.
+        WrapperEventBus.shared().attach(this);
+    }
+
+    /**
+     * Detaches from the event bus when the bridge goes away.
+     *
+     * <p>Identity-checked inside the bus: a reload can construct and attach the
+     * NEW module before this one is invalidated, and an unconditional clear
+     * would then silence the live bridge. Emitting into a dead module is the
+     * classic React Native leak, so this is not optional.
+     */
+    @Override
+    public void invalidate() {
+        WrapperEventBus.shared().detach(this);
+        super.invalidate();
+    }
+
+    @Override
+    public void onLifecycleEvent(@NonNull final String name, @Nullable final String reportId) {
+        final WritableMap payload = Arguments.createMap();
+        payload.putString("name", name);
+        // Present only for the events that carry one, rather than null for the
+        // rest: the JS type marks it optional, and a null would force every
+        // caller to distinguish "absent" from "explicitly nothing".
+        if (reportId != null) {
+            payload.putString("reportId", reportId);
+        }
+        emitOnLifecycleEvent(payload);
     }
 
     @NonNull

@@ -104,6 +104,25 @@ final class BugseeReactNativeWrapper implements BugseeWrapper {
      */
     @Override
     public void onLifecycleEvent(@NonNull final String eventType, @Nullable final Object data) {
+        // Through the bus rather than straight to the bridge: this wrapper is
+        // registered before React Native exists and is replaced once it does,
+        // while the bridge itself appears late and can be torn down by a
+        // reload. The two lifetimes do not line up, so neither side holds the
+        // other. See WrapperEventBus.
+        WrapperEventBus.shared().emitLifecycle(eventType, reportIdFrom(data));
+    }
+
+    /**
+     * The report id an event carries, when it carries one.
+     *
+     * <p>The SDK types the payload as {@code Object} because most events carry
+     * nothing; the ones that do carry the id as a string. Anything else is
+     * ignored rather than stringified -- a JS caller reading `reportId` should
+     * get the id or nothing, never a toString of some future payload shape.
+     */
+    @Nullable
+    private static String reportIdFrom(@Nullable final Object data) {
+        return data instanceof String ? (String) data : null;
     }
 
     /**

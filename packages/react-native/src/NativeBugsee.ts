@@ -1,6 +1,9 @@
 import type { TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
-import type { UnsafeObject } from 'react-native/Libraries/Types/CodegenTypes';
+import type {
+  EventEmitter,
+  UnsafeObject,
+} from 'react-native/Libraries/Types/CodegenTypes';
 
 /**
  * The native surface. Codegen turns this into the C++/Java/ObjC++ spec both
@@ -11,6 +14,29 @@ import type { UnsafeObject } from 'react-native/Libraries/Types/CodegenTypes';
  * model that produces the map lives in JS (Phase 2).
  */
 export interface Spec extends TurboModule {
+  /**
+   * Lifecycle events the SDK announces to its wrapper.
+   *
+   * A codegen `EventEmitter`, not a `NativeEventEmitter`: verified to generate
+   * real plumbing on the 0.81 floor, not merely to typecheck there --
+   * `emitOnLifecycleEvent(ReadableMap)` on the Java spec base class and
+   * `- (void)emitOnLifecycleEvent:(NSDictionary *)` on the ObjC one.
+   *
+   * `name` is the SDK's own name with the `com.bugsee.lifecycle.` prefix
+   * stripped; both platforms dispatch BY NAME, so there is no per-platform
+   * mapping to get wrong. `reportId` is present only for the events that
+   * carry one.
+   *
+   * This is the ONLY event channel. Status transitions are derived from it in
+   * JS rather than being a second emitter: Android exposes no status listener
+   * at all (only `getStatus()`), and iOS's `bugseeDidChangeStatus:` belongs to
+   * the app's own `BugseeDelegate` -- taking it would steal it from the app.
+   * Deriving keeps one source, one mapping, and tests that cover both
+   * platforms at once.
+   */
+  readonly onLifecycleEvent: EventEmitter<{ name: string; reportId?: string }>;
+
+
   /**
    * Registers the wrapper identity with the SDK.
    *

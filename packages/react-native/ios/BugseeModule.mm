@@ -15,12 +15,14 @@
 #import <BugseeRNSupport/BGSRNWrapper.h>
 #import <BugseeRNSupport/BGSRNStatusMapper.h>
 #import <BugseeRNSupport/BGSRNSecureRectangles.h>
+#import <BugseeRNSupport/BGSRNEventBus.h>
 #import <BugseeRNSupport/BGSRNTokens.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
 #import "BGSRNStatusMapper.h"
 #import "BGSRNSecureRectangles.h"
+#import "BGSRNEventBus.h"
 #import "BGSRNTokens.h"
 #endif
 
@@ -33,7 +35,18 @@
 
 @implementation BGSRNWrapper (BugseeConformance)
 
+/// Through the bus rather than straight to the module: this wrapper is
+/// registered before React Native has a JS runtime and is replaced once it
+/// does, while the bridge appears late and can be torn down by a reload. The
+/// two lifetimes do not line up, so neither side holds the other.
+///
+/// `data` is typed `id` because most events carry nothing; the ones that carry
+/// something carry the report id as a string. Anything else is ignored rather
+/// than stringified — a JS caller reading `reportId` should get the id or
+/// nothing, never a description of some future payload shape.
 - (void)onLifecycleEvent:(NSString *)eventType data:(id)data {
+  NSString *reportId = [data isKindOfClass:NSString.class] ? (NSString *)data : nil;
+  [BGSRNEventBus.shared emitLifecycle:eventType reportId:reportId];
 }
 
 /// The packed buffer the SDK expects: `[version, count, l,t,r,b, ...]` as
@@ -75,6 +88,40 @@
 @implementation BugseeModule
 
 RCT_EXPORT_MODULE(Bugsee)
+
+/// Attached here, not on first subscribe: the SDK may emit before any JS has
+/// run, and a listener that only existed once JS asked for it would miss the
+/// launch transitions a caller most wants.
+- (instancetype)init {
+  self = [super init];
+  if (self) {
+    __weak __typeof(self) weakSelf = self;
+    [BGSRNEventBus.shared attach:self block:^(NSString *name, NSString *reportId) {
+      __strong __typeof(weakSelf) strongSelf = weakSelf;
+      if (strongSelf == nil) {
+        return;
+      }
+      // `reportId` omitted rather than NSNull when absent: the JS type marks it
+      // optional, and a null would force every caller to distinguish "absent"
+      // from "explicitly nothing".
+      NSMutableDictionary *payload = [NSMutableDictionary dictionaryWithObject:name forKey:@"name"];
+      if (reportId != nil) {
+        payload[@"reportId"] = reportId;
+      }
+      [strongSelf emitOnLifecycleEvent:payload];
+    }];
+  }
+  return self;
+}
+
+/// Identity-checked inside the bus: a reload can construct and attach the NEW
+/// module before this one is invalidated, and an unconditional clear would then
+/// silence the live bridge.
+- (void)invalidate {
+  // No super call: `invalidate` comes from RCTInvalidating, and
+  // NativeBugseeSpecBase inherits NSObject, which does not declare it.
+  [BGSRNEventBus.shared detach:self];
+}
 
 /// The SDK touches UIKit during start-up, so it must not be constructed on a
 /// background queue. React Native honours this for module setup; the main-queue
