@@ -30,6 +30,49 @@
 @end
 
 @implementation BGSRNWrapper (BugseeConformance)
+
+- (void)onLifecycleEvent:(NSString *)eventType data:(id)data {
+}
+
+/// The packed buffer the SDK expects: `[version, count, l,t,r,b, ...]` as
+/// little-endian int32. Nothing is redacted yet — Task 3.3 wires real
+/// rectangles — so this publishes an empty set, which a count of 0 means.
+///
+/// The version is held constant BECAUSE the set never changes. Changing it
+/// per call would make the SDK re-read an identical set on every frame; the
+/// header's rule is that any two DIFFERENT sets carry different versions.
+///
+/// An immutable NSData built here, not a reused buffer: the header warns that
+/// a mutable buffer rewritten from another thread is a use-after-free while
+/// the SDK reads it, and a React Native wrapper's state lives on the JS
+/// thread.
+- (NSData *)secureRectanglesForDisplay:(NSInteger)display {
+  const int32_t header[2] = { 1, 0 };
+  return [NSData dataWithBytes:header length:sizeof(header)];
+}
+
+- (void)requestDataWithType:(NSString *)dataType
+                   callback:(id<BGSDataRequestResultCallback>)callback {
+  // Always answer: the SDK waits on this mid-capture.
+  [callback onResult:nil];
+}
+
+- (void)onBeforeReportCreated:(id<BGSReportContract>)report
+                isTerminating:(BOOL)isTerminating
+                   completion:(BGSCallback)completion {
+  if (completion) {
+    completion();
+  }
+}
+
+- (void)onAfterReportCreated:(id<BGSReportContract>)report
+               isTerminating:(BOOL)isTerminating
+                  completion:(BGSCallback)completion {
+  if (completion) {
+    completion();
+  }
+}
+
 @end
 
 @implementation BugseeModule
