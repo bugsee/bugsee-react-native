@@ -30,6 +30,25 @@ def nativeVersionsFile = { ->
 }()
 def nativeVersions = new groovy.json.JsonSlurper().parse(nativeVersionsFile)
 
+// The wrapper's own version, compiled in so the init provider can report an
+// identity with no JS runtime. Found the same way as native-versions.json and
+// for the same reason: inside an app, projectDir is the autolink symlink.
+def packageJsonFile = { ->
+    def dir = projectDir.canonicalFile
+    while (dir != null) {
+        def candidate = new File(dir, 'package.json')
+        if (candidate.isFile()
+                && new groovy.json.JsonSlurper().parse(candidate).name == '@bugsee/react-native') {
+            return candidate
+        }
+        dir = dir.parentFile
+    }
+    throw new GradleException(
+            "@bugsee/react-native package.json not found above ${projectDir.canonicalFile}. " +
+            "The wrapper version reported to the SDK comes from that one file.")
+}()
+def wrapperVersion = new groovy.json.JsonSlurper().parse(packageJsonFile).version
+
 // Two builds consume this file.
 //
 // Inside an app, React Native's autolinking includes the module and the app's
@@ -57,6 +76,14 @@ android {
         // 1.15.0+ require 23/24). A wrapper must not raise the floor above the
         // SDK it wraps.
         minSdk 21
+
+        // Read by ReactNativeWrapperInitProvider, which registers the wrapper
+        // before any JS exists and so cannot be handed this from the bridge.
+        buildConfigField 'String', 'WRAPPER_VERSION', "\"${wrapperVersion}\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     compileOptions {
