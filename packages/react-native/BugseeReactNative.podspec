@@ -53,7 +53,12 @@ Pod::Spec.new do |s|
       rm -rf "Bugsee.xcframework"
       curl -sSfL -o /tmp/Bugsee-${VERSION}.zip \
         "https://download.bugsee.com/sdk/ios/spm/Bugsee-${VERSION}.zip"
-      unzip -q -o /tmp/Bugsee-${VERSION}.zip -d .
+      # Only the framework. The archive also carries the iOS SDK's own
+      # README.md and LICENSE at its root, and extracting everything drops
+      # them into this package -- where npm publishes README.md and LICENSE
+      # whatever `files` says. That is how this package came to ship the SDK's
+      # CocoaPods instructions and PLCrashReporter's licence.
+      unzip -q -o /tmp/Bugsee-${VERSION}.zip 'Bugsee.xcframework/*' -d .
       rm -f /tmp/Bugsee-${VERSION}.zip
       printf '%s' "${VERSION}" > "${STAMP}"
     fi
