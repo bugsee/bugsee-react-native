@@ -104,6 +104,12 @@ android {
     }
 
     testOptions {
+        // android.util.Log is not implemented in a plain JVM test; by default
+        // every call throws "not mocked". That turns a catch block whose only
+        // job is to log into a rethrow, so a test asserting "this must not
+        // escape" fails for a reason that cannot happen on a device. Defaults
+        // make the framework stubs inert instead.
+        unitTests.returnDefaultValues = true
         unitTests.all {
             useJUnit()
             testLogging { events 'passed', 'failed', 'skipped' }

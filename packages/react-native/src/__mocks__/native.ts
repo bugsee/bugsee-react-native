@@ -12,9 +12,31 @@ const DEFAULTS: Record<string, unknown> = {
   getLaunchOptions: {},
 };
 
+const lifecycleListeners = new Set<(event: { name: string; reportId?: string }) => void>();
+
 export const native = {
   setWrapperInfo: jest.fn<void, [Record<string, unknown>]>(),
   setSecureRectangles: jest.fn<void, [number, number[]]>(),
+
+  /**
+   * The codegen EventEmitter, which is a SUBSCRIBE function returning an
+   * unsubscribe handle -- not a jest.fn to assert calls on. Tests drive it by
+   * calling `emitLifecycle`, which is what the native side would do.
+   */
+  onLifecycleEvent(listener: (event: { name: string; reportId?: string }) => void) {
+    lifecycleListeners.add(listener);
+    return { remove: () => { lifecycleListeners.delete(listener); } };
+  },
+
+  /** Stands in for the native emit. */
+  emitLifecycle(event: { name: string; reportId?: string }): void {
+    for (const listener of [...lifecycleListeners]) listener(event);
+  },
+
+  /** How many subscribers are attached -- proves `remove` actually detaches. */
+  lifecycleListenerCount(): number {
+    return lifecycleListeners.size;
+  },
   launch: jest.fn<Promise<boolean>, [string, Record<string, unknown>]>(),
   relaunch: jest.fn<Promise<boolean>, [Record<string, unknown>]>(),
   stop: jest.fn<Promise<boolean>, []>(),
@@ -31,6 +53,7 @@ export const native = {
    * species of bug as a hardcoded list of spec methods or CI matrix versions.
    */
   reset(): void {
+    lifecycleListeners.clear();
     for (const [name, value] of Object.entries(this)) {
       if (typeof value === 'function' && 'mockReset' in value) {
         const fn = value as jest.Mock;
