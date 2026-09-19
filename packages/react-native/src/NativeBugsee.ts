@@ -21,6 +21,18 @@ export interface Spec extends TurboModule {
    * wrapper while building a report's environment.
    */
   setWrapperInfo(identity: UnsafeObject): void;
+  /**
+   * Publishes the regions the SDK must not record, for one display, as a flat
+   * list of four-number rectangles: `[left, top, right, bottom, ...]`.
+   *
+   * Synchronous and fire-and-forget. The SDK PULLS these 2-3 times a second
+   * from its own thread; a promise would put a JS round trip on a path that
+   * has to answer immediately, and a rejected one would leave the caller
+   * believing a region is redacted when it is not.
+   *
+   * An empty list clears the display's set.
+   */
+  setSecureRectangles(display: number, coordinates: number[]): void;
   launch(token: string, options: UnsafeObject): Promise<boolean>;
   relaunch(options: UnsafeObject): Promise<boolean>;
   stop(): Promise<boolean>;

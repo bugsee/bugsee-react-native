@@ -2,6 +2,8 @@ import NativeBugsee from './NativeBugsee';
 import { PACKAGE_VERSION } from './version';
 import { collectWrapperFacts } from './wrapper/collect';
 import { wrapperIdentity } from './wrapper/identity';
+import { flattenSecureRectangles } from './secure/rectangles';
+import type { SecureRectangle } from './secure/rectangles';
 
 /**
  * Mirrors the SDKs' own status enum. Both platforms bring capture up off the
@@ -51,6 +53,31 @@ class Bugsee {
   async relaunch(options: LaunchOptions = {}): Promise<boolean> {
     this.registerWrapper();
     return NativeBugsee.relaunch(options);
+  }
+
+  /**
+   * Publishes the regions the SDK must not record on `display`, replacing
+   * whatever was published for it before. An empty list clears them.
+   *
+   * Synchronous by design. The SDK PULLS these 2-3 times a second from its own
+   * thread and never waits on JS, so there is nothing to await; a promise here
+   * would only invite a caller to believe a region was redacted before it was.
+   *
+   * The whole call is rejected if any rectangle is malformed, rather than the
+   * bad one being dropped: publishing the rest would leave the caller believing
+   * the missing region is redacted when it is not.
+   */
+  setSecureRectangles(
+    rectangles: readonly SecureRectangle[],
+    display: number = 0,
+  ): void {
+    if (!Number.isInteger(display) || display < 0) {
+      throw new RangeError(
+        `display must be a non-negative integer, got ${String(display)}; ` +
+          `a fractional index reaches the native cast and silently addresses display 0`,
+      );
+    }
+    NativeBugsee.setSecureRectangles(display, flattenSecureRectangles(rectangles));
   }
 
   /** Stops the current session. */
@@ -126,3 +153,5 @@ export {
 } from './options/enums';
 
 export default new Bugsee();
+
+export type { SecureRectangle } from './secure/rectangles';

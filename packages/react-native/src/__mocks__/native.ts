@@ -14,6 +14,7 @@ const DEFAULTS: Record<string, unknown> = {
 
 export const native = {
   setWrapperInfo: jest.fn<void, [Record<string, unknown>]>(),
+  setSecureRectangles: jest.fn<void, [number, number[]]>(),
   launch: jest.fn<Promise<boolean>, [string, Record<string, unknown>]>(),
   relaunch: jest.fn<Promise<boolean>, [Record<string, unknown>]>(),
   stop: jest.fn<Promise<boolean>, []>(),
