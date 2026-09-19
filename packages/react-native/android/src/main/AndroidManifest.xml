@@ -1,5 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- No permissions, no components: the SDK's own manifest supplies those and
-     is merged in through the `api` dependency. This exists because AGP needs
-     a manifest for the library's namespace to resolve. -->
-<manifest />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          Registers the React Native wrapper with the SDK before the SDK can
+          launch.
+
+          Why a ContentProvider at all: under auto-init the SDK launches from
+          its own BugseeInitProvider, which is a ContentProvider and therefore
+          runs BEFORE Application.onCreate, before any app code, and long
+          before React Native has a JS runtime. Registering from JS, as we did,
+          cannot beat that. Providers start in DESCENDING initOrder, so 200
+          puts us ahead of the SDK's 100. This is the same convention the SDK's
+          own extensions use (see BugseeExtensionInitProviderBase).
+
+          Why the class is NOT called Bugsee*InitProvider: the Bugsee Gradle
+          plugin strips every provider matching `^.*\.Bugsee[A-Za-z0-9_]+InitProvider$`
+          from the merged manifest and compensates by injecting that extension's
+          register<Name>Extension() call into BugseeInitProvider. We are a
+          wrapper, not an SDK extension, and have no such method. A matching
+          name would be removed with nothing put back, and the wrapper would
+          silently never register. The name is load-bearing; a test asserts it.
+        -->
+        <provider
+            android:name="com.bugsee.reactnative.ReactNativeWrapperInitProvider"
+            android:authorities="${applicationId}.bugseereactnativewrapperinit"
+            android:directBootAware="true"
+            android:exported="false"
+            android:initOrder="200" />
+    </application>
+
+</manifest>
