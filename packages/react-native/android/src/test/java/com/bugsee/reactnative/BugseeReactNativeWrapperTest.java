@@ -79,4 +79,31 @@ public class BugseeReactNativeWrapperTest {
         wrapper(context()).requestData("something-new", data -> called[0] = true);
         assertTrue(called[0]);
     }
+
+    /**
+     * The wrapper object is REPLACED mid-session: the init provider registers
+     * one before launch, and setWrapperInfo swaps in a fully-populated one as
+     * soon as the bridge is up. Secure regions belong to the app, not to
+     * whichever wrapper instance is current, so they must survive that swap.
+     * If they did not, every app would be recorded unredacted for the window
+     * between the swap and the next time it happened to re-publish.
+     */
+    @Test
+    public void securedRegionsSurviveTheWrapperBeingReplaced() {
+        SecureRectangleStore.shared().set(0, new int[] { 1, 2, 3, 4 });
+
+        final int[] packed = wrapper(context()).getSecureRectangles(0);
+
+        assertEquals(1, packed[1]);
+        assertEquals(1, packed[2]);
+        assertEquals(4, packed[5]);
+    }
+
+    /** The empty set still has to be a well-formed buffer, not null. */
+    @Test
+    public void publishesAWellFormedBufferForADisplayWithNothingSecured() {
+        final int[] packed = wrapper(context()).getSecureRectangles(7);
+        assertEquals(2, packed.length);
+        assertEquals(0, packed[1]);
+    }
 }

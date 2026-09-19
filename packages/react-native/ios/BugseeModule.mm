@@ -14,6 +14,7 @@
 #import <BugseeRNSupport/BGSRNMainThread.h>
 #import <BugseeRNSupport/BGSRNWrapper.h>
 #import <BugseeRNSupport/BGSRNStatusMapper.h>
+#import <BugseeRNSupport/BGSRNSecureRectangles.h>
 #import <BugseeRNSupport/BGSRNTokens.h>
 #else
 #import "BGSRNMainThread.h"
@@ -35,20 +36,15 @@
 }
 
 /// The packed buffer the SDK expects: `[version, count, l,t,r,b, ...]` as
-/// little-endian int32. Nothing is redacted yet — Task 3.3 wires real
-/// rectangles — so this publishes an empty set, which a count of 0 means.
+/// little-endian int32.
 ///
-/// The version is held constant BECAUSE the set never changes. Changing it
-/// per call would make the SDK re-read an identical set on every frame; the
-/// header's rule is that any two DIFFERENT sets carry different versions.
-///
-/// An immutable NSData built here, not a reused buffer: the header warns that
-/// a mutable buffer rewritten from another thread is a use-after-free while
-/// the SDK reads it, and a React Native wrapper's state lives on the JS
-/// thread.
+/// Read from the process-wide store rather than from this instance. The SDK
+/// pulls 2-3 times a second on the MAIN thread, and the wrapper it pulls
+/// through is replaced when `setWrapperInfo` runs — regions the app marked
+/// secret must survive that swap. See `BGSRNSecureRectangles` for the version
+/// contract, which is what makes the SDK notice a change at all.
 - (NSData *)secureRectanglesForDisplay:(NSInteger)display {
-  const int32_t header[2] = { 1, 0 };
-  return [NSData dataWithBytes:header length:sizeof(header)];
+  return [BGSRNSecureRectangles.shared snapshotForDisplay:display];
 }
 
 - (void)requestDataWithType:(NSString *)dataType
@@ -84,6 +80,27 @@ RCT_EXPORT_MODULE(Bugsee)
 /// hops below cover the method calls, which it does not.
 + (BOOL)requiresMainQueueSetup {
   return YES;
+}
+
+- (void)setSecureRectangles:(double)display
+                coordinates:(NSArray *)coordinates {
+  const NSUInteger count = coordinates.count;
+  // Codegen hands numbers across as double, because that is what a JS number
+  // is. Rounding rather than truncating: the JS side has already rounded each
+  // edge outwards, and truncating would pull an edge back inside the region it
+  // was widened to cover.
+  int32_t *flat = count > 0 ? (int32_t *)malloc(count * sizeof(int32_t)) : NULL;
+  if (count > 0 && flat == NULL) {
+    return;
+  }
+  for (NSUInteger i = 0; i < count; i++) {
+    flat[i] = (int32_t)llround([coordinates[i] doubleValue]);
+  }
+
+  [BGSRNSecureRectangles.shared setCoordinates:flat
+                                         count:count
+                                    forDisplay:(NSInteger)display];
+  free(flat);
 }
 
 - (void)setWrapperInfo:(NSDictionary *)identity {

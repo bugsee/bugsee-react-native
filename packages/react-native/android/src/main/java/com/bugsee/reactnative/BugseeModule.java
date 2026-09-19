@@ -7,6 +7,7 @@ import com.bugsee.library.Bugsee;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableMapKeySetIterator;
 import com.facebook.react.bridge.ReadableType;
@@ -88,6 +89,19 @@ public class BugseeModule extends NativeBugseeSpec {
                 string(identity, "version", "unknown"),
                 identity.hasKey("build") ? identity.getString("build") : null,
                 toStringMap(context)));
+    }
+
+    @Override
+    public void setSecureRectangles(final double display, final ReadableArray coordinates) {
+        // Codegen hands numbers across as double, because that is what a JS
+        // number is. Rounding rather than truncating: the JS side has already
+        // rounded each edge outwards, and truncating -0.9999 to 0 would pull an
+        // edge back inside the region it was widened to cover.
+        final int[] flat = new int[coordinates == null ? 0 : coordinates.size()];
+        for (int i = 0; i < flat.length; i++) {
+            flat[i] = (int) Math.round(coordinates.getDouble(i));
+        }
+        SecureRectangleStore.shared().set((int) display, flat);
     }
 
     private static String string(
