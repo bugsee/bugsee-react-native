@@ -5,23 +5,6 @@ apply plugin: "com.facebook.react"
 // tasks to an Android variant, so it has to land on the module that has one.
 apply plugin: "com.bugsee.android.gradle"
 
-// WORKAROUND, remove when the Bugsee Gradle plugin ships the fix.
-//
-// Plugin 4.0.6 strips Bugsee extension <provider> entries from the merged
-// manifest and compensates by injecting each extension's registration into
-// BugseeInitProvider.initializeExtensions(). In 4.0.6 the injection is skipped
-// for R8-minified classes, and the published SDK AAR self-minifies -- so the
-// strip happens, the injection does not, and every extension silently never
-// registers. For bugsee-android-ndk that means no native crash reporting at
-// all, with a green build and no warning.
-//
-// Verified here: with the optimisation on, the packaged manifest carries no
-// BugseeNdkInitProvider and BugseeInitProvider.initializeExtensions() is
-// `return-void`; a real SIGSEGV produced no report. Turning the lane off keeps
-// the providers, which is how the SDK behaved before the optimisation existed.
-bugsee {
-    optimizeExtensionsLoading = false
-}
 
 /**
  * This is the configuration block to customize your React Native Android app.

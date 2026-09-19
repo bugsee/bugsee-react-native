@@ -1,7 +1,7 @@
 import { readNativeVersions, type NativeVersions } from '../native-versions';
 
 const valid: NativeVersions = {
-  android: { sdk: '7.2.0', gradlePlugin: '4.0.6' },
+  android: { sdk: '7.2.0', gradlePlugin: '4.0.7' },
   ios: { sdk: '7.0.0-beta2', spmUrl: 'https://github.com/bugsee/spm' },
 };
 
@@ -9,7 +9,7 @@ describe('readNativeVersions', () => {
   it('exposes the pinned native versions', () => {
     const v = readNativeVersions();
     expect(v.android.sdk).toBe('7.2.0');
-    expect(v.android.gradlePlugin).toBe('4.0.6');
+    expect(v.android.gradlePlugin).toBe('4.0.7');
     expect(v.ios.sdk).toBe('7.0.0-beta2');
     expect(v.ios.spmUrl).toBe('https://github.com/bugsee/spm');
   });
