@@ -4,19 +4,11 @@ import { collectWrapperFacts } from './wrapper/collect';
 import { wrapperIdentity } from './wrapper/identity';
 import { flattenSecureRectangles } from './secure/rectangles';
 import type { SecureRectangle } from './secure/rectangles';
+import { Status } from './status';
+import { statusForEvent } from './wrapper/events';
+import type { LifecycleEvent } from './wrapper/events';
 
-/**
- * Mirrors the SDKs' own status enum. Both platforms bring capture up off the
- * main thread, so `launch` returning is not the same as being live — poll or
- * observe this rather than assuming.
- */
-export const Status = {
-  Stopped: 0,
-  Launching: 1,
-  Launched: 2,
-  Stopping: 3,
-} as const;
-export type Status = (typeof Status)[keyof typeof Status];
+export { Status } from './status';
 
 const KNOWN_STATUSES: ReadonlySet<number> = new Set(Object.values(Status));
 
@@ -78,6 +70,44 @@ class Bugsee {
       );
     }
     NativeBugsee.setSecureRectangles(display, flattenSecureRectangles(rectangles));
+  }
+
+  /**
+   * Subscribes to the SDK's lifecycle events.
+   *
+   * Events arrive OFF the main thread on both platforms and are delivered to
+   * JavaScript as they come; nothing is queued while no subscriber exists, so
+   * a subscription made after launch does not replay what it missed. Ask
+   * `getStatus()` for the current state rather than reconstructing it.
+   *
+   * An event this version does not know is delivered unchanged rather than
+   * dropped: a newer SDK must be able to reach a subscriber through an older
+   * wrapper.
+   */
+  onLifecycleEvent(
+    listener: (event: LifecycleEvent) => void,
+  ): { remove: () => void } {
+    return NativeBugsee.onLifecycleEvent(listener);
+  }
+
+  /**
+   * Subscribes to the SDK's status transitions.
+   *
+   * Derived from the lifecycle channel, not a second native one: Android has
+   * no status listener at all and iOS's belongs to the app's own delegate.
+   * Only the four transition events produce a call; everything else is
+   * silent, because reporting a status for a non-transition would say the SDK
+   * had moved when it had not.
+   */
+  onStatusChange(
+    listener: (status: Status) => void,
+  ): { remove: () => void } {
+    return NativeBugsee.onLifecycleEvent((event: LifecycleEvent) => {
+      const status = statusForEvent(event);
+      if (status !== undefined) {
+        listener(status);
+      }
+    });
   }
 
   /** Stops the current session. */
@@ -155,3 +185,5 @@ export {
 export default new Bugsee();
 
 export type { SecureRectangle } from './secure/rectangles';
+
+export type { LifecycleEvent } from './wrapper/events';
