@@ -3,6 +3,7 @@ import { PACKAGE_VERSION } from './version';
 import { collectWrapperFacts } from './wrapper/collect';
 import { wrapperIdentity } from './wrapper/identity';
 import { flattenSecureRectangles } from './secure/rectangles';
+import { secureRectangleScale } from './secure/unit';
 import type { SecureRectangle } from './secure/rectangles';
 import { Status } from './status';
 import { statusForEvent } from './wrapper/events';
@@ -69,7 +70,10 @@ class Bugsee {
           `a fractional index reaches the native cast and silently addresses display 0`,
       );
     }
-    NativeBugsee.setSecureRectangles(display, flattenSecureRectangles(rectangles));
+    NativeBugsee.setSecureRectangles(
+      display,
+      flattenSecureRectangles(rectangles, secureRectangleScale()),
+    );
   }
 
   /**
