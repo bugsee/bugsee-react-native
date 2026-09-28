@@ -208,19 +208,25 @@ describeDevice(`report handler on ${ON_IOS ? `the iOS simulator (${IOS_SIMULATOR
       }
       await clearBundles().catch(() => {});
     } finally {
-      if (!ON_IOS) {
-        await airplane(false);
-      }
-      resetScenario();
-      // Pulled bundles carry credentials on iOS beta3; E2E_KEEP_BUNDLES=1
-      // keeps them for inspection.
-      const { removed, kept } = removePulledBundles();
-      report('pulled bundle roots', { removed: removed.length, kept });
-      if (log !== undefined) {
-        log.stop();
-        const dump = process.env.E2E_LOGCAT_DUMP;
-        if (dump) {
-          writeFileSync(dump, log.lines.map(line => line.text).join('\n'));
+      // airplane(false) can throw (it shells out to adb/simctl); the bundle
+      // cleanup and log stop below must run regardless, so they get their
+      // own finally rather than sitting after it in the same block.
+      try {
+        if (!ON_IOS) {
+          await airplane(false);
+        }
+      } finally {
+        resetScenario();
+        // Pulled bundles carry credentials on iOS beta3; E2E_KEEP_BUNDLES=1
+        // keeps them for inspection.
+        const { removed, kept } = removePulledBundles();
+        report('pulled bundle roots', { removed: removed.length, kept });
+        if (log !== undefined) {
+          log.stop();
+          const dump = process.env.E2E_LOGCAT_DUMP;
+          if (dump) {
+            writeFileSync(dump, log.lines.map(line => line.text).join('\n'));
+          }
         }
       }
     }
