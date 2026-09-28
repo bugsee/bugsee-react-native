@@ -196,6 +196,14 @@ public class BugseeModule extends NativeBugseeSpec
         Bugsee.testCrash();
     }
 
+    // The two-argument overload only -- severity and labels are Phase 8. JS
+    // has already checked both arguments are strings, so nothing is
+    // re-validated here.
+    @Override
+    public void upload(final String summary, final String description) {
+        Bugsee.upload(summary, description);
+    }
+
     @Override
     public void onReportHandlerRequest(
             @NonNull final String handleId,
