@@ -17,7 +17,7 @@ import {
   platformUnderTest,
   type Step,
 } from './device';
-import { resetScenario } from './scenario';
+import { awaitMetroServes, resetScenario, scenarioUri, writeScenario } from './scenario';
 import { checkAndroidBanner } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
 
@@ -104,21 +104,51 @@ const ANDROID_SDK_BUILD_STEP: Step = {
   timeoutMs: 15_000,
 };
 
+/**
+ * This run's scenario really is the one the app ran: the app echoes the
+ * nonce in its first marker. Without it, a launch could run whatever
+ * scenario an earlier suite left behind -- the bundle Metro had not yet
+ * rebuilt -- and pass for this one.
+ */
+function scenarioStep(nonce: string): Step {
+  return {
+    name: 'this run\'s scenario',
+    pattern: new RegExp(`BUGSEE_E2E scenario=launch nonce=${nonce} `),
+    timeoutMs: 120_000,
+  };
+}
+
 const STEPS: readonly Step[] =
   process.env.E2E_PLATFORM === 'android'
     ? [BASE_STEPS[0]!, ANDROID_SDK_BUILD_STEP, ...BASE_STEPS.slice(1)]
     : BASE_STEPS;
 
-jest.setTimeout(STEPS.reduce((total, step) => total + step.timeoutMs, 60_000));
+jest.setTimeout(STEPS.reduce((total, step) => total + step.timeoutMs, 180_000));
 
 describe('example app on a real device', () => {
   it('reaches Status.Launched within 10s of the JS bundle running', async () => {
     const platform = platformUnderTest();
     // The app runs whatever e2e-scenario.json names; an interrupted
-    // report-handler run can leave it on one of its own.
-    resetScenario();
+    // report-handler run can leave it on one of its own. A fresh nonce, so
+    // the run can prove which one it got.
+    const scenario = writeScenario('launch');
+    let uri: string | undefined;
+    if (platform === 'android') {
+      // The launch intent carries it: read at once, debug or release.
+      uri = scenarioUri(scenario);
+    } else {
+      // iOS reads only the JSON, through Metro, which rebuilds a beat after
+      // the write: launching before it has would run the previous scenario.
+      await awaitMetroServes(scenario.nonce);
+    }
 
-    const { steps, lines } = await launchAndWaitForSequence(platform, STEPS);
+    let result;
+    try {
+      result = await launchAndWaitForSequence(platform, [scenarioStep(scenario.nonce), ...STEPS], uri);
+    } finally {
+      resetScenario();
+    }
+    const { steps, lines } = result;
 
     const failed = steps.find(step => step.matched === undefined);
     if (failed !== undefined) {
