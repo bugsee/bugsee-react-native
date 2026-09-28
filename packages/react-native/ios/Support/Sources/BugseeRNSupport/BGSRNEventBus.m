@@ -6,7 +6,7 @@ static NSString *const kLifecyclePrefix = @"com.bugsee.lifecycle.";
   /// Weak: the bridge owns the module, and holding it here would keep a torn
   /// down instance alive for the life of the process.
   __weak id _sink;
-  void (^_block)(NSString *, NSString *_Nullable);
+  BGSRNLifecycleBlock _block;
   /// The SDK dispatches from its own threads while the bridge attaches and
   /// detaches from the React thread.
   NSLock *_lock;
@@ -27,7 +27,7 @@ static NSString *const kLifecyclePrefix = @"com.bugsee.lifecycle.";
   return self;
 }
 
-- (void)attach:(id)sink block:(void (^)(NSString *, NSString *_Nullable))block {
+- (void)attach:(id)sink block:(BGSRNLifecycleBlock)block {
   [_lock lock];
   _sink = sink;
   _block = [block copy];
@@ -47,7 +47,7 @@ static NSString *const kLifecyclePrefix = @"com.bugsee.lifecycle.";
   [_lock lock];
   // Copied under the lock and invoked outside it: a handler that calls back
   // into the bus would otherwise deadlock on a non-recursive lock.
-  void (^block)(NSString *, NSString *_Nullable) = _block;
+  BGSRNLifecycleBlock block = _block;
   const BOOL alive = _sink != nil;
   [_lock unlock];
 
@@ -59,13 +59,11 @@ static NSString *const kLifecyclePrefix = @"com.bugsee.lifecycle.";
       ? [rawName substringFromIndex:kLifecyclePrefix.length]
       : rawName;
 
-  @try {
-    block(name, reportId);
-  } @catch (NSException *exception) {
-    // This runs on the SDK's dispatch thread. Letting a dead bridge's
-    // exception escape would break the SDK's own lifecycle handling for a
-    // fault that is entirely ours.
-    NSLog(@"[Bugsee] failed to deliver lifecycle event %@: %@", name, exception);
+  // Branch on the result, never @try: the block catches inside Objective-C++
+  // (BGSRNGuardedEmit), and nothing may unwind through this ARC file, which
+  // is not built exception-safe. This runs on the SDK's dispatch thread.
+  if (!block(name, reportId)) {
+    NSLog(@"[Bugsee] failed to deliver lifecycle event %@", name);
   }
 }
 

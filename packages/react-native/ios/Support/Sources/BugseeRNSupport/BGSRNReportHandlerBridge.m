@@ -203,36 +203,38 @@ static NSString *_Nullable SafeType(id<BGSReportContract> report) {
   // Live (main) or recovery (off main): see BGSRNReportDeadlines.h. Unlike
   // Android, recovery still reaches JS.
   const int64_t deadlineMs = BGSRNDeadlineMs(onMain);
-  @try {
-    // The task holds the handle itself, not its id: a deadline that was
-    // already running when JS completed must still hit the guard.
-    id timer = _schedule(^{
-      [self finish:handle by:@"deadline"];
-    }, deadlineMs);
-    os_unfair_lock_lock(&_lock);
-    const BOOL alreadyDone = handle.done;
-    if (!alreadyDone) {
-      handle.timer = timer;
-    }
-    os_unfair_lock_unlock(&_lock);
-    if (alreadyDone) {
-      // Finished between minting and here; don't leave the timer armed.
-      [self cancelQuietly:timer];
-    }
+  // The task holds the handle itself, not its id: a deadline that was already
+  // running when JS completed must still hit the guard.
+  id timer = _schedule(^{
+    [self finish:handle by:@"deadline"];
+  }, deadlineMs);
+  os_unfair_lock_lock(&_lock);
+  const BOOL alreadyDone = handle.done;
+  if (!alreadyDone) {
+    handle.timer = timer;
+  }
+  os_unfair_lock_unlock(&_lock);
+  if (alreadyDone) {
+    // Finished between minting and here; don't leave the timer armed.
+    [self cancelQuietly:timer];
+  }
 
-    _log([NSString stringWithFormat:@"BugseeRN report handler %@ phase=%@ deadline=%lld",
-                                    handle.handleId, PhaseWire(phase), deadlineMs]);
-    block(@{
-      @"handleId" : handle.handleId,
-      @"phase" : PhaseWire(phase),
-      @"reportId" : SafeReportId(report) ?: @"",
-      @"type" : SafeType(report) ?: @"",
-      @"deadlineMs" : @((double)deadlineMs),
-    });
-  } @catch (NSException *exception) {
-    // A dead bridge throws from the emit, on the SDK's thread. JS will never
-    // answer, so answer for it now.
-    NSLog(@"BugseeRN report handler %@ could not reach JS: %@", handle.handleId, exception);
+  _log([NSString stringWithFormat:@"BugseeRN report handler %@ phase=%@ deadline=%lld",
+                                  handle.handleId, PhaseWire(phase), deadlineMs]);
+  // Branch on the result, never @try: the sink catches inside Objective-C++
+  // (BGSRNGuardedEmit), and nothing may unwind through this ARC file, which
+  // is not built exception-safe.
+  const BOOL delivered = block(@{
+    @"handleId" : handle.handleId,
+    @"phase" : PhaseWire(phase),
+    @"reportId" : SafeReportId(report) ?: @"",
+    @"type" : SafeType(report) ?: @"",
+    @"deadlineMs" : @((double)deadlineMs),
+  });
+  if (!delivered) {
+    // A dead bridge, on the SDK's thread. JS will never answer, so answer for
+    // it now.
+    NSLog(@"BugseeRN report handler %@ could not reach JS", handle.handleId);
     [self finish:handle by:@"no-handler"];
   }
 }

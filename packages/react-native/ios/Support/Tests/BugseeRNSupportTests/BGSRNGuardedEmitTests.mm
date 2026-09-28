@@ -20,60 +20,66 @@
 
 @implementation BGSRNGuardedEmitTests
 
-- (void)testEmitBeforeEmitterIsSetDoesNotThrowAndIsDropped {
+- (void)testEmitBeforeEmitterIsSetReturnsNoWithoutThrowingAndIsDropped {
   std::function<void()> unset;
   __block BOOL delivered = NO;
-  NSException *caught = nil;
+  __block BOOL result = YES;
 
-  // The guard converts the C++ exception into an NSException rather than
-  // silently swallowing it -- exactly the report path's mechanism, whose
-  // caller (BGSRNReportHandlerBridge) needs to see the failure to complete
-  // the waiting handle. Catching it here is what "does not throw" (past this
-  // point, uncaught, all the way to std::terminate) and "is dropped" (the
-  // emit's own effect never ran) actually mean for a caller of the guard.
-  @try {
-    BGSRNGuardedEmit(^{
-      unset();
-      delivered = YES;
-    }, @"onLifecycleEvent");
-  } @catch (NSException *exception) {
-    caught = exception;
-  }
+  // The guard catches INSIDE this Objective-C++ file and reports the drop as
+  // NO. Nothing may unwind out of it: its callers are plain Objective-C,
+  // compiled without -fobjc-arc-exceptions, where an exception passing
+  // through a frame leaks every strong local in it.
+  XCTAssertNoThrow(result = BGSRNGuardedEmit(^{
+    unset();
+    delivered = YES;
+  }, @"onLifecycleEvent"));
 
+  XCTAssertFalse(result, @"an emit through an unset emitter must report failure");
   XCTAssertFalse(delivered, @"an emit through an unset emitter must be dropped, not delivered");
-  XCTAssertNotNil(caught, @"the guard must report the drop as a catchable NSException, not let the "
-                          @"C++ exception escape uncaught");
-  XCTAssertEqualObjects(caught.name, NSInternalInconsistencyException);
 }
 
 /// Not every C++ throw is a `std::exception`: a JSI or codegen path can throw
 /// anything, and a `catch (const std::exception &)` alone lets the rest
 /// unwind to `std::terminate`.
 - (void)testANonStdExceptionIsGuardedToo {
-  NSException *caught = nil;
+  __block BOOL result = YES;
 
-  @try {
-    BGSRNGuardedEmit(^{
-      throw 42;
-    }, @"onReportHandlerRequest");
-  } @catch (NSException *exception) {
-    caught = exception;
-  }
+  XCTAssertNoThrow(result = BGSRNGuardedEmit(^{
+    throw 42;
+  }, @"onReportHandlerRequest"));
 
-  XCTAssertNotNil(caught, @"a non-std C++ exception must not escape the guard");
+  XCTAssertFalse(result);
 }
 
-- (void)testEmitAfterEmitterIsSetDelivers {
+/// An Objective-C exception from the emit (a payload that cannot convert)
+/// must not unwind into the Objective-C caller either.
+- (void)testAnNSExceptionIsGuarded {
+  __block BOOL result = YES;
+
+  XCTAssertNoThrow(result = BGSRNGuardedEmit(^{
+    [NSException raise:NSInvalidArgumentException format:@"cannot convert"];
+  }, @"onLifecycleEvent"));
+
+  XCTAssertFalse(result);
+}
+
+- (void)testEmitAfterEmitterIsSetDeliversAndReturnsYes {
   std::function<void()> set = [] {
   };
   __block BOOL delivered = NO;
+  __block BOOL result = NO;
 
-  XCTAssertNoThrow(BGSRNGuardedEmit(^{
+  XCTAssertNoThrow(result = BGSRNGuardedEmit(^{
     set();
     delivered = YES;
   }, @"onLifecycleEvent"));
 
+  XCTAssertTrue(result);
   XCTAssertTrue(delivered, @"an emit through a set emitter must be delivered");
+}
+
+- (void)testNoEmitIsNotADelivery {
+  XCTAssertFalse(BGSRNGuardedEmit(nil, @"onLifecycleEvent"));
 }
 
 @end
