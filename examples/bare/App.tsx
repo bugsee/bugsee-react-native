@@ -9,7 +9,8 @@
  *
  * What it does after launching is picked by a scenario (e2e/scenario.ts):
  * `launch`, the default, is the lifecycle walk launch.test.ts asserts; the
- * `rh-*` scenarios are the report-handler cases in scenarios/report-handler.ts.
+ * `rh-*` scenarios are the report-handler cases in scenarios/report-handler.ts;
+ * `channel` is scenarios/channel.ts and `secure` is scenarios/secure.tsx.
  */
 import { useEffect, useState } from 'react';
 import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
@@ -35,6 +36,7 @@ import {
   preLaunchChannelProbe,
   runChannelScenario,
 } from './scenarios/channel';
+import { SecureProbe, isSecureScenario } from './scenarios/secure';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -108,6 +110,8 @@ async function chooseScenario(): Promise<ScenarioChoice> {
 export default function App() {
   const [status, setStatus] = useState<number>(Status.Stopped);
   const [error, setError] = useState<string | undefined>();
+  /** Set by the `secure` scenario once Launched: mounts the probe. */
+  const [secureNonce, setSecureNonce] = useState<string | undefined>();
 
   useEffect(() => {
     let cancelled = false;
@@ -200,6 +204,13 @@ export default function App() {
           return;
         }
 
+        if (isSecureScenario(choice.scenario)) {
+          if (!cancelled) {
+            setSecureNonce(choice.nonce);
+          }
+          return;
+        }
+
         // Task 2.6: the option must have reached the SDK, not merely been
         // accepted by launch(). Reading it back through getLaunchOptions is
         // the only thing that shows the difference.
@@ -276,6 +287,7 @@ export default function App() {
         </Text>
         {error !== undefined && <Text style={styles.error}>{error}</Text>}
       </View>
+      {secureNonce !== undefined && <SecureProbe nonce={secureNonce} />}
     </View>
   );
 }
