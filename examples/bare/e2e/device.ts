@@ -86,13 +86,19 @@ export function platformUnderTest(): Platform {
 export async function launchAndWaitForSequence(
   platform: Platform,
   steps: readonly Step[],
+  androidUri?: string,
 ): Promise<SequenceResult> {
   const child =
-    platform === 'android' ? await spawnAndroid() : spawnIos();
+    platform === 'android' ? await spawnAndroid(androidUri) : spawnIos();
   return collect(child, steps);
 }
 
-async function spawnAndroid(): Promise<ChildProcess> {
+/**
+ * `uri`, when given, is the launch intent's data: the app's per-launch
+ * scenario channel (scenario.ts), which a debug build reads without waiting
+ * on Metro and a release build reads at all.
+ */
+async function spawnAndroid(uri?: string): Promise<ChildProcess> {
   await run(ADB, ['-s', ANDROID_SERIAL, 'logcat', '-c']);
   const logcat = spawn(ADB, [
     '-s',
@@ -123,6 +129,7 @@ async function spawnAndroid(): Promise<ChildProcess> {
     'start',
     '-n',
     `${ANDROID_PACKAGE}/.MainActivity`,
+    ...(uri === undefined ? [] : ['-a', 'android.intent.action.VIEW', '-d', `'${uri}'`]),
   ]);
   return logcat;
 }
