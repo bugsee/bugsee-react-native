@@ -3,6 +3,17 @@
  * so a test failure means the facade is wrong, never that a device misbehaved.
  */
 
+/** The empty snapshot shape `reportRead` resolves to by default. */
+const EMPTY_REPORT_SNAPSHOT = {
+  summary: null,
+  description: null,
+  severity: 0,
+  labels: [],
+  attributes: {},
+  screenshotDisplayIds: [],
+  attachmentNames: [],
+};
+
 /** What a freshly reset mock resolves, for the calls that return something. */
 const DEFAULTS: Record<string, unknown> = {
   launch: true,
@@ -10,9 +21,30 @@ const DEFAULTS: Record<string, unknown> = {
   stop: true,
   getStatus: 0,
   getLaunchOptions: {},
+  reportRead: EMPTY_REPORT_SNAPSHOT,
 };
 
 const lifecycleListeners = new Set<(event: { name: string; reportId?: string }) => void>();
+
+interface ReportHandlerRequestEvent {
+  handleId: string;
+  phase: string;
+  reportId: string;
+  type: string;
+  deadlineMs: number;
+}
+
+const reportHandlerRequestListeners = new Set<
+  (event: ReportHandlerRequestEvent) => void
+>();
+
+/**
+ * Counted separately from the Set's size: the dispatcher always passes the
+ * SAME module-level function reference, so a `Set` silently dedupes a second
+ * subscribe call and the size alone cannot tell "subscribed once" from
+ * "subscribed four times, deduped". This counts every call.
+ */
+let reportHandlerRequestSubscribeCalls = 0;
 
 export const native = {
   setWrapperInfo: jest.fn<void, [Record<string, unknown>]>(),
@@ -45,6 +77,45 @@ export const native = {
   testCrash: jest.fn<void, []>(),
 
   /**
+   * The codegen EventEmitter for report handoffs -- a SUBSCRIBE function
+   * returning an unsubscribe handle, exactly like `onLifecycleEvent` above.
+   * Tests drive it with `emitReportHandlerRequest`, standing in for native.
+   */
+  onReportHandlerRequest(listener: (event: ReportHandlerRequestEvent) => void) {
+    reportHandlerRequestSubscribeCalls += 1;
+    reportHandlerRequestListeners.add(listener);
+    return {
+      remove: () => {
+        reportHandlerRequestListeners.delete(listener);
+      },
+    };
+  },
+
+  /** Stands in for the native emit. */
+  emitReportHandlerRequest(event: ReportHandlerRequestEvent): void {
+    for (const listener of [...reportHandlerRequestListeners]) listener(event);
+  },
+
+  /** How many subscribers are attached -- proves the dispatcher subscribes at most once. */
+  reportHandlerRequestListenerCount(): number {
+    return reportHandlerRequestListeners.size;
+  },
+
+  /** How many times `onReportHandlerRequest` was actually called, deduping aside. */
+  reportHandlerRequestSubscribeCallCount(): number {
+    return reportHandlerRequestSubscribeCalls;
+  },
+
+  setReportHandlerPhases: jest.fn<void, [boolean, boolean]>(),
+  completeReportHandler: jest.fn<void, [string]>(),
+  reportRead: jest.fn<Promise<unknown>, [string]>(),
+  reportUpdate: jest.fn<Promise<void>, [string, unknown]>(),
+  reportAddFileAttachment:
+    jest.fn<Promise<void>, [string, string, string, string | null, boolean]>(),
+  reportAddDataAttachment:
+    jest.fn<Promise<void>, [string, string, string, string | null]>(),
+
+  /**
    * Resets every mock on this object, found rather than listed.
    *
    * A hardcoded list silently stops covering a method the moment the spec
@@ -54,6 +125,8 @@ export const native = {
    */
   reset(): void {
     lifecycleListeners.clear();
+    reportHandlerRequestListeners.clear();
+    reportHandlerRequestSubscribeCalls = 0;
     for (const [name, value] of Object.entries(this)) {
       if (typeof value === 'function' && 'mockReset' in value) {
         const fn = value as jest.Mock;
