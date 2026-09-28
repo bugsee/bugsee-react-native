@@ -21,8 +21,8 @@ import java.util.Map;
  * infers them natively, which would produce a second, disagreeing answer.
  *
  * <p>Lifecycle events, secure rectangles and report handling are the other
- * halves of this contract and arrive in later tasks; the interface supplies
- * defaults for them, so an incomplete wrapper is still valid.
+ * halves of this contract; each is forwarded to a process-wide object that
+ * outlives this instance.
  */
 final class BugseeReactNativeWrapper implements BugseeWrapper {
 
@@ -139,15 +139,22 @@ final class BugseeReactNativeWrapper implements BugseeWrapper {
         return SecureRectangleStore.shared().snapshot(display);
     }
 
+    /**
+     * Hands the report to JS through the process-wide bridge, which owns
+     * running {@code completionCallback} exactly once on every path -- the
+     * pipeline waits on it, so failing to call it stalls the report rather
+     * than merely skipping our contribution. Through the bridge rather than
+     * held here for the same reason as the lifecycle events: this wrapper
+     * instance is replaced mid-session.
+     */
     @Override
     public void onBeforeReportCreated(
             @NonNull final Report report,
             final boolean isTerminating,
             @NonNull final Runnable completionCallback
     ) {
-        // Always run it: the pipeline waits on this, so failing to call it
-        // stalls the report rather than merely skipping our contribution.
-        completionCallback.run();
+        ReportHandlerBridge.shared().dispatch(
+                ReportHandlerBridge.Phase.BEFORE, report, isTerminating, completionCallback);
     }
 
     @Override
@@ -156,7 +163,8 @@ final class BugseeReactNativeWrapper implements BugseeWrapper {
             final boolean isTerminating,
             @NonNull final Runnable completionCallback
     ) {
-        completionCallback.run();
+        ReportHandlerBridge.shared().dispatch(
+                ReportHandlerBridge.Phase.AFTER, report, isTerminating, completionCallback);
     }
 
     @Override
