@@ -7,6 +7,13 @@ export interface NativeVersions {
     /** `com.bugsee:bugsee-android-gradle-plugin`. Resolves from Maven Central,
      *  NOT the Gradle Plugin Portal, which does not serve it. */
     gradlePlugin: string;
+    /**
+     * 40-character commit SHA of the private `bugsee-android` clone `sdk` was
+     * built from. Present iff `sdk` ends in `-SNAPSHOT`: a released version
+     * needs no such provenance, and a SNAPSHOT pin without it can never be
+     * traced back to the build that produced it.
+     */
+    snapshotCommit?: string;
   };
   ios: {
     /** Tag in the SPM repo, and the version embedded in the xcframework zip URL. */
@@ -22,8 +29,11 @@ export interface NativeVersions {
  */
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
+/** A 40-character git commit SHA, in full -- not the short form the SDK banner prints. */
+const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/;
+
 /** Keys that hold something other than a version and must not be checked. */
-const NOT_A_VERSION = new Set(['spmUrl']);
+const NOT_A_VERSION = new Set(['spmUrl', 'snapshotCommit']);
 
 export function readNativeVersions(
   override?: NativeVersions,
@@ -42,6 +52,31 @@ export function readNativeVersions(
         );
       }
     }
+  }
+
+  // snapshotCommit and android.sdk's `-SNAPSHOT` suffix must agree: each is
+  // the only reason the other is allowed to exist.
+  const { sdk, snapshotCommit } = resolved.android;
+  const isSnapshot = sdk.endsWith('-SNAPSHOT');
+  if (isSnapshot && snapshotCommit === undefined) {
+    throw new Error(
+      `native-versions.android.snapshotCommit is required when android.sdk ` +
+        `is a SNAPSHOT (got ${JSON.stringify(sdk)}), so the pin can always be ` +
+        `traced back to the clone it was built from.`,
+    );
+  }
+  if (!isSnapshot && snapshotCommit !== undefined) {
+    throw new Error(
+      `native-versions.android.snapshotCommit is set (${JSON.stringify(snapshotCommit)}) ` +
+        `but android.sdk (${JSON.stringify(sdk)}) is not a SNAPSHOT. A released ` +
+        `version carries no snapshot provenance; remove the field.`,
+    );
+  }
+  if (snapshotCommit !== undefined && !FULL_COMMIT_SHA.test(snapshotCommit)) {
+    throw new Error(
+      `native-versions.android.snapshotCommit must be a full 40-character hex ` +
+        `commit SHA, got ${JSON.stringify(snapshotCommit)}.`,
+    );
   }
 
   return resolved;

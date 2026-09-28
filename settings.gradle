@@ -18,6 +18,18 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Only while native-versions.json pins a SNAPSHOT: mavenLocal is a
+        // human's own machine, not a build input anyone else can reproduce,
+        // and ~/.m2 on this one already holds stale non-SNAPSHOT builds of
+        // com.bugsee artifacts. The content filter is load-bearing -- without
+        // it those stale versions could satisfy a normal request too.
+        def nativeVersions = new groovy.json.JsonSlurper()
+                .parse(new File(settingsDir, 'native-versions.json'))
+        if (nativeVersions.android.sdk.endsWith('-SNAPSHOT')) {
+            mavenLocal {
+                content { includeVersionByRegex('com\\.bugsee', '.*', '.*-SNAPSHOT') }
+            }
+        }
     }
 }
 rootProject.name = 'bugsee-react-native'

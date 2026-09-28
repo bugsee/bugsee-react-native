@@ -17,6 +17,8 @@ import {
   platformUnderTest,
   type Step,
 } from './device';
+import { checkAndroidBanner } from '../../../scripts/sdk-banner';
+import { readNativeVersions } from '../../../scripts/native-versions';
 
 /**
  * Two markers, two clocks.
@@ -26,7 +28,7 @@ import {
  * second is the one Task 1.5 is about, and starts counting only from there —
  * otherwise a cold bundler would fail a test about Bugsee.
  */
-const STEPS: readonly Step[] = [
+const BASE_STEPS: readonly Step[] = [
   {
     name: 'JS running',
     pattern: /BUGSEE_E2E launching on/,
@@ -75,6 +77,22 @@ const STEPS: readonly Step[] = [
   },
 ];
 
+// Task 3.P1: proof that the app launched the exact Android SDK build
+// native-versions.json pins, not merely a version string that happens to
+// match. iOS prints no such banner (3.P1's device workbook), so this step
+// exists only for Android, inserted between the bundle starting and the SDK
+// reaching Launched.
+const ANDROID_SDK_BUILD_STEP: Step = {
+  name: 'SDK build',
+  pattern: /Bugsee Android SDK \S+ \[[0-9a-f]+\]/,
+  timeoutMs: 15_000,
+};
+
+const STEPS: readonly Step[] =
+  process.env.E2E_PLATFORM === 'android'
+    ? [BASE_STEPS[0]!, ANDROID_SDK_BUILD_STEP, ...BASE_STEPS.slice(1)]
+    : BASE_STEPS;
+
 jest.setTimeout(STEPS.reduce((total, step) => total + step.timeoutMs, 60_000));
 
 describe('example app on a real device', () => {
@@ -98,7 +116,18 @@ describe('example app on a real device', () => {
       );
     }
 
-    const launched = steps[1]!;
+    if (platform === 'android') {
+      // Reads by eye it is not: the harness asserts the exact SDK build that
+      // launched against the pin, rather than trusting a human glancing at
+      // logcat.
+      const sdkBuild = steps.find(step => step.name === 'SDK build')!;
+      const bannerCheck = checkAndroidBanner(sdkBuild.matched!, readNativeVersions());
+      if (!bannerCheck.ok) {
+        throw new Error(`android: SDK build banner does not match the pin.\n  ${bannerCheck.reason}`);
+      }
+    }
+
+    const launched = steps.find(step => step.name === 'Status.Launched')!;
     console.log(
       `${platform}: Status.Launched ${launched.elapsedMs}ms after the bundle ran\n` +
         `  ${launched.matched?.trim()}`,

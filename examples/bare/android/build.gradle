@@ -37,13 +37,29 @@ plugins {
 // project, not :app — under the unprefixed key `app_token`. It is generated
 // from the environment by ../scripts/write-credentials.mjs and gitignored.
 
-def pinned = new groovy.json.JsonSlurper()
-        .parse(file("../../../native-versions.json")).android.gradlePlugin
+def nativeVersions = new groovy.json.JsonSlurper().parse(file("../../../native-versions.json"))
+
+def pinned = nativeVersions.android.gradlePlugin
 def applied = '4.0.7'
 if (pinned != applied) {
     throw new GradleException(
             "Bugsee Gradle plugin is pinned to ${pinned} in native-versions.json " +
             "but this build applies ${applied}.")
+}
+
+// Only while native-versions.json pins a SNAPSHOT: mavenLocal is a human's
+// own machine, not a build input CI or another developer can reproduce, and
+// ~/.m2 on this one already holds stale non-SNAPSHOT builds of com.bugsee
+// artifacts. The content filter is load-bearing -- without it those stale
+// versions could satisfy a normal request too.
+if (nativeVersions.android.sdk.endsWith('-SNAPSHOT')) {
+    allprojects {
+        repositories {
+            mavenLocal {
+                content { includeVersionByRegex('com\\.bugsee', '.*', '.*-SNAPSHOT') }
+            }
+        }
+    }
 }
 
 apply plugin: "com.facebook.react.rootproject"
