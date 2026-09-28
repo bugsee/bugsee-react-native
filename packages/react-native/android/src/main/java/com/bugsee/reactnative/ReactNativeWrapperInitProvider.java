@@ -1,5 +1,9 @@
 package com.bugsee.reactnative;
 
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+
 import com.bugsee.library.BugseeExtensionInitProviderBase;
 
 /**
@@ -28,12 +32,29 @@ import com.bugsee.library.BugseeExtensionInitProviderBase;
  */
 public final class ReactNativeWrapperInitProvider extends BugseeExtensionInitProviderBase {
 
+    private static final String TAG = "BugseeRN";
+
     @Override
     protected boolean onExtensionCreate() {
         // Through the registrar, like every registration: setWrapperInfo
         // re-registers from another thread once JS is up.
-        WrapperRegistrar.register(BugseeReactNativeWrapper.withoutJsRuntime());
+        registerEarly(WrapperRegistrar::register);
         // Conventional for an init provider: we expose no content.
         return false;
+    }
+
+    /**
+     * Never throws, errors included. This runs before
+     * {@code Application.onCreate} in every host app that links the library,
+     * so a throw here kills the process before the app runs a line of its
+     * own. Losing the early registration only costs attribution until
+     * {@code setWrapperInfo} registers from JS.
+     */
+    static void registerEarly(@NonNull final WrapperRegistrar.Setter register) {
+        try {
+            register.set(BugseeReactNativeWrapper.withoutJsRuntime());
+        } catch (Throwable t) {
+            Log.e(TAG, "could not register the React Native wrapper at process start", t);
+        }
     }
 }
