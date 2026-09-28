@@ -14,7 +14,7 @@ The single most important finding behind this design: **iOS 7.x and Android 7.x 
 
 ## 2. Goals
 
-- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.2.0** (GA) and iOS **7.0.0-beta1** (SPM only).
+- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.3.0** (pinned transitionally as `7.3.0-SNAPSHOT` while the release is pending — see the plan's Phase 3 rulings) and iOS **7.0.0-beta3** (SPM only, iOS deployment target 15.0).
 - Expose the capabilities 7.x added and 6.x never had: breadcrumbs, notification relay, APM, user identity, hang/HTTP-error/frustration/anomaly detection, SDK status, report handlers.
 - Make the wrapper's option surface **provably** consistent with the native SDKs, enforced in CI rather than by review.
 - Work on bare React Native and on Expo, including Expo apps that regenerate native projects with `prebuild`.
@@ -105,7 +105,7 @@ This deviates from `javascript/`, which uses pnpm. The deviation is deliberate: 
 - Android `com.bugsee.library.contracts.internal.BugseeWrapper` — its javadoc names React Native explicitly.
 - iOS `@protocol BugseeWrapper <BGSBugseeWrapper>` in `BGSContracts.h`.
 
-It supersedes the `$$WRAPPER` launch option, which **no longer exists** in `Options.java` at 7.2.0.
+`com.bugsee.option.$$WRAPPER` still exists and is consumed by Android (`bugsee-android` #119, `EnvironmentInfoProvider.resolveWrapper`), which reads it only when no wrapper object is registered — the same rule iOS applies to `wrapper_info`. This wrapper always registers the object first (ContentProvider at `initOrder=200`; module init on iOS), so it does not also send `$$WRAPPER`.
 
 It is not merely an identity struct. It extends `ReportHandler` *and* `DataRequestProvider` and carries:
 
@@ -117,8 +117,19 @@ It is not merely an identity struct. It extends `ReportHandler` *and* `DataReque
 | `onLifecycleEvent(name, data)` | lifecycle delivery; fires **before** the app's own listener |
 | `getSecureRectangles(display)` / `secureRectsForDisplay:` | pull-based secure rectangles |
 | `ReportHandler` callbacks | attachments and report mutation; fire **before** the app's `setReportHandler` |
+| `onWrapperChannelAvailable(channel)` | the attributed route for logs, network events and breadcrumbs (Task 3.5) |
 
 One object per platform replaces four scattered mechanisms in the 6.x wrapper, and removes two of the five `bgs*Event` bridge channels (attachments, lifecycle).
+
+#### Report handler dispatch: recovery routing is per platform, and never blocks the SDK's own thread
+
+Verified during Phase 3, on-device and by reading both SDKs' sources. `bugsee/specs` `sdk/report-contract` has the cross-SDK contract; what follows is what this wrapper actually observed against it.
+
+**Android.** A crash the SDK recovers through its own bounded early-recovery dispatch — a call off the live `BugseeReportHandlerThread`, completion `Callback.NOOP` — completes natively at once (`completed by=recovery`) and never reaches JS; the bridge detects this by thread name, not by `isTerminating` (the plan's Phase 3 rulings). A crash recovered at the *next launch*, when that launch is JS-initiated, is a different path: the SDK dispatches it on the live `BugseeReportHandlerThread` with the ordinary 25 s live deadline, so it *does* reach JS and `onAfterReportCreated`'s edits land in the retained crash bundle. Verified on the WOD_LX1 (Task 3.4d): the relaunch logged `deadline=25000` and `completed by=js`, never `by=recovery`.
+
+**iOS.** Live dispatch is on the main thread (25 s deadline); a report recovered at relaunch is dispatched off main (2.5 s deadline) — and, unlike Android's bounded early-recovery path, it **does** reach JS, because iOS re-persists the report on a late completion until the bundle is assembled. The recovery case cannot run in the Simulator: the simulator slice of 7.0.0-beta3 has no crash reporter (Task 3.4f), so it is gated `E2E_IOS_RECOVERY=1` and proven only on physical hardware (§12).
+
+**iOS threading, load-bearing for both cases.** The SDK invokes the live report handler with `dispatch_async` onto main; its completion is a thread-agnostic run-once that hops to a private queue. Main is never blocked waiting for it (`BGSIssueReportingCoordinator.m` on `nextgen`). Consequently the bridge's own report ops and its call to `completeReportHandler` must never hop to main themselves — there is no need to, and queuing behind whatever UI work is already on main would eat into the handle's deadline for nothing. The bridge completes from background queues throughout.
 
 ### 6.2 Secure rectangles become pull-based
 
@@ -136,7 +147,7 @@ Typed `EventEmitter<T>` members (available in codegen from RN 0.76, so safe at a
 
 - Namespace `com.bugsee.reactnative`. The 6.x bridge squats `com.bugsee`, the SDK's own package.
 - Single source set; no `newarch`/`oldarch` split.
-- `api("com.bugsee:bugsee-android:7.2.0")`, pinned, replacing the unpinned `+`.
+- `api("com.bugsee:bugsee-android:${nativeVersions.android.sdk}")`, the version read from `native-versions.json`, replacing the unpinned `+`.
 - The feedback package adds `bugsee-android-feedback` and reaches the feature through `Bugsee.ext(Feedback.class)`.
 - The Gradle plugin's `DependencyDetector` was fixed to detect the SDK reached transitively through an intermediate module, which is exactly the RN autolinking shape (`:app` → `:react-native-bugsee` → SDK).
 
@@ -148,7 +159,9 @@ Typed `EventEmitter<T>` members (available in codegen from RN 0.76, so safe at a
 
 - `s.platforms` reads React Native's own `min_ios_version_supported` (15.1 from
   RN 0.76 onward) rather than a literal, so the pod tracks the app's RN
-  version. The SDK binary supports 13.0, but no RN app can reach it — see §4.5.
+  version. As of `7.0.0-beta3` the SDK's own deployment target is 15.0 (raised
+  in beta2, from the 13.0 this section originally recorded), so the two floors
+  now agree — see §4.5 and `platform-floors.ts`.
 - **No `s.dependency 'Bugsee'`** — no pod exists, and none ever will.
 - **`spm_dependency` does not work here.** It attaches the package product to
   the Pods project target, and nothing then embeds the framework into the app.
@@ -269,9 +282,9 @@ What changes is the payload gaining a `debug_ids` member alongside name, message
 | | Android 7.x | iOS 7.x |
 |---|---|---|
 | handled | `logException(Throwable, Map)` | `logException:reason:options:completion:` |
-| unhandled | `logUnhandledException(Throwable, Map)` | `logUnhandledException:name:reason:completion:` |
+| unhandled | `logUnhandledException(Throwable, Map)` | `logUnhandledException:reason:completion:` |
 
-`logUnhandledException` is new on Android and is a better fit than `onUncaughtException(Thread, Throwable)`, which exists to be called from a real `UncaughtExceptionHandler`.
+`logUnhandledException` is new on Android and is a better fit than `onUncaughtException(Thread, Throwable)`, which exists to be called from a real `UncaughtExceptionHandler`. The iOS signature has no `name:` parameter — corrected from an earlier draft; `Bugsee.h:381` on `nextgen` declares `+logUnhandledException:(NSString *)reason completion:`.
 
 The `ExceptionOptions` contract interface declares only `Domain` and `SkipFrames`, but the `logException` javadoc documents `"domain"`, `"labels"` and `"includeVideo"`. The parameter is `Map<String, Object>`, so the extra keys are accepted; the wrapper passes all three.
 
@@ -358,13 +371,12 @@ Both send `LogSource.Custom`, which is what makes the source consistent across p
 
 **This fixes two divergences that exist today.** The iOS RN hook tags logs `source: 98` while Android tags the same logs `source: 4`, because neither platform exposed a source parameter publicly and Android's wrapper had no other route — so one `console.log` in one app is recorded differently per platform. And `BGSLoggerInterceptor.m:54` hard-codes `enforceFiltering:NO`, so React Native logs on iOS are **never** passed through the log filter: a customer's redaction silently does not apply to them, while the comparable Android logs are filtered. The second is a privacy gap, not a cosmetic one, and neither is fixable inside a hook with the flag baked in.
 
-Three implementation constraints:
+Four implementation constraints:
 
 1. **Dedup before either filter runs.** Under `__DEV__`, `console.log` reaches both the JS patch and `RCTLog`. Dedup is not only about duplicate lines — without it the user's filter callback runs twice on one message by two different routes. React Native only routes `console.*` through `RCTLog` under `__DEV__`, and Hermes release builds commonly strip console calls, so neither stream is sufficient alone and both must be live.
 2. **The native→JS filter round-trip is a redaction boundary.** `RCTLog` can fire on any thread, including during teardown. A filter callback that cannot complete must **drop the line, not pass it through** — failing open at a redaction boundary leaks exactly the data the callback existed to remove. This is now load-bearing rather than defensive: since the JS-side pass is gone, this round trip is the *only* place the customer's filter runs, so a dropped reply is a line that was never redacted. Both SDKs already drop on timeout, silently (`specs` `sdk/wrapper-channel`), which is the behaviour we want and the diagnostic we do not have.
-
-4. **Flush buffered lines after `setWrapper` returns, never inside `onWrapperChannelAvailable`.** The callback runs while the SDK holds its registration lock, and an exception escaping it — including one thrown by the customer's filter as we flush — is caught and logged by `setWrapper` rather than reaching the global handler. Flushing inside the callback therefore hides customer filter bugs. It also matters for us specifically: our wrapper registers before the JS runtime exists, so the flush belongs to the *later* re-registration that carries the JS runtime, not the first one.
-3. **Verify in both Debug and Release.** The two streams overlap in one and not the other, so a dedup that looks correct in development can silently drop everything in a release build.
+3. **Flush buffered lines after `setWrapper` returns, never inside `onWrapperChannelAvailable`.** The callback runs while the SDK holds its registration lock, and an exception escaping it — including one thrown by the customer's filter as we flush — is caught and logged by `setWrapper` rather than reaching the global handler. Flushing inside the callback therefore hides customer filter bugs. It also matters for us specifically: our wrapper registers before the JS runtime exists, so the flush belongs to the *later* re-registration that carries the JS runtime, not the first one.
+4. **Verify in both Debug and Release.** The two streams overlap in one and not the other, so a dedup that looks correct in development can silently drop everything in a release build.
 
 ---
 
@@ -426,6 +438,7 @@ So iOS ends up with **two** build-time integrations, at different stages for dif
 - **Native unit tests** for the two pieces of real logic in the bridges: the Android enum-coercion table and the secure-rectangle buffer encoding.
 - **Device smoke tests** via **Maestro** on both example apps. The current repo uses Detox; Maestro is substantially lower maintenance for this and does not require instrumenting the app.
 - **Acceptance: does a correct report arrive?** Drive the example app to crash, then assert through the Bugsee API that the issue exists, that the JS stack symbolicated through the uploaded source map, and that video and logs are attached. Every other layer can pass while the product is broken; this is the only one that catches a bad option key, a missing debug ID, or a wrapper that never registered.
+- **A hardware pass is required before merge, on top of the simulator/emulator runs.** The Android device suite is already covered end to end on the WOD_LX1. iOS is not: Task 3.4f's report-handler case 6 (recovery) and Task 3.5d's wrapper-channel device test ran on the iOS Simulator only, gated `E2E_IOS_RECOVERY=1`, because the simulator slice of the SDK has no crash reporter — no crash is ever recovered there, so the recovery path cannot be exercised without a physical iPhone. Before merge: run both on a physical iPhone, and implement the `devicectl` bundle-pull recipe for physical iPhones — the retention/pull recipe in `examples/bare/e2e/bundles.ts` today only reads the simulator's host-filesystem data container via `simctl`.
 
 ## 13. CI and release
 
@@ -450,9 +463,9 @@ Work outside this repository that this design depends on or has surfaced.
    - `bugsee/bugsee-android#87` — enum-typed options accept a `String` in `validateValueType` but only the Bundle path converts it; the Map path used by `launch(Context, String, Map)` stores it verbatim, so the option is accepted-and-silently-wrong.
    - `bugsee/bugsee-cocoa#88` — the React Native log hook was duplicated between the public `BugseeLogger` and the live `BGSLoggerInterceptor`, with the level mapping in both. PR #89 consolidates it.
 
-     **Superseded in part.** That issue asked *where* the hook should live. The answer turned out to be *nowhere*: see §10.3. `bugsee/bugsee-cocoa#91` and `bugsee/bugsee-android#90` add a generic source-aware log API to each SDK, after which the React-Native-specific code is deleted from the Apple core outright and this wrapper owns the `RCTLogLevel` mapping. #89 should be trimmed to its CocoaLumberjack half rather than merged whole, so public API is not added and then removed a release later.
+     **Superseded in part.** That issue asked *where* the hook should live. The answer turned out to be *nowhere*: see §10.3. `bugsee/bugsee-cocoa#91` and `bugsee/bugsee-android#90` are **resolved via the wrapper channel** (`bugsee/specs` `sdk/wrapper-channel`; Android #149, iOS #137–#140), which superseded the public source-aware overload both issues originally asked for — the wrapper records `LogSource.Custom` through `onWrapperChannelAvailable(channel)` instead (Task 3.5). `bugsee-android#90` is closed; `bugsee-cocoa#91` is still open on GitHub and should be closed as superseded. #89 should be trimmed to its CocoaLumberjack half rather than merged whole, so public API is not added and then removed a release later.
 
-6. **Blocking for §10.3:** `bugsee/bugsee-cocoa#91` and `bugsee/bugsee-android#90`. Until both land, the wrapper cannot record `LogSource.Custom` and cannot run the user's filter over RN-internal logs on iOS. The console component ships JS-side capture first and adopts the native stream when they do.
+6. **Resolved via the wrapper channel, not the public source-aware overload originally filed for it:** `bugsee/bugsee-cocoa#91` and `bugsee/bugsee-android#90`. Both are superseded by `bugsee/specs` `sdk/wrapper-channel` (Android #149, iOS #137–#140) — the wrapper stores the channel first thing in `onWrapperChannelAvailable` and forwards through it, so §10.3 no longer depends on either issue landing. `bugsee-android#90` is closed; `bugsee-cocoa#91` should be closed as superseded rather than implemented.
 
 ## 15. Open questions
 
@@ -463,6 +476,14 @@ Work outside this repository that this design depends on or has surfaced.
 ---
 
 ## Appendix A: verified native state (2026-09-15)
+
+> **Superseded for versions.** The pins and version-specific facts below are as
+> of 2026-09-15. Phase 3 of the plan (rulings and *Verified facts*,
+> 2026-09-28) superseded them: Android moved to `7.3.0` (pinned transitionally
+> as `7.3.0-SNAPSHOT`), the Gradle plugin to `4.0.7`, and iOS to `7.0.0-beta3`
+> with a 15.0 deployment target. Read this appendix for the shape of the
+> verification (what was checked and how), not for the version numbers
+> themselves.
 
 **Android — GA.** `android/sdk` version.txt `7.2.0`. Maven Central has `com.bugsee:bugsee-android` 7.2.0 and the same for `-feedback`, `-okhttp`, `-compose`, `-ndk`, `-ktor-2`, `-ktor-3`, `-cronet`. Gradle plugin `com.bugsee:bugsee-android-gradle-plugin` 4.0.6 and its marker `com.bugsee.android.gradle.gradle.plugin` 4.0.6 are on Maven Central; the Gradle Plugin Portal does **not** serve it. The plugin is mandatory for SDK 7.x.
 
