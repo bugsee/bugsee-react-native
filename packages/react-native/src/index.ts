@@ -136,6 +136,15 @@ class Bugsee {
    * before adding one). A mutation made after the callback settles, or after
    * its handle's deadline passes -- the SDK's deadline, not one the app
    * negotiates -- does not reach the report.
+   *
+   * Budgets: 25 s per callback for a live report on both platforms (never
+   * raised above that; on Android it follows a lower
+   * `report-handler-callback-timeout`). A report recovered at launch gets
+   * 2.5 s on iOS (off main, best-effort, edits land only until the bundle is
+   * assembled) but the live 25 s on Android when the SDK was launched from
+   * JS; Android's early bounded recovery never reaches JS. So async I/O in
+   * `onAfterReportCreated` can succeed on Android and silently miss on iOS
+   * recovery. Details on `BugseeReportHandler`.
    */
   setReportHandler(handler: BugseeReportHandler | null): void {
     installReportHandler(handler);
