@@ -128,13 +128,16 @@ public class BugseeModule extends NativeBugseeSpec
     @Override
     public void setWrapperInfo(final ReadableMap identity) {
         if (identity == null) {
-            Bugsee.setWrapper(null);
+            WrapperRegistrar.register(null);
             return;
         }
         final ReadableMap context = identity.hasKey("context")
                 ? identity.getMap("context")
                 : null;
-        Bugsee.setWrapper(new BugseeReactNativeWrapper(
+        // A new instance, so the SDK hands it a fresh channel and retires the
+        // provider's. Through the registrar: the provider registered on
+        // another thread, and the spec forbids registrations overlapping.
+        WrapperRegistrar.register(new BugseeReactNativeWrapper(
                 string(identity, "type", "unknown"),
                 string(identity, "version", "unknown"),
                 identity.hasKey("build") ? identity.getString("build") : null,
@@ -202,6 +205,17 @@ public class BugseeModule extends NativeBugseeSpec
     @Override
     public void upload(final String summary, final String description) {
         Bugsee.upload(summary, description);
+    }
+
+    /**
+     * One JS line into the wrapper channel. JS has already range-checked the
+     * level; the holder defends again, maps it by value, and keeps a throwing
+     * app filter from escaping onto this thread. Filtered natively only --
+     * JS never runs the app's filter on these lines.
+     */
+    @Override
+    public void wrapperLog(final String message, final double level) {
+        WrapperChannelHolder.shared().log(message, (int) level);
     }
 
     @Override
