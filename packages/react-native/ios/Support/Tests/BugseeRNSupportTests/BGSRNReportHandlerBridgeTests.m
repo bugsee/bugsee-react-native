@@ -67,8 +67,9 @@
 }
 
 - (void)attachRecorder:(id)sink into:(NSMutableArray<NSDictionary *> *)requests {
-  [_bridge attach:sink block:^(NSDictionary *request) {
+  [_bridge attach:sink block:^BOOL(NSDictionary *request) {
     [requests addObject:request];
+    return YES;
   }];
 }
 
@@ -262,11 +263,14 @@
   XCTAssertEqual(_completions, 1);
 }
 
-/// A dead bridge throws from the emit, on the SDK's thread (main, on the live
-/// path). JS will never answer, so the bridge answers for it now.
-- (void)testAThrowingSinkStillCompletes {
-  [_bridge attach:_sink block:^(NSDictionary *request) {
-    [NSException raise:NSInternalInconsistencyException format:@"bridge is gone"];
+/// A dead bridge (module gone, emitter unset) reports the emit as not
+/// delivered, on the SDK's thread (main, on the live path). JS will never
+/// answer, so the bridge answers for it now -- by branching on the result,
+/// not by catching: nothing may unwind through this non-exception-safe ARC
+/// file.
+- (void)testASinkThatCannotDeliverStillCompletes {
+  [_bridge attach:_sink block:^BOOL(NSDictionary *request) {
+    return NO;
   }];
   [_bridge setPhasesBefore:YES after:YES];
 
@@ -274,6 +278,17 @@
 
   XCTAssertEqual(_completions, 1);
   XCTAssertTrue(_tasks[0].cancelled);
+  XCTAssertTrue([_lines.lastObject hasSuffix:@"completed by=no-handler"], @"%@", _lines.lastObject);
+}
+
+/// ...and a sink that delivered leaves the handle waiting for JS.
+- (void)testASinkThatDeliveredLeavesTheHandleOpen {
+  [self attachWithBothPhases];
+
+  [self dispatchLive:BGSRNReportPhaseBefore terminating:NO];
+
+  XCTAssertEqual(_completions, 0);
+  XCTAssertFalse(_tasks[0].cancelled);
 }
 
 - (void)testAThrowingSdkCompletionDoesNotEscape {

@@ -11,8 +11,10 @@ typedef NS_ENUM(NSInteger, BGSRNReportPhase) {
 };
 
 /// Receives each `onReportHandlerRequest` payload: `handleId`, `phase`
-/// (`"before"`/`"after"`), `reportId`, `type` and `deadlineMs`.
-typedef void (^BGSRNReportRequestBlock)(NSDictionary<NSString *, id> *request);
+/// (`"before"`/`"after"`), `reportId`, `type` and `deadlineMs`. Returns
+/// whether it reached JS; NO completes the handle at once. Must not throw
+/// (see `BGSRNGuardedEmit`).
+typedef BOOL (^BGSRNReportRequestBlock)(NSDictionary<NSString *, id> *request);
 
 /// Arms a handle's deadline; returns a token the matching cancel block takes.
 typedef id _Nonnull (^BGSRNReportScheduler)(dispatch_block_t task, int64_t delayMs);
