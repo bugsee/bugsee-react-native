@@ -1,7 +1,10 @@
 /**
- * argv/exit shim for the release gate. Run as `prepublishOnly`, so
- * `npm publish` (and therefore `changeset publish`) refuses to ship a
- * SNAPSHOT pin or an unresolved SPM placeholder.
+ * argv/exit shim for the release gate. Run as `prepack`, the one lifecycle
+ * hook that `npm pack`, `npm publish`, `yarn pack` and `yarn npm publish`
+ * (yarn 4, which this repo pins) all run, so none of them can produce a
+ * tarball carrying a SNAPSHOT pin or an unresolved SPM placeholder.
+ * (`prepublishOnly` would not do: yarn 4 never runs it, and neither pack
+ * command does.)
  *
  * Deliberately thin: everything decidable lives in releasable-pins.ts, where
  * it is unit-tested. Reads native-versions.json itself (a type-only import of
