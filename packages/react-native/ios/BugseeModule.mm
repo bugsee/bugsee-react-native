@@ -123,6 +123,10 @@
 /// after a `nil` registration. `onWrapperChannelAvailable:` delivers a fresh
 /// channel for a non-nil registration, so clearing only happens for `nil` --
 /// clearing on every call would wipe a channel the instant it arrived.
+///
+/// Registrations must never overlap (the wrapper-channel contract). Main is
+/// the lock: every call goes through `BGSRNRunOnMain`, so another call site
+/// needs no lock of its own as long as it comes through here.
 static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper) {
   BGSRNRunOnMain(^{
     [Bugsee setWrapper:wrapper];
