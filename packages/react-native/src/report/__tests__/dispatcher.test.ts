@@ -86,6 +86,35 @@ describe('setReportHandler', () => {
     expect(native.completeReportHandler).toHaveBeenCalledWith('h2');
   });
 
+  // A bare `callback(proxy)` call reads `handler?.onAfterReportCreated` off
+  // its object and invokes it detached from that object, so a class-based
+  // handler's `this` would be `undefined` inside the method -- the resulting
+  // TypeError gets caught and logged as "the handler threw", so the handler
+  // would silently do nothing rather than fail loudly. The dispatcher must
+  // call back on the handler it read the method from.
+  it('invokes a class-instance handler method with the handler as `this`', async () => {
+    native.reportUpdate.mockResolvedValue(undefined);
+
+    class RecordingHandler {
+      readonly tag = 'from-this';
+
+      onAfterReportCreated(report: BugseeReport): Promise<void> {
+        // Reads `this` -- a detached call makes this throw instead.
+        return report.setLabels([this.tag]);
+      }
+    }
+
+    setReportHandler(new RecordingHandler());
+
+    emit({ handleId: 'h2b', phase: 'after' });
+    await flush();
+
+    expect(native.reportUpdate).toHaveBeenCalledWith('h2b', {
+      labels: ['from-this'],
+    });
+    expect(native.completeReportHandler).toHaveBeenCalledWith('h2b');
+  });
+
   it('completes immediately when no handler is set', () => {
     // A handler must have existed once to force the native subscription --
     // otherwise the event never reaches the dispatcher at all. Both phases
@@ -135,6 +164,15 @@ describe('setReportHandler', () => {
   });
 
   it('completes exactly once when the callback rejects, and nothing is unhandled', async () => {
+    // Real timers for this one test: Node only reports an unhandled
+    // rejection after a full macrotask boundary passes with the rejection
+    // still unhandled, not merely after the microtask queue drains -- a
+    // `flush()` of `await Promise.resolve()` never crosses that boundary, so
+    // detaching the listener right after it would let this test pass even
+    // with the dispatcher's `.catch` deleted. Fake timers also fake
+    // `setImmediate`, which is exactly the macrotask boundary this needs, so
+    // they have to come out for this test specifically.
+    jest.useRealTimers();
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const unhandled = jest.fn();
     process.on('unhandledRejection', unhandled);
@@ -147,6 +185,9 @@ describe('setReportHandler', () => {
 
     emit({ handleId: 'h6', phase: 'after' });
     await flush();
+    // Crosses a real macrotask boundary, so a rejection still unhandled at
+    // this point would have been reported by now.
+    await new Promise((resolve) => setImmediate(resolve));
 
     process.off('unhandledRejection', unhandled);
     expect(unhandled).not.toHaveBeenCalled();
