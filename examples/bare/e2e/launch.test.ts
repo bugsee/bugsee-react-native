@@ -17,6 +17,7 @@ import {
   platformUnderTest,
   type Step,
 } from './device';
+import { resetScenario } from './scenario';
 import { checkAndroidBanner } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
 
@@ -98,6 +99,9 @@ jest.setTimeout(STEPS.reduce((total, step) => total + step.timeoutMs, 60_000));
 describe('example app on a real device', () => {
   it('reaches Status.Launched within 10s of the JS bundle running', async () => {
     const platform = platformUnderTest();
+    // The app runs whatever e2e-scenario.json names; an interrupted
+    // report-handler run can leave it on one of its own.
+    resetScenario();
 
     const { steps, lines } = await launchAndWaitForSequence(platform, STEPS);
 

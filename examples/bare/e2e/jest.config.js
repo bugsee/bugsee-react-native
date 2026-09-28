@@ -14,6 +14,9 @@ module.exports = {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: `${__dirname}/tsconfig.json` }],
   },
   testMatch: ['<rootDir>/*.test.ts'],
+  // One handset, one app: two test files driving it at once would force-stop
+  // each other's runs and read each other's markers.
+  maxWorkers: 1,
   // The device driver spawns adb/devicectl and reports the whole captured log
   // on failure; truncating it would hide the reason.
   verbose: true,
