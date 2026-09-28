@@ -697,10 +697,10 @@ Workbook Part 9 throughout: assert the experiment, not only the result.
 
 **Not covered here, stated rather than implied:** a *successful* file-path attachment on device (JS cannot create a file without a dependency; covered by `ReportOpsTest.fileAttachmentPassesMoveThrough`), and Android early-crash recovery (not stageable by hand; covered by `ReportHandlerDeadlinesTest`).
 
-- [ ] **Red** — write the test and scenarios; run once before the app changes → FAIL at the first marker.
-- [ ] **Green** — wire `App.tsx` and the scenarios; all six pass on the WOD_LX1.
-- [ ] **Mutate** — temporarily set `LIVE_DEADLINE_MS` to 40 000: case 4 must fail (no `completed by=deadline` inside 30 s; the SDK's own 30 s cap fires first). Revert.
-- [ ] **Commit** — `test(e2e): report handler on Android hardware`. Body: the banner line, observed dispatch-to-completion timings for cases 1, 4 and 5, and the build type used for case 6.
+- [x] **Red** — write the test and scenarios; run once before the app changes → FAIL at the first marker.
+- [x] **Green** — wire `App.tsx` and the scenarios; all six pass on the WOD_LX1.
+- [x] **Mutate** — temporarily set `LIVE_DEADLINE_MS` to 40 000: case 4 must fail (no `completed by=deadline` inside 30 s; the SDK's own 30 s cap fires first). Revert. *Done: as written it survived -- the bridge clamps the live deadline to the SDK option minus 1 s (29 s at the default 30), inside the window. Case 4 now also asserts `deadline=25000` and completion under 26 s, which kills it.*
+- [x] **Commit** — `test(e2e): report handler on Android hardware`. Body: the banner line, observed dispatch-to-completion timings for cases 1, 4 and 5, and the build type used for case 6.
 
 ---
 

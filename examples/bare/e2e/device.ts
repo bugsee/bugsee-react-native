@@ -41,7 +41,7 @@ export const IOS_BUNDLE_ID = 'org.reactjs.native.example.BareExample';
 
 const ANDROID_HOME =
   process.env.ANDROID_HOME ?? `${process.env.HOME}/Library/Android/sdk`;
-const ADB = `${ANDROID_HOME}/platform-tools/adb`;
+export const ADB = `${ANDROID_HOME}/platform-tools/adb`;
 
 /** One thing to wait for, and how long to wait for it once its turn comes. */
 export interface Step {

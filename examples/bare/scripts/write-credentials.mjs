@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Writes the two credential files the example app needs, from the environment.
+ * Writes the two credential files the example app needs, from the environment,
+ * and the default e2e scenario file.
  *
- * Both outputs are gitignored and neither is ever committed:
+ * All three outputs are gitignored and none is ever committed:
  *
  *   credentials.json         read by App.tsx at runtime, for Bugsee.launch()
  *   android/bugsee.properties read by the Bugsee Gradle plugin at build time
@@ -14,11 +15,20 @@
  *   BUGSEE_TOKEN_IOS=… BUGSEE_TOKEN_ANDROID=… BUGSEE_ENDPOINT=… \
  *     node scripts/write-credentials.mjs
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const appRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// App.tsx imports e2e-scenario.json, so the bundle does not build without it.
+// The device e2e overwrites it per run; left alone, the app runs the plain
+// launch walk. Written only when absent, so a scenario mid-run is not reset.
+const scenarioFile = join(appRoot, 'e2e-scenario.json');
+if (!existsSync(scenarioFile)) {
+  writeFileSync(scenarioFile, `${JSON.stringify({ scenario: 'launch' })}\n`);
+  console.log('write-credentials: wrote the default e2e-scenario.json');
+}
 
 const iosToken = process.env.BUGSEE_TOKEN_IOS ?? '';
 const androidToken = process.env.BUGSEE_TOKEN_ANDROID ?? '';
