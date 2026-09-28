@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "test": "jest",
+    "test:release": "BUGSEE_RELEASE=1 yarn test",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.example.json",
     "lint": "eslint .",
     "mutate": "yarn mutate:src && yarn mutate:scripts",

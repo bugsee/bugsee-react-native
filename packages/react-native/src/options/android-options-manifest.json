@@ -1,17 +1,10 @@
 {
   "manifestVersion": 1,
   "sdk": "android",
-  "sdkVersion": "7.2.0",
+  "sdkVersion": "7.3.0-SNAPSHOT",
   "buildConfiguration": "release",
-  "generatedAt": "2026-09-17T15:29:16Z",
+  "generatedAt": "2026-09-28T10:46:30Z",
   "options": [
-    {
-      "key": "com.bugsee.option.capture.webview.domain-allowlist",
-      "type": "string",
-      "default": "",
-      "module": "bugsee-android",
-      "hidden": false
-    },
     {
       "key": "com.bugsee.option.config.duration",
       "type": "int",
@@ -42,6 +35,27 @@
     },
     {
       "key": "com.bugsee.option.config.report-handler-callback-timeout",
+      "type": "int",
+      "default": 30,
+      "module": "bugsee-android",
+      "hidden": false
+    },
+    {
+      "key": "com.bugsee.option.config.max-data-size",
+      "type": "int",
+      "default": 150,
+      "module": "bugsee-android",
+      "hidden": false
+    },
+    {
+      "key": "com.bugsee.option.config.max-pending-reports",
+      "type": "int",
+      "default": 30,
+      "module": "bugsee-android",
+      "hidden": false
+    },
+    {
+      "key": "com.bugsee.option.config.max-pending-report-age",
       "type": "int",
       "default": 30,
       "module": "bugsee-android",

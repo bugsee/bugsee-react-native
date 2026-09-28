@@ -19,6 +19,9 @@
   "devDependencies": {
     "react-native": "0.87.1"
   },
+  "scripts": {
+    "prepublishOnly": "node ../../scripts/cli-check-releasable-pins.ts"
+  },
   "codegenConfig": {
     "name": "RNBugseeSpec",
     "type": "modules",
