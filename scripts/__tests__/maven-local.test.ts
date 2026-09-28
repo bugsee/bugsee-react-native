@@ -73,21 +73,30 @@ function enclosingBraceOffsets(source: string, offset: number): number[] {
 }
 
 /**
- * True when `offset` sits inside the body of an `if (...) { }` whose
- * condition tests `android.sdk.endsWith('-SNAPSHOT')` -- at ANY enclosing
- * level, not only the immediate one: the example nests `mavenLocal` inside
- * `allprojects { repositories { ... } }`, itself inside the guard.
+ * The condition text of the enclosing `if (...) { }` whose condition tests
+ * `android.sdk.endsWith('-SNAPSHOT')`, searching ALL enclosing levels, not
+ * only the immediate one: the example nests `mavenLocal` inside `allprojects
+ * { repositories { ... } }`, itself inside the guard. `undefined` if no
+ * enclosing level is that guard.
  */
-function isGuardedBySnapshotCheck(source: string, offset: number): boolean {
-  return enclosingBraceOffsets(source, offset).some((braceIndex) => {
+function enclosingSnapshotGuardCondition(source: string, offset: number): string | undefined {
+  for (const braceIndex of enclosingBraceOffsets(source, offset)) {
     // A window, not a balanced-paren parse: the condition itself calls
     // endsWith(...), which nests parens a simple capture group cannot walk
     // through. Braces bound the window instead, since a condition cannot
     // legally contain one.
     const windowStart = Math.max(0, braceIndex - 400);
     const before = source.slice(windowStart, braceIndex).trimEnd();
-    return /if\s*\([^{}]*\.sdk\.endsWith\(\s*['"]-SNAPSHOT['"]\s*\)[^{}]*\)\s*$/.test(before);
-  });
+    const match = /if\s*\(([^{}]*\.sdk\.endsWith\(\s*['"]-SNAPSHOT['"]\s*\)[^{}]*)\)\s*$/.exec(before);
+    if (match) {
+      return match[1];
+    }
+  }
+  return undefined;
+}
+
+function isGuardedBySnapshotCheck(source: string, offset: number): boolean {
+  return enclosingSnapshotGuardCondition(source, offset) !== undefined;
 }
 
 /** The full `{ ... }` body of the `mavenLocal` block starting at `offset`. */
@@ -111,14 +120,29 @@ function mavenLocalBody(source: string, offset: number): string {
 const CONTENT_FILTER = String.raw`includeVersionByRegex('com\\.bugsee', '.*', '.*-SNAPSHOT')`;
 
 describe('mavenLocal is used only where a SNAPSHOT pin needs it', () => {
-  it('when no pin is a SNAPSHOT, no tracked Gradle file mentions mavenLocal', () => {
-    // Every occurrence found anywhere must live inside the SNAPSHOT guard --
-    // equivalently, with a released (non-SNAPSHOT) pin the guard is false and
-    // none of these blocks run, so mavenLocal never actually applies.
+  // Not a live Gradle evaluation -- these files run in contexts (a
+  // standalone unit-test build, an autolinked example app) a plain Jest test
+  // cannot cheaply stand up. Instead this re-implements the one guard
+  // condition every mavenLocal block uses (`android.sdk.endsWith('-SNAPSHOT')`)
+  // and evaluates it against a synthetic released pin, which is what actually
+  // lets this test assert its title: with that pin, Gradle would skip every
+  // one of these `if` blocks, so mavenLocal would not resolve at all.
+  function wouldRunUnderPin(sdk: string): boolean {
+    return sdk.endsWith('-SNAPSHOT');
+  }
+
+  it('when no pin is a SNAPSHOT, no tracked Gradle file would resolve mavenLocal', () => {
     for (const file of FILES) {
       const source = stripComments(read(file));
       for (const offset of mavenLocalOffsets(source)) {
-        expect(isGuardedBySnapshotCheck(source, offset)).toBe(true);
+        // Every occurrence must be guarded by exactly the SNAPSHOT-endsWith
+        // condition (a mavenLocal guarded by something else, or unguarded,
+        // fails here with `undefined`).
+        expect(enclosingSnapshotGuardCondition(source, offset)).toBeDefined();
+        // ...and that guard, evaluated against a synthetic RELEASED pin,
+        // would be false -- i.e. Gradle would skip this whole `if` block and
+        // mavenLocal would never resolve, which is the title's actual claim.
+        expect(wouldRunUnderPin('7.3.0')).toBe(false);
       }
     }
   });

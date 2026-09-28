@@ -83,6 +83,14 @@ export interface ManifestOption {
   module: string;
   hidden: boolean;
   enum?: { name: string; values: Record<string, number> };
+  /**
+   * Present iff the SDK still honours the option but no longer recommends
+   * it. Shape per the spec: `{ since, replacement? }`. Android registers a
+   * deprecated option through a separate call
+   * (`OptionDescriptor.createAndRegisterDeprecated`) that carries no
+   * `replacement` -- the spec allows omitting it when there is none.
+   */
+  deprecated?: { since: string; replacement?: string };
 }
 
 /** A whole manifest, format version 1. */
@@ -148,6 +156,41 @@ export function parseAndroidDescriptors(
         : {}),
     });
   }
+
+  // A deprecated option is still registered -- an unregistered key would be
+  // rejected outright -- but through a DIFFERENT call, createAndRegisterDep-
+  // recated, which the pattern above does not match: "createAndRegister" is
+  // a strict prefix of its name, but the character right after it is "D", not
+  // "(". The real source also wraps this call in its own private method
+  // (`registerDeprecatedX()`) rather than inlining it in the static
+  // initializer -- irrelevant here, since this scans the whole file's text
+  // rather than one block.
+  for (const m of source.matchAll(
+    /createAndRegisterDeprecated\(\s*(?:Options\.(\w+)|"([^"]+)")\s*,\s*(\w+)\.class\s*,\s*([^,]*?)\s*,\s*"([^"]+)"\s*\)\s*;/g,
+  )) {
+    const key = m[1] ? keysByConstant[m[1] as string] : (m[2] as string);
+    if (key === undefined) continue;
+
+    const declared = m[3] as string;
+    const rawDefault = m[4] as string;
+    const since = m[5] as string;
+
+    const enumValues = enums[declared];
+    options.push({
+      key,
+      type: enumValues ? 'enum' : (JAVA_TYPES[declared] ?? 'string'),
+      default: parseJavaLiteral(rawDefault),
+      module: 'bugsee-android',
+      // OptionDescriptor.createAndRegisterDeprecated hardcodes hidden to
+      // false in its own implementation; the caller has no way to override it.
+      hidden: false,
+      deprecated: { since },
+      ...(enumValues
+        ? { enum: { name: declared, values: enumValues } }
+        : {}),
+    });
+  }
+
   if (options.length === 0) {
     throw new Error('no descriptors found; the parser missed the source');
   }
