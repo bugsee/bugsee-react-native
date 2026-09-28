@@ -286,6 +286,14 @@ RCT_EXPORT_MODULE(Bugsee)
   // Intentionally empty. Task 3.4e
 }
 
+/// No-op stub. Task 3.5c holds the wrapper channel on iOS and forwards the
+/// line through it (tag nil, `BGSLogEventSourceCustom`, level by value); the
+/// beta2 SDK this builds against has no channel to forward to.
+- (void)wrapperLog:(NSString *)message
+             level:(double)level {
+  // Intentionally empty. Task 3.5c
+}
+
 /// No-op stub. The real bridge (Task 3.4e) tells the SDK which phases JS
 /// wants; nothing native mints a handle yet, so there is nothing to enable.
 - (void)setReportHandlerPhases:(BOOL)before

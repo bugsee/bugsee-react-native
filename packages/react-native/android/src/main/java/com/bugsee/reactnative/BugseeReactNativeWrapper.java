@@ -5,6 +5,7 @@ import androidx.annotation.Nullable;
 
 import com.bugsee.library.contracts.common.DataRequestResultCallback;
 import com.bugsee.library.contracts.internal.BugseeWrapper;
+import com.bugsee.library.contracts.internal.BugseeWrapperChannel;
 import com.bugsee.library.contracts.reporting.Report;
 
 import java.util.Collections;
@@ -20,9 +21,9 @@ import java.util.Map;
  * global, and the build configuration from {@code __DEV__}. Nothing here
  * infers them natively, which would produce a second, disagreeing answer.
  *
- * <p>Lifecycle events, secure rectangles and report handling are the other
- * halves of this contract; each is forwarded to a process-wide object that
- * outlives this instance.
+ * <p>Lifecycle events, secure rectangles, report handling and the wrapper
+ * channel are the other halves of this contract; each is forwarded to a
+ * process-wide object that outlives this instance.
  */
 final class BugseeReactNativeWrapper implements BugseeWrapper {
 
@@ -123,6 +124,20 @@ final class BugseeReactNativeWrapper implements BugseeWrapper {
     @Nullable
     private static String reportIdFrom(@Nullable final Object data) {
         return data instanceof String ? (String) data : null;
+    }
+
+    /**
+     * Stores the channel in the process-wide holder, and does nothing else.
+     *
+     * <p>Runs inside {@code Bugsee.setWrapper}, under the SDK's registration
+     * lock, so it must not block or take a lock. Storing is the first
+     * statement for a harder reason: if anything threw before it, registering
+     * this same instance again is a no-op and would deliver no replacement.
+     * Held outside this instance because {@code setWrapperInfo} replaces it.
+     */
+    @Override
+    public void onWrapperChannelAvailable(@NonNull final BugseeWrapperChannel channel) {
+        WrapperChannelHolder.shared().set(channel);
     }
 
     /**
