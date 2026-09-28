@@ -158,12 +158,6 @@ export abstract class BugseeLaunchOptions {
    * Installs the set the SDK reports as being in effect, replacing any
    * previous report rather than merging — a merge would keep answering with
    * an option the SDK has since stopped applying.
-   *
-   * What this can answer differs by platform, and the wrapper does not
-   * paper over it: Android merges its own defaults with the app's overrides
-   * and answers even before launch, while iOS reports only what differs from
-   * its defaults, so an option the app never set stays unanswered there
-   * (bugsee/bugsee-cocoa#100).
    */
   static refreshFrom(
     options: BugseeLaunchOptions,
