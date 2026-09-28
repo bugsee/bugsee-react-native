@@ -20,6 +20,7 @@
  * `adb reverse tcp:8081 tcp:8081`.
  */
 import { ANDROID_PACKAGE } from './device';
+import { ON_ANDROID, must, useLog } from './harness';
 import {
   type LogLine,
   Logcat,
@@ -29,7 +30,6 @@ import {
   writeScenario,
 } from './scenario';
 
-const ON_ANDROID = process.env.E2E_PLATFORM === 'android';
 const describeAndroid = ON_ANDROID ? describe : describe.skip;
 
 jest.setTimeout(4 * 60_000);
@@ -38,13 +38,6 @@ const PROBE = 'bugsee-secure-probe';
 const DUMP = '/data/local/tmp/bugsee-e2e-ui.xml';
 
 let log: Logcat;
-
-function must(line: LogLine | undefined, what: string, from = 0): LogLine {
-  if (line === undefined) {
-    throw new Error(`never saw ${what}.\nLog since the run started:\n${log.tail(from)}`);
-  }
-  return line;
-}
 
 interface Rect {
   readonly left: number;
@@ -85,6 +78,7 @@ function servedRect(line: LogLine): Rect {
 describeAndroid('secure rectangles on an Android handset', () => {
   beforeAll(async () => {
     log = await Logcat.start();
+    useLog(log, 'B1');
     await adb('shell', 'setprop', 'log.tag.BugseeRN', 'DEBUG');
   });
 

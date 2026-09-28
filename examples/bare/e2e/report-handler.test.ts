@@ -39,43 +39,38 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { checkAndroidBanner } from '../../../scripts/sdk-banner';
-import { readNativeVersions } from '../../../scripts/native-versions';
 import {
-  DEAD_ENDPOINT,
   type PulledBundle,
   airplane,
-  clearAndroidBundles,
-  clearIosBundles,
   displayNameOf,
   fileNameOf,
-  listAndroidBundles,
-  listIosBundles,
-  pullAndroidBundles,
-  pullIosBundles,
   terminateIosApp,
 } from './bundles';
 import { ANDROID_PACKAGE, IOS_SIMULATOR_ID } from './device';
 import {
+  ON_ANDROID,
+  ON_IOS,
+  type Run,
+  awaitBundles,
+  clearBundles,
+  describeDevice,
+  escape,
+  must,
+  report,
+  startRun,
+  useLog,
+} from './harness';
+import {
   type DeviceLog,
   type LogLine,
   Logcat,
-  type Scenario,
   SimulatorConsole,
-  type SimulatorLaunch,
   adb,
-  awaitMetroServes,
   hostProcessAlive,
-  launchScenario,
   pidOf,
   resetScenario,
-  writeScenario,
 } from './scenario';
 
-const PLATFORM = process.env.E2E_PLATFORM;
-const ON_ANDROID = PLATFORM === 'android';
-const ON_IOS = PLATFORM === 'ios';
-const describeDevice = ON_ANDROID || ON_IOS ? describe : describe.skip;
 const itAndroid = ON_ANDROID ? it : it.skip;
 /**
  * Case 6 on iOS needs a crash reporter, and the simulator slice of the iOS SDK
@@ -90,139 +85,6 @@ const itIosRecovery = ON_IOS && process.env.E2E_IOS_RECOVERY === '1' ? it : it.s
 jest.setTimeout(10 * 60_000);
 
 let log: DeviceLog;
-
-/** Fails with the captured log, so a miss can be read rather than guessed. */
-function must(line: LogLine | undefined, what: string, from = 0): LogLine {
-  if (line === undefined) {
-    throw new Error(`never saw ${what}.\nLog since the run started:\n${log.tail(from)}`);
-  }
-  return line;
-}
-
-function escape(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-interface Run {
-  readonly scenario: Scenario;
-  /** Log index the run started at. */
-  readonly start: number;
-  readonly banner: LogLine;
-  readonly launched: LogLine;
-  /** Whether the JS bundle was built with __DEV__, as the app reports it. */
-  readonly dev: boolean;
-  /** iOS only: the launch's console attachment, which ends with the process. */
-  readonly launch?: SimulatorLaunch;
-}
-
-/** The SDK's version line on iOS, from the `NSLog` it prints at launch. */
-const IOS_SDK_LINE = /Bugsee IOS SDK ver:(\S+) build:(\S+)/;
-
-/**
- * Starts the app on `name` and asserts the per-run preconditions: the app
- * really ran this scenario (the nonce round-trips), the SDK build is the
- * pinned one, and the SDK reached Launched with the device offline.
- */
-async function startRun(name: string): Promise<Run> {
-  if (ON_IOS) {
-    return startIosRun(name);
-  }
-  const scenario = writeScenario(name);
-  const start = log.mark();
-  await launchScenario(scenario);
-
-  const ran = must(
-    await log.waitFor(
-      new RegExp(`BUGSEE_E2E scenario=${name} nonce=${scenario.nonce} `),
-      120_000,
-      start,
-    ),
-    `the app starting scenario ${name} (nonce ${scenario.nonce})`,
-    start,
-  );
-  const banner = must(
-    await log.waitFor(/Bugsee Android SDK \S+ \[[0-9a-f]+\]/, 15_000, start),
-    'the SDK build banner',
-    start,
-  );
-  const bannerCheck = checkAndroidBanner(banner.text, readNativeVersions());
-  if (!bannerCheck.ok) {
-    throw new Error(`SDK build banner does not match the pin: ${bannerCheck.reason}`);
-  }
-  const launched = must(
-    await log.waitFor(/BUGSEE_E2E status=2/, 20_000, ran.index),
-    'Status.Launched with the device offline',
-    start,
-  );
-  return { scenario, start, banner, launched, dev: / dev=true/.test(ran.text) };
-}
-
-async function startIosRun(name: string): Promise<Run> {
-  const simulator = log as SimulatorConsole;
-  const scenario = writeScenario(name, { endpoint: DEAD_ENDPOINT });
-  await awaitMetroServes(scenario.nonce);
-  const launch = simulator.launch();
-  const { start } = launch;
-
-  const ran = must(
-    await log.waitFor(
-      new RegExp(`BUGSEE_E2E scenario=${name} nonce=${scenario.nonce} `),
-      120_000,
-      start,
-    ),
-    `the app starting scenario ${name} (nonce ${scenario.nonce})`,
-    start,
-  );
-  // The retention precondition, both halves: the app took the dead endpoint,
-  // and the SDK really failed to reach it.
-  expect(ran.text).toContain(`endpoint=${DEAD_ENDPOINT}`);
-  const banner = must(await log.waitFor(IOS_SDK_LINE, 15_000, start), 'the iOS SDK version line', start);
-  const version = IOS_SDK_LINE.exec(banner.text)![1];
-  if (version !== readNativeVersions().ios.sdk) {
-    throw new Error(`iOS SDK ${version} launched, but the pin is ${readNativeVersions().ios.sdk}`);
-  }
-  must(
-    await log.waitFor(/Session not initialized\. - Could not connect to the server/, 15_000, start),
-    'the SDK failing to reach the dead endpoint',
-    start,
-  );
-  const launched = must(
-    await log.waitFor(/BUGSEE_E2E status=2/, 20_000, ran.index),
-    'Status.Launched with the endpoint dead',
-    start,
-  );
-  return { scenario, start, banner, launched, dev: / dev=true/.test(ran.text), launch };
-}
-
-async function clearBundles(): Promise<void> {
-  return ON_IOS ? clearIosBundles() : clearAndroidBundles();
-}
-
-async function listBundles(): Promise<string[]> {
-  return ON_IOS ? listIosBundles() : listAndroidBundles();
-}
-
-/**
- * The retained bundles, once at least `count` exist (or the wait runs out).
- * On iOS, which has no commit banner, each bundle's `environment.sdk` is the
- * build evidence: its version must be the pin.
- */
-async function awaitBundles(count: number, timeoutMs = 60_000): Promise<PulledBundle[]> {
-  const deadline = Date.now() + timeoutMs;
-  while ((await listBundles()).length < count && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 1_000));
-  }
-  if (!ON_IOS) {
-    return pullAndroidBundles();
-  }
-  const bundles = await pullIosBundles();
-  for (const bundle of bundles) {
-    const sdk = (bundle.request.environment as { sdk?: Record<string, unknown> } | undefined)?.sdk;
-    report(`${bundle.file} environment.sdk`, { version: sdk?.version, build: sdk?.build, type: sdk?.type });
-    expect(sdk?.version).toBe(readNativeVersions().ios.sdk);
-  }
-  return bundles;
-}
 
 /**
  * iOS: the thread an `NSLog` line came from, `BareExample[<pid>:<tid>]`. The
@@ -285,12 +147,6 @@ function pick(request: Record<string, unknown>): Record<string, unknown> {
   return { type, summary, description, severity, labels, source, created_on };
 }
 
-/** Evidence the report is committed, surfaced for the commit body. */
-function report(label: string, value: unknown): void {
-  const task = ON_IOS ? '3.4f' : '3.4d';
-  console.log(`[${task}] ${label}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
-}
-
 /**
  * The simulator's own crash report for `pid`, which macOS writes to the
  * host's DiagnosticReports: the process-death evidence on iOS, with the
@@ -328,9 +184,11 @@ describeDevice(`report handler on ${ON_IOS ? `the iOS simulator (${IOS_SIMULATOR
       // No network switch to throw: every iOS launch carries DEAD_ENDPOINT
       // (startIosRun), which is what retains its reports.
       log = SimulatorConsole.start();
+      useLog(log, '3.4f');
       return;
     }
     log = await Logcat.start();
+    useLog(log, '3.4d');
     // 9.3.2: offline before the app starts, and for the whole file, so every
     // report is retained where the test can read it.
     await airplane(true);
