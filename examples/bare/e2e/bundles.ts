@@ -33,7 +33,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { inflateRawSync, zstdDecompressSync } from 'node:zlib';
 
@@ -300,6 +300,13 @@ export function extractZip(zip: Buffer, dir: string): void {
     if (name.includes('..') || name.startsWith('/')) {
       throw new Error(`extractZip: refusing entry path ${name}`);
     }
-    writeFileSync(join(dir, name), bytes);
+    // A directory entry (`logs/`) is not a file to write; a nested entry
+    // (`logs/log.json`) needs its directories first.
+    if (name.endsWith('/')) {
+      continue;
+    }
+    const path = join(dir, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, bytes);
   }
 }
