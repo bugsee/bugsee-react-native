@@ -199,4 +199,62 @@ describe('parseAndroidDescriptors', () => {
     expect(() => parseAndroidDescriptors('// nothing', keys, enums))
       .toThrow(/missed the source/);
   });
+
+  // Real shape from OptionsDescriptors.java: a deprecated-but-still-honoured
+  // option registers through createAndRegisterDeprecated, not
+  // createAndRegister -- a caller relying on the surface this parser
+  // extracts would otherwise silently lose it, exactly what happened to
+  // com.bugsee.option.capture.webview.domain-allowlist when 7.3.0-SNAPSHOT
+  // deprecated it. Wrapped in its own private method, per the real source,
+  // to prove a text-wide scan finds it there too.
+  describe('a deprecated option, registered via createAndRegisterDeprecated', () => {
+    const deprecatedKeys = {
+      ...keys,
+      WebViewDomainAllowlist: 'com.bugsee.option.capture.webview.domain-allowlist',
+    };
+    const SOURCE = `
+final class OptionsDescriptors {
+    @SuppressWarnings("deprecation")
+    private static void registerDeprecatedWebViewDomainAllowlist() {
+        OptionDescriptor.createAndRegisterDeprecated(
+                Options.WebViewDomainAllowlist, String.class, "", "7.1.2");
+    }
+
+    static {
+        OptionDescriptor.createAndRegister(Options.Duration, Integer.class, 60);
+        registerDeprecatedWebViewDomainAllowlist();
+    }
+}`;
+
+    it('is present in the extracted options, not dropped', () => {
+      const result = parseAndroidDescriptors(SOURCE, deprecatedKeys, enums);
+      expect(result.map((o) => o.key)).toEqual(
+        expect.arrayContaining([
+          'com.bugsee.option.config.duration',
+          'com.bugsee.option.capture.webview.domain-allowlist',
+        ]),
+      );
+    });
+
+    it('carries the deprecation, per the spec shape { since }', () => {
+      const result = parseAndroidDescriptors(SOURCE, deprecatedKeys, enums);
+      const option = result.find(
+        (o) => o.key === 'com.bugsee.option.capture.webview.domain-allowlist',
+      );
+      expect(option).toEqual({
+        key: 'com.bugsee.option.capture.webview.domain-allowlist',
+        type: 'string',
+        default: '',
+        module: 'bugsee-android',
+        hidden: false,
+        deprecated: { since: '7.1.2' },
+      });
+    });
+
+    it('still finds a non-deprecated option registered alongside it', () => {
+      const result = parseAndroidDescriptors(SOURCE, deprecatedKeys, enums);
+      const option = result.find((o) => o.key === 'com.bugsee.option.config.duration');
+      expect(option?.deprecated).toBeUndefined();
+    });
+  });
 });

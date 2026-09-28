@@ -3,7 +3,7 @@
   "sdk": "android",
   "sdkVersion": "7.3.0-SNAPSHOT",
   "buildConfiguration": "release",
-  "generatedAt": "2026-09-28T10:46:30Z",
+  "generatedAt": "2026-09-28T11:16:26Z",
   "options": [
     {
       "key": "com.bugsee.option.config.duration",
@@ -624,6 +624,16 @@
       "default": null,
       "module": "bugsee-android",
       "hidden": true
+    },
+    {
+      "key": "com.bugsee.option.capture.webview.domain-allowlist",
+      "type": "string",
+      "default": "",
+      "module": "bugsee-android",
+      "hidden": false,
+      "deprecated": {
+        "since": "7.1.2"
+      }
     }
   ]
 }
