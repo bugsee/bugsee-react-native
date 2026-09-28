@@ -156,4 +156,122 @@ public class SecureRectangleStoreTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new SecureRectangleStore().set(DISPLAY, null));
     }
+
+    // ---- Display origin -------------------------------------------------
+    //
+    // JS publishes measureInWindow values, which React Native makes relative
+    // to the root's viewport offset. With edge-to-edge off that offset has
+    // the status bar and cutout subtracted, and in split-screen/freeform the
+    // window is not at the display's origin either. The SDK wants display
+    // pixels, so the store adds the React root's display origin to every
+    // rectangle it serves.
+
+    @Test
+    public void translatesEveryRectangleByTheDisplayOrigin() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.setOrigin(DISPLAY, 7, 96);
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40, 50, 60, 70, 80 });
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertEquals(2, packed[1]);
+        assertArrayEquals(
+                new int[] { 17, 116, 37, 136, 57, 156, 77, 176 },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
+    /**
+     * The origin can arrive, or change (rotation, a window resize), after the
+     * rectangles were published: the served set must follow it, and the SDK
+     * must be told to re-read.
+     */
+    @Test
+    public void anOriginChangeMovesPublishedRectanglesAndTheVersion() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+        final int before = store.snapshot(DISPLAY)[0];
+
+        store.setOrigin(DISPLAY, 0, 96);
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertNotEquals(before, packed[0]);
+        assertArrayEquals(new int[] { 10, 116, 30, 136 },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
+    /** The origin is re-reported on every layout pass; an unchanged one is free. */
+    @Test
+    public void anUnchangedOriginHoldsTheVersion() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.setOrigin(DISPLAY, 0, 96);
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+        final int settled = store.snapshot(DISPLAY)[0];
+
+        store.setOrigin(DISPLAY, 0, 96);
+
+        assertEquals(settled, store.snapshot(DISPLAY)[0]);
+    }
+
+    /** A republish after an origin change keeps the origin, not (0, 0). */
+    @Test
+    public void keepsTheOriginAcrossRepublishes() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.setOrigin(DISPLAY, 0, 96);
+        store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertArrayEquals(new int[] { 10, 116, 30, 136 },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
+    @Test
+    public void anOriginAppliesOnlyToItsOwnDisplay() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.setOrigin(1, 0, 96);
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertArrayEquals(new int[] { 10, 20, 30, 40 },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
+    /** An origin with nothing secured serves the empty set, at the empty version. */
+    @Test
+    public void anOriginAloneSecuresNothing() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        final int[] empty = store.snapshot(DISPLAY);
+
+        store.setOrigin(DISPLAY, 0, 96);
+
+        assertArrayEquals(empty, store.snapshot(DISPLAY));
+    }
+
+    /** Past int32 the sum saturates outwards rather than wrapping elsewhere. */
+    @Test
+    public void saturatesOutwardsInsteadOfWrapping() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.setOrigin(DISPLAY, -10, 10);
+        store.set(DISPLAY, new int[] {
+                Integer.MIN_VALUE + 5, 0, 0, Integer.MAX_VALUE - 5 });
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertArrayEquals(
+                new int[] { Integer.MIN_VALUE, 10, -10, Integer.MAX_VALUE },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
+    @Test
+    public void theDisplayOriginIsTheScreenLocationLessTheViewportOffset() {
+        // Edge-to-edge off, 96 px status bar: RN's viewport offset is the
+        // root's window location less the status-bar inset, i.e. (0, 0),
+        // while the root sits at (0, 96) on the display.
+        assertArrayEquals(new int[] { 0, 96 },
+                SecureRectangleStore.displayOrigin(new int[] { 0, 96 }, 0, 0));
+        // Edge-to-edge on: RN's offset already is the screen location.
+        assertArrayEquals(new int[] { 0, 0 },
+                SecureRectangleStore.displayOrigin(new int[] { 0, 96 }, 0, 96));
+        // Any mix: each axis is screen location less viewport offset.
+        assertArrayEquals(new int[] { 80, 1200 },
+                SecureRectangleStore.displayOrigin(new int[] { 80, 1296 }, 0, 96));
+    }
 }

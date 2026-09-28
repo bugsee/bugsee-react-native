@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import android.util.Base64;
+import android.util.Log;
 
 import com.bugsee.library.Bugsee;
 import com.bugsee.library.contracts.reporting.Report;
@@ -20,6 +21,7 @@ import com.facebook.react.module.annotations.ReactModule;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,13 +42,20 @@ public class BugseeModule extends NativeBugseeSpec
 
     public static final String NAME = "Bugsee";
 
+    /** The wrapper's log tag, as ReportHandlerBridge and WrapperEventBus use. */
+    private static final String TAG = "BugseeRN";
+
     // The stable codes of src/report/errors.ts. An app matches on these.
     private static final String E_REPORT_HANDLE_DEAD = "E_REPORT_HANDLE_DEAD";
     private static final String E_REPORT_ATTACHMENT_REJECTED = "E_REPORT_ATTACHMENT_REJECTED";
     private static final String E_REPORT_BAD_ARGUMENT = "E_REPORT_BAD_ARGUMENT";
 
+    /** Moves secure rectangles from React Native's viewport space to display pixels. */
+    private final ReactRootOriginTracker originTracker;
+
     public BugseeModule(final ReactApplicationContext context) {
         super(context);
+        originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared());
         // Attached here, not on first subscribe: the SDK may emit before any JS
         // has run, and a listener that only exists once JS asks for it would
         // miss the launch transitions that a caller most wants.
@@ -70,6 +79,7 @@ public class BugseeModule extends NativeBugseeSpec
         // next runtime cannot know them, so the reports must not wait out
         // their deadlines.
         ReportHandlerBridge.shared().detach(this);
+        originTracker.dispose();
         super.invalidate();
     }
 
@@ -154,7 +164,17 @@ public class BugseeModule extends NativeBugseeSpec
         for (int i = 0; i < flat.length; i++) {
             flat[i] = (int) Math.round(coordinates.getDouble(i));
         }
+        // Stored as measured (relative to React Native's viewport offset);
+        // the store serves them moved to the React root's display origin,
+        // which the tracker keeps current. Re-read now too, in case the
+        // window moved without a layout pass.
         SecureRectangleStore.shared().set((int) display, flat);
+        originTracker.refreshSoon();
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "secure published display=" + (int) display
+                    + " raw=" + Arrays.toString(flat)
+                    + " served=" + Arrays.toString(SecureRectangleStore.shared().snapshot((int) display)));
+        }
     }
 
     private static String string(
