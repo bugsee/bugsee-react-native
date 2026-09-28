@@ -273,20 +273,16 @@ Spawn a reviewer subagent. It must independently verify the embed assertion, the
 - [ ] **2.3** Enum coercion on the Android bridge — a per-key number→enum table using `fromIntValue`/`fromRawValue`. Tests pin `LogLevel.Error → 1` (ordinal 0) and `VideoMode.Fullscreen → 20` (ordinal 3). **Mutate:** switch the table to `values()[n]`; both must fail.
 - [ ] **2.4** `endpoint` normalisation — Android to `$$ENDPOINT` passthrough, iOS to `endpoint` with `/v2` appended when absent. Tests both directions, including an input that already carries `/v2`.
 - [ ] **2.5** Defaults read back from `getLaunchOptions()` after launch, so hardcoded values only answer pre-launch.
-**Waiting on SDK fixes, both in progress.** Two workarounds in this phase are
-temporary and should be removed rather than inherited:
-
-- `bugsee/bugsee-cocoa#99` — `relaunchWithOptions:started:` can never invoke
-  `started:`, so the iOS bridge settles the promise itself after 30s with
-  `E_RELAUNCH_NO_REPORT`. When fixed: delete the `settled` flag, the
-  `dispatch_after` and the rejection, and resolve straight from the callback.
-- `bugsee/bugsee-cocoa#100` — `getLaunchOptions` returns only user-set
-  options, so an iOS getter cannot answer for an option the app never set.
-  When fixed: the bridge returns the effective set and the platform caveats in
-  `NativeBugsee.ts`, `index.ts` and `BugseeLaunchOptions.refreshFrom` go away.
-
-Both are pinned by issue number at each site, so `git grep bugsee-cocoa#`
-finds everything to remove.
+**Resolved in 7.0.0-beta2; removed in Task 3.7.** This phase originally
+carried two temporary workarounds for `bugsee/bugsee-cocoa#99` (the iOS
+bridge settling `relaunch()` itself after 30s with `E_RELAUNCH_NO_REPORT`,
+because `relaunchWithOptions:started:` could never invoke `started:`) and
+`bugsee/bugsee-cocoa#100` (an iOS `getLaunchOptions` getter that could not
+answer for an option the app never set, and the platform caveats in
+`NativeBugsee.ts`, `index.ts` and `BugseeLaunchOptions.refreshFrom` that
+documented it). Both issues are closed as completed and both fixes are
+ancestors of beta2 and beta3; Task 3.7 proved this on-device before deleting
+the workarounds, and `git grep bugsee-cocoa#` now finds nothing.
 
 - [ ] **2.6** Device integration: launch with a non-default option on both devices and assert via `getLaunchOptions()` that it took effect.
 - [x] **2.7** Manifest parity gate against `bugsee/specs` `sdk/options/`.

@@ -201,6 +201,17 @@ export default function App() {
               effective['com.bugsee.option.config.duration'],
             )} keys=${Object.keys(effective).length}`,
           );
+          // Task 3.7: this app never sets wifi-only-upload (see
+          // launchOptions above -- only endpoint and duration), so an SDK
+          // that could only report options differing from its own defaults
+          // would have no key to answer with here at all. Logged separately
+          // from `effective duration` so a caller can tell "the getter
+          // answered but the key is missing" from "the getter never ran".
+          console.log(
+            `BUGSEE_E2E effective wifi-only-upload=${String(
+              effective['com.bugsee.option.config.wifi-only-upload'],
+            )}`,
+          );
         } catch (optionsCause) {
           console.log(`BUGSEE_E2E effective threw ${String(optionsCause)}`);
         }

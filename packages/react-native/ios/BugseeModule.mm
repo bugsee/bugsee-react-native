@@ -186,56 +186,16 @@ RCT_EXPORT_MODULE(Bugsee)
     // call was made" on iOS and "the SDK restarted" on Android, for one JS
     // signature. optionsFrom: converts the same dictionary, and the started:
     // overload reports what actually happened.
-    //
-    // The timeout is not defensive decoration. relaunchWithOptions:started:
-    // reaches its completion through [Bugsee stop:], whose own completion runs
-    // inside -stopRecording:. When the preceding launch never brought capture
-    // up — an invalid app token does this — that callback does not arrive, and
-    // started: is never invoked. Reproduced on a simulator: `relaunch()` never
-    // settles, and a promise that never settles is indistinguishable from a
-    // slow one.
-    //
-    // TEMPORARY, tracked by bugsee/bugsee-cocoa#99: once started: is
-    // guaranteed to fire exactly once on every path, delete `settled`, the
-    // dispatch_after and the E_RELAUNCH_NO_REPORT rejection, and resolve
-    // straight from the callback. Until then a wrapper must not hand JS a
-    // promise that can hang forever.
-    // `settled` is guarded by the main queue, not by luck: every writer below
-    // runs there. The SDK invokes started: on whatever thread its stop
-    // completion happens to use, so without the hop that callback and the
-    // timeout could both observe NO and settle the same promise twice --
-    // resolve and reject, on one promise.
-    __block BOOL settled = NO;
-    void (^settleOnce)(BOOL, BOOL) = ^(BOOL known, BOOL success) {
-      NSCAssert([NSThread isMainThread], @"settleOnce must run on the main queue");
-      if (settled) {
-        return;
-      }
-      settled = YES;
-      if (known) {
-        resolve(@(success));
-      } else {
-        reject(@"E_RELAUNCH_NO_REPORT",
-               @"Bugsee.relaunch did not report completion within 30s. The SDK "
-               @"may or may not have restarted; call getStatus() to find out.",
-               nil);
-      }
-    };
-
     [Bugsee relaunchWithOptions:[BugseeOptions optionsFrom:options]
                         started:^(BOOL success) {
-                          // Onto the main queue so this writer and the timeout
-                          // below are serialised on one queue.
+                          // Onto the main queue: the SDK invokes started: on
+                          // whatever thread its stop completion happens to
+                          // use, and resolve/reject must be called from the
+                          // same queue this method hopped onto.
                           dispatch_async(dispatch_get_main_queue(), ^{
-                            settleOnce(YES, success);
+                            resolve(@(success));
                           });
                         }];
-
-    dispatch_after(
-        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)),
-        dispatch_get_main_queue(), ^{
-          settleOnce(NO, NO);
-        });
   });
 }
 
@@ -261,14 +221,6 @@ RCT_EXPORT_MODULE(Bugsee)
 - (void)getLaunchOptions:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
-    // NOTE, tracked by bugsee/bugsee-cocoa#100: iOS returns only the options
-    // that DIFFER from its defaults (+getLaunchOptions is [options
-    // userOptions]), so unlike Android this cannot answer a getter the app
-    // never set. BugseeOptions -dictionary holds the resolved set and is
-    // public, but nothing public hands out the live options object. When the
-    // SDK exposes the effective set, this returns it and the platform caveats
-    // in NativeBugsee.ts, index.ts and BugseeLaunchOptions.refreshFrom go
-    // away with it.
     resolve([Bugsee getLaunchOptions] ?: @{});
   });
 }
