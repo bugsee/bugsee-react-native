@@ -13,6 +13,7 @@
 #if __has_include(<BugseeRNSupport/BGSRNTokens.h>)
 #import <BugseeRNSupport/BGSRNMainThread.h>
 #import <BugseeRNSupport/BGSRNWrapper.h>
+#import <BugseeRNSupport/BGSRNWrapperChannelHolder.h>
 #import <BugseeRNSupport/BGSRNStatusMapper.h>
 #import <BugseeRNSupport/BGSRNSecureRectangles.h>
 #import <BugseeRNSupport/BGSRNEventBus.h>
@@ -23,6 +24,7 @@
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
+#import "BGSRNWrapperChannelHolder.h"
 #import "BGSRNStatusMapper.h"
 #import "BGSRNSecureRectangles.h"
 #import "BGSRNEventBus.h"
@@ -40,6 +42,14 @@
 @end
 
 @implementation BGSRNWrapper (BugseeConformance)
+
+/// Store the channel and return -- the SDK's contract for this callback,
+/// verbatim. Nothing else belongs here: flushing anything buffered, taking a
+/// lock, or calling back into the SDK from inside this callback are all ways
+/// to discover one of the hazards `BGSWrapperChannel` documents.
+- (void)onWrapperChannelAvailable:(id<BGSWrapperChannel>)channel {
+  BGSRNWrapperChannelHolder.shared.channel = channel;
+}
 
 /// Through the bus rather than straight to the module: this wrapper is
 /// registered before React Native has a JS runtime and is replaced once it
@@ -106,6 +116,21 @@
 }
 
 @end
+
+/// The one route to `+[Bugsee setWrapper:]` in this module, so a future call
+/// site cannot bypass either half of this: the main-thread hop
+/// `setWrapperInfo` already needed, and clearing the held wrapper channel
+/// after a `nil` registration. `onWrapperChannelAvailable:` delivers a fresh
+/// channel for a non-nil registration, so clearing only happens for `nil` --
+/// clearing on every call would wipe a channel the instant it arrived.
+static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper) {
+  BGSRNRunOnMain(^{
+    [Bugsee setWrapper:wrapper];
+    if (wrapper == nil) {
+      BGSRNWrapperChannelHolder.shared.channel = nil;
+    }
+  });
+}
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
 
@@ -240,12 +265,11 @@ RCT_EXPORT_MODULE(Bugsee)
 }
 
 - (void)setWrapperInfo:(NSDictionary *)identity {
-  BGSRNRunOnMain(^{
-    // The SDK holds the wrapper for the process's lifetime and reads it while
-    // composing a report's environment, so this must be registered before
-    // launch rather than alongside it.
-    [Bugsee setWrapper:(id<BugseeWrapper>)[BGSRNWrapper wrapperWithIdentity:identity]];
-  });
+  // The SDK holds the wrapper for the process's lifetime and reads it while
+  // composing a report's environment, so this must be registered before
+  // launch rather than alongside it. Through BGSRNSetWrapper, the one route
+  // to `+setWrapper:` in this module.
+  BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithIdentity:identity]);
 }
 
 - (void)launch:(NSString *)token
@@ -330,12 +354,17 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
-/// No-op stub. Task 3.5c holds the wrapper channel on iOS and forwards the
-/// line through it (tag nil, `BGSLogEventSourceCustom`, level by value); the
-/// beta2 SDK this builds against has no channel to forward to.
+/// Forwards a JS log line through the wrapper channel (tag nil,
+/// `BGSLogEventSourceCustom`, level by value -- see `BGSRNWrapperChannelHolder`).
+///
+/// `level` arrives as `double` because that is what a JS number is; JS
+/// already restricts it to the 1-5 wire values (`forwardLog` in
+/// `wrapper/channel.ts`), but rounding rather than truncating matches the
+/// caution taken with secure-rectangle coordinates above -- a stray fraction
+/// should land on the nearest level, not be chopped toward one.
 - (void)wrapperLog:(NSString *)message
              level:(double)level {
-  // Intentionally empty. Task 3.5c
+  [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
 }
 
 /// Which phases JS wants delivered; the other completes natively at once.
