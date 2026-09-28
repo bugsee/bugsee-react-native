@@ -99,6 +99,7 @@ android {
             main {
                 java.exclude 'com/bugsee/reactnative/BugseeModule.java'
                 java.exclude 'com/bugsee/reactnative/BugseePackage.java'
+                java.exclude 'com/bugsee/reactnative/ReactRootOriginTracker.java'
             }
         }
     }
