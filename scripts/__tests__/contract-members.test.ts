@@ -84,6 +84,15 @@ public interface R {
 `)).toEqual(['getFoo']);
   });
 
+  // A line comment between a name and its opening parenthesis must be
+  // stripped to nothing, not left as placeholder text: JAVA_METHOD's `\s*`
+  // between the two spans the newline to the "(" on the next line, but only
+  // across whitespace -- any leftover non-whitespace character breaks that.
+  it('strips a line comment cleanly enough that the parenthesis on the next line is still found', () => {
+    expect(parseJavaMembers('interface R {\n    void real // note\n        ();\n}'))
+      .toEqual(['real']);
+  });
+
   // A method is only recognised at the true start of its line: a second
   // statement crammed onto the same line as a field is not read as a member.
   it('does not find a member that is not the first token on its line', () => {
@@ -101,7 +110,11 @@ public interface R {
 
   // A multi-line annotation call (its closing paren on a later line) must be
   // stripped as a whole so its own text never gets read as a member.
-  it('strips a multi-line annotation before a member', () => {
+  // No annotation is ever stripped (see the comment in parseJavaMembers), so
+  // this pins the reason that is safe: JAVA_METHOD cannot match starting
+  // inside an annotation call, multi-line or not, and it cannot leak into
+  // the real declaration that follows one either.
+  it('does not let a multi-line annotation call corrupt the member after it', () => {
     expect(parseJavaMembers(`
 public interface R {
     @Deprecated(
@@ -123,6 +136,17 @@ public interface R {
   // one required tab and one stray character.
   it('accepts more than one tab between the type and the name', () => {
     expect(parseJavaMembers('interface R {\n    String\t\tgetId();\n}'))
+      .toEqual(['getId']);
+  });
+
+  // Two tabs between a modifier and the type it precedes: a single tab
+  // cannot tell `\s+` (the modifier's real separator) apart from `\s`
+  // (exactly one) -- the prefix class right after absorbs a single leftover
+  // whitespace char anyway, since it lists a literal space. It does not
+  // list a tab, so a second one is the only whitespace a fallback there
+  // cannot swallow.
+  it('accepts two tabs between a modifier and the type it precedes', () => {
+    expect(parseJavaMembers('interface R {\n    public\t\tString getId();\n}'))
       .toEqual(['getId']);
   });
 
@@ -209,6 +233,16 @@ NSInteger x = -1; - (void)hidden;
 -(void)compact;
 @end
 `, 'P')).toEqual(['compact']);
+  });
+
+  // Indented by leading spaces: OBJC_METHOD's leading `[ \t]*` must actually
+  // consume them to reach the "-"/"+", not merely tolerate their absence.
+  it('accepts a method indented by leading spaces', () => {
+    expect(parseObjcMembers(`
+@protocol P <NSObject>
+    - (void)indented;
+@end
+`, 'P')).toEqual(['indented']);
   });
 
   // A property with no attribute list at all is still a property: the

@@ -40,10 +40,12 @@ const NOT_A_METHOD = new Set(['if', 'for', 'while', 'switch', 'catch', 'return',
  * spells the same capability once.
  */
 export function parseJavaMembers(source: string): string[] {
-  const clean = withoutComments(source)
-    // Annotations can sit on their own line and carry parentheses of their
-    // own, which would otherwise read as a method.
-    .replace(/^[ \t]*@\w+(?:\([^)]*\))?[ \t]*$/gm, '');
+  // No separate annotation-stripping pass: JAVA_METHOD is anchored on the
+  // true start of a line and its prefix class excludes "@", so a bare
+  // annotation line (with or without its own parentheses) can never satisfy
+  // it, stripped or not. A previous stripping pass here was dead code for
+  // any valid Java source.
+  const clean = withoutComments(source);
 
   const names = new Set<string>();
   for (const [, name] of clean.matchAll(JAVA_METHOD)) {
