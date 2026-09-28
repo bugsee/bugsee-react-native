@@ -98,13 +98,16 @@ export function validateNonEmptyString(value: unknown, field: string): string {
 
 const FILE_URL_PREFIX = 'file://';
 
-/** Strips a leading `file://` and percent-decodes the remainder. */
+/**
+ * A `file://` URL is stripped and percent-decoded. Anything else is a plain
+ * filesystem path and passes through verbatim: `%` is a legal filename
+ * character, so decoding it would reject `/…/100%done.log` and silently turn
+ * `/logs/a%41.log` into `/logs/aA.log`.
+ */
 export function normalizeFilePath(path: string): string {
-  const stripped = path.startsWith(FILE_URL_PREFIX)
-    ? path.slice(FILE_URL_PREFIX.length)
-    : path;
+  if (!path.startsWith(FILE_URL_PREFIX)) return path;
   try {
-    return decodeURIComponent(stripped);
+    return decodeURIComponent(path.slice(FILE_URL_PREFIX.length));
   } catch {
     return badArgument(
       `path is not valid percent-encoding: ${JSON.stringify(path)}`,

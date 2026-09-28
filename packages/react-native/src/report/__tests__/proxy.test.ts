@@ -709,11 +709,50 @@ describe('setAttribute', () => {
 });
 
 describe('addFileAttachment percent-decoding', () => {
-  it('rejects a path with malformed percent-encoding before crossing', async () => {
+  // Only a file:// URL is percent-encoded. A plain filesystem path is taken
+  // verbatim: `%` is a legal filename character, so decoding one would reject
+  // `/data/…/100%done.log` and silently turn `/logs/a%41.log` into
+  // `/logs/aA.log`.
+  it.each([
+    ['/data/user/0/app/files/100%done.log'],
+    ['/broken%zzpath'],
+    ['/logs/a%41.log'],
+    ['/logs/a%20b.log'],
+  ])('passes a plain path containing %% through verbatim (%p)', async (path) => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+    native.reportAddFileAttachment.mockResolvedValueOnce(undefined);
+
+    await report.addFileAttachment(path, { name: 'n' });
+
+    expect(native.reportAddFileAttachment).toHaveBeenCalledWith(
+      'h1',
+      path,
+      'n',
+      null,
+      false,
+    );
+  });
+
+  it('still decodes a file:// URL', async () => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+    native.reportAddFileAttachment.mockResolvedValueOnce(undefined);
+
+    await report.addFileAttachment('file:///logs/a%41%25.log', { name: 'n' });
+
+    expect(native.reportAddFileAttachment).toHaveBeenCalledWith(
+      'h1',
+      '/logs/aA%.log',
+      'n',
+      null,
+      false,
+    );
+  });
+
+  it('rejects a file:// URL with malformed percent-encoding before crossing', async () => {
     const report = new BugseeReportProxy('h1', 'r1', 'bug');
 
     await expect(
-      report.addFileAttachment('/broken%zzpath', { name: 'n' }),
+      report.addFileAttachment('file:///broken%zzpath', { name: 'n' }),
     ).rejects.toMatchObject({
       code: ReportErrorCode.BadArgument,
       message: expect.stringMatching(/percent-encoding/),
@@ -721,7 +760,7 @@ describe('addFileAttachment percent-decoding', () => {
     expect(native.reportAddFileAttachment).not.toHaveBeenCalled();
   });
 
-  it('passes a path with no file:// prefix through unchanged, once decoded', async () => {
+  it('passes a path with no file:// prefix through unchanged', async () => {
     const report = new BugseeReportProxy('h1', 'r1', 'bug');
     native.reportAddFileAttachment.mockResolvedValueOnce(undefined);
 
