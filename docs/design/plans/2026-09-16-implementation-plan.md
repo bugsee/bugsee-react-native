@@ -900,7 +900,7 @@ Spawn a reviewer subagent. It must independently: run `yarn test`, `BUGSEE_RELEA
 
 Each is small by design: they establish the bridging pattern that the harder phases reuse.
 
-**Phase 4 — Logging, events, traces.** `log(text, level)`, `event(name, params)`, `trace(name, value)`. Tests: level mapping both directions; params survive the bridge. Device test asserting the lines appear in a report.
+**Phase 4 — Logging, events, traces.** `log(text, level)`, `event(name, params)`, `trace(name, value)`. Tests: level mapping both directions; params survive the bridge. Device test asserting the lines appear in a report. `log()` builds on `forwardLog` / `wrapperLog` (Task 3.5a); do not add a second native route.
 
 **Phase 5 — Attributes & identity.** `setAttribute`/`getAttribute`/`getAllAttributes`/`clearAttribute`/`clearAllAttributes`; `setUserIdentifier`/`getUserIdentifier`/`clearUserIdentifier`. Tests include round-tripping non-string values, since Android takes `Serializable` and iOS takes `id`.
 

@@ -92,6 +92,21 @@ export interface Spec extends TurboModule {
   upload(summary: string, description: string): void;
 
   /**
+   * One log line into the SDK's wrapper channel, attributed to the wrapper
+   * (source `Custom`, no tag) rather than to the app's own `Bugsee.log`.
+   *
+   * `level` is the SDK's by-value level, 1 Error .. 5 Verbose, already
+   * checked in JS; native maps anything else to Info. The line is filtered
+   * natively by the app's log filter, once -- never in JS (design doc
+   * §10.3). Fire-and-forget: before launch the channel accepts and drops it.
+   *
+   * Internal. `forwardLog` in `src/wrapper/channel.ts` is its only caller;
+   * Phase 4's `log()` and Phase 9's console routing build on that, and must
+   * not add a second native route.
+   */
+  wrapperLog(message: string, level: number): void;
+
+  /**
    * A report handoff, before or after the SDK builds it.
    *
    * `handleId` is opaque and native-minted, never reused within a process, and

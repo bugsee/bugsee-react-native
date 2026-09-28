@@ -80,7 +80,9 @@ describe('the wrapper registers before the SDK can launch', () => {
       'ReactNativeWrapperInitProvider.java',
     );
     expect(src).toMatch(/extends\s+BugseeExtensionInitProviderBase\b/);
-    expect(src).toMatch(/Bugsee\.setWrapper\(/);
+    // Through the registrar, which serialises every registration; see
+    // wrapper-registration-serialised.test.ts.
+    expect(src).toMatch(/WrapperRegistrar\.register\(\s*BugseeReactNativeWrapper\.withoutJsRuntime\(\)\s*\)/);
   });
 });
 

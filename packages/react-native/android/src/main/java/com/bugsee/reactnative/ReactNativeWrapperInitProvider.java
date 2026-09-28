@@ -1,6 +1,5 @@
 package com.bugsee.reactnative;
 
-import com.bugsee.library.Bugsee;
 import com.bugsee.library.BugseeExtensionInitProviderBase;
 
 /**
@@ -31,7 +30,9 @@ public final class ReactNativeWrapperInitProvider extends BugseeExtensionInitPro
 
     @Override
     protected boolean onExtensionCreate() {
-        Bugsee.setWrapper(BugseeReactNativeWrapper.withoutJsRuntime());
+        // Through the registrar, like every registration: setWrapperInfo
+        // re-registers from another thread once JS is up.
+        WrapperRegistrar.register(BugseeReactNativeWrapper.withoutJsRuntime());
         // Conventional for an init provider: we expose no content.
         return false;
     }
