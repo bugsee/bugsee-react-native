@@ -4,24 +4,18 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 /**
- * How long JS gets to handle one report callback.
+ * How long JS gets to handle one report callback, and whether it gets one.
  *
- * <p>Every value here sits INSIDE the SDK's own cap for the path the callback
- * arrived on (see the {@code ReportHandler} Javadoc). Past that cap the SDK
- * proceeds without us, so a JS deadline that overshoots it is not generous --
- * it lets JS keep writing to a report that has already moved on.
+ * <p>Only the SDK's live dispatch thread reaches JS at all (see
+ * {@link ReportHandlerBridge}). There the deadline sits INSIDE the SDK's
+ * per-handler cap: past that cap the SDK proceeds without us, so a JS
+ * deadline that overshoots it is not generous -- it lets JS keep writing to a
+ * report that has already moved on.
  */
 final class ReportHandlerDeadlines {
 
     /** 5 s inside the SDK's default 30 s per-handler cap. */
     static final long LIVE_DEADLINE_MS = 25_000L;
-
-    /**
-     * 0.5 s inside the 3 s the SDK waits on every crash-adjacent path:
-     * early-crash recovery, and the inline fallbacks when no SDK thread could
-     * be had.
-     */
-    static final long RECOVERY_DEADLINE_MS = 2_500L;
 
     /**
      * Below this a round trip to JS and back cannot reliably fit, so the
@@ -56,8 +50,8 @@ final class ReportHandlerDeadlines {
         return Math.min(LIVE_DEADLINE_MS, optionSeconds * 1000L - 1000L);
     }
 
-    /** {@code liveMs} on the SDK's dispatch thread; the short cap anywhere else. */
-    static long forThread(@NonNull final String threadName, final long liveMs) {
-        return LIVE_HANDLER_THREAD.equals(threadName) ? liveMs : RECOVERY_DEADLINE_MS;
+    /** Whether {@code threadName} is the SDK's live dispatch thread. */
+    static boolean isLive(@NonNull final String threadName) {
+        return LIVE_HANDLER_THREAD.equals(threadName);
     }
 }

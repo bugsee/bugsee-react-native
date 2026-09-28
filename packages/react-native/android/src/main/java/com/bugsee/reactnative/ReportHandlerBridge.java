@@ -28,6 +28,14 @@ import java.util.concurrent.atomic.AtomicReference;
  * one {@link AtomicBoolean} per handle; everything else -- the table, the
  * timer -- is bookkeeping that may race freely behind it.
  *
+ * <p>On Android only reports dispatched on the SDK's live
+ * {@code BugseeReportHandlerThread} reach JS; every other non-terminating
+ * dispatch is early-crash recovery, which the SDK runs on a spawned bounded
+ * thread with a no-op completion and lets proceed as soon as the handler
+ * returns. JS attached then has just called {@code launch} on the very
+ * native-modules thread its report ops queue behind, so it could never act
+ * before the report moves on; those complete natively at once instead.
+ *
  * <p>Like {@link WrapperEventBus}, this outlives any one React instance: the
  * wrapper that calls in is registered at process start, while the module that
  * receives comes and goes with the JS runtime.
@@ -71,6 +79,15 @@ final class ReportHandlerBridge {
         long liveMs();
     }
 
+    /**
+     * Where the one-line outcome of every dispatch goes. Logcat in production,
+     * where the device tests match these lines; injectable so the JVM tests
+     * can assert them too.
+     */
+    interface OutcomeLog {
+        void line(String message);
+    }
+
     private static final class Handle {
         final String id;
         final Report report;
@@ -99,6 +116,7 @@ final class ReportHandlerBridge {
 
     private final Scheduler scheduler;
     private final LiveDeadlineSource live;
+    private final OutcomeLog outcomes;
     private final AtomicReference<Sink> sink = new AtomicReference<>();
     private final Map<String, Handle> handles = new ConcurrentHashMap<>();
     private final AtomicLong counter = new AtomicLong();
@@ -106,8 +124,17 @@ final class ReportHandlerBridge {
     private volatile boolean afterRegistered;
 
     ReportHandlerBridge(@NonNull final Scheduler scheduler, @NonNull final LiveDeadlineSource live) {
+        this(scheduler, live, message -> Log.i(TAG, message));
+    }
+
+    ReportHandlerBridge(
+            @NonNull final Scheduler scheduler,
+            @NonNull final LiveDeadlineSource live,
+            @NonNull final OutcomeLog outcomes
+    ) {
         this.scheduler = scheduler;
         this.live = live;
+        this.outcomes = outcomes;
     }
 
     void setPhases(final boolean before, final boolean after) {
@@ -154,14 +181,18 @@ final class ReportHandlerBridge {
             completeUnminted(phase, report, sdkCompletion, "terminating");
             return;
         }
+        // Early-crash recovery: the SDK will not wait for JS. See the class doc.
+        if (!ReportHandlerDeadlines.isLive(Thread.currentThread().getName())) {
+            completeUnminted(phase, report, sdkCompletion, "recovery");
+            return;
+        }
         final Sink target = sink.get();
         final boolean registered = phase == Phase.BEFORE ? beforeRegistered : afterRegistered;
         if (target == null || !registered) {
             completeUnminted(phase, report, sdkCompletion, "no-handler");
             return;
         }
-        final long deadlineMs = ReportHandlerDeadlines.forThread(
-                Thread.currentThread().getName(), live.liveMs());
+        final long deadlineMs = live.liveMs();
         if (deadlineMs < ReportHandlerDeadlines.MIN_USEFUL_DEADLINE_MS) {
             completeUnminted(phase, report, sdkCompletion, "no-handler");
             return;
@@ -179,7 +210,7 @@ final class ReportHandlerBridge {
                 // Finished between put and here; don't leave the timer armed.
                 cancelQuietly(timer);
             }
-            Log.i(TAG, "report handler " + handle.id + " phase=" + phase.wire
+            outcomes.line("report handler " + handle.id + " phase=" + phase.wire
                     + " deadline=" + deadlineMs);
             target.onReportHandlerRequest(
                     handle.id, phase.wire, report.getId(), ReportOps.typeOf(report), deadlineMs);
@@ -213,19 +244,19 @@ final class ReportHandlerBridge {
         if (timer != null) {
             cancelQuietly(timer);
         }
-        Log.i(TAG, "report handler " + handle.id + " completed by=" + by);
+        outcomes.line("report handler " + handle.id + " completed by=" + by);
         runQuietly(handle.sdkCompletion);
         return true;
     }
 
     /** No handle was minted; the line still carries the report for correlation. */
-    private static void completeUnminted(
+    private void completeUnminted(
             @NonNull final Phase phase,
             @NonNull final Report report,
             @NonNull final Runnable sdkCompletion,
             @NonNull final String by
     ) {
-        Log.i(TAG, "report handler - completed by=" + by + " phase=" + phase.wire
+        outcomes.line("report handler - completed by=" + by + " phase=" + phase.wire
                 + " report=" + safeId(report));
         runQuietly(sdkCompletion);
     }
