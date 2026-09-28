@@ -1,22 +1,49 @@
 /**
- * Report bundles the SDK retained on the handset, read back off it.
+ * Report bundles the SDK retained on the device, read back off it.
  *
- * Retaining a bundle rather than letting it upload is workbook 9.3.2:
- * airplane mode, switched on before the app starts. A dead endpoint would
- * retain it too, but changes upload timing and so perturbs the very report
- * handler deadlines these tests measure.
+ * Android. Retaining a bundle rather than letting it upload is workbook
+ * 9.3.2: airplane mode, switched on before the app starts. A dead endpoint
+ * would retain it too, but changes upload timing and so perturbs the very
+ * report handler deadlines these tests measure. Everything goes through
+ * `run-as`, which needs a debuggable package -- the release build case 6 uses
+ * is built debuggable for exactly this reason (see android/app/build.gradle,
+ * `bugseeE2eDebuggable`).
  *
- * Everything goes through `run-as`, which needs a debuggable package -- the
- * release build case 6 uses is built debuggable for exactly this reason
- * (see android/app/build.gradle, `bugseeE2eDebuggable`).
+ * iOS simulator. There is no airplane mode: the simulator shares the host's
+ * network, and cutting that (a pf rule, Network Link Conditioner, a proxy)
+ * needs root or takes the whole Mac offline. So the app launches against a
+ * closed loopback port instead (`DEAD_ENDPOINT`, passed through the scenario
+ * file). That is the dead endpoint the workbook warns about, but not the
+ * kind that perturbs timing: loopback refuses a connection at once, as an
+ * offline radio fails one at once -- nothing hangs waiting on a server. The
+ * SDK says so itself (`Session not initialized. - Could not connect to the
+ * server.`), and the test asserts that line as the retention precondition.
+ * The simulator's data container is a host directory, so clearing and
+ * pulling are plain file operations.
  */
 import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { inflateRawSync, zstdDecompressSync } from 'node:zlib';
 
-import { ADB, ANDROID_PACKAGE, ANDROID_SERIAL } from './device';
+import {
+  ADB,
+  ANDROID_PACKAGE,
+  ANDROID_SERIAL,
+  IOS_BUNDLE_ID,
+  IOS_SIMULATOR_ID,
+} from './device';
 import { adb, adbStatus } from './scenario';
 
 const execFileAsync = promisify(execFile);
@@ -91,17 +118,21 @@ export async function pullAndroidBundles(): Promise<PulledBundle[]> {
     const dir = join(root, file.replace(/\.bundle\.zip$/, ''));
     mkdirSync(dir);
     await execFileAsync('unzip', ['-q', '-o', zip, '-d', dir]);
-    const request = JSON.parse(readFileSync(join(dir, 'request.json'), 'utf8'));
-    const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
-    const logEntry = (manifest.files as ManifestFile[]).find(f => f.type === 'log');
-    const logName = logEntry === undefined ? undefined : fileNameOf(logEntry);
-    const log =
-      logName !== undefined && readdirSync(dir).includes(logName)
-        ? readFileSync(join(dir, logName), 'utf8')
-        : undefined;
-    bundles.push({ file, dir, request, manifest, log });
+    bundles.push(parseBundle(file, dir));
   }
   return bundles;
+}
+
+function parseBundle(file: string, dir: string): PulledBundle {
+  const request = JSON.parse(readFileSync(join(dir, 'request.json'), 'utf8'));
+  const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+  const logEntry = (manifest.files as ManifestFile[]).find(f => f.type === 'log');
+  const logName = logEntry === undefined ? undefined : fileNameOf(logEntry);
+  const log =
+    logName !== undefined && readdirSync(dir).includes(logName)
+      ? readFileSync(join(dir, logName), 'utf8')
+      : undefined;
+  return { file, dir, request, manifest, log };
 }
 
 /** The stored file name a manifest entry points at. */
@@ -126,5 +157,123 @@ export async function airplane(on: boolean): Promise<void> {
   const state = (await adb('shell', 'cmd', 'connectivity', 'airplane-mode')).trim();
   if (state !== (on ? 'enabled' : 'disabled')) {
     throw new Error(`airplane-mode ${verb} did not take: device reports "${state}"`);
+  }
+}
+
+/**
+ * The loopback port the iOS simulator run launches against, so every report
+ * is retained (see the top of this file). Port 9 (discard) is closed on a Mac.
+ */
+export const DEAD_ENDPOINT = 'https://127.0.0.1:9';
+
+/** The SDK's data directory in the simulator app's data container. */
+async function iosSdkData(): Promise<string> {
+  const { stdout } = await execFileAsync(
+    'xcrun',
+    ['simctl', 'get_app_container', IOS_SIMULATOR_ID, IOS_BUNDLE_ID, 'data'],
+    { encoding: 'utf8' },
+  );
+  return join(stdout.trim(), 'Library', 'Caches', 'com.bugsee.data');
+}
+
+/** `<capture>/bundles/<requestId>.bundle.zip`, as the iOS SDK writes them. */
+async function iosBundlesDir(): Promise<string> {
+  return join(await iosSdkData(), 'capture', 'bundles');
+}
+
+/** Stops the simulator app; not running is fine. */
+export async function terminateIosApp(): Promise<void> {
+  await execFileAsync('xcrun', ['simctl', 'terminate', IOS_SIMULATOR_ID, IOS_BUNDLE_ID]).catch(
+    () => {},
+  );
+}
+
+/**
+ * The iOS counterpart of `clearAndroidBundles`, and as wide, for the same
+ * reasons: stop the app first, then remove the SDK's whole data directory
+ * (pending reports and crash state included), and assert it is gone.
+ */
+export async function clearIosBundles(): Promise<void> {
+  await terminateIosApp();
+  const data = await iosSdkData();
+  rmSync(data, { recursive: true, force: true });
+  if (existsSync(data)) {
+    throw new Error(`clearIosBundles: ${data} is still there after removing it`);
+  }
+}
+
+export async function listIosBundles(): Promise<string[]> {
+  const dir = await iosBundlesDir();
+  if (!existsSync(dir)) {
+    return [];
+  }
+  return readdirSync(dir).filter(name => name.endsWith('.bundle.zip'));
+}
+
+/** Copies, unzips and parses every retained bundle. */
+export async function pullIosBundles(): Promise<PulledBundle[]> {
+  const source = await iosBundlesDir();
+  const root = mkdtempSync(join(tmpdir(), 'bugsee-bundles-'));
+  const bundles: PulledBundle[] = [];
+  for (const file of await listIosBundles()) {
+    const zip = join(root, file);
+    copyFileSync(join(source, file), zip);
+    const dir = join(root, file.replace(/\.bundle\.zip$/, ''));
+    mkdirSync(dir);
+    extractZip(readFileSync(zip), dir);
+    bundles.push(parseBundle(file, dir));
+  }
+  return bundles;
+}
+
+/**
+ * A minimal zip reader. The iOS SDK stores most entries with zstd (method
+ * 93), which neither macOS's `unzip` nor its `bsdtar` can read; Node's zlib
+ * can. Sizes come from the central directory, since entries are written with
+ * data descriptors (flag bit 3) and zero sizes in their local headers.
+ */
+export function extractZip(zip: Buffer, dir: string): void {
+  let end = zip.length - 22;
+  while (end >= 0 && zip.readUInt32LE(end) !== 0x06054b50) {
+    end -= 1;
+  }
+  if (end < 0) {
+    throw new Error('extractZip: no end-of-central-directory record');
+  }
+  const count = zip.readUInt16LE(end + 10);
+  let entry = zip.readUInt32LE(end + 16);
+  for (let i = 0; i < count; i += 1) {
+    if (zip.readUInt32LE(entry) !== 0x02014b50) {
+      throw new Error(`extractZip: bad central directory entry ${i}`);
+    }
+    const method = zip.readUInt16LE(entry + 10);
+    const packed = zip.readUInt32LE(entry + 20);
+    const nameLength = zip.readUInt16LE(entry + 28);
+    const extraLength = zip.readUInt16LE(entry + 30);
+    const commentLength = zip.readUInt16LE(entry + 32);
+    const local = zip.readUInt32LE(entry + 42);
+    const name = zip.toString('utf8', entry + 46, entry + 46 + nameLength);
+    entry += 46 + nameLength + extraLength + commentLength;
+
+    const dataStart = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+    const data = zip.subarray(dataStart, dataStart + packed);
+    let bytes: Buffer;
+    switch (method) {
+      case 0:
+        bytes = data;
+        break;
+      case 8:
+        bytes = inflateRawSync(data);
+        break;
+      case 93:
+        bytes = zstdDecompressSync(data);
+        break;
+      default:
+        throw new Error(`extractZip: ${name} uses unsupported method ${method}`);
+    }
+    if (name.includes('..') || name.startsWith('/')) {
+      throw new Error(`extractZip: refusing entry path ${name}`);
+    }
+    writeFileSync(join(dir, name), bytes);
   }
 }

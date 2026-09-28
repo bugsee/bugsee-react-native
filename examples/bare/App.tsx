@@ -72,6 +72,12 @@ interface ScenarioChoice {
   scenario: string;
   nonce: string;
   source: 'uri' | 'json';
+  /**
+   * An endpoint to launch against instead of the credentials' one. The iOS
+   * simulator has no airplane mode, so the e2e retains a report there by
+   * pointing the SDK at a closed loopback port (see e2e/bundles.ts).
+   */
+  endpoint?: string;
 }
 
 const SCENARIO_URI = /^bugsee-e2e:\/\/scenario\/([\w-]+)\?nonce=([0-9a-f]+)$/;
@@ -89,8 +95,14 @@ async function chooseScenario(): Promise<ScenarioChoice> {
   }
   // Widened: with the file present, TS types it from whatever it holds now,
   // and the default has no nonce.
-  const file: { scenario: string; nonce?: string } = scenarioFile;
-  return { scenario: file.scenario, nonce: file.nonce ?? '-', source: 'json' };
+  const file: { scenario: string; nonce?: string; endpoint?: string } =
+    scenarioFile;
+  return {
+    scenario: file.scenario,
+    nonce: file.nonce ?? '-',
+    source: 'json',
+    endpoint: file.endpoint,
+  };
 }
 
 export default function App() {
@@ -140,7 +152,8 @@ export default function App() {
       // asserts on it.
       console.log(
         `BUGSEE_E2E scenario=${choice.scenario} nonce=${choice.nonce} ` +
-          `source=${choice.source} dev=${String(__DEV__)}`,
+          `source=${choice.source} dev=${String(__DEV__)} ` +
+          `endpoint=${choice.endpoint ?? 'default'}`,
       );
       const reportHandler = isReportHandlerScenario(choice.scenario)
         ? choice.scenario
@@ -167,7 +180,8 @@ export default function App() {
         Bugsee.getStatus().then(observe).catch(() => {});
       }, 100);
       try {
-        const launched = await Bugsee.launch(token, launchOptions(credentials.endpoint));
+        const endpoint = choice.endpoint ?? credentials.endpoint;
+        const launched = await Bugsee.launch(token, launchOptions(endpoint));
         console.log(`BUGSEE_E2E launch() resolved ${String(launched)}`);
 
         // Wait for Launched to be LOGGED before relaunching, so the output
@@ -223,9 +237,7 @@ export default function App() {
         // promise that never settles is indistinguishable from a slow one,
         // and no other check in this repo would notice.
         try {
-          const relaunched = await Bugsee.relaunch(
-            launchOptions(credentials.endpoint),
-          );
+          const relaunched = await Bugsee.relaunch(launchOptions(endpoint));
           console.log(`BUGSEE_E2E relaunch() settled resolved=${String(relaunched)}`);
         } catch (relaunchCause) {
           console.log(`BUGSEE_E2E relaunch() settled rejected=${String(relaunchCause)}`);
