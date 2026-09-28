@@ -46,6 +46,23 @@
   XCTAssertEqualObjects(caught.name, NSInternalInconsistencyException);
 }
 
+/// Not every C++ throw is a `std::exception`: a JSI or codegen path can throw
+/// anything, and a `catch (const std::exception &)` alone lets the rest
+/// unwind to `std::terminate`.
+- (void)testANonStdExceptionIsGuardedToo {
+  NSException *caught = nil;
+
+  @try {
+    BGSRNGuardedEmit(^{
+      throw 42;
+    }, @"onReportHandlerRequest");
+  } @catch (NSException *exception) {
+    caught = exception;
+  }
+
+  XCTAssertNotNil(caught, @"a non-std C++ exception must not escape the guard");
+}
+
 - (void)testEmitAfterEmitterIsSetDelivers {
   std::function<void()> set = [] {
   };
