@@ -147,14 +147,16 @@ describeDevice(`wrapper channel on ${ON_IOS ? 'the iOS simulator' : 'an Android 
           await airplane(false);
         }
       } finally {
-        resetScenario();
         // Pulled bundles carry credentials on iOS beta3; E2E_KEEP_BUNDLES=1
-        // keeps them for inspection.
+        // keeps them for inspection. Ahead of resetScenario(), which writes
+        // a file and so can itself throw -- neither this cleanup nor the log
+        // stop below may depend on that write succeeding first.
         const { removed, kept } = removePulledBundles();
         report('pulled bundle roots', { removed: removed.length, kept });
         if (log !== undefined) {
           log.stop();
         }
+        resetScenario();
       }
     }
   });
