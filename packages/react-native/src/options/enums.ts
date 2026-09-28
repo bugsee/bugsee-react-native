@@ -41,7 +41,7 @@ export const FrameRate = {
   Low: 1,
   Medium: 2,
   High: 3,
-  Raw: 4,
+  // Raw: 4 — Android only. See WITHHELD_FROM_JS below.
 } as const;
 export type FrameRate = (typeof FrameRate)[keyof typeof FrameRate];
 
@@ -53,3 +53,32 @@ export const IssueSeverity = {
   Blocker: 5,
 } as const;
 export type IssueSeverity = (typeof IssueSeverity)[keyof typeof IssueSeverity];
+
+/**
+ * SDK enum members this package deliberately does not expose, with the value
+ * they carry natively.
+ *
+ * A cross-platform enum can only offer what both platforms accept. Leaving a
+ * one-sided member out is the correct call, but doing it by simply not typing
+ * it is not: the drift guard in `__tests__/enums.test.ts` compares our
+ * constants against members extracted from the SDK sources, so an unexplained
+ * omission is indistinguishable from the transcription slip that guard exists
+ * to catch. `IssueSeverity` once gained a `Low` that does not exist and lost
+ * `Blocker`, shifting three values the SDK would have accepted as different,
+ * valid severities.
+ *
+ * So a withheld member is written down here instead. The guard then requires
+ * exposed + withheld to equal the SDK exactly, which keeps its teeth: a member
+ * added natively still fails until someone decides which side it belongs on.
+ */
+export const WITHHELD_FROM_JS = {
+  /**
+   * Android `FrameRate` has `Raw = 4`; iOS `BugseeFrameRate` stops at
+   * `High = 3` (ios/sdk `origin/nextgen`, `BugseeConstants.h`, checked
+   * 2026-09-22 — there is no `BugseeFrameRateRaw` anywhere in the headers).
+   *
+   * Exposing it would give JavaScript a value that silently means a different
+   * capture rate per platform. Move it into `FrameRate` if iOS gains it.
+   */
+  FrameRate: { Raw: 4 },
+} as const;
