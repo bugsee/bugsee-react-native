@@ -123,12 +123,19 @@ class Bugsee {
 
   /**
    * Installs the handler the SDK hands a report to before and/or after it
-   * builds one. See `BugseeReportHandler` for the phase contract.
+   * builds one. See `BugseeReportHandler` for the full phase contract.
    *
    * Register before `launch()` to see reports the SDK recovers at launch --
    * a handler installed afterward misses whatever launch already recovered.
    * `null` tells the SDK no phase is wanted; a later call can resume
    * delivery.
+   *
+   * `onBeforeReportCreated` is at-most-once and may be skipped for a given
+   * report; `onAfterReportCreated` is at-least-once and MUST be idempotent
+   * (`setLabels`/`setAttribute`, not appending; check `getAttachmentNames()`
+   * before adding one). A mutation made after the callback settles, or after
+   * its handle's deadline passes -- the SDK's deadline, not one the app
+   * negotiates -- does not reach the report.
    */
   setReportHandler(handler: BugseeReportHandler | null): void {
     installReportHandler(handler);
