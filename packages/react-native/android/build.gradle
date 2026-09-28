@@ -101,6 +101,13 @@ android {
                 java.exclude 'com/bugsee/reactnative/BugseePackage.java'
                 java.exclude 'com/bugsee/reactnative/ReactRootOriginTracker.java'
             }
+            test {
+                // Depends on the class excluded above, and on
+                // com.facebook.react.bridge.LifecycleEventListener, which is
+                // only on the classpath via the react-android dependency this
+                // build never adds (see the `implementation` below).
+                java.exclude 'com/bugsee/reactnative/ReactRootOriginTrackerTest.java'
+            }
         }
     }
 
