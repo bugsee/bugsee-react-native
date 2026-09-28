@@ -15,7 +15,7 @@
  *   BUGSEE_TOKEN_IOS=… BUGSEE_TOKEN_ANDROID=… BUGSEE_ENDPOINT=… \
  *     node scripts/write-credentials.mjs
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,11 +23,30 @@ const appRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // App.tsx imports e2e-scenario.json, so the bundle does not build without it.
 // The device e2e overwrites it per run; left alone, the app runs the plain
-// launch walk. Written only when absent, so a scenario mid-run is not reset.
+// launch walk. Written when absent, and otherwise left alone so a scenario
+// mid-run is not reset -- unless it carries an `endpoint`. Only the iOS e2e
+// writes one (the closed loopback port that retains reports on the
+// simulator), and an interrupted run that leaves it behind points every later
+// launch of the app at a dead endpoint. Unreadable JSON is reset too: the
+// bundle would not build with it.
 const scenarioFile = join(appRoot, 'e2e-scenario.json');
+const DEFAULT_SCENARIO = `${JSON.stringify({ scenario: 'launch' })}\n`;
 if (!existsSync(scenarioFile)) {
-  writeFileSync(scenarioFile, `${JSON.stringify({ scenario: 'launch' })}\n`);
+  writeFileSync(scenarioFile, DEFAULT_SCENARIO);
   console.log('write-credentials: wrote the default e2e-scenario.json');
+} else {
+  const stale = (() => {
+    try {
+      const current = JSON.parse(readFileSync(scenarioFile, 'utf8'));
+      return current === null || typeof current !== 'object' || 'endpoint' in current;
+    } catch {
+      return true;
+    }
+  })();
+  if (stale) {
+    writeFileSync(scenarioFile, DEFAULT_SCENARIO);
+    console.log('write-credentials: reset e2e-scenario.json to the default (it carried an endpoint or was unreadable)');
+  }
 }
 
 const iosToken = process.env.BUGSEE_TOKEN_IOS ?? '';
