@@ -291,6 +291,37 @@
   XCTAssertFalse(_tasks[0].cancelled);
 }
 
+/// A cancelled `dispatch_block` keeps its captures until its fire time, and
+/// the deadline task captures the handle -- so a finished handle must drop
+/// the report and the SDK's completion itself, or it pins both for up to
+/// 25 s. The manual scheduler's cancelled task keeps its block the same way.
+- (void)testAFinishedHandleNoLongerPinsTheReportOrTheCompletion {
+  [self attachWithBothPhases];
+  __weak BGSRNFakeReport *weakReport = nil;
+  __weak NSObject *weakCaptured = nil;
+  @autoreleasepool {
+    BGSRNFakeReport *report = [BGSRNFakeReport new];
+    NSObject *captured = [NSObject new];
+    weakReport = report;
+    weakCaptured = captured;
+    BGSCallback completion = ^{
+      (void)captured;
+    };
+    [_bridge dispatchPhase:BGSRNReportPhaseBefore
+                    report:report
+             isTerminating:NO
+              onMainThread:YES
+                completion:completion];
+    XCTAssertTrue([_bridge complete:_requests.lastObject[@"handleId"]]);
+  }
+
+  XCTAssertEqual(_tasks.count, 1u);
+  XCTAssertTrue(_tasks[0].cancelled);
+  XCTAssertNotNil(_tasks[0].block, @"precondition: the cancelled deadline task still holds the handle");
+  XCTAssertNil(weakReport, @"a finished handle must not keep its report alive");
+  XCTAssertNil(weakCaptured, @"a finished handle must not keep the SDK's completion alive");
+}
+
 - (void)testAThrowingSdkCompletionDoesNotEscape {
   [self attachWithBothPhases];
   BGSCallback throwing = ^{

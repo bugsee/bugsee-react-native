@@ -4,12 +4,15 @@
 
 #import "BGSRNReportDeadlines.h"
 
-/// One dispatch that reached JS. `done` and `timer` are guarded by the
-/// bridge's lock; everything else is immutable.
+/// One dispatch that reached JS. `done`, `timer`, `report` and `completion`
+/// are guarded by the bridge's lock; everything else is immutable.
 @interface BGSRNReportHandle : NSObject
 @property (nonatomic, copy, readonly) NSString *handleId;
-@property (nonatomic, strong, readonly) id<BGSReportContract> report;
-@property (nonatomic, copy, readonly, nullable) BGSCallback completion;
+/// Nilled by `finish:`, with `completion`: the deadline task captures the
+/// handle, and a cancelled `dispatch_block` keeps its captures until its fire
+/// time, so a finished handle would otherwise pin both for up to 25 s.
+@property (nonatomic, strong, nullable) id<BGSReportContract> report;
+@property (nonatomic, copy, nullable) BGSCallback completion;
 /// The sink this handle was emitted to; its detach completes it. Weak, like
 /// the sink itself: the bridge must not keep a torn-down module alive.
 @property (nonatomic, weak, readonly) id owner;
@@ -269,6 +272,9 @@ static NSString *_Nullable SafeType(id<BGSReportContract> report) {
   }
   id timer = handle.timer;
   handle.timer = nil;
+  BGSCallback completion = handle.completion;
+  handle.completion = nil;
+  handle.report = nil;
   os_unfair_lock_unlock(&_lock);
 
   // Outside the lock from here: the completion re-enters the SDK, and a
@@ -277,7 +283,7 @@ static NSString *_Nullable SafeType(id<BGSReportContract> report) {
     [self cancelQuietly:timer];
   }
   _log([NSString stringWithFormat:@"BugseeRN report handler %@ completed by=%@", handle.handleId, by]);
-  RunQuietly(handle.completion);
+  RunQuietly(completion);
   return YES;
 }
 
