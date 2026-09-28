@@ -180,10 +180,10 @@ RCT_EXPORT_MODULE(Bugsee)
   self = [super init];
   if (self) {
     __weak __typeof(self) weakSelf = self;
-    [BGSRNEventBus.shared attach:self block:^(NSString *name, NSString *reportId) {
+    [BGSRNEventBus.shared attach:self block:^BOOL(NSString *name, NSString *reportId) {
       __strong __typeof(weakSelf) strongSelf = weakSelf;
       if (strongSelf == nil) {
-        return;
+        return NO;
       }
       // `reportId` omitted rather than NSNull when absent: the JS type marks it
       // optional, and a null would force every caller to distinguish "absent"
@@ -193,29 +193,28 @@ RCT_EXPORT_MODULE(Bugsee)
         payload[@"reportId"] = reportId;
       }
       // Guarded like the report path below: a lifecycle event can arrive
-      // before the codegen emitter is set (start-up) or after this module is
-      // gone (mid-reload), and an unset std::function throws a C++ exception
-      // BGSRNEventBus's own @catch cannot see. BGSRNGuardedEmit turns that
-      // into an NSException, which the bus does catch and log; there is no
-      // subscriber to queue the event for, so it is simply dropped.
-      BGSRNGuardedEmit(^{
+      // after this module is gone (mid-reload), and an unset std::function
+      // throws a C++ exception. BGSRNGuardedEmit catches it here, in
+      // Objective-C++, and returns NO; the bus logs and drops the event --
+      // there is no subscriber to queue it for.
+      return BGSRNGuardedEmit(^{
         [strongSelf emitOnLifecycleEvent:payload];
       }, @"onLifecycleEvent");
     }];
     // The same lifetime rule for report handlers. The request is emitted
     // as-is: the bridge already built the wire payload.
-    [BGSRNReportHandlerBridge.shared attach:self block:^(NSDictionary *request) {
+    [BGSRNReportHandlerBridge.shared attach:self block:^BOOL(NSDictionary *request) {
       __strong __typeof(weakSelf) strongSelf = weakSelf;
       if (strongSelf == nil) {
-        // Throwing makes the bridge complete the handle now, rather than
-        // leave the report waiting out a deadline no JS will ever meet.
-        [NSException raise:NSInternalInconsistencyException format:@"BugseeModule is gone"];
+        // NO makes the bridge complete the handle now, rather than leave the
+        // report waiting out a deadline no JS will ever meet.
+        return NO;
       }
       // The codegen emitter is a std::function, and an unset one throws a C++
-      // exception the bridge's @catch cannot see. BGSRNGuardedEmit re-raises
-      // it as an NSException, so the bridge completes the handle instead of
-      // the SDK's thread unwinding through it.
-      BGSRNGuardedEmit(^{
+      // exception. BGSRNGuardedEmit catches it here, in Objective-C++, and
+      // returns NO, so the bridge completes the handle -- nothing unwinds
+      // through the bridge's non-exception-safe ARC frames.
+      return BGSRNGuardedEmit(^{
         [strongSelf emitOnReportHandlerRequest:request];
       }, @"onReportHandlerRequest");
     }];

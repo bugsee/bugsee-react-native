@@ -2,19 +2,29 @@
 
 #include <exception>
 
-void BGSRNGuardedEmit(dispatch_block_t emit, NSString *what) {
+BOOL BGSRNGuardedEmit(dispatch_block_t emit, NSString *what) {
   if (emit == nil) {
-    return;
+    return NO;
   }
+  // Everything is caught HERE, in Objective-C++, and never rethrown. The
+  // callers are plain Objective-C compiled without -fobjc-arc-exceptions, so
+  // an exception unwinding through one of their frames leaks every strong
+  // local in it; a BOOL crosses back instead.
   try {
-    emit();
+    @try {
+      emit();
+      return YES;
+    } @catch (NSException *exception) {
+      NSLog(@"[Bugsee] %@ could not be emitted: %@", what, exception);
+      return NO;
+    }
   } catch (const std::exception &e) {
-    [NSException raise:NSInternalInconsistencyException
-                format:@"%@ could not be emitted: %s", what, e.what()];
+    NSLog(@"[Bugsee] %@ could not be emitted: %s", what, e.what());
+    return NO;
   } catch (...) {
     // Not every C++ throw is a std::exception, and whatever this misses
     // unwinds to std::terminate.
-    [NSException raise:NSInternalInconsistencyException
-                format:@"%@ could not be emitted: a non-std C++ exception", what];
+    NSLog(@"[Bugsee] %@ could not be emitted: a non-std C++ exception", what);
+    return NO;
   }
 }

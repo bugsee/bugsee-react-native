@@ -21,8 +21,12 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (class, readonly) BGSRNEventBus *shared;
 
+/// Receives each lifecycle event. Returns whether it reached JS; the bus logs
+/// and drops an event that did not. Must not throw (see `BGSRNGuardedEmit`).
+typedef BOOL (^BGSRNLifecycleBlock)(NSString *name, NSString *_Nullable reportId);
+
 /// Attaches the bridge. Replaces whatever was attached.
-- (void)attach:(id)sink block:(void (^)(NSString *name, NSString *_Nullable reportId))block;
+- (void)attach:(id)sink block:(BGSRNLifecycleBlock)block;
 
 /// Detaches `sink` only if it is still the attached one.
 ///

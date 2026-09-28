@@ -24,9 +24,25 @@
   // pointer is an ARC error (the value can be nilled between load and use), and
   // the array outlives the block regardless.
   NSMutableArray<NSString *> *events = _events;
-  [_bus attach:owner block:^(NSString *name, NSString *reportId) {
+  [_bus attach:owner block:^BOOL(NSString *name, NSString *reportId) {
     [events addObject:[NSString stringWithFormat:@"%@/%@", name, reportId ?: @"nil"]];
+    return YES;
   }];
+}
+
+/// A sink that could not emit (no JS emitter yet, or mid-reload) says so,
+/// and the bus drops the event without unwinding anything through the
+/// SDK's dispatch thread.
+- (void)testASinkThatCannotDeliverIsDroppedQuietly {
+  NSObject *owner = [NSObject new];
+  __block NSUInteger calls = 0;
+  [_bus attach:owner block:^BOOL(NSString *name, NSString *reportId) {
+    calls += 1;
+    return NO;
+  }];
+
+  XCTAssertNoThrow([_bus emitLifecycle:@"com.bugsee.lifecycle.Launched" reportId:nil]);
+  XCTAssertEqual(calls, 1u);
 }
 
 - (void)testSwallowsEventsWhenNoBridgeIsAttached {
