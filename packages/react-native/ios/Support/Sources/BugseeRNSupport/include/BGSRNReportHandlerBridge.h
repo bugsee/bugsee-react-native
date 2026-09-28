@@ -34,8 +34,11 @@ typedef void (^BGSRNReportOutcomeLog)(NSString *line);
 /// reach JS, with the shorter recovery deadline: see `BGSRNReportDeadlines.h`.
 ///
 /// Nothing here hops to the main queue, and nothing may. On the live path the
-/// SDK calls in on main and waits for the completion; anything that needed
-/// main to complete would stall until the deadline.
+/// SDK calls in on main via `dispatch_async`, but it does not wait there for
+/// the completion: that completion is a thread-agnostic run-once that hops to
+/// a private queue, so main is never blocked on it. The rule holds anyway --
+/// there is no need to hop, and an op that did would queue behind whatever UI
+/// work is already on main, eating into the handle's deadline for nothing.
 ///
 /// Like `BGSRNEventBus`, this outlives any one React instance: the wrapper
 /// that calls in is registered at process start, while the module that
