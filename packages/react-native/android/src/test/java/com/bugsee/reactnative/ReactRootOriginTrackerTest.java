@@ -2,12 +2,12 @@ package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 
 import android.graphics.Point;
 
 import com.bugsee.reactnative.ReactRootOriginTracker.LayoutListenerToken;
 import com.bugsee.reactnative.ReactRootOriginTracker.LifecycleSource;
+import com.bugsee.reactnative.ReactRootOriginTracker.OriginSnapshot;
 import com.bugsee.reactnative.ReactRootOriginTracker.RootFinder;
 import com.bugsee.reactnative.ReactRootOriginTracker.RootHandle;
 import com.facebook.react.bridge.LifecycleEventListener;
@@ -60,10 +60,20 @@ public class ReactRootOriginTrackerTest {
     private static final class FakeRoot implements RootHandle {
         boolean attached = true;
         int[] location = { 0, 0 };
-        Point viewport = new Point(0, 0);
+        Point viewport = new Point();
         int displayId;
+        /** Simulates the weakly-held view having been collected mid-refresh. */
+        boolean viewGone;
         int listenerRegistrations;
         FakeToken lastToken;
+        /**
+         * What {@link #releaseGlobalLayoutListener} finds and removes when
+         * the token it is asked to release reports its own observer dead --
+         * standing in for "this root's current registration", the way
+         * production re-fetches the view's current ViewTreeObserver.
+         */
+        FakeToken fallbackToken;
+        int fallbackReleaseCalls;
 
         @Override
         public boolean isAttachedToWindow() {
@@ -71,19 +81,11 @@ public class ReactRootOriginTrackerTest {
         }
 
         @Override
-        public void getLocationOnScreen(final int[] outLocation) {
-            outLocation[0] = location[0];
-            outLocation[1] = location[1];
-        }
-
-        @Override
-        public Point viewportOffset() {
-            return viewport;
-        }
-
-        @Override
-        public int displayId() {
-            return displayId;
+        public OriginSnapshot resolveOrigin() {
+            if (viewGone) {
+                return null;
+            }
+            return new OriginSnapshot(new int[] { location[0], location[1] }, viewport, displayId);
         }
 
         @Override
@@ -91,6 +93,18 @@ public class ReactRootOriginTrackerTest {
             listenerRegistrations++;
             lastToken = new FakeToken();
             return lastToken;
+        }
+
+        @Override
+        public void releaseGlobalLayoutListener(final LayoutListenerToken token) {
+            if (token.isAlive()) {
+                token.remove();
+                return;
+            }
+            fallbackReleaseCalls++;
+            if (fallbackToken != null) {
+                fallbackToken.remove();
+            }
         }
     }
 
@@ -114,7 +128,6 @@ public class ReactRootOriginTrackerTest {
         // platform class, and this module's unit tests run against a stub
         // android.jar (unitTests.returnDefaultValues) whose constructors are
         // stripped to no-ops -- new Point(10, 20) would silently leave x=y=0.
-        rootHandle.viewport = new Point();
         rootHandle.viewport.x = 10;
         rootHandle.viewport.y = 20;
         rootHandle.displayId = 7;
@@ -135,6 +148,36 @@ public class ReactRootOriginTrackerTest {
         final int[] snapshot = store.snapshot(7);
         assertEquals(1, snapshot[1]);
         assertArrayEquals(new int[] { 100, 30, 110, 40 }, java.util.Arrays.copyOfRange(snapshot, 2, 6));
+    }
+
+    // The privacy-sensitive case: the root is weakly held, and reading its
+    // location/viewport/display as three separate calls could resolve the
+    // view for one and find it collected for the next, blending a real
+    // value with a made-up default into a WRONG origin. resolveOrigin()
+    // resolves the view once and returns null if it is gone by then; refresh()
+    // must abort and publish nothing rather than accept a partial reading.
+    @Test
+    public void refreshPublishesNothingWhenTheRootIsGoneMidRefresh() {
+        final FakeRoot rootHandle = new FakeRoot();
+        rootHandle.location = new int[] { 100, 40 };
+        rootHandle.viewport.x = 10;
+        rootHandle.viewport.y = 20;
+        rootHandle.displayId = 7;
+        final QueueRootFinder finder = new QueueRootFinder();
+        finder.queue.add(rootHandle);
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(7, new int[] { 10, 10, 20, 20 });
+        final ReactRootOriginTracker tracker =
+                new ReactRootOriginTracker(new FakeLifecycleSource(), finder, store);
+        tracker.refresh();
+        final int[] published = store.snapshot(7);
+
+        // Still reports itself attached (so refresh() does not look for a
+        // new root) but gone by the time its location is actually resolved.
+        rootHandle.viewGone = true;
+        tracker.refresh();
+
+        assertArrayEquals(published, store.snapshot(7));
     }
 
     @Test
@@ -172,10 +215,9 @@ public class ReactRootOriginTrackerTest {
         // The root is no longer attached to its window -- as it would be
         // once its activity is torn down -- and only detach() runs, not a
         // fresh refresh(). A correct detach() must release exactly the token
-        // handed back when the listener was registered, without asking the
-        // (now stale) root for anything at all: a bug that instead asked the
-        // root to look up "its" observer again would find a different,
-        // unrelated one, so this asserts on the same FakeToken instance.
+        // handed back when the listener was registered (here, the token's
+        // own observer is still alive, so the root removes through it
+        // directly), without registering a new listener.
         rootHandle.attached = false;
         tracker.detach();
 
@@ -189,19 +231,35 @@ public class ReactRootOriginTrackerTest {
         assertEquals(1, token.removeCalls);
     }
 
+    // The real bug this guards: a listener registered before the view is
+    // attached to a window goes onto a "floating" ViewTreeObserver; Android
+    // merges it into the window's observer on attach and kills the floating
+    // one, so the saved token's own observer reports itself dead. The old
+    // code then simply skipped removal, leaking the registration (and, via
+    // it, the window observer keeping the listener, the tracker and the
+    // ReactApplicationContext alive) on every such attach. The fix asks the
+    // ROOT to release the token, so it can fall back to whatever it
+    // considers its current, live registration.
     @Test
-    public void detachDoesNotReleaseATokenThatReportsItselfAlreadyDead() {
+    public void detachRemovesThroughTheRootsCurrentRegistrationWhenTheSavedObserverHasDied() {
         final FakeRoot rootHandle = new FakeRoot();
         final QueueRootFinder finder = new QueueRootFinder();
         finder.queue.add(rootHandle);
         final ReactRootOriginTracker tracker =
                 new ReactRootOriginTracker(new FakeLifecycleSource(), finder, new SecureRectangleStore());
         tracker.refresh();
-        rootHandle.lastToken.alive = false;
+        final FakeToken savedToken = rootHandle.lastToken;
+        savedToken.alive = false;
+        final FakeToken currentRegistration = new FakeToken();
+        rootHandle.fallbackToken = currentRegistration;
 
         tracker.detach();
 
-        assertEquals(0, rootHandle.lastToken.removeCalls);
+        assertEquals("a dead saved observer must never be asked to remove anything",
+                0, savedToken.removeCalls);
+        assertEquals(1, rootHandle.fallbackReleaseCalls);
+        assertEquals("removal must go through the root's current registration instead",
+                1, currentRegistration.removeCalls);
     }
 
     @Test
@@ -220,8 +278,8 @@ public class ReactRootOriginTrackerTest {
         first.attached = false;
         tracker.refresh();
 
-        assertTrue("the stale root's token must be released once a new root is found",
-                firstToken.removeCalls >= 1);
+        assertEquals("the stale root's token must be released exactly once, "
+                + "when a new root is found", 1, firstToken.removeCalls);
         assertEquals(1, second.listenerRegistrations);
     }
 

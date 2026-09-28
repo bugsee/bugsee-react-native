@@ -144,18 +144,27 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
                 root = current;
             }
 
-            final int[] onScreen = new int[2];
-            current.getLocationOnScreen(onScreen);
-            final Point viewport = current.viewportOffset();
-            final int[] origin = SecureRectangleStore.displayOrigin(onScreen, viewport.x, viewport.y);
-            final int displayId = current.displayId();
-            store.setOrigin(displayId, origin[0], origin[1]);
+            // Resolved once, atomically: current holds the root's view only
+            // weakly, and reading location/viewport/display as separate
+            // calls could see the view collected partway through, mixing a
+            // real value read before that with a made-up default (0,0) /
+            // DEFAULT_DISPLAY read after it -- publishing a wrong origin is
+            // a privacy defect, not a cosmetic one, so a gone-mid-refresh
+            // view aborts the whole read instead: nothing new is published
+            // and the previous origin stands.
+            final OriginSnapshot snapshot = current.resolveOrigin();
+            if (snapshot == null) {
+                return;
+            }
+            final int[] origin =
+                    SecureRectangleStore.displayOrigin(snapshot.onScreen, snapshot.viewport.x, snapshot.viewport.y);
+            store.setOrigin(snapshot.displayId, origin[0], origin[1]);
             if (Log.isLoggable(TAG, Log.DEBUG)) {
-                Log.d(TAG, "secure origin display=" + displayId
-                        + " onScreen=" + onScreen[0] + "," + onScreen[1]
-                        + " viewport=" + viewport.x + "," + viewport.y
+                Log.d(TAG, "secure origin display=" + snapshot.displayId
+                        + " onScreen=" + snapshot.onScreen[0] + "," + snapshot.onScreen[1]
+                        + " viewport=" + snapshot.viewport.x + "," + snapshot.viewport.y
                         + " origin=" + origin[0] + "," + origin[1]
-                        + " served=" + Arrays.toString(store.snapshot(displayId)));
+                        + " served=" + Arrays.toString(store.snapshot(snapshot.displayId)));
             }
         } catch (Throwable t) {
             Log.w(TAG, "secure rectangles: could not read the React root's display origin", t);
@@ -165,10 +174,23 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     /** Package-visible for the same reason as {@link #refresh()}. */
     @UiThread
     void detach() {
+        final RootHandle previousRoot = root;
         root = null;
         final LayoutListenerToken token = layoutToken;
         layoutToken = null;
-        if (token != null && token.isAlive()) {
+        if (token == null) {
+            return;
+        }
+        if (previousRoot != null) {
+            // The root, not the token, releases it: a listener registered
+            // while the root was not yet attached to a window went onto a
+            // "floating" ViewTreeObserver, which Android kills once the
+            // real registration is merged into the window's observer on
+            // attach -- the token's own observer then reports itself dead,
+            // and only the root (which still holds the view) can find the
+            // observer that is actually live now to remove it from instead.
+            previousRoot.releaseGlobalLayoutListener(token);
+        } else {
             token.remove();
         }
     }
@@ -208,17 +230,42 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     interface RootHandle {
         boolean isAttachedToWindow();
 
-        void getLocationOnScreen(int[] outLocation);
-
-        Point viewportOffset();
-
-        int displayId();
+        /**
+         * The root's current on-screen location, viewport offset and display
+         * id, resolved as one atomic snapshot -- or {@code null} if the
+         * underlying view is no longer reachable. Reading these as separate
+         * calls could resolve a weakly-held view once for one field and find
+         * it already collected for the next, silently blending a real value
+         * with a made-up default.
+         */
+        @Nullable
+        OriginSnapshot resolveOrigin();
 
         /**
          * Registers a layout callback and returns a token bound to the exact
          * observer live right now.
          */
         LayoutListenerToken addOnGlobalLayoutListener(Runnable onLayout);
+
+        /**
+         * Releases {@code token}, falling back to this root's own,
+         * currently-live listener registration if the token's own observer
+         * no longer reports itself alive (see {@link ViewTreeObserverToken}).
+         */
+        void releaseGlobalLayoutListener(LayoutListenerToken token);
+    }
+
+    /** A root's location, viewport offset and display id, read together. */
+    static final class OriginSnapshot {
+        final int[] onScreen;
+        final Point viewport;
+        final int displayId;
+
+        OriginSnapshot(final int[] onScreen, final Point viewport, final int displayId) {
+            this.onScreen = onScreen;
+            this.viewport = viewport;
+            this.displayId = displayId;
+        }
     }
 
     /** A layout-listener registration, releasable from the exact observer it was made on. */
@@ -272,6 +319,16 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     private static final class ViewRootHandle implements RootHandle {
         private final WeakReference<View> view;
 
+        /**
+         * The listener currently registered through {@link
+         * #addOnGlobalLayoutListener}, if any -- kept here (not only inside
+         * the token handed back) so {@link #releaseGlobalLayoutListener} can
+         * remove it from whatever observer this root considers current now,
+         * not only the one it was originally registered on.
+         */
+        @Nullable
+        private ViewTreeObserver.OnGlobalLayoutListener registeredListener;
+
         ViewRootHandle(final View view) {
             this.view = new WeakReference<>(view);
         }
@@ -287,25 +344,19 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             return v != null && v.isAttachedToWindow();
         }
 
+        @Nullable
         @Override
-        public void getLocationOnScreen(final int[] outLocation) {
+        public OriginSnapshot resolveOrigin() {
             final View v = view();
-            if (v != null) {
-                v.getLocationOnScreen(outLocation);
+            if (v == null) {
+                return null;
             }
-        }
-
-        @Override
-        public Point viewportOffset() {
-            final View v = view();
-            return v == null ? new Point(0, 0) : RootViewUtil.getViewportOffset(v);
-        }
-
-        @Override
-        public int displayId() {
-            final View v = view();
-            final Display display = v == null ? null : v.getDisplay();
-            return display == null ? Display.DEFAULT_DISPLAY : display.getDisplayId();
+            final int[] onScreen = new int[2];
+            v.getLocationOnScreen(onScreen);
+            final Point viewport = RootViewUtil.getViewportOffset(v);
+            final Display display = v.getDisplay();
+            final int displayId = display == null ? Display.DEFAULT_DISPLAY : display.getDisplayId();
+            return new OriginSnapshot(onScreen, viewport, displayId);
         }
 
         @Override
@@ -317,28 +368,66 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             final ViewTreeObserver observer = v.getViewTreeObserver();
             final ViewTreeObserver.OnGlobalLayoutListener listener = onLayout::run;
             observer.addOnGlobalLayoutListener(listener);
+            registeredListener = listener;
             return new ViewTreeObserverToken(observer, listener);
+        }
+
+        @Override
+        public void releaseGlobalLayoutListener(final LayoutListenerToken token) {
+            if (token.isAlive()) {
+                token.remove();
+                return;
+            }
+            // The observer the token was registered on is dead: normal once
+            // a listener is registered before the view is attached to a
+            // window (onHostResume can fire before the decor view is
+            // attached) and the view attaches afterwards -- Android merges
+            // that registration into the window's ViewTreeObserver and kills
+            // the "floating" one it was made on. What is still live, if
+            // anything, is this view's CURRENT observer.
+            final View v = view();
+            final ViewTreeObserver.OnGlobalLayoutListener listener = registeredListener;
+            if (v == null || listener == null) {
+                return;
+            }
+            final ViewTreeObserver current = v.getViewTreeObserver();
+            if (current.isAlive()) {
+                current.removeOnGlobalLayoutListener(listener);
+            }
         }
     }
 
+    /**
+     * Holds the {@link ViewTreeObserver} it registered on weakly: a live
+     * observer transitively pins the view, and so the activity, and this
+     * token can outlive both dispose() (which posts detach() to the UI
+     * thread) and a host reload. If it has been collected there is nothing
+     * left to remove the listener from through this token specifically --
+     * {@link ViewRootHandle#releaseGlobalLayoutListener} is what falls back
+     * to the view's current observer in that case.
+     */
     private static final class ViewTreeObserverToken implements LayoutListenerToken {
-        private final ViewTreeObserver observer;
+        private final WeakReference<ViewTreeObserver> observer;
         private final ViewTreeObserver.OnGlobalLayoutListener listener;
 
         ViewTreeObserverToken(final ViewTreeObserver observer,
                 final ViewTreeObserver.OnGlobalLayoutListener listener) {
-            this.observer = observer;
+            this.observer = new WeakReference<>(observer);
             this.listener = listener;
         }
 
         @Override
         public boolean isAlive() {
-            return observer.isAlive();
+            final ViewTreeObserver o = observer.get();
+            return o != null && o.isAlive();
         }
 
         @Override
         public void remove() {
-            observer.removeOnGlobalLayoutListener(listener);
+            final ViewTreeObserver o = observer.get();
+            if (o != null) {
+                o.removeOnGlobalLayoutListener(listener);
+            }
         }
     }
 
