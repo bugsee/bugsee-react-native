@@ -1,164 +1,230 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
+import {
+  CONTENT_FILTER,
+  MAVEN_LOCAL_FILES,
+  mavenLocalBody,
+  mavenLocalOffsets,
+  mavenLocalProblems,
+  stripComments,
+} from '../maven-local';
+import { readNativeVersions } from '../native-versions';
 
-/**
- * `mavenLocal` is a human's own machine, not a build input CI or another
- * developer can reproduce, and this machine's `~/.m2` already holds stale
- * non-SNAPSHOT `com.bugsee` builds. It must therefore appear only inside the
- * `android.sdk.endsWith('-SNAPSHOT')` guard, and even there only filtered to
- * `com.bugsee` `-SNAPSHOT` versions -- never able to satisfy a normal request.
- *
- * Checked as text, not by running Gradle: these files are evaluated in
- * contexts (a standalone unit-test build, an autolinked example app) that a
- * plain Jest test cannot stand up cheaply, and the invariant is structural --
- * "is this token inside that guard" -- which a small brace-matching scan
- * answers directly.
- */
 const repoRoot = join(__dirname, '..', '..');
 
-const FILES = [
-  'settings.gradle',
-  'examples/bare/android/build.gradle',
-  'examples/bare/android/settings.gradle',
-  'packages/react-native/android/build.gradle',
-] as const;
-
-function read(path: string): string {
-  return readFileSync(join(repoRoot, path), 'utf8');
-}
-
-/**
- * Blanks out `//` and `/* *\/` comments, preserving every other character's
- * offset (and line breaks, so a line-comment doesn't swallow the newline).
- * Comments are exactly where prose about this rule -- "mavenLocal is guarded
- * by the SNAPSHOT pin" -- would otherwise be misread as the guard itself.
- */
-function stripComments(source: string): string {
-  return source.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (match) =>
-    match.replace(/[^\n]/g, ' '),
+function trackedFiles(): Record<string, string> {
+  return Object.fromEntries(
+    MAVEN_LOCAL_FILES.map((file) => [file, readFileSync(join(repoRoot, file), 'utf8')]),
   );
 }
 
-/** Byte offsets of every `mavenLocal` token in `source`. */
-function mavenLocalOffsets(source: string): number[] {
-  const offsets: number[] = [];
-  const re = /\bmavenLocal\b/g;
-  for (let m = re.exec(source); m !== null; m = re.exec(source)) {
-    offsets.push(m.index);
-  }
-  return offsets;
-}
+// Stryker's sandbox leaves examples/ out (stryker.scripts.json
+// ignorePatterns), and its findRelatedTests picks this file up because it
+// imports the checker. There, only the fixture suites below run -- they are
+// what the checker's mutants are judged against.
+const inStrykerSandbox = __dirname.includes(`${sep}.stryker-tmp${sep}`);
 
-/**
- * Offsets of every `{` that encloses `offset`, innermost first -- e.g. for
- * `mavenLocal` inside `if (...) { allprojects { repositories { mavenLocal`,
- * all three opening braces.
- */
-function enclosingBraceOffsets(source: string, offset: number): number[] {
-  const braces: number[] = [];
-  let depth = 0;
-  for (let i = offset - 1; i >= 0; i -= 1) {
-    const ch = source[i];
-    if (ch === '}') {
-      depth += 1;
-    } else if (ch === '{') {
-      if (depth === 0) {
-        braces.push(i);
-      } else {
-        depth -= 1;
-      }
+(inStrykerSandbox ? describe.skip : describe)('the tracked Gradle files, against the pinned Android SDK', () => {
+  const sdk = readNativeVersions().android.sdk;
+  // Read inside the test, not the describe body: a skipped describe's body
+  // still runs.
+  const occurrencesIn = (files: Record<string, string>) =>
+    Object.values(files).reduce(
+      (n, source) => n + mavenLocalOffsets(stripComments(source)).length,
+      0,
+    );
+
+  if (sdk.endsWith('-SNAPSHOT')) {
+    it(`${sdk} is a SNAPSHOT: mavenLocal is present, and every one is guarded and filtered`, () => {
+      const files = trackedFiles();
+      expect(occurrencesIn(files)).toBeGreaterThan(0);
+      expect(mavenLocalProblems(sdk, files)).toEqual([]);
+    });
+  } else {
+    it(`${sdk} is released: no tracked Gradle file mentions mavenLocal`, () => {
+      const files = trackedFiles();
+      expect(occurrencesIn(files)).toBe(0);
+      expect(mavenLocalProblems(sdk, files)).toEqual([]);
+    });
+  }
+});
+
+// Fixtures, so both branches of the checker run whatever the pin is today.
+const GUARDED = `
+def versions = new groovy.json.JsonSlurper().parse(file('native-versions.json'))
+// mavenLocal only while the pin is a SNAPSHOT
+if (versions.android.sdk.endsWith('-SNAPSHOT')) {
+    allprojects {
+        repositories {
+            mavenLocal {
+                content { ${CONTENT_FILTER} }
+            }
+        }
     }
-  }
-  return braces;
 }
-
-/**
- * The condition text of the enclosing `if (...) { }` whose condition tests
- * `android.sdk.endsWith('-SNAPSHOT')`, searching ALL enclosing levels, not
- * only the immediate one: the example nests `mavenLocal` inside `allprojects
- * { repositories { ... } }`, itself inside the guard. `undefined` if no
- * enclosing level is that guard.
- */
-function enclosingSnapshotGuardCondition(source: string, offset: number): string | undefined {
-  for (const braceIndex of enclosingBraceOffsets(source, offset)) {
-    // A window, not a balanced-paren parse: the condition itself calls
-    // endsWith(...), which nests parens a simple capture group cannot walk
-    // through. Braces bound the window instead, since a condition cannot
-    // legally contain one.
-    const windowStart = Math.max(0, braceIndex - 400);
-    const before = source.slice(windowStart, braceIndex).trimEnd();
-    const match = /if\s*\(([^{}]*\.sdk\.endsWith\(\s*['"]-SNAPSHOT['"]\s*\)[^{}]*)\)\s*$/.exec(before);
-    if (match) {
-      return match[1];
+repositories { mavenCentral() }
+`;
+const CLEAN = `
+// no mavenLocal here any more
+repositories { google(); mavenCentral() }
+`;
+const UNGUARDED = `
+repositories {
+    mavenLocal {
+        content { ${CONTENT_FILTER} }
     }
-  }
-  return undefined;
 }
-
-function isGuardedBySnapshotCheck(source: string, offset: number): boolean {
-  return enclosingSnapshotGuardCondition(source, offset) !== undefined;
+`;
+const UNFILTERED = `
+if (versions.android.sdk.endsWith('-SNAPSHOT')) {
+    repositories { mavenLocal() }
 }
-
-/** The full `{ ... }` body of the `mavenLocal` block starting at `offset`. */
-function mavenLocalBody(source: string, offset: number): string {
-  const openIndex = source.indexOf('{', offset);
-  let depth = 0;
-  for (let i = openIndex; i < source.length; i += 1) {
-    if (source[i] === '{') depth += 1;
-    else if (source[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return source.slice(openIndex, i + 1);
+`;
+const OTHER_GUARD = `
+if (project.hasProperty('useLocal')) {
+    repositories {
+        mavenLocal { content { ${CONTENT_FILTER} } }
     }
-  }
-  throw new Error(`unbalanced braces scanning mavenLocal block at offset ${offset}`);
 }
-
-// The Gradle source is a Groovy single-quoted string, where a literal
-// backslash is written `\\` -- so the file's actual bytes for the escaped
-// dot are TWO backslash characters, not one. String.raw keeps this literal
-// instead of a JS string swallowing one level of escaping.
-const CONTENT_FILTER = String.raw`includeVersionByRegex('com\\.bugsee', '.*', '.*-SNAPSHOT')`;
-
-describe('mavenLocal is used only where a SNAPSHOT pin needs it', () => {
-  // Not a live Gradle evaluation -- these files run in contexts (a
-  // standalone unit-test build, an autolinked example app) a plain Jest test
-  // cannot cheaply stand up. Instead this re-implements the one guard
-  // condition every mavenLocal block uses (`android.sdk.endsWith('-SNAPSHOT')`)
-  // and evaluates it against a synthetic released pin, which is what actually
-  // lets this test assert its title: with that pin, Gradle would skip every
-  // one of these `if` blocks, so mavenLocal would not resolve at all.
-  function wouldRunUnderPin(sdk: string): boolean {
-    return sdk.endsWith('-SNAPSHOT');
-  }
-
-  it('when no pin is a SNAPSHOT, no tracked Gradle file would resolve mavenLocal', () => {
-    for (const file of FILES) {
-      const source = stripComments(read(file));
-      for (const offset of mavenLocalOffsets(source)) {
-        // Every occurrence must be guarded by exactly the SNAPSHOT-endsWith
-        // condition (a mavenLocal guarded by something else, or unguarded,
-        // fails here with `undefined`).
-        expect(enclosingSnapshotGuardCondition(source, offset)).toBeDefined();
-        // ...and that guard, evaluated against a synthetic RELEASED pin,
-        // would be false -- i.e. Gradle would skip this whole `if` block and
-        // mavenLocal would never resolve, which is the title's actual claim.
-        expect(wouldRunUnderPin('7.3.0')).toBe(false);
-      }
+`;
+// A bare mavenLocal() followed by an unrelated filtered block: the filter
+// belongs to the later block, not to this one.
+const BARE_THEN_FILTERED = `
+if (versions.android.sdk.endsWith('-SNAPSHOT')) {
+    repositories {
+        mavenLocal()
+        maven { url 'x'; content { ${CONTENT_FILTER} } }
     }
+}
+`;
+
+// A guard that closed before mavenLocal does not guard it.
+const AFTER_CLOSED_GUARD = `
+if (versions.android.sdk.endsWith('-SNAPSHOT')) {
+    repositories { mavenCentral() }
+}
+repositories {
+    mavenLocal { content { ${CONTENT_FILTER} } }
+}
+`;
+// Spacing and extra clauses the guard pattern must tolerate, and closed
+// sibling blocks between the guard and mavenLocal that must be skipped.
+const GUARDED_VARIANTS = `
+if(versions.android.sdk.endsWith( '-SNAPSHOT' ) && !gradle.startParameter.offline){
+    allprojects {
+        buildscript { repositories { google() } }
+        repositories {
+            mavenCentral()
+            mavenLocal(){content { ${CONTENT_FILTER} }}
+            mavenLocal( ) { content { ${CONTENT_FILTER} } }
+        }
+    }
+}
+`;
+
+describe('mavenLocalProblems with a SNAPSHOT pin', () => {
+  it('accepts guard and block spelling variants, skipping closed sibling blocks', () => {
+    expect(mavenLocalProblems('7.3.0-SNAPSHOT', { 'v.gradle': GUARDED_VARIANTS })).toEqual([]);
   });
 
-  it('when a pin is a SNAPSHOT, every mavenLocal is guarded by the pin and filtered to com.bugsee -SNAPSHOT versions', () => {
-    let occurrences = 0;
-    for (const file of FILES) {
-      const source = stripComments(read(file));
-      for (const offset of mavenLocalOffsets(source)) {
-        occurrences += 1;
-        expect(isGuardedBySnapshotCheck(source, offset)).toBe(true);
-        expect(mavenLocalBody(source, offset)).toContain(CONTENT_FILTER);
-      }
-    }
-    // Sanity: native-versions.json pins a SNAPSHOT right now, so this suite
-    // is not vacuously passing over zero occurrences.
-    expect(occurrences).toBeGreaterThan(0);
+  it('accepts a block directly inside the guard', () => {
+    const direct = `if (versions.android.sdk.endsWith('-SNAPSHOT')) { mavenLocal { content { ${CONTENT_FILTER} } } }`;
+    expect(mavenLocalProblems('7.3.0-SNAPSHOT', { 'd.gradle': direct })).toEqual([]);
+  });
+
+  it('rejects a block after a guard that has already closed', () => {
+    expect(mavenLocalProblems('7.3.0-SNAPSHOT', { 'k.gradle': AFTER_CLOSED_GUARD })).toEqual([
+      "k.gradle:6: mavenLocal is not inside the android.sdk.endsWith('-SNAPSHOT') guard",
+    ]);
+  });
+
+
+  const sdk = '7.3.0-SNAPSHOT';
+
+  it('accepts guarded, filtered blocks', () => {
+    expect(mavenLocalProblems(sdk, { 'a.gradle': GUARDED, 'b.gradle': CLEAN })).toEqual([]);
+  });
+
+  it('rejects having no mavenLocal at all, since the pin cannot resolve', () => {
+    expect(mavenLocalProblems(sdk, { 'b.gradle': CLEAN })).toEqual([
+      '7.3.0-SNAPSHOT is a SNAPSHOT pin, but no Gradle file adds the guarded mavenLocal it resolves from',
+    ]);
+  });
+
+  it('rejects an unguarded block, naming the file and line', () => {
+    expect(mavenLocalProblems(sdk, { 'u.gradle': UNGUARDED })).toEqual([
+      "u.gradle:3: mavenLocal is not inside the android.sdk.endsWith('-SNAPSHOT') guard",
+    ]);
+  });
+
+  it('rejects a block guarded by some other condition', () => {
+    expect(mavenLocalProblems(sdk, { 'o.gradle': OTHER_GUARD })).toEqual([
+      "o.gradle:4: mavenLocal is not inside the android.sdk.endsWith('-SNAPSHOT') guard",
+    ]);
+  });
+
+  it('rejects a guarded but unfiltered block', () => {
+    expect(mavenLocalProblems(sdk, { 'f.gradle': UNFILTERED })).toEqual([
+      'f.gradle:3: mavenLocal is not filtered to com.bugsee -SNAPSHOT versions',
+    ]);
+  });
+
+  it('does not credit a bare mavenLocal() with a later block’s filter', () => {
+    expect(mavenLocalProblems(sdk, { 'g.gradle': BARE_THEN_FILTERED })).toEqual([
+      'g.gradle:4: mavenLocal is not filtered to com.bugsee -SNAPSHOT versions',
+    ]);
+  });
+
+  it('ignores mavenLocal in comments', () => {
+    const commented = `/* mavenLocal { } */\n// mavenLocal()\n${GUARDED}`;
+    expect(mavenLocalProblems(sdk, { 'c.gradle': commented })).toEqual([]);
+    expect(mavenLocalProblems(sdk, { 'c.gradle': '// mavenLocal()\n' })).toHaveLength(1);
+  });
+});
+
+describe('mavenLocalProblems with a released pin', () => {
+  const sdk = '7.3.0';
+
+  it('accepts files with no mavenLocal', () => {
+    expect(mavenLocalProblems(sdk, { 'b.gradle': CLEAN, 'c.gradle': '// mavenLocal\n' })).toEqual([]);
+  });
+
+  it('rejects even a guarded, filtered block: it must be deleted', () => {
+    expect(mavenLocalProblems(sdk, { 'a.gradle': GUARDED })).toEqual([
+      'a.gradle:7: mavenLocal must be removed, 7.3.0 is a released pin',
+    ]);
+  });
+
+  it('rejects every occurrence, in every file', () => {
+    expect(
+      mavenLocalProblems(sdk, { 'a.gradle': GUARDED, 'u.gradle': UNGUARDED }),
+    ).toHaveLength(2);
+  });
+});
+
+describe('mavenLocalBody', () => {
+  it('returns the braced body of a block', () => {
+    expect(mavenLocalBody('mavenLocal { a { b } } c', 0)).toBe('{ a { b } }');
+  });
+
+  it('returns the body of the mavenLocal() { } form', () => {
+    expect(mavenLocalBody('mavenLocal() { x }', 0)).toBe('{ x }');
+  });
+
+  it('returns nothing for a bare mavenLocal()', () => {
+    expect(mavenLocalBody('mavenLocal()\nmaven { x }', 0)).toBe('');
+  });
+
+  it('throws on unbalanced braces', () => {
+    expect(() => mavenLocalBody('mavenLocal { {', 0)).toThrow(/unbalanced/);
+  });
+});
+
+describe('stripComments', () => {
+  it('blanks comments but keeps offsets and newlines', () => {
+    const source = 'a // b\n/* c\nd */ e';
+    const stripped = stripComments(source);
+    expect(stripped).toHaveLength(source.length);
+    expect(stripped).toBe('a     \n    \n     e');
   });
 });
