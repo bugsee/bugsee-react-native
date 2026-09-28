@@ -79,6 +79,19 @@ export interface Spec extends TurboModule {
   testCrash(): void;
 
   /**
+   * Creates and uploads a bug report immediately, without showing any UI.
+   *
+   * Pulled forward from Phase 8 (Task 3.4c): the report-handler device tests
+   * need a LIVE report that JS can trigger, and nothing else in the facade
+   * creates one this early. The two-argument form only, matching
+   * `Bugsee.upload(summary, description)` on Android; severity and labels
+   * are Phase 8. Fire-and-forget like `setSecureRectangles` -- the SDK
+   * assembles and uploads the report from its own capture buffer in the
+   * background, so there is nothing to await.
+   */
+  upload(summary: string, description: string): void;
+
+  /**
    * A report handoff, before or after the SDK builds it.
    *
    * `handleId` is opaque and native-minted, never reused within a process, and
