@@ -317,13 +317,582 @@ finds everything to remove.
 
 ## Phase 3 — Wrapper contract
 
-**Ships:** a `BugseeWrapper` implementation per platform — the seam for identity, context, lifecycle events, secure rectangles and report handling. Replaces four scattered mechanisms in the 6.x wrapper.
+**Ships:** a `BugseeWrapper` implementation per platform — the seam for identity, context, lifecycle events, secure rectangles, report handling and the wrapper channel. Replaces four scattered mechanisms in the 6.x wrapper.
 
-- [ ] **3.1** Identity and context: `getWrapperType() → "react_native"`, version, build, and a context map carrying RN version, JS engine and build configuration. Device test: a report's environment shows the wrapper block.
-- [ ] **3.2** `onLifecycleEvent(name, data)` → a typed JS event, plus `onStatusChange(cb)` surfacing the SDK's own status transitions (iOS `bugseeDidChangeStatus:`, Android `BugseeStatus`). Normalise the two platforms' event sets: Android emits string constants; iOS keeps an enum and **never dispatches** `Paused`/`Resumed` or the feedback events. Expose only events that fire on at least one platform; document per-event availability. Device test on both.
-- [ ] **3.3** `getSecureRectangles(display)` — the pull-based buffer `[version, count, l,t,r,b, …]`. Tests pin the encoding and that the version increments on every change. **Mutate:** hold the version constant across a change; the test must fail — a stale version is a privacy defect, since the SDK keeps redacting the old region.
-- [ ] **3.4** `setReportHandler(handler)` — the wrapper's `ReportHandler` callbacks (`onBeforeReportCreated` / `onAfterReportCreated`) routed to JS, superseding the bespoke attachments channel. Both carry an `isTerminating` flag; when set, the process is about to exit, so the JS round trip must not be awaited.
-- [ ] Review gate.
+- [x] **3.1** Identity and context: `getWrapperType() → "react_native"`, version, build, and a context map carrying RN version, JS engine and build configuration. Device test: a report's environment shows the wrapper block.
+- [x] **3.2** `onLifecycleEvent(name, data)` → a typed JS event, plus `onStatusChange(cb)` derived from it. Expose only events that fire on at least one platform; document per-event availability. Device test on both.
+- [x] **3.3** `getSecureRectangles(display)` — the pull-based buffer `[version, count, l,t,r,b, …]`. Tests pin the encoding and that the version increments on every change.
+
+### Rulings for the rest of Phase 3
+
+Decided by the controller on 2026-09-28. Not open for re-litigation inside a task; a task that finds one wrong stops and reports.
+
+- **Ruling:** Android develops against `bugsee-android` `origin/main`, built from a **separate clone** (never the shared `~/Projects/Bugsee/android/sdk` working tree) and published to mavenLocal as `7.3.0-SNAPSHOT`; `native-versions.json` pins `"7.3.0-SNAPSHOT"`, and `mavenLocal()` appears only where a `-SNAPSHOT` pin needs it.
+- **Ruling:** the device harness asserts the Android SDK banner's commit SHA against the commit the SNAPSHOT was built from (workbook 9.1.1).
+- **Ruling:** the flip to `7.3.0` is its own later task — the pin line plus removing mavenLocal, nothing else.
+- **Ruling:** the package is never released while any pin is a SNAPSHOT; `BUGSEE_RELEASE=1 yarn test` fails if one is.
+- **Ruling:** iOS pins `7.0.0-beta3`. Android and JS land first; the iOS halves are separate, later tasks whose first step checks that beta3 is published.
+- **Ruling:** if beta3 is not published when the iOS tasks start, build a local xcframework from `bugsee-cocoa` commit `74af69ee8` (the beta3 release commit) in a separate clone and consume it through the `BUGSEE_IOS_XCFRAMEWORK_ZIP` env override, on the CocoaPods path only.
+- **Ruling:** Task 3.4 (report handler) splits into JS API; Android bridge; iOS bridge; device verification (done per platform, Android first).
+- **Ruling:** `isTerminating = true` never round-trips to JS; the bridge completes natively at once.
+- **Ruling:** the SDK completion is always called — on success, on JS throw, on timeout, and when no handler is set.
+- **Ruling:** the bridge's deadline is below the SDK's cap on the path it runs on: live 30 s; recovery 3 s (iOS recovery and Android early-crash recovery, where the completion is not awaited).
+- **Ruling:** a handle is dead after completion; ops on it reject with a stable error code.
+- **Ruling:** `onAfterReportCreated` may be delivered more than once; it is documented and the proxy tolerates it.
+- **Ruling:** severity crosses by value, 1–5; iOS `0` reads as `undefined`; out-of-range values are rejected in JS before they cross. No bitmap ever crosses (workbook 7.3).
+- **Ruling:** Task 3.5 implements `onWrapperChannelAvailable` on both platforms, stores the channel first thing in a volatile/atomic field outside the wrapper object, and proves the seam with one internal route: a JS log line through `channel.log` with source `Custom`. Phase 4 builds `log()` on it; Phase 9 routes `console.*`.
+- **Ruling:** network events go through the channel with `requiresFiltering = true`, always.
+- **Ruling:** Task 3.6 catches the docs up; the `bugsee-cocoa#99`/`#100` workaround notes are removed only because both issues are verified fixed (below), and deleting the code is its own task (3.7).
+
+### Planner decisions (reviewable; change them here, not inside a task)
+
+- **Handler shape: two optional callbacks, not one callback with a `phase`.** `Bugsee.setReportHandler({ onBeforeReportCreated?, onAfterReportCreated? } | null)`, each `(report: BugseeReport) => void | Promise<void>`. Grounded in the contract: both SDKs name the two callbacks exactly so, and they have different delivery guarantees (before at-most-once, after at-least-once), which a single callback hides behind a string. It also lets native skip the JS round trip for a phase the app never registered — which matters for `onAfter`, which can fire more than once. **`isTerminating` is not passed to JS:** the bridge never reaches JS when it is `true`, so JS would only ever see `false`, and a field that is constant by construction invites branching on it.
+- **`upload(summary, description)` is pulled forward from Phase 8 (Task 3.4c).** The report-handler device tests need a *live* report that JS can trigger, and nothing else in the facade creates one before Phase 7/8. It is one method, the two-argument form only; Phase 8 adds severity and labels.
+- **Deadline path detection.** The bridge cannot learn the path from `isTerminating` (false on both live and recovery). It uses the thread each SDK documents: iOS live = main thread, recovery = off main (`BGSContracts.h`, `BGSReportHandler`); Android live = the thread the public `ReportHandler` javadoc names, `BugseeReportHandlerThread`. Anything else gets the **shorter** recovery deadline, so an SDK change that renames a thread fails safe (enrichment cut short), never unsafe (deadline past the cap).
+- **Execution order is the order written below**, not numeric: 3.P1, 3.4a, 3.4b, 3.4c, 3.5a, 3.4d, 3.5b, 3.P2, 3.7, 3.4e, 3.5c, 3.4f, 3.5d, 3.6, 3.P3, review gate.
+
+### Verified facts these tasks rely on (2026-09-28)
+
+- Android `origin/main` @ `234dcddfc`: `version.txt` still reads `7.2.0`; a non-`RELEASE` build appends `-SNAPSHOT`, so the separate clone must write `7.3.0` into `version.txt` locally. The banner is `Log.d("Bugsee", "Bugsee Android SDK " + VERSION_NAME + " [" + BUILD_CHECKSUM + "]")` (`BugseeInternal.java:202`), where `BUILD_CHECKSUM` is `git rev-parse --short HEAD` of the clone.
+- `~/.m2/repository/com/bugsee/bugsee-android/` already holds stale local builds, including a non-SNAPSHOT `7.3.0` from 2026-09-20. Every mavenLocal declaration below is therefore content-filtered to `com.bugsee` **`-SNAPSHOT` versions only**.
+- `bugsee/bugsee-android` and `bugsee/bugsee-cocoa` are **private**; CI cannot build a SNAPSHOT itself.
+- iOS beta3 is **not published** today: `bugsee/spm` has tags up to `7.0.0-beta2`, and `https://download.bugsee.com/sdk/ios/spm/Bugsee-7.0.0-beta3.zip` answers `403`. `bugsee-cocoa` `74af69ee8` is `release: 7.0.0-beta3`, `version.txt` = `7.0.0-beta3`; its `scripts/build.sh` produces `build/bugsee-spm-xcframework.zip` in the published zip's layout.
+- `bugsee/bugsee-cocoa#99` and `#100` are **closed as completed** (2026-09-17). Their fixes (`8ed4ab31e`, `0eb3ec195`) are ancestors of both the beta2 (`376e3a5d2`) and beta3 (`74af69ee8`) release commits.
+- `bugsee/bugsee-android#178` (screenshot display ids ascending) is **open**, so the 7.3.0-SNAPSHOT does not sort them. The bridge sorts.
+- Android handler caps: live 30 s per handler (option `com.bugsee.option.config.report-handler-callback-timeout`, default 30, `0` disables the per-handler timer), 60 s per chain; uncaught Java exception `isTerminating = true`, 3 s, `onBefore` only; early-crash recovery 3 s, completion not awaited. iOS: live on main, 30 s per handler (constant, no option), 60 s chain; recovery off main, `boundedReportHandlerCap` 3 s, completion not awaited, `isTerminating = NO`.
+
+### Constants every task below uses
+
+| Name | Value | Why |
+|---|---|---|
+| `LIVE_DEADLINE_MS` | `25000` | SDK live cap is 30 s per handler. 5 s headroom covers the bridge hops and JS-thread queueing, and leaves the app's own native handler (which runs after ours) room inside the 60 s chain cap. |
+| `RECOVERY_DEADLINE_MS` | `2500` | Recovery cap is 3 s (iOS `boundedReportHandlerCap`, Android early-crash). 500 ms headroom. |
+| `MIN_USEFUL_DEADLINE_MS` | `1000` | Below this a JS round trip cannot complete; complete natively without emitting. |
+| Android live deadline | `min(25000, optionSeconds*1000 − 1000)` when `optionSeconds > 0`; `25000` when `0` or unreadable | Tracks an app that lowered `report-handler-callback-timeout`. |
+| iOS live deadline | `25000` | No option exists on iOS. |
+| `ANDROID_LIVE_HANDLER_THREAD` | `"BugseeReportHandlerThread"` | Named in the public `ReportHandler` javadoc. |
+
+| Error code | Meaning |
+|---|---|
+| `E_REPORT_HANDLE_DEAD` | The handle completed, timed out, was released by a JS reload, or never existed. Same code whichever side notices. |
+| `E_REPORT_ATTACHMENT_REJECTED` | The SDK returned null/nil from an attachment add: report no longer live, 1000-attachment cap, unreadable/missing file, or write failure. |
+| `E_REPORT_BAD_ARGUMENT` | A value failed validation — in JS before crossing, or defensively in native. |
+
+---
+
+### Task 3.P1 — Android pin: `7.3.0-SNAPSHOT` from a separate clone, and the release guard
+
+**Files:**
+- Modify: `native-versions.json`, `scripts/native-versions.ts`, `scripts/__tests__/native-versions.test.ts`
+- Modify: `settings.gradle` (root, standalone unit-test build), `examples/bare/android/build.gradle`
+- Modify: `.github/workflows/ci.yml` (android job), `packages/react-native/package.json` (`prepublishOnly`), root `package.json` (`test:release`)
+- Create: `scripts/releasable-pins.ts`, `scripts/cli-check-releasable-pins.ts`, `scripts/__tests__/releasable-pins.test.ts`
+- Create: `scripts/__tests__/maven-local.test.ts`
+- Create: `scripts/sdk-banner.ts`, `scripts/__tests__/sdk-banner.test.ts`
+- Modify: `examples/bare/e2e/device.ts`, `examples/bare/e2e/launch.test.ts`
+
+**Interfaces:**
+- `native-versions.json` → `"android": { "sdk": "7.3.0-SNAPSHOT", "gradlePlugin": "4.0.7", "snapshotCommit": "<40-hex SHA of the clone's HEAD>" }`. `snapshotCommit` is present **iff** `sdk` ends in `-SNAPSHOT`; `readNativeVersions` adds it to `NOT_A_VERSION`, requires `/^[0-9a-f]{40}$/`, and throws naming the key when the pairing is violated in either direction.
+- `releaseBlockers(versions: NativeVersions, supportPackageResolved: string): string[]` — one human-readable line per blocker: any pin ending `-SNAPSHOT`; `android.snapshotCommit` present; the `spm` pin in `ios/Support/Package.resolved` carrying the placeholder revision `0000000000000000000000000000000000000000` (see 3.P2).
+- `checkAndroidBanner(line: string, versions: NativeVersions): { ok: true } | { ok: false; reason: string }` — parses `Bugsee Android SDK (\S+) \[([0-9a-f]{7,40})\]`; `ok` iff the version equals `versions.android.sdk` exactly and, when `snapshotCommit` is set, `snapshotCommit.startsWith(sha)`.
+
+**Build the SNAPSHOT (human-run, recorded, never in CI):**
+
+```sh
+CLONE="$HOME/Projects/Bugsee/_clones/bugsee-android-rn-snapshot"   # NOT ~/Projects/Bugsee/android/sdk
+[ -d "$CLONE" ] || git clone https://github.com/bugsee/bugsee-android.git "$CLONE"
+cd "$CLONE"
+git fetch origin && git checkout --detach origin/main
+git submodule update --init --recursive
+git status --porcelain                       # must be empty before the next line
+printf '7.3.0\n' > version.txt               # local only; RELEASE unset makes it 7.3.0-SNAPSHOT
+./gradlew :library:publishToMavenLocal :ndk:publishToMavenLocal
+git rev-parse HEAD                           # -> native-versions.json android.snapshotCommit
+ls ~/.m2/repository/com/bugsee/bugsee-android/7.3.0-SNAPSHOT/ ~/.m2/repository/com/bugsee/bugsee-android-ndk/7.3.0-SNAPSHOT/
+```
+
+Both artifacts are required: `packages/react-native/android/build.gradle` pins `bugsee-android` **and** `bugsee-android-ndk` to the same version.
+
+**mavenLocal, only where a SNAPSHOT needs it.** In both Gradle files, read `native-versions.json` (root: `new File(settingsDir, 'native-versions.json')`; example: the `../../../native-versions.json` it already parses) and only when `android.sdk` ends with `-SNAPSHOT` add:
+
+```groovy
+mavenLocal {
+    content { includeVersionByRegex('com\\.bugsee', '.*', '.*-SNAPSHOT') }
+}
+```
+
+Root: inside `dependencyResolutionManagement.repositories`. Example: `allprojects { repositories { … } }`. The filter is load-bearing: the stale non-SNAPSHOT `7.3.0` in `~/.m2` must never be able to satisfy a request.
+
+**CI.** First step of the `android` job: fail fast with `::error title=Local SNAPSHOT pin::native-versions.json pins Android ${sdk}, built from a private clone; CI cannot resolve it. Expected red until Task 3.P3 flips to 7.3.0.` when `android.sdk` ends `-SNAPSHOT`. An opaque dependency-resolution failure is the alternative. The step stays after the flip, where it passes.
+
+**Release switch.** `BUGSEE_RELEASE=1` is the release mode. Root `package.json`: `"test:release": "BUGSEE_RELEASE=1 yarn test"`. `packages/react-native/package.json`: `"prepublishOnly": "node ../../scripts/cli-check-releasable-pins.ts"` (exits 1 printing every blocker) — `changeset publish` runs `npm publish`, which runs it.
+
+- [ ] **Red** — `scripts/__tests__/native-versions.test.ts`: `pins Android 7.3.0-SNAPSHOT with the commit it was built from`; `rejects a SNAPSHOT pin without snapshotCommit`; `rejects snapshotCommit on a release pin`; `rejects a short or non-hex snapshotCommit`. `scripts/__tests__/releasable-pins.test.ts`: `a SNAPSHOT android pin is a release blocker`; `snapshotCommit alone is a release blocker`; `the zero-revision Package.resolved placeholder is a release blocker`; `7.3.0 with a real revision has no blockers`; and the gate `(process.env.BUGSEE_RELEASE === '1' ? it : it.skip)('the committed pins are releasable', …)`. `scripts/__tests__/sdk-banner.test.ts`: `accepts the SNAPSHOT banner whose SHA prefixes snapshotCommit`; `rejects a banner from a different commit, naming both SHAs`; `rejects 7.3.0 when 7.3.0-SNAPSHOT is pinned` (a published build outranked the local one); `rejects 7.3.0-SNAPSHOT when 7.3.0 is pinned` (stale mavenLocal leaked in); `rejects a line that is not the banner`. `scripts/__tests__/maven-local.test.ts`: `when no pin is a SNAPSHOT, no tracked Gradle file mentions mavenLocal`; `when a pin is a SNAPSHOT, every mavenLocal is guarded by the pin and filtered to com.bugsee -SNAPSHOT versions` (reads root `settings.gradle`, `examples/bare/android/build.gradle`, `examples/bare/android/settings.gradle`, `packages/react-native/android/build.gradle`). Run `yarn test` → the new cases FAIL.
+- [ ] **Green** — the pin, the validation, the guarded repositories, `releaseBlockers` + CLI, `checkAndroidBanner`, the CI step, the scripts. `yarn test` green; `BUGSEE_RELEASE=1 yarn test` **fails**, listing the SNAPSHOT pin (expected — that is the guard working). `./gradlew :bugsee-android-bridge:testDebugUnitTest` and `examples/bare/android ./gradlew assembleDebug` green against the SNAPSHOT; fix any compile break from 7.2.0 → main in this commit only if it is mechanical, otherwise stop and report.
+- [ ] **Harness** — `device.ts` adds `Bugsee:V` (already present) and `BugseeRN:V` to the logcat filter. `launch.test.ts` on Android inserts a step `SDK build` (`/Bugsee Android SDK \S+ \[[0-9a-f]+\]/`, 15 s) between `JS running` and `Status.Launched`, then asserts `checkAndroidBanner(matched, readNativeVersions())` is `ok`, failing with its `reason`.
+- [ ] **Mutate** — (1) make `releaseBlockers` ignore `-SNAPSHOT`: `a SNAPSHOT android pin is a release blocker` must fail. (2) compare only the version in `checkAndroidBanner`: `rejects a banner from a different commit` must fail. (3) drop the `content { … }` filter from the example's mavenLocal: the maven-local test must fail. Revert each; record results.
+- [ ] **Device** — WOD_LX1: `yarn workspace bugsee-example-bare device:android`, then `E2E_PLATFORM=android yarn workspace bugsee-example-bare e2e`. The `SDK build` step must print the clone's short SHA. Then the NDK check from workbook 1.4.2: `adb logcat` for ≥ 30 s after a cold start, `grep -oE "libbugsee[a-z-]*\.so" | sort -u | wc -l` → **4**.
+- [ ] **Commit** — `build(android): pin 7.3.0-SNAPSHOT from a separate clone, and refuse to release it`. Body: the clone SHA, the banner line observed, the `.so` count.
+
+**Acceptance:** SNAPSHOT resolves only from mavenLocal and only for `com.bugsee` `-SNAPSHOT`; the banner SHA is asserted by the harness, not read by eye; `BUGSEE_RELEASE=1 yarn test` and `npm publish` both refuse; CI's android job fails with the named reason and nothing else.
+
+---
+
+### Task 3.4a — Report handler: JS API, types, proxy (bridge mocked), native stubs
+
+**Files:**
+- Modify: `packages/react-native/src/NativeBugsee.ts`, `src/index.ts`, `src/__mocks__/native.ts`
+- Create: `src/report/types.ts`, `src/report/errors.ts`, `src/report/validate.ts`, `src/report/BugseeReport.ts`, `src/report/dispatcher.ts`
+- Create: `src/report/__tests__/dispatcher.test.ts`, `src/report/__tests__/proxy.test.ts`, `src/report/__tests__/validate.test.ts`
+- Modify (stubs only): `android/.../BugseeModule.java`, `ios/BugseeModule.mm`
+- Create: `scripts/__tests__/ios-spec-coverage.test.ts`
+
+**TurboModule additions (exact):**
+
+```ts
+readonly onReportHandlerRequest: EventEmitter<{
+  handleId: string;   // opaque, native-minted, never reused in a process
+  phase: string;      // 'before' | 'after'
+  reportId: string;
+  type: string;       // 'bug' | 'crash' | 'error' (open set)
+  deadlineMs: number; // the native deadline for THIS handle
+}>;
+setReportHandlerPhases(before: boolean, after: boolean): void;
+completeReportHandler(handleId: string): void;
+reportRead(handleId: string): Promise<UnsafeObject>;
+reportUpdate(handleId: string, patch: UnsafeObject): Promise<void>;
+reportAddFileAttachment(handleId: string, path: string, name: string, mimeType: string | null, move: boolean): Promise<void>;
+reportAddDataAttachment(handleId: string, base64: string, name: string, mimeType: string | null): Promise<void>;
+```
+
+`reportRead` resolves `{ summary: string|null, description: string|null, severity: number /* 0..5; 0 = iOS unset */, labels: string[], attributes: {[k]: string|number|boolean}, screenshotDisplayIds: number[], attachmentNames: string[] }`.
+
+`reportUpdate` patch keys, all optional: `summary: string|null`, `description: string|null`, `severity: 1..5`, `labels: string[]` (**replaces** — Android `setLabels`, iOS `replaceLabels:`), `clearAttributes: true` (applied first), `attributes: {[k]: string|number|boolean|null}` (merge; `null` removes). Unknown keys are `E_REPORT_BAD_ARGUMENT`. Validation is all-or-nothing: nothing is applied unless every field is valid.
+
+**Public JS API (exact):**
+
+```ts
+// src/report/types.ts
+export type ReportType = 'bug' | 'crash' | 'error' | (string & {});
+export interface BugseeReportSnapshot {
+  summary: string | undefined;
+  description: string | undefined;
+  severity: IssueSeverity | undefined;          // iOS 0, or anything outside 1..5 -> undefined
+  labels: string[];
+  attributes: Record<string, string | number | boolean>;
+  screenshotDisplayIds: number[];               // ascending, always
+  attachmentNames: string[];
+}
+export interface ReportPatch {
+  summary?: string | null;
+  description?: string | null;
+  severity?: IssueSeverity;
+  labels?: readonly string[];
+  attributes?: Readonly<Record<string, string | number | boolean | null>>;
+  clearAttributes?: true;
+}
+export interface BugseeReport {
+  readonly id: string;                          // synchronous, from the event
+  readonly type: ReportType;                    // synchronous, from the event
+  read(): Promise<BugseeReportSnapshot>;
+  getSummary(): Promise<string | undefined>;      setSummary(v: string | null): Promise<void>;
+  getDescription(): Promise<string | undefined>;  setDescription(v: string | null): Promise<void>;
+  getSeverity(): Promise<IssueSeverity | undefined>; setSeverity(v: IssueSeverity): Promise<void>;
+  getLabels(): Promise<string[]>;                 setLabels(labels: readonly string[]): Promise<void>;
+  getAttributes(): Promise<Record<string, string | number | boolean>>;
+  setAttribute(name: string, value: string | number | boolean | null): Promise<void>;
+  clearAttributes(): Promise<void>;
+  getScreenshotDisplayIds(): Promise<number[]>;
+  getAttachmentNames(): Promise<string[]>;
+  addFileAttachment(path: string, options: { name: string; mimeType?: string; move?: boolean }): Promise<void>;
+  addDataAttachment(base64: string, options: { name: string; mimeType?: string }): Promise<void>;
+  update(patch: ReportPatch): Promise<void>;
+}
+export interface BugseeReportHandler {
+  onBeforeReportCreated?(report: BugseeReport): void | Promise<void>;
+  onAfterReportCreated?(report: BugseeReport): void | Promise<void>;
+}
+// src/report/errors.ts
+export const ReportErrorCode = {
+  HandleDead: 'E_REPORT_HANDLE_DEAD',
+  AttachmentRejected: 'E_REPORT_ATTACHMENT_REJECTED',
+  BadArgument: 'E_REPORT_BAD_ARGUMENT',
+} as const;
+export class BugseeReportError extends Error { readonly code: (typeof ReportErrorCode)[keyof typeof ReportErrorCode]; }
+// facade
+setReportHandler(handler: BugseeReportHandler | null): void;
+```
+
+Getters are sugar over one `reportRead`. Exported from `src/index.ts`: `ReportErrorCode`, `BugseeReportError`, and the types above.
+
+**Behaviour the dispatcher must have:**
+- Subscribes to `onReportHandlerRequest` on the first non-null `setReportHandler`; stays subscribed. `setReportHandler(h)` calls `setReportHandlerPhases(!!h?.onBeforeReportCreated, !!h?.onAfterReportCreated)`; `null` → `(false, false)`.
+- Per event: take the callback for `phase` from the handler **current at dispatch**; none → `completeReportHandler(handleId)` synchronously. Otherwise build a proxy, run the callback, and in `finally` mark the proxy dead and call `completeReportHandler` exactly once. A throw or rejection is caught and reported with `console.error('[Bugsee] report handler threw', error)`; it never becomes an unhandled rejection.
+- A local timer at `deadlineMs` marks the proxy dead; ops after that reject locally. JS still calls `completeReportHandler` once when the callback settles (native treats a second completion as a no-op).
+- Dead proxy ops reject with `BugseeReportError` code `E_REPORT_HANDLE_DEAD` **without crossing the bridge**. Native rejections surface with the same `.code`.
+- JS validation before crossing: `setSeverity` accepts only integers 1–5 (`0`, `6`, `2.5`, `NaN` → `E_REPORT_BAD_ARGUMENT`); labels must be strings; attribute values must be string, boolean, finite number or `null`; `addFileAttachment` strips a leading `file://` and percent-decodes, rejects an empty path or name; `addDataAttachment` requires `/^[A-Za-z0-9+/]*={0,2}$/` with length % 4 == 0, and a non-empty name. `getScreenshotDisplayIds` sorts ascending (Android #178 is open).
+- **Document on `setReportHandler`:** register before `launch()` to see reports recovered at launch; `onBeforeReportCreated` is at-most-once and may be skipped; `onAfterReportCreated` is at-least-once and must be idempotent — `setLabels`/`setAttribute` rather than appending, and check `getAttachmentNames()` before adding; mutations after the handler settles (or after its deadline) do not reach the report; the deadline is the SDK's, not the app's.
+
+**Native stubs in this task** (so every commit builds on both platforms): Android and iOS implement the six new methods. `setReportHandlerPhases` and `completeReportHandler` are no-ops; the four promise methods reject `E_REPORT_HANDLE_DEAD` — truthful, since no stub ever mints a handle. The wrappers keep completing immediately. `ios-spec-coverage.test.ts`: every method named in the `Spec` interface of `NativeBugsee.ts` has a matching first selector segment in `BugseeModule.mm`.
+
+- [ ] **Red** — `dispatcher.test.ts`: `invokes onBeforeReportCreated for phase "before" and completes after it resolves`; `invokes onAfterReportCreated for phase "after"`; `completes immediately when no handler is set`; `completes immediately when the phase has no callback`; `completes exactly once when the callback throws synchronously`; `completes exactly once when the callback rejects, and nothing is unhandled`; `setReportHandler(null) tells native no phase is wanted`; `registers only the phases the handler defines`; `a handler replaced mid-flight finishes with the callback captured at dispatch`; `two onAfter deliveries for one report get two independent proxies`; `the proxy dies at deadlineMs even if the callback never settles` (fake timers). `proxy.test.ts`: `ops after completion reject with E_REPORT_HANDLE_DEAD without crossing`; `a native E_REPORT_HANDLE_DEAD surfaces with the same code`; `severity 0 reads as undefined`; `severity 7 reads as undefined`; `severity 4 reads as IssueSeverity.Critical`; `setSeverity rejects 0, 6, 2.5 and NaN before crossing`; `setLabels sends the whole list in one reportUpdate`; `setLabels rejects a non-string label before crossing`; `setAttribute(name, null) sends a removal`; `setAttribute rejects NaN, Infinity and objects`; `update with one bad field sends nothing`; `addFileAttachment strips file:// and percent-decodes`; `addFileAttachment rejects an empty path or name`; `addDataAttachment rejects non-base64 before crossing`; `E_REPORT_ATTACHMENT_REJECTED surfaces with its code`; `getScreenshotDisplayIds is ascending even when native is not`; `id and type are synchronous and come from the event`. `validate.test.ts`: `ReportErrorCode values are exactly the three stable strings`. → FAIL.
+- [ ] **Green** — the modules above; the mock gains `onReportHandlerRequest` (subscribe), `emitReportHandlerRequest(event)`, and `jest.fn`s for the six methods (`reportRead` default resolves the empty snapshot).
+- [ ] **Stubs** — as above; `ios-spec-coverage.test.ts` green; the Android `java-signatures` check and both example builds green.
+- [ ] **Mutate** — (1) delete the JS severity range check: `setSeverity rejects … before crossing` must fail. (2) move `completeReportHandler` out of `finally`: `completes exactly once when the callback throws` must fail. (3) drop the local dead flag: `ops after completion reject … without crossing` must fail. (4) delete the iOS stub for `reportRead`: `ios-spec-coverage` must fail.
+- [ ] **Commit** — `feat(report): setReportHandler and the BugseeReport proxy, bridge stubbed`.
+
+**Acceptance:** the whole JS contract is pinned by tests against the mock; no platform behaviour changes yet; every build green.
+
+---
+
+### Task 3.4b — Report handler: Android bridge
+
+**Files:**
+- Create: `android/src/main/java/com/bugsee/reactnative/ReportHandlerBridge.java`, `ReportHandlerDeadlines.java`, `ReportOps.java`
+- Modify: `BugseeReactNativeWrapper.java` (both callbacks), `BugseeModule.java` (replace the 3.4a stubs; attach/detach)
+- Create tests: `ReportHandlerBridgeTest.java`, `ReportHandlerDeadlinesTest.java`, `ReportOpsTest.java`, and helper `FakeReports.java` (builds a `Report` with `java.lang.reflect.Proxy`, recording calls and holding state, so no test implements the ~40-method interface by hand)
+
+**Interfaces (plain Java, no React Native, JVM-testable):**
+
+```java
+final class ReportHandlerBridge {
+    enum Phase { BEFORE("before"), AFTER("after"); final String wire; }
+    interface Sink { void onReportHandlerRequest(String handleId, String phase, String reportId, String type, double deadlineMs); }
+    interface Scheduler { Cancellable schedule(Runnable task, long delayMs); }   // injectable; prod = one daemon thread "BugseeRN-ReportDeadline"
+    interface Cancellable { void cancel(); }
+    static ReportHandlerBridge shared();
+    interface LiveDeadlineSource { long liveMs(); }                             // own interface: java.util.function needs API 24, minSdk is 21
+    ReportHandlerBridge(Scheduler scheduler, LiveDeadlineSource live);           // package-private, for tests
+    void setPhases(boolean before, boolean after);
+    void attach(Sink sink);
+    void detach(Sink stale);             // identity-checked; completes every outstanding handle; resets phases to false
+    void dispatch(Phase phase, Report report, boolean isTerminating, Runnable sdkCompletion);
+    boolean complete(String handleId);   // true only for the call that ran the SDK completion
+    @Nullable Report reportFor(String handleId);
+}
+final class ReportHandlerDeadlines {
+    static final long LIVE_DEADLINE_MS = 25_000, RECOVERY_DEADLINE_MS = 2_500, MIN_USEFUL_DEADLINE_MS = 1_000;
+    static final String LIVE_HANDLER_THREAD = "BugseeReportHandlerThread";
+    static long liveMs(@Nullable Integer optionSeconds);   // null/0 -> 25000; else min(25000, s*1000 - 1000)
+    static long forThread(String threadName, long liveMs); // LIVE_HANDLER_THREAD -> liveMs; anything else -> 2500
+}
+final class ReportOps {
+    static Map<String, Object> read(Report report);        // severity via getValue(); labels; attributes; sorted display ids; attachment names
+    static void apply(Report report, Map<String, Object> patch) throws BadArgument;  // validates all, then applies
+    static boolean addFile(Report report, String path, String name, @Nullable String mimeType, boolean move); // false = SDK returned null
+    static boolean addData(Report report, byte[] data, String name, @Nullable String mimeType);
+    static final class BadArgument extends Exception { … }
+}
+```
+
+**`dispatch` order (each is a test):** `isTerminating` → run `sdkCompletion` synchronously, return, emit nothing. No sink attached, phase not registered, or deadline `< MIN_USEFUL_DEADLINE_MS` → complete immediately. Otherwise mint `"rh-" + counter`, store `{report, completion, done}`, arm the deadline, call the sink (a throwing sink completes the handle). `complete` is idempotent behind an `AtomicBoolean`, cancels the timer, removes the entry, and runs `sdkCompletion` inside `try/catch (Throwable)`. Every outcome logs one line at tag `BugseeRN`: `report handler <id> phase=<p> deadline=<ms>` on dispatch; `report handler <id> completed by=<js|deadline|terminating|no-handler|detach>` on completion — the device tests match these.
+
+**Module:** reads `optionSeconds` for `liveMs` from `Bugsee.getLaunchOptions()` key `com.bugsee.option.config.report-handler-callback-timeout` (wrapped; any failure → `null`). Converts `ReadableMap` patch → `Map` (integral numbers within ±2^53 → `Long`, others → `Double`; booleans; strings; null). `reportAddDataAttachment` decodes with `android.util.Base64.decode(s, Base64.NO_WRAP)`; `IllegalArgumentException` → `E_REPORT_BAD_ARGUMENT`. Unknown handle → `E_REPORT_HANDLE_DEAD`. Ops run on the calling (native-modules) thread; the SDK documents `Report` as usable from any thread and its collections are synchronized. Severity is written with an explicit 1–5 check then `IssueSeverity.fromIntValue(n)` — **never the one-argument form on unchecked input**, which silently maps garbage to `VeryLow`. The module attaches itself as the sink in its constructor and detaches in `invalidate()`, exactly like `WrapperEventBus`.
+
+- [ ] **Red** — `ReportHandlerBridgeTest`: `terminatingCompletesSynchronouslyAndNeverReachesJs`; `noSinkCompletesImmediately`; `unregisteredPhaseCompletesImmediately`; `tooShortADeadlineCompletesWithoutEmitting`; `eachDeliveryGetsAFreshHandle` (two AFTER dispatches of one report); `completeRunsTheSdkCompletionExactlyOnce`; `deadlineCompletesAndKillsTheHandle` (manual scheduler); `completingBeforeTheDeadlineCancelsTheTimer`; `aThrowingSinkStillCompletes`; `aThrowingSdkCompletionDoesNotEscape`; `detachCompletesEverythingOutstandingAndClearsPhases`; `detachingAStaleSinkLeavesTheCurrentOne`. `ReportHandlerDeadlinesTest`: `liveIs25sUnderTheDefault30sCap`; `liveTracksALowerOption` (10 → 9000); `zeroOptionMeans25s`; `oneSecondOptionFallsBelowTheUsefulMinimum`; `recoveryIs2500`; `onlyTheSdkHandlerThreadIsLive` (`"BugseeReportHandlerThread"` → live; `"main"`, `"BugseeRN-x"` → 2500); `handlerThreadNameMatchesTheJavadoc`. `ReportOpsTest`: `readsSeverityByValueNotOrdinal` (`Critical` → 4); `appliesSeverityOneToFive`; `rejectsSeverityZeroAndSixAndLeavesTheReportAlone`; `patchIsAllOrNothing`; `labelsReplaceThroughSetLabels` (recorded calls: `setLabels` only, never `clearLabels` + `addLabels`); `nullAttributeRemoves`; `clearAttributesRunsBeforeAttributes`; `unknownPatchKeyIsRejected`; `typeCrossesAsItsString` (`IssueType.Crash` → `"crash"`); `screenshotIdsAreSortedAscending` (`[2,0,1]` → `[0,1,2]`); `aNullFromTheSdkIsARejectedAttachment`; `fileAttachmentPassesMoveThrough` (temp file). Run `./gradlew :bugsee-android-bridge:testDebugUnitTest` → FAIL.
+- [ ] **Green** — the three classes; the wrapper's two callbacks become `ReportHandlerBridge.shared().dispatch(Phase.X, report, isTerminating, completionCallback)`; the module replaces its stubs and emits `onReportHandlerRequest`.
+- [ ] **Mutate** — (1) delete the `isTerminating` early return: `terminatingCompletesSynchronouslyAndNeverReachesJs` must fail. (2) drop the `AtomicBoolean`: `completeRunsTheSdkCompletionExactlyOnce` must fail. (3) read severity with `ordinal()`: `readsSeverityByValueNotOrdinal` must fail. (4) make `forThread` return live for every thread: `onlyTheSdkHandlerThreadIsLive` must fail. Revert each; record.
+- [ ] **Commit** — `feat(android): route report handlers to JS through a handle registry`.
+
+**Acceptance:** the SDK completion runs exactly once on every path, including JS reload; no deadline can exceed the SDK's cap for the path; all JVM tests green; the example builds.
+
+---
+
+### Task 3.4c — Live-report trigger: `upload(summary, description)`, pulled forward from Phase 8
+
+**Files:** `src/NativeBugsee.ts`, `src/index.ts`, `src/__tests__/upload.test.ts`, `android/.../BugseeModule.java`, `ios/BugseeModule.mm` (stub)
+
+**Interfaces:** spec `upload(summary: string, description: string): void`; facade `upload(summary: string, description: string): void` — both must be strings (`TypeError` otherwise, before crossing). Android: `Bugsee.upload(summary, description)`. iOS: a no-op stub commented `Task 3.4e`. The two-argument form only; severity and labels are Phase 8.
+
+- [ ] **Red** — `upload forwards summary and description`; `upload rejects a non-string summary or description before crossing`. → FAIL.
+- [ ] **Green** — as above. Phase 8's paragraph gains one line: "`upload(summary, description)` exists since Task 3.4c; add the severity/labels forms."
+- [ ] **Mutate** — forward `summary` twice: the first test must fail.
+- [ ] **Commit** — `feat(report): upload(summary, description), the live trigger the handler tests need`.
+
+---
+
+### Task 3.5a — Wrapper channel: Android seam and the internal JS log route
+
+Implements the §10.3 decision as amended in `9ec0a37`: every line a wrapper injects is filtered **natively**, once; the RN wrapper never runs the customer's log filter in JS. The channel's `log` has no filtering flag, so there is nothing to pass. This task proves the seam only; Phase 4 builds `log()` on it and Phase 9 routes `console.*`. Nothing is buffered: before launch the channel is inert and drops lines (spec), so the §10.3 "flush after `setWrapper` returns" constraint does not arise until Phase 9 buffers.
+
+**Files:**
+- Create: `android/.../WrapperChannelHolder.java`, `android/.../WrapperRegistrar.java`
+- Modify: `BugseeReactNativeWrapper.java` (`onWrapperChannelAvailable`), `ReactNativeWrapperInitProvider.java` and `BugseeModule.setWrapperInfo` (both through `WrapperRegistrar`), `BugseeModule.java` (`wrapperLog`)
+- Modify: `src/NativeBugsee.ts`; `ios/BugseeModule.mm` (no-op stub commented `Task 3.5c`)
+- Create: `src/wrapper/channel.ts`, `src/wrapper/__tests__/channel.test.ts`
+- Create tests: `WrapperChannelHolderTest.java`, `WrapperRegistrarTest.java`, `scripts/__tests__/wrapper-registration-serialised.test.ts`
+
+**Interfaces:**
+
+```java
+final class WrapperChannelHolder {           // process-wide; outlives every wrapper instance
+    static WrapperChannelHolder shared();
+    void set(@NonNull BugseeWrapperChannel channel);   // AtomicReference.set, nothing else
+    void clear();
+    void log(@Nullable String message, int level);     // channel.log(null, message, level(level), LogSource.Custom)
+    void addNetworkEvent(@Nullable NetworkEvent e);     // channel.addNetworkEvent(e, true) -- ALWAYS true
+}
+final class WrapperRegistrar {
+    interface Setter { void set(@Nullable BugseeWrapper wrapper); }         // own interface (no java.util.function below API 24); prod = Bugsee::setWrapper
+    static void register(@Nullable BugseeWrapper wrapper);  // synchronized on one static lock; Bugsee.setWrapper(w); clear() after a null
+    static void registerWith(Setter setter, @Nullable BugseeWrapper wrapper); // package-private, for tests
+}
+// BugseeReactNativeWrapper
+@Override public void onWrapperChannelAvailable(@NonNull BugseeWrapperChannel channel) {
+    WrapperChannelHolder.shared().set(channel);   // FIRST statement, and the only one
+}
+```
+
+```ts
+// NativeBugsee.ts
+wrapperLog(message: string, level: number): void;
+// src/wrapper/channel.ts -- internal: NOT exported from src/index.ts
+export function forwardLog(message: string, level: LogLevel = LogLevel.Info): void;
+```
+
+**Level mapping — by value, identical on both platforms:**
+
+| JS `LogLevel` | wire | Android `LogLevel` (`fromRawValue`) | iOS `BugseeLogLevel` |
+|---|---|---|---|
+| `Error` | 1 | `Error` (value 1, **ordinal 0**) | `BugseeLogLevelError` (1) |
+| `Warning` | 2 | `Warning` | `BugseeLogLevelWarning` (2) |
+| `Info` | 3 | `Info` | `BugseeLogLevelInfo` (3) |
+| `Debug` | 4 | `Debug` | `BugseeLogLevelDebug` (4) |
+| `Verbose` | 5 | `Verbose` | `BugseeLogLevelVerbose` (5) |
+
+JS rejects anything else with `RangeError` before crossing. Native defends: outside 1–5 → `Info` (Android `LogLevel.fromRawValue((byte) n, LogLevel.Info)`; iOS `BugseeLogLevelInfo`). `BugseeLogLevelInvalid` (0) is never sent. `tag` is always `null`: iOS drops it, so passing one would make the platforms disagree. Source is always `Custom` (98), resolved by the bridge — never left missing, which iOS would read as `Unknown`.
+
+**Guarding the call site** (wrapper-channel spec: the app's filter runs on the calling thread and on Android its exception propagates): `log` catches `Throwable`, logs it once per process at `BugseeRN` (`AtomicBoolean`), and does not rethrow into React Native. **Registration** is serialised by `WrapperRegistrar`'s lock (spec: "register from one thread"); the callback only stores, so it cannot deadlock under the SDK's registration lock.
+
+- [ ] **Red** — `WrapperChannelHolderTest` (a recording fake `BugseeWrapperChannel`): `logsWithSourceCustomAndNoTag`; `mapsLevelsByValue` (1→`Error` … 5→`Verbose`); `outOfRangeLevelBecomesInfo` (0, 6, −1); `noChannelIsANoOp`; `aThrowingFilterDoesNotEscapeAndIsReportedOnce`; `networkEventsAlwaysRequireFiltering` (a `NetworkEvent` from `java.lang.reflect.Proxy`); `clearRetiresTheChannel`; `theWrapperStoresTheChannelItIsHanded`. `WrapperRegistrarTest` (injected setter): `registrationsNeverOverlap` (two threads; the fake setter fails on re-entry); `unregisteringClearsTheChannel`. `wrapper-registration-serialised.test.ts`: `no source outside WrapperRegistrar calls Bugsee.setWrapper`. `channel.test.ts`: `forwards message and level`; `defaults to Info (3)`; `rejects 0, 6 and 2.5 before crossing`; `rejects a non-string message`; `is not exported from the public entry point`. → FAIL.
+- [ ] **Green** — as specified. Phase 4's paragraph gains one line: "`log()` builds on `forwardLog` / `wrapperLog` (Task 3.5a); do not add a second native route."
+- [ ] **Mutate** — (1) pass `LogSource.Bugsee`: `logsWithSourceCustomAndNoTag` must fail. (2) pass `requiresFiltering = false`: `networkEventsAlwaysRequireFiltering` must fail. (3) map with `LogLevel.values()[n]`: `mapsLevelsByValue` must fail. (4) remove the store from `onWrapperChannelAvailable`: `theWrapperStoresTheChannelItIsHanded` must fail.
+- [ ] **Commit** — `feat(android): hold the wrapper channel and forward a JS log line through it`.
+
+**Acceptance:** the channel is stored outside the wrapper, first; a JS line reaches `channel.log` as `Custom` with the level by value; network events cannot be sent unfiltered through our code; registrations are serialised.
+
+---
+
+### Task 3.4d — Device verification, Android: report handler
+
+Workbook Part 9 throughout: assert the experiment, not only the result.
+
+**Files:**
+- Create: `examples/bare/e2e/bundles.ts` (Android half), `examples/bare/e2e/scenario.ts`, `examples/bare/e2e/report-handler.test.ts`, `examples/bare/scenarios/report-handler.ts`
+- Modify: `examples/bare/App.tsx` (dispatch on the scenario), `examples/bare/scripts/write-credentials.mjs` (write a default `e2e-scenario.json` = `{"scenario":"launch"}` when absent), `examples/bare/.gitignore` (`e2e-scenario.json`)
+
+**Mechanism.** The harness writes `examples/bare/e2e-scenario.json` = `{ "scenario": "<name>", "nonce": "<random hex>" }` before starting the app; Metro serves it with the bundle, so no native code is needed to choose a scenario. Every marker and every value the app writes carries the nonce, so a bundle from an earlier run cannot pass.
+
+**Helpers (`bundles.ts`):** `clearAndroidBundles()` = `adb shell run-as com.bareexample rm -rf files/bugsee_data/bundles`, then assert the directory is absent (9.1.3). `pullAndroidBundles()` = list `files/bugsee_data/bundles/*.bundle.zip` via `run-as`, `adb exec-out run-as com.bareexample cat <f>` into a temp dir, `unzip`, parse `request.json`, `manifest.json` and the `type: "log"` file named in the manifest. `airplane(on)` = `adb shell cmd connectivity airplane-mode enable|disable`; `afterAll` always disables it.
+
+**Per-run preconditions (asserted, not assumed):** the `SDK build` banner step from 3.P1 passes; `clearAndroidBundles()` succeeded; airplane mode is on **before** the app starts (9.3.2); the app reaches `Status.Launched` offline (9.1.2). If it does not reach `Launched` offline, stop and report — do not fall back to a dead endpoint, which perturbs timing.
+
+**Scenarios and assertions (`report-handler.test.ts`, `E2E_PLATFORM=android`):**
+1. `live: the handler's edits reach the retained bundle` — scenario `rh-live`: `onBeforeReportCreated` sets summary `e2e-<nonce>`, description `d-<nonce>`, severity `IssueSeverity.Critical`, labels `['e2e', '<nonce>']`, attribute `nonce=<nonce>`, and `addDataAttachment(base64("hello <nonce>"), { name: 'e2e-<nonce>.txt', mimeType: 'text/plain' })`; `onAfterReportCreated` logs `BUGSEE_E2E rh after type=<t> severity=<n> labels=<json> ids=<json>`; the app then calls `Bugsee.upload('upload-<nonce>', '')`. Assert markers `BUGSEE_E2E rh before type=bug` and `rh after … severity=4`; logcat `BugseeRN … deadline=25000` (live path detected); the pulled `request.json` has `summary = e2e-<nonce>`, `severity = 4`, `labels ⊇ [<nonce>]`; `manifest.json` `attrs.nonce = <nonce>` and **exactly one** `attachment` file named `e2e-<nonce>.txt` (at-least-once `onAfter` must not duplicate it — the handler adds it only in `onBefore`).
+2. `live: a dead handle rejects with E_REPORT_HANDLE_DEAD` — same run: the app keeps the `onBefore` proxy and, after the handler settles, calls `setSummary('late')`; marker `BUGSEE_E2E rh dead-handle code=E_REPORT_HANDLE_DEAD`; the bundle's summary is still `e2e-<nonce>`.
+3. `live: a refused attachment surfaces E_REPORT_ATTACHMENT_REJECTED` — same run: `addFileAttachment('/nonexistent/<nonce>', { name: 'x' })`; marker with that code; no attachment named `x` in the manifest.
+4. `timeout: a handler that never settles is completed at the deadline and the report still ships` — scenario `rh-hang`: `onBefore` awaits a promise that never settles. Assert `BugseeRN … completed by=deadline` between 25 s and 30 s after the dispatch line, and a bundle with summary `upload-<nonce>`.
+5. `throw: a throwing handler still ships the report` — scenario `rh-throw`: `onBefore` throws. Assert `completed by=js` within 5 s and a bundle.
+6. `terminating: an uncaught Java exception never reaches JS; onAfter does, next launch` — scenario `rh-crash` calls `testNativeCrash()` (Android `testCrash` throws `RuntimeException("Test crash")`). Assert the process actually died of it (9.1.4: logcat `FATAL EXCEPTION` + `java.lang.RuntimeException: Test crash`); if a debug build's red box swallows it instead, rerun this case on a release build and say so in the commit. Assert `BugseeRN … completed by=terminating` and **no** `BUGSEE_E2E rh before` in that run. Relaunch (airplane mode still on) with scenario `rh-observe` (handler registered before `launch()`): marker `BUGSEE_E2E rh after type=crash`, and the crash bundle carries the labels `onAfter` set.
+
+**Not covered here, stated rather than implied:** a *successful* file-path attachment on device (JS cannot create a file without a dependency; covered by `ReportOpsTest.fileAttachmentPassesMoveThrough`), and Android early-crash recovery (not stageable by hand; covered by `ReportHandlerDeadlinesTest`).
+
+- [ ] **Red** — write the test and scenarios; run once before the app changes → FAIL at the first marker.
+- [ ] **Green** — wire `App.tsx` and the scenarios; all six pass on the WOD_LX1.
+- [ ] **Mutate** — temporarily set `LIVE_DEADLINE_MS` to 40 000: case 4 must fail (no `completed by=deadline` inside 30 s; the SDK's own 30 s cap fires first). Revert.
+- [ ] **Commit** — `test(e2e): report handler on Android hardware`. Body: the banner line, observed dispatch-to-completion timings for cases 1, 4 and 5, and the build type used for case 6.
+
+---
+
+### Task 3.5b — Device verification, Android: wrapper channel
+
+**Files:** `examples/bare/e2e/wrapper-channel.test.ts`, `examples/bare/scenarios/channel.ts`; reuses `bundles.ts` and `scenario.ts` from 3.4d.
+
+Scenario `channel`: **before** `launch()`, `forwardLog('pre-<nonce>', LogLevel.Warning)`; after `Launched`, `forwardLog('BUGSEE_E2E channel <nonce>', LogLevel.Warning)`, then `Bugsee.upload('channel-<nonce>', '')`. The example deep-imports `@bugsee/react-native/src/wrapper/channel`; the function stays off the public surface.
+
+- [ ] **Red/Green** — `a channel line lands in the bundle as Custom`: the pulled log file has exactly one event whose `message` contains `channel <nonce>`, with `source = 98`, `level = 2`, and **no** `tag` key. `a line sent before launch is dropped`: no event contains `pre-<nonce>` (the channel is inert before launch). Preconditions exactly as 3.4d.
+- [ ] **Mutate** — temporarily pass `LogSource.StdOut` in `WrapperChannelHolder.log`: the first case must fail on `source`. Revert.
+- [ ] **Commit** — `test(e2e): a JS line reaches the Android bundle through the wrapper channel`.
+
+**Not covered:** that the app's log filter runs on these lines — no filter API exists until Phase 9, whose device test must assert it.
+
+---
+
+### Task 3.P2 — iOS pin: `7.0.0-beta3`
+
+**Files:** `native-versions.json`, `packages/react-native/ios/Support/Package.swift`, `packages/react-native/ios/Support/Package.resolved`, `scripts/__tests__/native-versions.test.ts`, `packages/react-native/BugseeReactNative.podspec`, create `scripts/__tests__/podspec-override.test.ts`
+
+- [ ] **Step 1 — availability, first, and recorded in the commit:**
+
+  ```sh
+  gh api repos/bugsee/spm/tags --jq '.[].name' | grep -qx '7.0.0-beta3' && echo TAG-OK
+  curl -sfI https://download.bugsee.com/sdk/ios/spm/Bugsee-7.0.0-beta3.zip | head -1   # need HTTP 200 (403 on 2026-09-28)
+  ```
+
+- [ ] **Published path (both checks pass)** — `ios.sdk` → `7.0.0-beta3`; `exact: "7.0.0-beta3"` in `ios/Support/Package.swift`; regenerate `Package.resolved` with `xcodebuild -resolvePackageDependencies` in `ios/Support`; `pod install` in the example (the podspec's version stamp forces a fresh download). Fix beta2 → beta3 compile breaks in this commit only if mechanical (known: `+log:level:enforceFiltering:` became `+log:level:requiresFiltering:`; this repo does not call it). `yarn test`, the `ios-unit` scheme and both example delivery builds green.
+- [ ] **Fallback path (either check fails)** — build locally, in a separate clone (never `~/Projects/Bugsee/ios/sdk`):
+
+  ```sh
+  CLONE="$HOME/Projects/Bugsee/_clones/bugsee-cocoa-beta3"
+  [ -d "$CLONE" ] || git clone https://github.com/bugsee/bugsee-cocoa.git "$CLONE"
+  cd "$CLONE" && git fetch origin && git checkout --detach 74af69ee8
+  git submodule update --init --recursive
+  test "$(cat version.txt)" = 7.0.0-beta3
+  # Mirror the env of the `Build` step in .github/workflows/deploy-beta.yml at this commit; it needs the
+  # tvOS, visionOS and Mac Catalyst SDKs installed.
+  /bin/sh -xe ./scripts/build.sh
+  ls -l build/bugsee-spm-xcframework.zip && shasum -a 256 build/bugsee-spm-xcframework.zip
+  ```
+
+  Then commit the pin anyway: `ios.sdk` → `7.0.0-beta3`, `exact: "7.0.0-beta3"`, and in `Package.resolved` set the `spm` pin to `"version": "7.0.0-beta3"`, `"revision": "0000000000000000000000000000000000000000"`. The zero revision is deliberate: SwiftPM fails loudly on it instead of resolving something else, and `releaseBlockers` (3.P1) refuses it. **Expected red until beta3 publishes:** CI `ios-unit`, `ios (spm)`, `ios (cocoapods)` and `ios-e2e` (all resolve or download beta3). Do not merge the Phase 3 PR while they are red; when beta3 publishes, rerun the published path's steps and replace the placeholder.
+
+**The override (CocoaPods path only).** `BUGSEE_IOS_XCFRAMEWORK_ZIP=<absolute path to a zip laid out like the published one>`, read by the podspec's `prepare_command` at `pod install`:
+- set → require it to be a regular file (else exit 1 naming the variable); stamp = `"${VERSION}+local.$(shasum -a 256 "$ZIP" | cut -c1-16)"`; copy instead of `curl`; print `WARNING: Bugsee.xcframework comes from BUGSEE_IOS_XCFRAMEWORK_ZIP, not download.bugsee.com` to stderr.
+- unset → stamp = `"${VERSION}"`, `curl` as today. Because the stamps differ, unsetting the variable forces a re-download; a local build can never linger silently.
+- Usage: `BUGSEE_IOS_XCFRAMEWORK_ZIP="$CLONE/build/bugsee-spm-xcframework.zip" pod install` in `examples/bare/ios`.
+- SPM is not overridden. For running the `BugseeRNSupport` XCTests locally in fallback, a **local, uncommitted** SwiftPM mirror is allowed: a git repo whose `Package.swift` declares product `Bugsee` as `.binaryTarget(name: "Bugsee", path: "Bugsee.xcframework")`, tagged `7.0.0-beta3`, wired with `swift package config set-mirror --original https://github.com/bugsee/spm --mirror <that repo>` inside `ios/Support` (writes under the gitignored `.swiftpm/`). If `xcodebuild` ignores the mirror, the Support tests of 3.4e/3.5c run when beta3 publishes, and those tasks stay open until they have.
+
+- [ ] **Red** — `native-versions.test.ts` expects `7.0.0-beta3`. `podspec-override.test.ts` extracts the `prepare_command` heredoc and runs it with `bash` in a temp dir, with a `curl` shim on `PATH` that records its call and fails: `an override zip is copied and stamped +local`; `a missing override path fails naming the variable`; `unsetting the override after a local build re-downloads` (the shim is called); `an unchanged published stamp does not re-download`. → FAIL.
+- [ ] **Green** — as above.
+- [ ] **Mutate** — stamp the override with plain `${VERSION}`: `unsetting the override … re-downloads` must fail. Revert.
+- [ ] **Commit** — `build(ios): pin 7.0.0-beta3` (published) or `build(ios): pin 7.0.0-beta3 from a local build until it publishes` (fallback). Body: the availability output and, in fallback, the zip's SHA-256 and `74af69ee8`.
+
+---
+
+### Task 3.7 — Delete the `bugsee-cocoa#99` / `#100` workarounds
+
+Both issues are closed as completed and both fixes are in beta2 and beta3 (see *Verified facts*). `git grep bugsee-cocoa#` finds every site.
+
+**Files:** `ios/BugseeModule.mm` (`relaunch:`, `getLaunchOptions:`), `src/NativeBugsee.ts`, `src/index.ts`, `src/options/BugseeLaunchOptions.ts` (comments), `examples/bare/e2e/launch.test.ts` (the step comment citing the 30 s bridge timeout), plan Phase 2's "Waiting on SDK fixes" block (rewrite to "resolved in 7.0.0-beta2; removed in Task 3.7").
+
+- [ ] **Red** — the example additionally logs `BUGSEE_E2E effective wifi-only-upload=<value>` for `com.bugsee.option.config.wifi-only-upload`, a key it never sets (confirm `BugseeLaunchOptions.serialize` of its options lacks it); `launch.test.ts` asserts the value is a boolean on both platforms, i.e. iOS now answers for an unset option. Run on the iPhone XS before deleting anything: it passes already, because the fix is in the SDK — that is the evidence the caveat is obsolete; record it.
+- [ ] **Green** — `relaunch:` resolves straight from `started:` (keep the main-queue hop for `resolve`; delete `settled`, `settleOnce`, the `dispatch_after` and `E_RELAUNCH_NO_REPORT`); delete the #100 caveats and the `NOTE` in `getLaunchOptions:`. `git grep 'bugsee-cocoa#99\|bugsee-cocoa#100'` returns nothing.
+- [ ] **Mutate** — none possible on deleted code; instead run the launch e2e on the iPhone XS and confirm `relaunch() settled resolved=true` arrives in under 5 s. Record the timing.
+- [ ] **Commit** — `fix(ios): drop the #99 and #100 workarounds, fixed in the SDK since 7.0.0-beta2`.
+
+---
+
+### Task 3.4e — Report handler: iOS bridge (and iOS `upload`)
+
+**Files:**
+- Create in `ios/Support/Sources/BugseeRNSupport/` (+ `include/`): `BGSRNReportHandlerBridge.{h,m}`, `BGSRNReportOps.{h,m}`, `BGSRNReportDeadlines.{h,m}`
+- Create in `ios/Support/Tests/BugseeRNSupportTests/`: `BGSRNReportHandlerBridgeTests.m`, `BGSRNReportOpsTests.m`, `BGSRNReportDeadlinesTests.m`, `BGSRNFakeReport.{h,m}` (an `NSObject <BGSReportContract>` holding state and recording calls)
+- Modify: `ios/BugseeModule.mm` (the category's two report callbacks; replace the six 3.4a stubs and the 3.4c `upload` stub; both `#if __has_include` import branches — `ios-delivery-parity.test.ts` enforces it)
+
+**Interfaces (mirror 3.4b):**
+
+```objc
+typedef NS_ENUM(NSInteger, BGSRNReportPhase) { BGSRNReportPhaseBefore, BGSRNReportPhaseAfter };
+@interface BGSRNReportHandlerBridge : NSObject
+@property (class, readonly) BGSRNReportHandlerBridge *shared;
+- (instancetype)initWithScheduler:(id (^)(dispatch_block_t task, int64_t delayMs))schedule
+                           cancel:(void (^)(id token))cancel;                 // tests inject; prod uses a private serial queue
+- (void)setPhasesBefore:(BOOL)before after:(BOOL)after;
+- (void)attach:(id)sink block:(void (^)(NSDictionary *request))block;       // request = the event payload
+- (void)detach:(id)sink;                                                    // completes all outstanding, resets phases
+- (void)dispatchPhase:(BGSRNReportPhase)phase report:(id<BGSReportContract>)report
+        isTerminating:(BOOL)isTerminating onMainThread:(BOOL)onMain completion:(BGSCallback)completion;
+- (BOOL)complete:(NSString *)handleId;
+- (nullable id<BGSReportContract>)reportFor:(NSString *)handleId;
+@end
+FOUNDATION_EXPORT const int64_t BGSRNLiveDeadlineMs;      // 25000
+FOUNDATION_EXPORT const int64_t BGSRNRecoveryDeadlineMs;  // 2500
+int64_t BGSRNDeadlineMs(BOOL onMainThread);              // main -> live; off main -> recovery
+```
+
+`onMainThread` is passed in (the category passes `NSThread.isMainThread`) so the rule is testable. `BGSRNReportOps`: `+readReport:` (severity as `NSInteger` 0–5 — `0` passes through, JS maps it to `undefined`; `screenshotDisplayIds` sorted ascending; `attachments[].name`), `+applyPatch:toReport:error:` (validate all then apply; severity 1–5 only, set via the typed property; labels via `replaceLabels:`; `NSNull` removes an attribute; `clearAttributes` first), `+addFileAtPath:name:mimeType:move:toReport:` (`addAttachmentWithFilePath:name:mimeType:move:`), `+addData:name:mimeType:toReport:` (`addAttachmentWithData:name:mimeType:`; base64 decoded with `initWithBase64EncodedString:options:0`, `nil` → `E_REPORT_BAD_ARGUMENT`). `type` crosses as the report's `type` string. Registry state behind `os_unfair_lock`; the SDK completion always runs **outside** the lock.
+
+**Thread rule, load-bearing:** report ops and `completeReportHandler` must **not** hop to the main queue. On the live path the SDK calls the handler on main and waits (bounded) for the completion; an op that needs main while main is the thread being waited on stalls until our deadline. `BGSReportContract` methods are lock-synchronized per `BGSContracts.h`, so the module's method queue is safe. Only `upload` hops to main (`[Bugsee uploadWithSummary:description:]`), like every other SDK entry point.
+
+Log lines via `NSLog` (reaches the `devicectl --console` stream): `BugseeRN report handler <id> phase=<p> deadline=<ms>` and `… completed by=<js|deadline|terminating|no-handler|detach>`.
+
+- [ ] **Red** — XCTests mirroring 3.4b by name: `testTerminatingCompletesSynchronouslyAndNeverReachesJs` (iOS never passes YES today; the contract still allows it); `testNoSinkCompletesImmediately`; `testUnregisteredPhaseCompletesImmediately`; `testEachDeliveryGetsAFreshHandle`; `testCompleteRunsTheSdkCompletionExactlyOnce`; `testDeadlineCompletesAndKillsTheHandle`; `testCompletingBeforeTheDeadlineCancelsTheTimer`; `testDetachCompletesEverythingOutstanding`; `testMainThreadIsLiveAndOffMainIsRecovery` (25000 / 2500); `testReadsUnsetSeverityAsZero`; `testReadsSeverityByValue` (`BugseeSeverityCritical` → 4); `testRejectsSeverityZeroAndSixAndLeavesTheReportAlone`; `testPatchIsAllOrNothing`; `testLabelsReplaceThroughReplaceLabels`; `testNSNullRemovesAnAttribute`; `testScreenshotIdsAreSortedAscending`; `testANilFromTheSdkIsARejectedAttachment`; `testInvalidBase64IsABadArgument`; `testFileAttachmentPassesMoveThrough` (temp file). → FAIL (`xcodebuild test -scheme BugseeRNSupport`, per the Support manifest's comment).
+- [ ] **Green** — the three classes; the category's `onBeforeReportCreated:…`/`onAfterReportCreated:…` call `dispatchPhase:…onMainThread:NSThread.isMainThread…`; the module attaches to the bridge in `init` and detaches in `invalidate`, exactly like `BGSRNEventBus`, replaces its stubs and emits `onReportHandlerRequest`; `upload` implemented.
+- [ ] **Mutate** — (1) drop the once-guard: `testCompleteRunsTheSdkCompletionExactlyOnce` must fail. (2) return live for both threads: `testMainThreadIsLiveAndOffMainIsRecovery` must fail. (3) apply labels with `clearLabels` + `addLabels:`: `testLabelsReplaceThroughReplaceLabels` must fail. Revert; record.
+- [ ] **Commit** — `feat(ios): route report handlers to JS through a handle registry`.
+
+---
+
+### Task 3.5c — Wrapper channel: iOS seam
+
+**Files:** create `ios/Support/Sources/BugseeRNSupport/BGSRNWrapperChannelHolder.{h,m}` (+ `include/`), `ios/Support/Tests/BugseeRNSupportTests/BGSRNWrapperChannelHolderTests.m`; modify `ios/BugseeModule.mm`.
+
+```objc
+@interface BGSRNWrapperChannelHolder : NSObject
+@property (class, readonly) BGSRNWrapperChannelHolder *shared;
+@property (atomic, strong, nullable) id<BGSWrapperChannel> channel;   // outside the wrapper object
+- (void)logMessage:(nullable NSString *)message level:(NSInteger)level; // tag nil, BGSLogEventSourceCustom, 1..5 else Info
+- (void)addNetworkEvent:(nullable BugseeNetworkEvent *)event;           // requiresFiltering:YES, always
+@end
+```
+
+The category adds `- (void)onWrapperChannelAvailable:(id<BGSWrapperChannel>)channel { BGSRNWrapperChannelHolder.shared.channel = channel; }` — first statement, and the only one. Every `+setWrapper:` in the module goes through one helper that runs on main (already the case in `setWrapperInfo:`) and sets `channel = nil` after registering `nil`. Each channel call checks `respondsToSelector:` first — every channel method is `@optional`. No `@try`: the SDK catches filter exceptions itself, and unwinding an ObjC exception through ARC frames leaks. `wrapperLog:level:` replaces its 3.5a stub. Level mapping: the table in 3.5a.
+
+- [ ] **Red** — `testLogsWithSourceCustomAndNilTag`; `testMapsLevelsByValue`; `testOutOfRangeLevelBecomesInfo` (0, 6); `testNetworkEventsAlwaysRequireFiltering`; `testNoChannelIsANoOp`; `testAChannelWithoutTheSelectorIsANoOp`; `testClearingRetiresTheChannel`. → FAIL.
+- [ ] **Green** — as specified.
+- [ ] **Mutate** — (1) `BGSLogEventSourceBugsee`: the source test must fail. (2) `requiresFiltering:NO`: the network test must fail. Revert.
+- [ ] **Commit** — `feat(ios): hold the wrapper channel and forward a JS log line through it`.
+
+---
+
+### Task 3.4f — Device verification, iOS: report handler
+
+**Files:** extend `examples/bare/e2e/bundles.ts` (iOS half), `examples/bare/e2e/report-handler.test.ts` (`E2E_PLATFORM=ios`).
+
+**Retaining a bundle on iOS.** Human step: the iPhone XS is **cabled** (devicectl must not depend on Wi-Fi), airplane mode on **and Wi-Fi off** (iOS keeps Wi-Fi on in airplane mode if it was re-enabled before), before the app starts. **Pulling it:** `xcrun devicectl device info files --device $IOS_DEVICE_ID --domain-type appDataContainer --domain-identifier org.reactjs.native.example.BareExample` to find `**/bundles/*.bundle.zip` (the SDK writes `<capture>/bundles/<requestId>.bundle.zip`), then `xcrun devicectl device copy from … --source <that path> --destination <tmp>`. Clearing: delete the app's bundles directory the same way, or reinstall, and assert none remain. **Which build:** iOS prints no commit banner, so assert `request.json` `environment.sdk` reports version `7.0.0-beta3`, and record `environment.sdk.build` if present; in fallback, also record the override zip's SHA-256 from the podspec stamp (`packages/react-native/.bugsee-xcframework-version`).
+
+- [ ] **Cases** — 1–5 of 3.4d unchanged in intent, on iOS: live edits reach the bundle (`deadline=25000`, dispatched on main); dead handle; refused attachment; hang completed by deadline in 25–30 s; throw. Case 6 becomes `recovery: a crash recovered at the next launch reaches JS off main with deadline=2500` — scenario `rh-crash` calls `testNativeCrash()`; assert the process died (9.1.4: the console stream ends, and the relaunch dispatches a `type=crash` report); relaunch with `rh-observe` and assert `BugseeRN … deadline=2500` and the JS marker. iOS never passes `isTerminating = YES`; the terminating branch is covered by `testTerminatingCompletesSynchronouslyAndNeverReachesJs` only — state this in the commit.
+- [ ] **Mutate** — set `BGSRNLiveDeadlineMs` to 40000: the hang case must fail (SDK's 30 s fires first). Revert.
+- [ ] **Commit** — `test(e2e): report handler on iOS hardware`. Body: `environment.sdk`, timings, and whether the published or the fallback framework was used.
+
+---
+
+### Task 3.5d — Device verification, iOS: wrapper channel
+
+Identical to 3.5b on the iPhone XS with 3.4f's retention and pull recipe: one log event containing `channel <nonce>` with `source = 98`, `level = 2`, no `tag`; nothing containing `pre-<nonce>`. **Mutate:** temporarily pass `BGSLogEventSourceStdOut`; the source assertion must fail. **Commit:** `test(e2e): a JS line reaches the iOS bundle through the wrapper channel`.
+
+---
+
+### Task 3.6 — Docs catch-up (design doc and plan)
+
+**Files:** `docs/design/2026-09-15-sdk-design.md`, `docs/design/plans/2026-09-16-implementation-plan.md`, create `scripts/__tests__/docs-versions.test.ts`.
+
+**Edits (each exact):**
+- Plan, Global Constraints: Android SDK **7.2.0** → **7.3.0** (with the reason: the wrapper channel, report-contract methods, handler thread and `$$WRAPPER` consumer are not in 7.2.0; a `7.3.0-SNAPSHOT` pin is transitional, see Phase 3 rulings); Gradle plugin **4.0.6** → **4.0.7** (4.0.6 strips every extension's provider, workbook 1.4); iOS **7.0.0-beta1** → **7.0.0-beta3**; add "iOS deployment target **15.0**".
+- Design §2 Goals: the same versions.
+- Design §6.1: replace "It supersedes the `$$WRAPPER` launch option, which **no longer exists** in `Options.java` at 7.2.0." with: `com.bugsee.option.$$WRAPPER` exists and is consumed by Android (`bugsee-android` #119, `EnvironmentInfoProvider.resolveWrapper`), which reads it only when no wrapper object is registered — the same rule iOS applies to `wrapper_info`. This wrapper always registers the object first (ContentProvider at `initOrder=200`; module init on iOS), so it does not also send `$$WRAPPER`. Add a table row: `onWrapperChannelAvailable(channel)` | the attributed route for logs, network events and breadcrumbs (Task 3.5).
+- Design §6.4: `api("com.bugsee:bugsee-android:7.2.0")` → the version read from `native-versions.json`.
+- Design §6.5: "The SDK binary supports 13.0" → the SDK's deployment target is 15.0 from beta3.
+- Design §9.1 table: iOS unhandled `logUnhandledException:name:reason:completion:` → `logUnhandledException:reason:completion:` (`Bugsee.h:381` on `nextgen`: `+logUnhandledException:(NSString *)name reason:(NSString *)reason completion:`).
+- Design §10.3: renumber the constraints 1, 2, 4, 3 → 1, 2, 3, 4.
+- Design §14.6 (and §14.5's "Superseded in part" note): `bugsee-cocoa#91` / `bugsee-android#90` are **resolved via the wrapper channel** (`sdk/wrapper-channel`; Android #149, iOS #137–#140), which superseded the public source-aware overload; the wrapper records `LogSource.Custom` through the channel (Task 3.5). Note that `bugsee-cocoa#91` is still open on GitHub and should be closed as superseded; `bugsee-android#90` is closed.
+- Design Appendix A: a dated note at its top: superseded for versions by the 2026-09-28 facts in Phase 3 of the plan.
+- Plan, "Cross-repo dependencies": replace the #91/#90 bullet with the same resolution; add `bugsee-android#178` (display-id order; the bridge sorts until it lands).
+- Plan, Phase 12: feedback-spm pins in lockstep with the core pin (`7.0.0-beta3`), not `beta1`.
+- `bugsee-cocoa#99`/`#100` notes: already handled by Task 3.7 (fixed; verified closed and in beta2). No other workaround notes remain — confirm with `git grep bugsee-cocoa#`.
+
+- [ ] **Red** — `docs-versions.test.ts`: `the plan's Global Constraints name the pinned Android, plugin and iOS versions` and `the design's Goals name the same`, comparing against `native-versions.json` with a `-SNAPSHOT` suffix stripped. → FAIL on the current docs.
+- [ ] **Green** — the edits above.
+- [ ] **Mutate** — change `ios.sdk` in a copy passed to the checker: the test must fail. (Test the checker function, not only the live files.)
+- [ ] **Commit** — `docs: catch the design and plan up with 7.3.0, beta3 and the wrapper channel`.
+
+---
+
+### Task 3.P3 — Flip Android to `7.3.0`
+
+Runs as soon as 7.3.0 is on Maven Central — before the review gate if possible.
+
+- [ ] **Precondition** — `curl -sfI https://repo1.maven.org/maven2/com/bugsee/bugsee-android/7.3.0/bugsee-android-7.3.0.pom` and the same for `bugsee-android-ndk` both answer 200.
+- [ ] **Change** — `native-versions.json`: `"sdk": "7.3.0"` and delete `snapshotCommit`; delete the two guarded `mavenLocal` blocks (root `settings.gradle`, `examples/bare/android/build.gradle`); update `native-versions.test.ts`. Nothing else.
+- [ ] **Verify** — `yarn test` (the maven-local test now asserts no `mavenLocal` anywhere); `BUGSEE_RELEASE=1 yarn test` passes for Android (iOS may still block if 3.P2 is on its placeholder); CI's android job green. Device: the harness's `SDK build` step shows `Bugsee Android SDK 7.3.0 [<sha>]`; compare `<sha>` with `git -C "$CLONE" rev-parse --short v7.3.0` after fetching tags. If the release commit differs from `snapshotCommit`, rerun 3.4d and 3.5b before closing this task.
+- [ ] **Mutate** — re-add an unconditional `mavenLocal()` to the example: the maven-local test must fail. Revert.
+- [ ] **Commit** — `build(android): pin the released 7.3.0`. Body: the banner line and both SHAs.
+
+---
+
+### Phase 3 review gate
+
+Spawn a reviewer subagent. It must independently: run `yarn test`, `BUGSEE_RELEASE=1 yarn test` (and report every blocker it prints), the Android JVM tests and the `BugseeRNSupport` XCTests; confirm `mavenLocal` is either absent or SNAPSHOT-filtered; confirm by reading the code that the SDK completion runs exactly once on every path (terminating, no handler, phase unregistered, JS resolve, JS throw, deadline, JS reload) on both platforms, and that no deadline can exceed the SDK's cap; confirm no report op hops to the iOS main queue; confirm network events cannot leave our code with `requiresFiltering = false`; and **rerun** the device tests of 3.4d, 3.5b, 3.4f and 3.5d rather than trust reported output. The phase is not releasable while `releaseBlockers` is non-empty. Address findings; re-review until satisfied.
 
 ---
 
