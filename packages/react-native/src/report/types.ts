@@ -103,6 +103,18 @@ export interface BugseeReport {
  * already have added. A mutation made after the callback settles, or after
  * its handle's deadline passes, does not reach the report -- the deadline is
  * the SDK's own, not something the app negotiates.
+ *
+ * **Time budget per callback, by platform.** A live report gives each
+ * callback 25 s on both platforms. That is never raised, even if an app
+ * raises the SDK's handler timeout (Android `report-handler-callback-timeout`;
+ * iOS has no such option), but on Android it drops to a second under that
+ * option when the app sets it lower. A report recovered at launch differs:
+ * - iOS gives JS 2.5 s, off the main thread and best-effort -- edits land
+ *   only until the SDK assembles the bundle;
+ * - Android gives the live 25 s when the SDK was launched from JS; the SDK's
+ *   own early, bounded recovery path never reaches JS at all.
+ * So async I/O in `onAfterReportCreated` can succeed on Android and silently
+ * miss on an iOS recovered report. Keep recovery-time work short.
  */
 export interface BugseeReportHandler {
   onBeforeReportCreated?(report: BugseeReport): void | Promise<void>;
