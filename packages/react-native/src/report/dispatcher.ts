@@ -68,7 +68,13 @@ function onReportHandlerRequest(event: ReportHandlerRequestEvent): void {
   const deadlineTimer = setTimeout(() => proxy.markDead(), event.deadlineMs);
 
   Promise.resolve()
-    .then(() => callback(proxy))
+    // `.call(handler, proxy)`, not `callback(proxy)`: `callback` was read off
+    // `handler` as a bare function reference, so an unbound call would give a
+    // class-based handler's method `this === undefined`. `handler` here is
+    // the one captured above, at dispatch -- not `currentHandler` re-read --
+    // so a `setReportHandler` mid-flight still cannot change the receiver a
+    // delivery already in progress calls back into.
+    .then(() => callback.call(handler, proxy))
     .catch((error: unknown) => {
       // Never an unhandled rejection: a handler's own bug must not become
       // one, on top of whatever else it broke.
