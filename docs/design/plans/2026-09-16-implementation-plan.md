@@ -329,7 +329,7 @@ Decided by the controller on 2026-09-28. Not open for re-litigation inside a tas
 - **Ruling:** the flip to `7.3.0` is its own later task — the pin line plus removing mavenLocal, nothing else.
 - **Ruling:** the package is never released while any pin is a SNAPSHOT; `BUGSEE_RELEASE=1 yarn test` fails if one is.
 - **Ruling:** iOS pins `7.0.0-beta3`. Android and JS land first; the iOS halves are separate, later tasks whose first step checks that beta3 is published.
-- **Ruling:** if beta3 is not published when the iOS tasks start, build a local xcframework from `bugsee-cocoa` commit `74af69ee8` (the beta3 release commit) in a separate clone, and pin it by committing the `ios.sdk` version with `Package.resolved`'s `spm` revision set to a zero placeholder (Task 3.P2) — not through an environment-variable override of the podspec's downloaded framework. (Task 3.P2 tried exactly such an override and removed it once beta3 published, for a reason that generalizes: CocoaPods decides whether to rerun `prepare_command` from the checksum of the raw podspec file, which an env var does not change, so a local build could linger silently after the real framework is available.)
+- **Ruling:** if beta3 is not published when the iOS tasks start, build a local xcframework from `bugsee-cocoa` commit `74af69ee8` (the beta3 release commit) in a separate clone, and pin it by committing the `ios.sdk` version with `Package.resolved`'s `spm` revision set to a zero placeholder. A local-zip env-var override was tried as a fallback and removed in `b873020` once beta3 published; see Task 3.P2 for what it was and why it was removed.
 - **Ruling:** Task 3.4 (report handler) splits into JS API; Android bridge; iOS bridge; device verification (done per platform, Android first).
 - **Ruling:** `isTerminating = true` never round-trips to JS; the bridge completes natively at once.
 - **Ruling:** the SDK completion is always called — on success, on JS throw, on timeout, and when no handler is set.
@@ -876,10 +876,10 @@ Identical to 3.5b on the iPhone XS with 3.4f's retention and pull recipe: one lo
 - Plan, Phase 12: feedback-spm pins in lockstep with the core pin (`7.0.0-beta3`), not `beta1`.
 - `bugsee-cocoa#99`/`#100` notes: already handled by Task 3.7 (fixed; verified closed and in beta2). No other workaround notes remain — confirm with `git grep bugsee-cocoa#`.
 
-- [ ] **Red** — `docs-versions.test.ts`: `the plan's Global Constraints name the pinned Android, plugin and iOS versions` and `the design's Goals name the same`, comparing against `native-versions.json` with a `-SNAPSHOT` suffix stripped. → FAIL on the current docs.
-- [ ] **Green** — the edits above.
-- [ ] **Mutate** — change `ios.sdk` in a copy passed to the checker: the test must fail. (Test the checker function, not only the live files.)
-- [ ] **Commit** — `docs: catch the design and plan up with 7.3.0, beta3 and the wrapper channel`.
+- [x] **Red** — `docs-versions.test.ts`: `the plan's Global Constraints name the pinned Android, plugin and iOS versions` and `the design's Goals name the same`, comparing against `native-versions.json` with a `-SNAPSHOT` suffix stripped. → FAIL on the current docs.
+- [x] **Green** — the edits above.
+- [x] **Mutate** — change `ios.sdk` in a copy passed to the checker: the test must fail. (Test the checker function, not only the live files.)
+- [x] **Commit** — `docs: catch the design and plan up with 7.3.0, beta3 and the wrapper channel`.
 
 ---
 
