@@ -2,10 +2,18 @@
  * The wrapper-channel scenario Task 3.5b drives on a device
  * (e2e/wrapper-channel.test.ts).
  *
- * `channel` sends one line through the wrapper channel before `launch()` --
- * which the channel must drop, since nothing is buffered before the SDK is
- * up -- and one after `Launched`, which the SDK must capture as source
- * `Custom` and which the test then finds in the retained bundle's log file.
+ * `channel` sends one line through the wrapper channel before `launch()`,
+ * which must not reach the bundle, and one after `Launched`, which the SDK
+ * must capture as source `Custom` and which the test then finds in the
+ * retained bundle's log file.
+ *
+ * What drops the pre-launch line differs by platform. On Android the init
+ * provider registered the wrapper at process start, so a channel exists and
+ * the SDK itself drops the line (nothing is buffered before it is running).
+ * On iOS nothing is registered until `launch()` calls `setWrapperInfo`, so the
+ * line stops at the wrapper's own channel holder, whose channel is still nil,
+ * and never reaches the SDK -- the iOS run does not exercise the SDK's
+ * pre-launch drop.
  *
  * `forwardLog` is deep-imported from `@bugsee/react-native/src/wrapper/channel`
  * rather than from the package's public entry: Task 3.5a built the channel
