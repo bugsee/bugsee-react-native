@@ -44,6 +44,24 @@ describe('the manifest describes the SDK we actually target', () => {
   it('records the build configuration its defaults came from', () => {
     expect(manifest.buildConfiguration).toBe('release');
   });
+
+  // Regression: 7.3.0-SNAPSHOT deprecated this option (registers it through
+  // OptionDescriptor.createAndRegisterDeprecated rather than
+  // createAndRegister), and a regenerated manifest silently dropped it --
+  // the extractor's registration pattern did not recognise the deprecated
+  // call. It is still live on the pinned SDK and must stay in the committed
+  // fixture, carrying the deprecation per the spec's `{ since }` shape.
+  it('keeps a deprecated-but-still-registered option, with its deprecation', () => {
+    const option = byKey.get('com.bugsee.option.capture.webview.domain-allowlist');
+    expect(option).toEqual({
+      key: 'com.bugsee.option.capture.webview.domain-allowlist',
+      type: 'string',
+      default: '',
+      module: 'bugsee-android',
+      hidden: false,
+      deprecated: { since: '7.1.2' },
+    });
+  });
 });
 
 describe('every enum-typed option can be coerced', () => {
