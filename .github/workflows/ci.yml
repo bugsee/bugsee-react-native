@@ -213,6 +213,12 @@ jobs:
       # A simulator is not a substitute for the handset: it cannot catch a
       # code-signing or embedding fault on real hardware. It is the only iOS
       # target CI has, and it runs the real SDK.
+      #
+      # launch.test.ts only, by ruling. A bare `yarn e2e` also picks up the
+      # report-handler and wrapper-channel suites, whose timing windows (a
+      # 25 s deadline asserted to within a second) a shared runner cannot
+      # promise, and which retain bundles -- on iOS beta3 those carry
+      # credentials, and CI has no policy for keeping them.
       - name: Reach Status.Launched
         if: steps.creds.outputs.have == 'true'
         working-directory: examples/bare
@@ -220,7 +226,7 @@ jobs:
           E2E_PLATFORM: ios
           E2E_IOS_TARGET: simulator
           IOS_SIMULATOR_ID: ${{ steps.sim.outputs.udid }}
-        run: yarn e2e
+        run: yarn e2e launch.test.ts
 
   ios:
     name: ios (${{ matrix.delivery }})

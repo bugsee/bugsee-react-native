@@ -78,3 +78,28 @@ describe('the example wires the embed assertion to a path it can resolve', () =>
     expect(() => read('scripts', 'assert-ios-embed.sh')).toThrow();
   });
 });
+
+// Final-review ruling D3: CI's ios-e2e job runs the launch suite only. The
+// report-handler and wrapper-channel suites have tight timing windows (a 25 s
+// deadline asserted to within a second) that a shared runner cannot promise,
+// and they retain bundles, which hold credentials on iOS beta3 -- CI has no
+// policy for that. A bare `yarn e2e` would pick them all up silently.
+describe("CI's ios-e2e step", () => {
+  const workflow = readFileSync(
+    join(__dirname, '..', '..', '.github', 'workflows', 'ci.yml'),
+    'utf8',
+  );
+  const step = (() => {
+    const start = workflow.indexOf('- name: Reach Status.Launched');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const next = workflow.indexOf('\n      - name:', start + 1);
+    const jobEnd = workflow.indexOf('\n  ios:', start);
+    const ends = [next, jobEnd].filter(i => i > 0);
+    return workflow.slice(start, ends.length > 0 ? Math.min(...ends) : undefined);
+  })();
+
+  it('runs launch.test.ts and nothing else', () => {
+    const run = /\n\s*run:\s*(.+)/.exec(step)?.[1]?.trim();
+    expect(run).toBe('yarn e2e launch.test.ts');
+  });
+});
