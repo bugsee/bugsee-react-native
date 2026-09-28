@@ -30,6 +30,11 @@ import {
   isReportHandlerScenario,
   runReportHandlerScenario,
 } from './scenarios/report-handler';
+import {
+  isChannelScenario,
+  preLaunchChannelProbe,
+  runChannelScenario,
+} from './scenarios/channel';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -140,10 +145,18 @@ export default function App() {
       const reportHandler = isReportHandlerScenario(choice.scenario)
         ? choice.scenario
         : undefined;
+      const channel = isChannelScenario(choice.scenario)
+        ? choice.scenario
+        : undefined;
       // Before launch(): a report the SDK recovers at launch is only offered
       // to a handler that is already registered.
       if (reportHandler !== undefined) {
         installReportHandler(reportHandler, choice.nonce);
+      }
+      // Before launch(): the channel scenario's negative case -- a line sent
+      // here must be dropped, since nothing is buffered before the SDK is up.
+      if (channel !== undefined) {
+        preLaunchChannelProbe(choice.nonce);
       }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
@@ -165,6 +178,11 @@ export default function App() {
 
         if (reportHandler !== undefined) {
           runReportHandlerScenario(reportHandler, choice.nonce);
+          return;
+        }
+
+        if (channel !== undefined) {
+          runChannelScenario(choice.nonce);
           return;
         }
 
