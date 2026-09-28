@@ -23,8 +23,10 @@ FOUNDATION_EXPORT NSString *_Nullable BGSRNReportErrorWireCode(NSError *error);
 /// `BGSReportContract`. The iOS mirror of Android's `ReportOps`.
 ///
 /// Called on the module's own method queue, never the main queue: the
-/// contract's methods are lock-synchronized (`BGSContracts.h`), and on the
-/// live path main is the thread the SDK is holding while it waits for us.
+/// contract's methods are lock-synchronized (`BGSContracts.h`), and there is
+/// no need to hop -- the SDK does not block main waiting on us, and hopping
+/// would only queue an op behind whatever UI work is already there, eating
+/// into the handle's deadline for nothing.
 @interface BGSRNReportOps : NSObject
 
 /// The snapshot `reportRead` returns: `summary`, `description` (both omitted

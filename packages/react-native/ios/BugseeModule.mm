@@ -19,6 +19,7 @@
 #import <BugseeRNSupport/BGSRNTokens.h>
 #import <BugseeRNSupport/BGSRNReportHandlerBridge.h>
 #import <BugseeRNSupport/BGSRNReportOps.h>
+#import <BugseeRNSupport/BGSRNGuardedEmit.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -28,6 +29,7 @@
 #import "BGSRNTokens.h"
 #import "BGSRNReportHandlerBridge.h"
 #import "BGSRNReportOps.h"
+#import "BGSRNGuardedEmit.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -75,10 +77,14 @@
 /// through the bus: this wrapper outlives every JS runtime.
 ///
 /// The thread is the only thing that tells the two paths apart. Live reports
-/// arrive on MAIN, and the SDK waits for the completion; recovered ones arrive
-/// off main, and it does not (see BGSRNReportDeadlines.h). Both reach JS, with
-/// different deadlines. Nothing on this path may hop to main: on the live path
-/// main is the thread the SDK is holding while it waits.
+/// arrive on MAIN, dispatched there with `dispatch_async`; recovered ones
+/// arrive off main (see BGSRNReportDeadlines.h). Both reach JS, with different
+/// deadlines. Nothing on this path may hop to main -- not because the SDK is
+/// blocked on main waiting for us (it isn't: the completion is a
+/// thread-agnostic run-once that hops to the SDK's own private queue, and main
+/// is never held for it), but because there is no need to, and an op that did
+/// would queue behind whatever UI work is already on main, eating into the
+/// handle's deadline for nothing.
 - (void)onBeforeReportCreated:(id<BGSReportContract>)report
                 isTerminating:(BOOL)isTerminating
                    completion:(BGSCallback)completion {
@@ -161,7 +167,15 @@ RCT_EXPORT_MODULE(Bugsee)
       if (reportId != nil) {
         payload[@"reportId"] = reportId;
       }
-      [strongSelf emitOnLifecycleEvent:payload];
+      // Guarded like the report path below: a lifecycle event can arrive
+      // before the codegen emitter is set (start-up) or after this module is
+      // gone (mid-reload), and an unset std::function throws a C++ exception
+      // BGSRNEventBus's own @catch cannot see. BGSRNGuardedEmit turns that
+      // into an NSException, which the bus does catch and log; there is no
+      // subscriber to queue the event for, so it is simply dropped.
+      BGSRNGuardedEmit(^{
+        [strongSelf emitOnLifecycleEvent:payload];
+      }, @"onLifecycleEvent");
     }];
     // The same lifetime rule for report handlers. The request is emitted
     // as-is: the bridge already built the wire payload.
@@ -173,15 +187,12 @@ RCT_EXPORT_MODULE(Bugsee)
         [NSException raise:NSInternalInconsistencyException format:@"BugseeModule is gone"];
       }
       // The codegen emitter is a std::function, and an unset one throws a C++
-      // exception the bridge's @catch cannot see. Re-raised as an NSException
-      // so the bridge completes the handle instead of the SDK's thread
-      // unwinding through it.
-      try {
+      // exception the bridge's @catch cannot see. BGSRNGuardedEmit re-raises
+      // it as an NSException, so the bridge completes the handle instead of
+      // the SDK's thread unwinding through it.
+      BGSRNGuardedEmit(^{
         [strongSelf emitOnReportHandlerRequest:request];
-      } catch (const std::exception &e) {
-        [NSException raise:NSInternalInconsistencyException
-                    format:@"onReportHandlerRequest could not be emitted: %s", e.what()];
-      }
+      }, @"onReportHandlerRequest");
     }];
   }
   return self;
@@ -335,12 +346,16 @@ RCT_EXPORT_MODULE(Bugsee)
 
 /// A second call for the same handle is a no-op in the bridge.
 ///
-/// Never hops to main -- on the live path the SDK is holding main while it
-/// waits for exactly this. Neither do the report ops below: they run on this
-/// module's method queue, which is safe because the report contract's methods
-/// are lock-synchronized (BGSContracts.h). Each catches everything: an
-/// exception escaping a TurboModule method is a crash in a release build, and
-/// the SDK's fault is not worth the app.
+/// Never hops to main -- not because the SDK is blocked on main waiting for
+/// this (it isn't: the live handler runs on main via `dispatch_async`, but
+/// its completion is a thread-agnostic run-once that hops to a private queue,
+/// so main is never held for it), but because there is no need to, and an op
+/// that did would queue behind whatever UI work is already on main, eating
+/// into the handle's deadline for nothing. Neither do the report ops below:
+/// they run on this module's method queue, which is safe because the report
+/// contract's methods are lock-synchronized (BGSContracts.h). Each catches
+/// everything: an exception escaping a TurboModule method is a crash in a
+/// release build, and the SDK's fault is not worth the app.
 - (void)completeReportHandler:(NSString *)handleId {
   [BGSRNReportHandlerBridge.shared complete:handleId];
 }
