@@ -604,10 +604,10 @@ final class ReportOps {
 
 **Interfaces:** spec `upload(summary: string, description: string): void`; facade `upload(summary: string, description: string): void` — both must be strings (`TypeError` otherwise, before crossing). Android: `Bugsee.upload(summary, description)`. iOS: a no-op stub commented `Task 3.4e`. The two-argument form only; severity and labels are Phase 8.
 
-- [ ] **Red** — `upload forwards summary and description`; `upload rejects a non-string summary or description before crossing`. → FAIL.
-- [ ] **Green** — as above. Phase 8's paragraph gains one line: "`upload(summary, description)` exists since Task 3.4c; add the severity/labels forms."
-- [ ] **Mutate** — forward `summary` twice: the first test must fail.
-- [ ] **Commit** — `feat(report): upload(summary, description), the live trigger the handler tests need`.
+- [x] **Red** — `upload forwards summary and description`; `upload rejects a non-string summary or description before crossing`. → FAIL.
+- [x] **Green** — as above. Phase 8's paragraph gains one line: "`upload(summary, description)` exists since Task 3.4c; add the severity/labels forms."
+- [x] **Mutate** — forward `summary` twice: the first test must fail.
+- [x] **Commit** — `feat(report): upload(summary, description), the live trigger the handler tests need`.
 
 ---
 
@@ -925,7 +925,7 @@ Each phase ends in a review gate.
 
 ## Phase 8 — Reporting
 
-`showReportDialog`, `upload`, `createReport`, attachments via the wrapper's `ReportHandler`. Note `upload` has no `includeVideo` overload in 7.x — the 6.x parameter is gone and must not be reintroduced. Device test: trigger the dialog, submit, confirm the issue appears.
+`showReportDialog`, `upload`, `createReport`, attachments via the wrapper's `ReportHandler`. Note `upload` has no `includeVideo` overload in 7.x — the 6.x parameter is gone and must not be reintroduced. `upload(summary, description)` exists since Task 3.4c; add the severity/labels forms. Device test: trigger the dialog, submit, confirm the issue appears.
 
 ---
 

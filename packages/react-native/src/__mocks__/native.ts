@@ -75,6 +75,7 @@ export const native = {
   getStatus: jest.fn<Promise<number>, []>(),
   getLaunchOptions: jest.fn<Promise<Record<string, unknown>>, []>(),
   testCrash: jest.fn<void, []>(),
+  upload: jest.fn<void, [string, string]>(),
 
   /**
    * The codegen EventEmitter for report handoffs -- a SUBSCRIBE function

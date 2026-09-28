@@ -142,6 +142,30 @@ class Bugsee {
   }
 
   /**
+   * Creates and uploads a bug report immediately, without showing any UI.
+   *
+   * Pulled forward from Phase 8 (Task 3.4c) as the live-report trigger the
+   * report-handler tests need. The two-argument form only -- severity and
+   * labels are Phase 8. `summary` and `description` must both be strings
+   * (an empty string is fine; only the type is checked) since a call this
+   * unstructured arrives from untyped JS as often as from TypeScript, and a
+   * non-string reaching the bridge would fail as something less legible.
+   */
+  upload(summary: string, description: string): void {
+    if (typeof summary !== 'string') {
+      throw new TypeError(
+        `Bugsee.upload requires summary to be a string, got ${typeof summary}`,
+      );
+    }
+    if (typeof description !== 'string') {
+      throw new TypeError(
+        `Bugsee.upload requires description to be a string, got ${typeof description}`,
+      );
+    }
+    NativeBugsee.upload(summary, description);
+  }
+
+  /**
    * Wires up the JS layer when the native SDK launched itself — on Android,
    * from `com.bugsee.app-token` manifest metadata. Deliberately makes no
    * native launch call; doing so would start a second session.

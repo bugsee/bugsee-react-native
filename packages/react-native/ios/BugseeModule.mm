@@ -279,6 +279,13 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
+/// No-op stub. Task 3.4e implements the real upload -- hopping to main, like
+/// every other SDK entry point (`[Bugsee uploadWithSummary:description:]`).
+- (void)upload:(NSString *)summary
+    description:(NSString *)description {
+  // Intentionally empty. Task 3.4e
+}
+
 /// No-op stub. The real bridge (Task 3.4e) tells the SDK which phases JS
 /// wants; nothing native mints a handle yet, so there is nothing to enable.
 - (void)setReportHandlerPhases:(BOOL)before
