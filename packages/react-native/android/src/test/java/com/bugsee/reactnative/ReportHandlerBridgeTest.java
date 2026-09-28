@@ -110,12 +110,14 @@ public class ReportHandlerBridgeTest {
     private Report report;
     private AtomicInteger completions;
     private Runnable completion;
+    private List<String> lines;
 
     @Before
     public void setUp() {
         scheduler = new ManualScheduler();
         liveMs = ReportHandlerDeadlines.LIVE_DEADLINE_MS;
-        bridge = new ReportHandlerBridge(scheduler, () -> liveMs);
+        lines = new ArrayList<>();
+        bridge = new ReportHandlerBridge(scheduler, () -> liveMs, lines::add);
         sink = new Recorder();
         report = FakeReports.create(new FakeReports.State());
         completions = new AtomicInteger();
@@ -127,10 +129,76 @@ public class ReportHandlerBridgeTest {
         bridge.setPhases(true, true);
     }
 
-    private static void onThread(final String name, final Runnable body) throws InterruptedException {
-        final Thread thread = new Thread(body, name);
+    /**
+     * Runs {@code body} on a thread with the given name, rethrowing whatever
+     * it throws -- an assertion or an escaped exception on another thread
+     * would otherwise pass silently.
+     */
+    private static void onThread(final String name, final Runnable body) {
+        final Throwable[] thrown = new Throwable[1];
+        final Thread thread = new Thread(() -> {
+            try {
+                body.run();
+            } catch (final Throwable e) {
+                thrown[0] = e;
+            }
+        }, name);
         thread.start();
-        thread.join();
+        try {
+            thread.join();
+        } catch (final InterruptedException e) {
+            throw new AssertionError(e);
+        }
+        if (thrown[0] != null) {
+            throw new AssertionError("thrown on " + name, thrown[0]);
+        }
+    }
+
+    /** A dispatch from the SDK's live report-handler thread: the only one that reaches JS. */
+    private void dispatchLive(final Phase phase, final Report r, final boolean terminating,
+            final Runnable sdkCompletion) {
+        onThread(ReportHandlerDeadlines.LIVE_HANDLER_THREAD,
+                () -> bridge.dispatch(phase, r, terminating, sdkCompletion));
+    }
+
+    /**
+     * Early-crash recovery: the SDK runs this on a spawned bounded thread,
+     * does not wait for the completion, and proceeds when the handler returns.
+     * JS attached then is queued behind its own {@code launch} call, so it
+     * could never act in time; a handle would only let a write "succeed"
+     * after the report has moved on.
+     */
+    @Test
+    public void aNonLiveThreadCompletesAtOnceAndNeverReachesJs() {
+        attachWithBothPhases();
+
+        onThread("bugsee-report-handler-bounded",
+                () -> bridge.dispatch(Phase.AFTER, report, false, completion));
+        bridge.dispatch(Phase.BEFORE, report, false, completion);
+
+        assertEquals(2, completions.get());
+        assertTrue(sink.requests.isEmpty());
+        assertTrue(scheduler.tasks.isEmpty());
+        assertEquals(2, lines.size());
+        assertEquals("report handler - completed by=recovery phase=after report=report-1", lines.get(0));
+        assertEquals("report handler - completed by=recovery phase=before report=report-1", lines.get(1));
+    }
+
+    /** The same registration on the live thread does reach JS. */
+    @Test
+    public void theLiveThreadStillReachesJs() {
+        attachWithBothPhases();
+
+        dispatchLive(Phase.AFTER, report, false, completion);
+
+        assertEquals(1, sink.requests.size());
+        assertEquals(0, completions.get());
+        final String id = sink.last().handleId;
+        assertEquals("report handler " + id + " phase=after deadline=25000", lines.get(0));
+
+        assertTrue(bridge.complete(id));
+        assertEquals("report handler " + id + " completed by=js", lines.get(1));
+        assertEquals(1, completions.get());
     }
 
     /**
@@ -141,7 +209,7 @@ public class ReportHandlerBridgeTest {
     public void terminatingCompletesSynchronouslyAndNeverReachesJs() {
         attachWithBothPhases();
 
-        bridge.dispatch(Phase.BEFORE, report, true, completion);
+        dispatchLive(Phase.BEFORE, report, true, completion);
 
         assertEquals(1, completions.get());
         assertTrue(sink.requests.isEmpty());
@@ -153,7 +221,7 @@ public class ReportHandlerBridgeTest {
     public void noSinkCompletesImmediately() {
         bridge.setPhases(true, true);
 
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
 
         assertEquals(1, completions.get());
         assertTrue(scheduler.tasks.isEmpty());
@@ -165,24 +233,23 @@ public class ReportHandlerBridgeTest {
         bridge.attach(sink);
         bridge.setPhases(false, true);
 
-        bridge.dispatch(Phase.BEFORE, report, false, completion);
+        dispatchLive(Phase.BEFORE, report, false, completion);
 
         assertEquals(1, completions.get());
         assertTrue(sink.requests.isEmpty());
 
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
         assertEquals(1, sink.requests.size());
         assertEquals(1, completions.get());
     }
 
     /** An app that set the SDK cap to 1 s leaves JS no useful time at all. */
     @Test
-    public void tooShortADeadlineCompletesWithoutEmitting() throws Exception {
+    public void tooShortADeadlineCompletesWithoutEmitting() {
         attachWithBothPhases();
         liveMs = ReportHandlerDeadlines.liveMs(1);
 
-        onThread(ReportHandlerDeadlines.LIVE_HANDLER_THREAD,
-                () -> bridge.dispatch(Phase.AFTER, report, false, completion));
+        dispatchLive(Phase.AFTER, report, false, completion);
 
         assertEquals(1, completions.get());
         assertTrue(sink.requests.isEmpty());
@@ -191,12 +258,11 @@ public class ReportHandlerBridgeTest {
 
     /** The live thread gets the live deadline, and the timer is armed with it. */
     @Test
-    public void theLiveThreadGetsTheLiveDeadline() throws Exception {
+    public void theLiveThreadGetsTheLiveDeadline() {
         attachWithBothPhases();
         liveMs = 9_000L;
 
-        onThread(ReportHandlerDeadlines.LIVE_HANDLER_THREAD,
-                () -> bridge.dispatch(Phase.BEFORE, report, false, completion));
+        dispatchLive(Phase.BEFORE, report, false, completion);
 
         final Request request = sink.last();
         assertEquals("before", request.phase);
@@ -211,8 +277,8 @@ public class ReportHandlerBridgeTest {
     public void eachDeliveryGetsAFreshHandle() {
         attachWithBothPhases();
 
-        bridge.dispatch(Phase.AFTER, report, false, completion);
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
 
         final String first = sink.requests.get(0).handleId;
         final String second = sink.requests.get(1).handleId;
@@ -235,7 +301,7 @@ public class ReportHandlerBridgeTest {
     @Test
     public void completeRunsTheSdkCompletionExactlyOnce() {
         attachWithBothPhases();
-        bridge.dispatch(Phase.BEFORE, report, false, completion);
+        dispatchLive(Phase.BEFORE, report, false, completion);
         final String id = sink.last().handleId;
 
         assertTrue(bridge.complete(id));
@@ -249,9 +315,9 @@ public class ReportHandlerBridgeTest {
     @Test
     public void deadlineCompletesAndKillsTheHandle() {
         attachWithBothPhases();
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
         final String id = sink.last().handleId;
-        assertEquals(ReportHandlerDeadlines.RECOVERY_DEADLINE_MS, scheduler.tasks.get(0).delayMs);
+        assertEquals(ReportHandlerDeadlines.LIVE_DEADLINE_MS, scheduler.tasks.get(0).delayMs);
 
         scheduler.fireDue();
 
@@ -264,7 +330,7 @@ public class ReportHandlerBridgeTest {
     @Test
     public void completingBeforeTheDeadlineCancelsTheTimer() {
         attachWithBothPhases();
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
 
         bridge.complete(sink.last().handleId);
 
@@ -279,7 +345,7 @@ public class ReportHandlerBridgeTest {
         });
         bridge.setPhases(true, true);
 
-        bridge.dispatch(Phase.BEFORE, report, false, completion);
+        dispatchLive(Phase.BEFORE, report, false, completion);
 
         assertEquals(1, completions.get());
         assertTrue(scheduler.tasks.get(0).cancelled);
@@ -288,13 +354,13 @@ public class ReportHandlerBridgeTest {
     @Test
     public void aThrowingSdkCompletionDoesNotEscape() {
         attachWithBothPhases();
-        bridge.dispatch(Phase.BEFORE, report, false, () -> {
+        dispatchLive(Phase.BEFORE, report, false, () -> {
             throw new IllegalStateException("sdk failure");
         });
 
         assertTrue(bridge.complete(sink.last().handleId));
 
-        bridge.dispatch(Phase.BEFORE, report, true, () -> {
+        dispatchLive(Phase.BEFORE, report, true, () -> {
             throw new IllegalStateException("sdk failure");
         });
     }
@@ -307,8 +373,8 @@ public class ReportHandlerBridgeTest {
     @Test
     public void detachCompletesEverythingOutstandingAndClearsPhases() {
         attachWithBothPhases();
-        bridge.dispatch(Phase.BEFORE, report, false, completion);
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.BEFORE, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
         final String first = sink.requests.get(0).handleId;
 
         bridge.detach(sink);
@@ -322,7 +388,7 @@ public class ReportHandlerBridgeTest {
         // runtime registers.
         final Recorder next = new Recorder();
         bridge.attach(next);
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
         assertTrue(next.requests.isEmpty());
         assertEquals(3, completions.get());
     }
@@ -335,13 +401,13 @@ public class ReportHandlerBridgeTest {
     @Test
     public void detachingAStaleSinkLeavesTheCurrentOne() {
         attachWithBothPhases();
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
         final String staleHandle = sink.last().handleId;
 
         final Recorder current = new Recorder();
         bridge.attach(current);
         bridge.setPhases(true, true);
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
         final String currentHandle = current.last().handleId;
 
         bridge.detach(sink);
@@ -350,7 +416,7 @@ public class ReportHandlerBridgeTest {
         assertNull(bridge.reportFor(staleHandle));
         assertNotNull(bridge.reportFor(currentHandle));
 
-        bridge.dispatch(Phase.BEFORE, report, false, completion);
+        dispatchLive(Phase.BEFORE, report, false, completion);
         assertEquals(2, current.requests.size());
     }
 
@@ -363,7 +429,7 @@ public class ReportHandlerBridgeTest {
         attachWithBothPhases();
 
         bridge.attach(new Recorder());
-        bridge.dispatch(Phase.AFTER, report, false, completion);
+        dispatchLive(Phase.AFTER, report, false, completion);
 
         assertEquals(1, completions.get());
     }
