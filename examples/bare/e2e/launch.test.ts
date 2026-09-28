@@ -56,6 +56,19 @@ const BASE_STEPS: readonly Step[] = [
     timeoutMs: 15_000,
   },
   {
+    // Task 3.7: `com.bugsee.option.config.wifi-only-upload` is a key the app
+    // never sets (App.tsx's launchOptions sets only endpoint and duration).
+    // Android has always been able to answer this -- it merges its own
+    // defaults with the app's overrides -- but iOS historically could only
+    // report options that DIFFER from its defaults, so an unset key had no
+    // way to appear here at all. Asserting the value is a boolean, not
+    // merely present, is what shows iOS now resolves the option rather than
+    // merely echoing an empty object.
+    name: 'unset option answered',
+    pattern: /BUGSEE_E2E effective wifi-only-upload=(true|false)/,
+    timeoutMs: 5_000,
+  },
+  {
     // That relaunch SETTLES is the assertion; what it resolves to is
     // secondary. iOS settles through the SDK's `started:` completion block,
     // so a path that never invokes it leaves the JS promise pending forever
@@ -63,9 +76,11 @@ const BASE_STEPS: readonly Step[] = [
     // in this repo. Android settles from its own callback.
     name: 'relaunch() settled',
     pattern: /BUGSEE_E2E relaunch\(\) settled (resolved|rejected)=/,
-    // Longer than the bridge's own 30s no-report timeout, so a hang shows up
-    // as that timeout's rejection rather than as this step expiring -- the
-    // two mean different things and should not look the same.
+    // The bridge itself no longer times out (Task 3.7): it resolves straight
+    // from the SDK's `started:` callback, which the fixed SDK is now
+    // guaranteed to invoke. This step's own budget is generous headroom
+    // against a genuinely slow device, not a second copy of a bridge-side
+    // deadline -- a hang here means the callback never arrived at all.
     timeoutMs: 45_000,
   },
   {
