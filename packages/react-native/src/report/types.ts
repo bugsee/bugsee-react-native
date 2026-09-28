@@ -76,6 +76,10 @@ export interface BugseeReport {
   clearAttributes(): Promise<void>;
   getScreenshotDisplayIds(): Promise<number[]>;
   getAttachmentNames(): Promise<string[]>;
+  /**
+   * `path` is either a `file://` URL, which is stripped and percent-decoded,
+   * or a plain filesystem path, which is used verbatim (`%` included).
+   */
   addFileAttachment(
     path: string,
     options: { name: string; mimeType?: string; move?: boolean },
