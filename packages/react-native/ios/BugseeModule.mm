@@ -173,53 +173,57 @@ static void BGSRNSettleAttachment(NSString *handleId,
 
 RCT_EXPORT_MODULE(Bugsee)
 
-/// Attached here, not on first subscribe: the SDK may emit before any JS has
-/// run, and a listener that only existed once JS asked for it would miss the
-/// launch transitions a caller most wants.
-- (instancetype)init {
-  self = [super init];
-  if (self) {
-    __weak __typeof(self) weakSelf = self;
-    [BGSRNEventBus.shared attach:self block:^BOOL(NSString *name, NSString *reportId) {
-      __strong __typeof(weakSelf) strongSelf = weakSelf;
-      if (strongSelf == nil) {
-        return NO;
-      }
-      // `reportId` omitted rather than NSNull when absent: the JS type marks it
-      // optional, and a null would force every caller to distinguish "absent"
-      // from "explicitly nothing".
-      NSMutableDictionary *payload = [NSMutableDictionary dictionaryWithObject:name forKey:@"name"];
-      if (reportId != nil) {
-        payload[@"reportId"] = reportId;
-      }
-      // Guarded like the report path below: a lifecycle event can arrive
-      // after this module is gone (mid-reload), and an unset std::function
-      // throws a C++ exception. BGSRNGuardedEmit catches it here, in
-      // Objective-C++, and returns NO; the bus logs and drops the event --
-      // there is no subscriber to queue it for.
-      return BGSRNGuardedEmit(^{
-        [strongSelf emitOnLifecycleEvent:payload];
-      }, @"onLifecycleEvent");
-    }];
-    // The same lifetime rule for report handlers. The request is emitted
-    // as-is: the bridge already built the wire payload.
-    [BGSRNReportHandlerBridge.shared attach:self block:^BOOL(NSDictionary *request) {
-      __strong __typeof(weakSelf) strongSelf = weakSelf;
-      if (strongSelf == nil) {
-        // NO makes the bridge complete the handle now, rather than leave the
-        // report waiting out a deadline no JS will ever meet.
-        return NO;
-      }
-      // The codegen emitter is a std::function, and an unset one throws a C++
-      // exception. BGSRNGuardedEmit catches it here, in Objective-C++, and
-      // returns NO, so the bridge completes the handle -- nothing unwinds
-      // through the bridge's non-exception-safe ARC frames.
-      return BGSRNGuardedEmit(^{
-        [strongSelf emitOnReportHandlerRequest:request];
-      }, @"onReportHandlerRequest");
-    }];
-  }
-  return self;
+/// Attaches this module to the lifecycle bus and the report handler bridge.
+///
+/// Called from `getTurboModule:`, right after the JSI object is built -- not
+/// from `init`, and not on first subscribe. Not on first subscribe: the SDK
+/// may emit before JS has subscribed, and a listener that only existed once JS
+/// asked for it would miss the launch transitions a caller most wants. Not
+/// from `init`: the codegen `emitOn*` methods call a `std::function` that the
+/// generated `NativeBugseeSpecJSI` constructor sets, so attaching earlier let
+/// the SDK's threads call it unset, and read it while the JS thread was still
+/// assigning it. Attaching after it is set, under the bus's and bridge's own
+/// locks, orders that write before any read.
+- (void)attachToBridges {
+  __weak __typeof(self) weakSelf = self;
+  [BGSRNEventBus.shared attach:self block:^BOOL(NSString *name, NSString *reportId) {
+    __strong __typeof(weakSelf) strongSelf = weakSelf;
+    if (strongSelf == nil) {
+      return NO;
+    }
+    // `reportId` omitted rather than NSNull when absent: the JS type marks it
+    // optional, and a null would force every caller to distinguish "absent"
+    // from "explicitly nothing".
+    NSMutableDictionary *payload = [NSMutableDictionary dictionaryWithObject:name forKey:@"name"];
+    if (reportId != nil) {
+      payload[@"reportId"] = reportId;
+    }
+    // Guarded like the report path below: a lifecycle event can arrive
+    // after this module is gone (mid-reload), and an unset std::function
+    // throws a C++ exception. BGSRNGuardedEmit catches it here, in
+    // Objective-C++, and returns NO; the bus logs and drops the event --
+    // there is no subscriber to queue it for.
+    return BGSRNGuardedEmit(^{
+      [strongSelf emitOnLifecycleEvent:payload];
+    }, @"onLifecycleEvent");
+  }];
+  // The same lifetime rule for report handlers. The request is emitted
+  // as-is: the bridge already built the wire payload.
+  [BGSRNReportHandlerBridge.shared attach:self block:^BOOL(NSDictionary *request) {
+    __strong __typeof(weakSelf) strongSelf = weakSelf;
+    if (strongSelf == nil) {
+      // NO makes the bridge complete the handle now, rather than leave the
+      // report waiting out a deadline no JS will ever meet.
+      return NO;
+    }
+    // The codegen emitter is a std::function, and an unset one throws a C++
+    // exception. BGSRNGuardedEmit catches it here, in Objective-C++, and
+    // returns NO, so the bridge completes the handle -- nothing unwinds
+    // through the bridge's non-exception-safe ARC frames.
+    return BGSRNGuardedEmit(^{
+      [strongSelf emitOnReportHandlerRequest:request];
+    }, @"onReportHandlerRequest");
+  }];
 }
 
 /// Identity-checked inside the bus: a reload can construct and attach the NEW
@@ -476,7 +480,10 @@ RCT_EXPORT_MODULE(Bugsee)
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams &)params {
-  return std::make_shared<facebook::react::NativeBugseeSpecJSI>(params);
+  auto module = std::make_shared<facebook::react::NativeBugseeSpecJSI>(params);
+  // Only now is the codegen event emitter set: see attachToBridges.
+  [self attachToBridges];
+  return module;
 }
 
 @end
