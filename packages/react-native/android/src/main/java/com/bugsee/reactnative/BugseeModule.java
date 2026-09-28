@@ -156,24 +156,33 @@ public class BugseeModule extends NativeBugseeSpec
 
     @Override
     public void setSecureRectangles(final double display, final ReadableArray coordinates) {
-        // Codegen hands numbers across as double, because that is what a JS
-        // number is. Rounding rather than truncating: the JS side has already
-        // rounded each edge outwards, and truncating -0.9999 to 0 would pull an
-        // edge back inside the region it was widened to cover.
-        final int[] flat = new int[coordinates == null ? 0 : coordinates.size()];
-        for (int i = 0; i < flat.length; i++) {
-            flat[i] = (int) Math.round(coordinates.getDouble(i));
-        }
-        // Stored as measured (relative to React Native's viewport offset);
-        // the store serves them moved to the React root's display origin,
-        // which the tracker keeps current. Re-read now too, in case the
-        // window moved without a layout pass.
-        SecureRectangleStore.shared().set((int) display, flat);
-        originTracker.refreshSoon();
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
-            Log.d(TAG, "secure published display=" + (int) display
-                    + " raw=" + Arrays.toString(flat)
-                    + " served=" + Arrays.toString(SecureRectangleStore.shared().snapshot((int) display)));
+        // A void TurboModule method: anything thrown here has no promise to
+        // reject and crashes the host app, over a call JS already validated.
+        try {
+            // Codegen hands numbers across as double, because that is what a
+            // JS number is. Rounding rather than truncating: the JS side has
+            // already rounded each edge outwards, and truncating -0.9999 to 0
+            // would pull an edge back inside the region it was widened to
+            // cover.
+            final int[] flat = new int[coordinates == null ? 0 : coordinates.size()];
+            for (int i = 0; i < flat.length; i++) {
+                flat[i] = (int) Math.round(coordinates.getDouble(i));
+            }
+            // Stored as measured (relative to React Native's viewport
+            // offset); the store serves them moved to the React root's
+            // display origin, which the tracker keeps current. Re-read now
+            // too, in case the window moved without a layout pass.
+            if (!SecureRectangleStore.shared().publishOrLog((int) display, flat)) {
+                return;
+            }
+            originTracker.refreshSoon();
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "secure published display=" + (int) display
+                        + " raw=" + Arrays.toString(flat)
+                        + " served=" + Arrays.toString(SecureRectangleStore.shared().snapshot((int) display)));
+            }
+        } catch (RuntimeException e) {
+            Log.e(TAG, "setSecureRectangles failed; the previous set stays published", e);
         }
     }
 

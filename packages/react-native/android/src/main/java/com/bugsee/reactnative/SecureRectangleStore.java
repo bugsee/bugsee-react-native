@@ -1,5 +1,7 @@
 package com.bugsee.reactnative;
 
+import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
@@ -38,6 +40,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * through.
  */
 final class SecureRectangleStore {
+
+    private static final String TAG = "BugseeRN";
 
     /** Four coordinates per rectangle: left, top, right, bottom. */
     private static final int COORDINATES_PER_RECTANGLE = 4;
@@ -128,6 +132,24 @@ final class SecureRectangleStore {
         // later write through it would edit a snapshot the SDK is reading.
         final int[] raw = coordinates.clone();
         update(display, previous -> new Snapshot(0, raw, previous.originX, previous.originY));
+    }
+
+    /**
+     * {@link #set}, for the TurboModule: a malformed list is logged and
+     * dropped instead of thrown. {@code setSecureRectangles} is a void method,
+     * so an exception out of it has no promise to reject and would take the
+     * host app down; the previous set stays published.
+     *
+     * @return whether {@code coordinates} was published
+     */
+    boolean publishOrLog(final int display, @Nullable final int[] coordinates) {
+        try {
+            set(display, coordinates);
+            return true;
+        } catch (IllegalArgumentException e) {
+            Log.e(TAG, "setSecureRectangles rejected; the previous set stays published", e);
+            return false;
+        }
     }
 
     /**
