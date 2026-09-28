@@ -327,10 +327,32 @@ Two ergonomic changes: `toggleProtected(ref, bool)` becomes a `<BugseeSecure>` c
 
 The wrapper captures two distinct streams and they need different handling. Neither native SDK contains any React-Native-specific code to support this; both expose a generic, source-aware log API instead (`bugsee/bugsee-cocoa#91`, `bugsee/bugsee-android#90`), and the wrapper owns the `RCTLogLevel` mapping in the bridge it already ships on both platforms.
 
-| stream | filtered where | `enforceFiltering` | why |
-|---|---|---|---|
-| JS `console.*` | in JS, by the console patch | `false` | The user's `setLogFilter` callback has already run; filtering again natively would run it twice on one line. |
-| RN-internal `RCTLog` | natively, via the bridge round-trip back into JS | `true` | The JS patch never sees these — RN core warnings, native module errors — so the native filter is the only place the user's callback can run. |
+| stream | filtered where | why |
+|---|---|---|
+| JS `console.*` | **natively**, via the bridge round-trip back into JS | One pass, on the only side that can cover both streams. |
+| RN-internal `RCTLog` | natively, via the bridge round-trip back into JS | The JS patch never sees these — RN core warnings, native module errors. |
+
+> **Changed 2026-09-23.** This table previously filtered `console.*` in JS and passed
+> `enforceFiltering: false` so the native side would not run the user's callback a second
+> time. **That flag no longer exists.** `sdk/wrapper-channel` gives the channel's `log` no
+> filtering parameter: every line a wrapper injects is always filtered natively, because
+> forwarded host output is as uncurated as stdout and the redaction has to apply. Raised by
+> the Android SDK session against this section.
+>
+> With the flag gone, filtering in JS as well would run the user's callback twice on one
+> line. **Native wins the tie**, for a reason rather than by default: the `RCTLog` stream
+> can only be filtered natively, so the callback must be registered there regardless — and
+> a second registration in JS would be correct only if every customer's filter were
+> idempotent. Redaction usually is; a filter that samples, counts, appends or has side
+> effects is not, and nothing in the API asks a customer to promise idempotence.
+>
+> **Cost:** every `console.*` line now makes a bridge round trip it did not before. The
+> filter contracts on both platforms are asynchronous — Android replies through a
+> `Callback1` with a timeout, iOS through a run-once decision block — so the filter must
+> **never block** the calling thread, which for us is the JS thread. A blocking
+> implementation would deadlock the very thread that produced the line. If console volume
+> makes the round trip expensive, batching is the answer; reintroducing a second filter
+> pass is not.
 
 Both send `LogSource.Custom`, which is what makes the source consistent across platforms.
 
@@ -339,7 +361,9 @@ Both send `LogSource.Custom`, which is what makes the source consistent across p
 Three implementation constraints:
 
 1. **Dedup before either filter runs.** Under `__DEV__`, `console.log` reaches both the JS patch and `RCTLog`. Dedup is not only about duplicate lines — without it the user's filter callback runs twice on one message by two different routes. React Native only routes `console.*` through `RCTLog` under `__DEV__`, and Hermes release builds commonly strip console calls, so neither stream is sufficient alone and both must be live.
-2. **The native→JS filter round-trip is a redaction boundary.** `RCTLog` can fire on any thread, including during teardown. A filter callback that cannot complete must **drop the line, not pass it through** — failing open at a redaction boundary leaks exactly the data the callback existed to remove.
+2. **The native→JS filter round-trip is a redaction boundary.** `RCTLog` can fire on any thread, including during teardown. A filter callback that cannot complete must **drop the line, not pass it through** — failing open at a redaction boundary leaks exactly the data the callback existed to remove. This is now load-bearing rather than defensive: since the JS-side pass is gone, this round trip is the *only* place the customer's filter runs, so a dropped reply is a line that was never redacted. Both SDKs already drop on timeout, silently (`specs` `sdk/wrapper-channel`), which is the behaviour we want and the diagnostic we do not have.
+
+4. **Flush buffered lines after `setWrapper` returns, never inside `onWrapperChannelAvailable`.** The callback runs while the SDK holds its registration lock, and an exception escaping it — including one thrown by the customer's filter as we flush — is caught and logged by `setWrapper` rather than reaching the global handler. Flushing inside the callback therefore hides customer filter bugs. It also matters for us specifically: our wrapper registers before the JS runtime exists, so the flush belongs to the *later* re-registration that carries the JS runtime, not the first one.
 3. **Verify in both Debug and Release.** The two streams overlap in one and not the other, so a dedup that looks correct in development can silently drop everything in a release build.
 
 ---
