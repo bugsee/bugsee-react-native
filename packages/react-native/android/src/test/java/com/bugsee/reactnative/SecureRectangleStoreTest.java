@@ -2,6 +2,7 @@ package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertThrows;
@@ -273,5 +274,32 @@ public class SecureRectangleStoreTest {
         // Any mix: each axis is screen location less viewport offset.
         assertArrayEquals(new int[] { 80, 1200 },
                 SecureRectangleStore.displayOrigin(new int[] { 80, 1296 }, 0, 96));
+    }
+
+    // ---- The TurboModule's entry point ----------------------------------
+    //
+    // setSecureRectangles is a void TurboModule method: an exception thrown
+    // out of it has no promise to reject and takes the host app down. The
+    // module publishes through publishOrLog, which never throws.
+
+    @Test
+    public void publishOrLogRejectsABadListWithoutThrowingOrTouchingTheSet() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
+        final int[] before = store.snapshot(DISPLAY);
+
+        assertFalse(store.publishOrLog(DISPLAY, new int[] { 1, 2, 3 }));
+        assertFalse(store.publishOrLog(DISPLAY, null));
+
+        assertArrayEquals(before, store.snapshot(DISPLAY));
+    }
+
+    @Test
+    public void publishOrLogPublishesAGoodList() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+
+        assertTrue(store.publishOrLog(DISPLAY, new int[] { 1, 2, 3, 4 }));
+
+        assertEquals(1, store.snapshot(DISPLAY)[1]);
     }
 }
