@@ -26,6 +26,7 @@
 import {
   type PulledBundle,
   airplane,
+  removePulledBundles,
   terminateIosApp,
 } from './bundles';
 import { ANDROID_PACKAGE } from './device';
@@ -140,6 +141,10 @@ describeDevice(`wrapper channel on ${ON_IOS ? 'the iOS simulator' : 'an Android 
         await airplane(false);
       }
       resetScenario();
+      // Pulled bundles carry credentials on iOS beta3; E2E_KEEP_BUNDLES=1
+      // keeps them for inspection.
+      const { removed, kept } = removePulledBundles();
+      report('pulled bundle roots', { removed: removed.length, kept });
       if (log !== undefined) {
         log.stop();
       }

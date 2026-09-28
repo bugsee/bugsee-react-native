@@ -104,8 +104,34 @@ export async function listAndroidBundles(): Promise<string[]> {
 }
 
 /** Pulls, unzips and parses every retained bundle. */
-export async function pullAndroidBundles(): Promise<PulledBundle[]> {
+/** Every temp root a pull created in this test file, until removed. */
+const pulledRoots: string[] = [];
+
+/** A fresh temp root to pull bundles into, tracked for `removePulledBundles`. */
+export function newPulledRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'bugsee-bundles-'));
+  pulledRoots.push(root);
+  return root;
+}
+
+/**
+ * Deletes every root pulled into, unless `E2E_KEEP_BUNDLES=1`. Call from a
+ * suite's `afterAll`: a pulled bundle holds what the SDK wrote, and on iOS
+ * beta3 that includes the app and access tokens (`log.internal.json`).
+ */
+export function removePulledBundles(): { removed: string[]; kept: string[] } {
+  const roots = pulledRoots.splice(0);
+  if (process.env.E2E_KEEP_BUNDLES === '1') {
+    return { removed: [], kept: roots };
+  }
+  for (const root of roots) {
+    rmSync(root, { recursive: true, force: true });
+  }
+  return { removed: roots, kept: [] };
+}
+
+export async function pullAndroidBundles(): Promise<PulledBundle[]> {
+  const root = newPulledRoot();
   const bundles: PulledBundle[] = [];
   for (const file of await listAndroidBundles()) {
     const zip = join(root, file);
@@ -213,7 +239,7 @@ export async function listIosBundles(): Promise<string[]> {
 /** Copies, unzips and parses every retained bundle. */
 export async function pullIosBundles(): Promise<PulledBundle[]> {
   const source = await iosBundlesDir();
-  const root = mkdtempSync(join(tmpdir(), 'bugsee-bundles-'));
+  const root = newPulledRoot();
   const bundles: PulledBundle[] = [];
   for (const file of await listIosBundles()) {
     const zip = join(root, file);
