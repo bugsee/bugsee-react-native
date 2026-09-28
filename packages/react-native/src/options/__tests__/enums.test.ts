@@ -5,6 +5,7 @@ import {
   LogLevel,
   VideoMode,
   VideoQuality,
+  WITHHELD_FROM_JS,
 } from '../enums';
 
 /**
@@ -23,14 +24,56 @@ const DECLARED = {
   IssueSeverity,
 } as const;
 
+type Members = Record<string, number>;
+const FIXTURE = fixture as Record<string, Members>;
+
 describe('the enum constants match the SDK', () => {
-  it.each(Object.keys(DECLARED))('%s agrees with the extracted fixture', (name) => {
-    expect(DECLARED[name as keyof typeof DECLARED])
-      .toEqual((fixture as Record<string, Record<string, number>>)[name]);
+  it.each(Object.keys(DECLARED))('%s accounts for every member the SDK has', (name) => {
+    const declared = DECLARED[name as keyof typeof DECLARED] as Members;
+    const withheld = (WITHHELD_FROM_JS as Record<string, Members>)[name] ?? {};
+
+    // Every SDK member is either exposed or deliberately withheld. A member
+    // that is neither fails here, which is the point: a value added to the
+    // SDK must be a decision, not something that appears or vanishes silently.
+    expect({ ...declared, ...withheld }).toEqual(FIXTURE[name]);
   });
 
   it('covers every enum the fixture carries', () => {
-    expect(Object.keys(DECLARED).sort()).toEqual(Object.keys(fixture).sort());
+    expect(Object.keys(DECLARED).sort()).toEqual(Object.keys(FIXTURE).sort());
+  });
+
+  it('never withholds a member the SDK does not have', () => {
+    for (const [name, withheld] of Object.entries(
+      WITHHELD_FROM_JS as Record<string, Members>
+    )) {
+      for (const [member, value] of Object.entries(withheld)) {
+        expect(FIXTURE[name]?.[member]).toBe(value);
+      }
+    }
+  });
+
+  it('never withholds and exposes the same member', () => {
+    for (const [name, withheld] of Object.entries(
+      WITHHELD_FROM_JS as Record<string, Members>
+    )) {
+      const declared = DECLARED[name as keyof typeof DECLARED] as Members;
+      expect(Object.keys(declared)).not.toEqual(
+        expect.arrayContaining(Object.keys(withheld))
+      );
+    }
+  });
+});
+
+describe('FrameRate.Raw is withheld until iOS has it', () => {
+  // Android FrameRate has Raw = 4; iOS BugseeFrameRate stops at High = 3.
+  // One JS enum cannot span that, so Raw is not exposed. Verified against
+  // ios/sdk origin/nextgen BugseeConstants.h on 2026-09-22.
+  it('is absent from the exposed enum', () => {
+    expect(FrameRate).not.toHaveProperty('Raw');
+  });
+
+  it('is recorded as withheld, with the SDK value it would have', () => {
+    expect(WITHHELD_FROM_JS.FrameRate).toEqual({ Raw: 4 });
   });
 });
 
