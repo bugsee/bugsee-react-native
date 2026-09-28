@@ -17,6 +17,8 @@
 #import <BugseeRNSupport/BGSRNSecureRectangles.h>
 #import <BugseeRNSupport/BGSRNEventBus.h>
 #import <BugseeRNSupport/BGSRNTokens.h>
+#import <BugseeRNSupport/BGSRNReportHandlerBridge.h>
+#import <BugseeRNSupport/BGSRNReportOps.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -24,6 +26,8 @@
 #import "BGSRNSecureRectangles.h"
 #import "BGSRNEventBus.h"
 #import "BGSRNTokens.h"
+#import "BGSRNReportHandlerBridge.h"
+#import "BGSRNReportOps.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -67,23 +71,72 @@
   [callback onResult:nil];
 }
 
+/// Through the report handler bridge, for the same reason lifecycle events go
+/// through the bus: this wrapper outlives every JS runtime.
+///
+/// The thread is the only thing that tells the two paths apart. Live reports
+/// arrive on MAIN, and the SDK waits for the completion; recovered ones arrive
+/// off main, and it does not (see BGSRNReportDeadlines.h). Both reach JS, with
+/// different deadlines. Nothing on this path may hop to main: on the live path
+/// main is the thread the SDK is holding while it waits.
 - (void)onBeforeReportCreated:(id<BGSReportContract>)report
                 isTerminating:(BOOL)isTerminating
                    completion:(BGSCallback)completion {
-  if (completion) {
-    completion();
-  }
+  [BGSRNReportHandlerBridge.shared dispatchPhase:BGSRNReportPhaseBefore
+                                          report:report
+                                   isTerminating:isTerminating
+                                    onMainThread:NSThread.isMainThread
+                                      completion:completion];
 }
 
 - (void)onAfterReportCreated:(id<BGSReportContract>)report
                isTerminating:(BOOL)isTerminating
                   completion:(BGSCallback)completion {
-  if (completion) {
-    completion();
-  }
+  [BGSRNReportHandlerBridge.shared dispatchPhase:BGSRNReportPhaseAfter
+                                          report:report
+                                   isTerminating:isTerminating
+                                    onMainThread:NSThread.isMainThread
+                                      completion:completion];
 }
 
 @end
+
+static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
+
+static void BGSRNRejectHandleDead(RCTPromiseRejectBlock reject) {
+  reject(kHandleDeadCode,
+         @"This BugseeReport handle is no longer valid: its handler has "
+         @"already settled, or its deadline has passed.",
+         nil);
+}
+
+/// No code of our own (React Native fills in `EUNSPECIFIED`, as Android's
+/// `promise.reject(e)` does): an unexpected fault is not one of the three the
+/// JS contract names, and inventing a fourth would make it matchable.
+static void BGSRNRejectException(RCTPromiseRejectBlock reject, NSException *exception) {
+  reject(nil, exception.reason ?: exception.name, nil);
+}
+
+/// The SDK returns nil both for a declined attachment and for a report that
+/// is no longer live. The handle tells the two apart: if it died while the
+/// call ran, that is the truer answer.
+static void BGSRNSettleAttachment(NSString *handleId,
+                                  BOOL added,
+                                  NSError *error,
+                                  RCTPromiseResolveBlock resolve,
+                                  RCTPromiseRejectBlock reject) {
+  if (added) {
+    resolve(nil);
+    return;
+  }
+  NSString *code = BGSRNReportErrorWireCode(error);
+  if ([code isEqualToString:@"E_REPORT_ATTACHMENT_REJECTED"] &&
+      [BGSRNReportHandlerBridge.shared reportFor:handleId] == nil) {
+    BGSRNRejectHandleDead(reject);
+    return;
+  }
+  reject(code, error.localizedDescription, nil);
+}
 
 @implementation BugseeModule
 
@@ -110,6 +163,26 @@ RCT_EXPORT_MODULE(Bugsee)
       }
       [strongSelf emitOnLifecycleEvent:payload];
     }];
+    // The same lifetime rule for report handlers. The request is emitted
+    // as-is: the bridge already built the wire payload.
+    [BGSRNReportHandlerBridge.shared attach:self block:^(NSDictionary *request) {
+      __strong __typeof(weakSelf) strongSelf = weakSelf;
+      if (strongSelf == nil) {
+        // Throwing makes the bridge complete the handle now, rather than
+        // leave the report waiting out a deadline no JS will ever meet.
+        [NSException raise:NSInternalInconsistencyException format:@"BugseeModule is gone"];
+      }
+      // The codegen emitter is a std::function, and an unset one throws a C++
+      // exception the bridge's @catch cannot see. Re-raised as an NSException
+      // so the bridge completes the handle instead of the SDK's thread
+      // unwinding through it.
+      try {
+        [strongSelf emitOnReportHandlerRequest:request];
+      } catch (const std::exception &e) {
+        [NSException raise:NSInternalInconsistencyException
+                    format:@"onReportHandlerRequest could not be emitted: %s", e.what()];
+      }
+    }];
   }
   return self;
 }
@@ -121,6 +194,10 @@ RCT_EXPORT_MODULE(Bugsee)
   // No super call: `invalidate` comes from RCTInvalidating, and
   // NativeBugseeSpecBase inherits NSObject, which does not declare it.
   [BGSRNEventBus.shared detach:self];
+  // Also completes every report handle this module's JS was given: the next
+  // runtime cannot know them, so the reports must not wait out their
+  // deadlines.
+  [BGSRNReportHandlerBridge.shared detach:self];
 }
 
 /// The SDK touches UIKit during start-up, so it must not be constructed on a
@@ -231,11 +308,15 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
-/// No-op stub. Task 3.4e implements the real upload -- hopping to main, like
-/// every other SDK entry point (`[Bugsee uploadWithSummary:description:]`).
+/// The two-argument form only -- severity and labels are Phase 8. JS has
+/// already checked both arguments are strings. On main, like every other SDK
+/// entry point; the report it creates is a LIVE one, so its handlers run on
+/// main too, after this returns.
 - (void)upload:(NSString *)summary
     description:(NSString *)description {
-  // Intentionally empty. Task 3.4e
+  BGSRNRunOnMain(^{
+    [Bugsee uploadWithSummary:summary description:description];
+  });
 }
 
 /// No-op stub. Task 3.5c holds the wrapper channel on iOS and forwards the
@@ -246,37 +327,58 @@ RCT_EXPORT_MODULE(Bugsee)
   // Intentionally empty. Task 3.5c
 }
 
-/// No-op stub. The real bridge (Task 3.4e) tells the SDK which phases JS
-/// wants; nothing native mints a handle yet, so there is nothing to enable.
+/// Which phases JS wants delivered; the other completes natively at once.
 - (void)setReportHandlerPhases:(BOOL)before
                          after:(BOOL)after {
-  // Intentionally empty.
+  [BGSRNReportHandlerBridge.shared setPhasesBefore:before after:after];
 }
 
-/// No-op stub. Nothing native ever hands JS a handle on this bridge, so there
-/// is nothing to acknowledge.
+/// A second call for the same handle is a no-op in the bridge.
+///
+/// Never hops to main -- on the live path the SDK is holding main while it
+/// waits for exactly this. Neither do the report ops below: they run on this
+/// module's method queue, which is safe because the report contract's methods
+/// are lock-synchronized (BGSContracts.h). Each catches everything: an
+/// exception escaping a TurboModule method is a crash in a release build, and
+/// the SDK's fault is not worth the app.
 - (void)completeReportHandler:(NSString *)handleId {
-  // Intentionally empty.
+  [BGSRNReportHandlerBridge.shared complete:handleId];
 }
 
-/// Truthful stub: every `report*` call rejects `E_REPORT_HANDLE_DEAD`,
-/// because no handle this stub could recognise was ever minted. Task 3.4e
-/// replaces this with the real handle table.
 - (void)reportRead:(NSString *)handleId
            resolve:(RCTPromiseResolveBlock)resolve
             reject:(RCTPromiseRejectBlock)reject {
-  reject(@"E_REPORT_HANDLE_DEAD",
-         @"No report handle exists on this stubbed bridge (Task 3.4e wires the real one).",
-         nil);
+  id<BGSReportContract> report = [BGSRNReportHandlerBridge.shared reportFor:handleId];
+  if (report == nil) {
+    BGSRNRejectHandleDead(reject);
+    return;
+  }
+  @try {
+    resolve([BGSRNReportOps readReport:report]);
+  } @catch (NSException *exception) {
+    BGSRNRejectException(reject, exception);
+  }
 }
 
 - (void)reportUpdate:(NSString *)handleId
                patch:(NSDictionary *)patch
              resolve:(RCTPromiseResolveBlock)resolve
               reject:(RCTPromiseRejectBlock)reject {
-  reject(@"E_REPORT_HANDLE_DEAD",
-         @"No report handle exists on this stubbed bridge (Task 3.4e wires the real one).",
-         nil);
+  id<BGSReportContract> report = [BGSRNReportHandlerBridge.shared reportFor:handleId];
+  if (report == nil) {
+    BGSRNRejectHandleDead(reject);
+    return;
+  }
+  @try {
+    NSError *error = nil;
+    if ([BGSRNReportOps applyPatch:patch toReport:report error:&error]) {
+      resolve(nil);
+    } else {
+      reject(BGSRNReportErrorWireCode(error), error.localizedDescription, nil);
+    }
+  } @catch (NSException *exception) {
+    BGSRNRejectException(reject, exception);
+  }
 }
 
 - (void)reportAddFileAttachment:(NSString *)handleId
@@ -286,9 +388,23 @@ RCT_EXPORT_MODULE(Bugsee)
                             move:(BOOL)move
                          resolve:(RCTPromiseResolveBlock)resolve
                           reject:(RCTPromiseRejectBlock)reject {
-  reject(@"E_REPORT_HANDLE_DEAD",
-         @"No report handle exists on this stubbed bridge (Task 3.4e wires the real one).",
-         nil);
+  id<BGSReportContract> report = [BGSRNReportHandlerBridge.shared reportFor:handleId];
+  if (report == nil) {
+    BGSRNRejectHandleDead(reject);
+    return;
+  }
+  @try {
+    NSError *error = nil;
+    const BOOL added = [BGSRNReportOps addFileAtPath:path
+                                                name:name
+                                            mimeType:mimeType
+                                                move:move
+                                            toReport:report
+                                               error:&error];
+    BGSRNSettleAttachment(handleId, added, error, resolve, reject);
+  } @catch (NSException *exception) {
+    BGSRNRejectException(reject, exception);
+  }
 }
 
 - (void)reportAddDataAttachment:(NSString *)handleId
@@ -297,9 +413,22 @@ RCT_EXPORT_MODULE(Bugsee)
                         mimeType:(NSString * _Nullable)mimeType
                          resolve:(RCTPromiseResolveBlock)resolve
                           reject:(RCTPromiseRejectBlock)reject {
-  reject(@"E_REPORT_HANDLE_DEAD",
-         @"No report handle exists on this stubbed bridge (Task 3.4e wires the real one).",
-         nil);
+  id<BGSReportContract> report = [BGSRNReportHandlerBridge.shared reportFor:handleId];
+  if (report == nil) {
+    BGSRNRejectHandleDead(reject);
+    return;
+  }
+  @try {
+    NSError *error = nil;
+    const BOOL added = [BGSRNReportOps addData:base64
+                                          name:name
+                                      mimeType:mimeType
+                                      toReport:report
+                                         error:&error];
+    BGSRNSettleAttachment(handleId, added, error, resolve, reject);
+  } @catch (NSException *exception) {
+    BGSRNRejectException(reject, exception);
+  }
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
