@@ -1,6 +1,6 @@
 /**
- * Runs one named scenario of the example app on the Android handset and
- * captures the device's whole log while it does.
+ * Runs one named scenario of the example app -- on the Android handset, or
+ * on the iOS simulator -- and captures the app's log while it does.
  *
  * How the app learns which scenario to run, with no native code:
  *
@@ -11,7 +11,11 @@
  *     read through `Linking.getInitialURL()`. A release build has the JSON
  *     baked in at build time, so a scenario that must run on a release build
  *     (a Java crash that a debug build's red box would swallow) needs a
- *     per-launch channel. The app prefers the URI when present.
+ *     per-launch channel. The app prefers the URI when present. Android only:
+ *     the iOS app registers no URL scheme, and on iOS nothing needs a release
+ *     build (`testNativeCrash` there is native, so no red box can catch it),
+ *     so iOS steers through the JSON alone -- and waits for Metro to serve
+ *     the new file before launching (`awaitMetroServes`).
  *
  * Every run carries a fresh nonce, and the app echoes it in its first marker,
  * so a stale bundle, a stale scenario file or a bundle left by an earlier run
@@ -23,7 +27,14 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { ADB, ANDROID_PACKAGE, ANDROID_SERIAL } from './device';
+import {
+  ADB,
+  ANDROID_PACKAGE,
+  ANDROID_SERIAL,
+  IOS_BUNDLE_ID,
+  IOS_SIMULATOR_ID,
+  IOS_TARGET,
+} from './device';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,10 +45,16 @@ export interface Scenario {
   readonly nonce: string;
 }
 
+/** Fields the JSON channel carries beyond the name and nonce. */
+export interface ScenarioExtras {
+  /** Replaces the credentials' endpoint (iOS simulator retention, bundles.ts). */
+  readonly endpoint?: string;
+}
+
 /** Writes the scenario file for the next launch, with a fresh nonce. */
-export function writeScenario(name: string): Scenario {
+export function writeScenario(name: string, extras: ScenarioExtras = {}): Scenario {
   const scenario = { scenario: name, nonce: randomBytes(6).toString('hex') };
-  writeFileSync(SCENARIO_FILE, `${JSON.stringify(scenario)}\n`);
+  writeFileSync(SCENARIO_FILE, `${JSON.stringify({ ...scenario, ...extras })}\n`);
   return scenario;
 }
 
@@ -86,7 +103,7 @@ export async function pidOf(): Promise<string | undefined> {
 }
 
 const RELEVANT =
-  /ReactNativeJS|Bugsee|AndroidRuntime|FATAL|bareexample|libbugsee|DEBUG\s*:|crashpad/;
+  /ReactNativeJS|Bugsee|AndroidRuntime|FATAL|bareexample|libbugsee|DEBUG\s*:|crashpad|BUGSEE_E2E|BareExample|Terminating app/;
 
 /** One logcat line, with the device's own timestamp (epoch ms). */
 export interface LogLine {
@@ -96,46 +113,32 @@ export interface LogLine {
 }
 
 /**
- * The whole device log (no tag filter: a crash's `AndroidRuntime` lines and
- * the linker/SELinux lines that name loaded `.so` files are not ours to tag),
- * with device-side timestamps so a timing is the device's, not adb's
- * delivery latency.
+ * Captured log lines, and the waiting and slicing every test does over them.
+ * Where the lines come from is the subclass's business: logcat on Android,
+ * the launched process's console on the iOS simulator.
  */
-export class Logcat {
+export abstract class DeviceLog {
   readonly lines: LogLine[] = [];
-  private readonly child: ChildProcess;
   private buffer = '';
   private waiters: Array<() => void> = [];
 
-  private constructor(child: ChildProcess) {
-    this.child = child;
-    const onChunk = (chunk: Buffer) => {
-      this.buffer += chunk.toString('utf8');
-      const parts = this.buffer.split('\n');
-      this.buffer = parts.pop() ?? '';
-      for (const raw of parts) {
-        const text = raw.replace(/\r$/, '');
-        const stamp = /^\s*(\d+)\.(\d{3})\s/.exec(text);
-        const deviceMs = stamp
-          ? Number(stamp[1]) * 1000 + Number(stamp[2])
-          : Number.NaN;
-        this.lines.push({ index: this.lines.length, deviceMs, text });
-      }
-      const waiters = this.waiters;
-      this.waiters = [];
-      for (const wake of waiters) {
-        wake();
-      }
-    };
-    child.stdout?.on('data', onChunk);
-    child.stderr?.on('data', onChunk);
-  }
+  /** The device-side time of a line, in epoch ms, or NaN if it carries none. */
+  protected abstract stampOf(text: string): number;
 
-  /** Clears the device's buffer, then streams from there. */
-  static async start(): Promise<Logcat> {
-    await adbStatus('logcat', '-c');
-    const child = spawn(ADB, ['-s', ANDROID_SERIAL, 'logcat', '-v', 'epoch']);
-    return new Logcat(child);
+  /** Feeds raw output; complete lines are recorded and wake any waiter. */
+  protected feed(chunk: Buffer): void {
+    this.buffer += chunk.toString('utf8');
+    const parts = this.buffer.split('\n');
+    this.buffer = parts.pop() ?? '';
+    for (const raw of parts) {
+      const text = raw.replace(/\r$/, '');
+      this.lines.push({ index: this.lines.length, deviceMs: this.stampOf(text), text });
+    }
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const wake of waiters) {
+      wake();
+    }
   }
 
   /** Where the log is now; pass to `waitFor`/`all` to look only after it. */
@@ -194,8 +197,128 @@ export class Logcat {
       .join('\n');
   }
 
+  abstract stop(): void;
+}
+
+/**
+ * The whole device log (no tag filter: a crash's `AndroidRuntime` lines and
+ * the linker/SELinux lines that name loaded `.so` files are not ours to tag),
+ * with device-side timestamps so a timing is the device's, not adb's
+ * delivery latency.
+ */
+export class Logcat extends DeviceLog {
+  private readonly child: ChildProcess;
+
+  private constructor(child: ChildProcess) {
+    super();
+    this.child = child;
+    child.stdout?.on('data', (chunk: Buffer) => this.feed(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => this.feed(chunk));
+  }
+
+  /** Clears the device's buffer, then streams from there. */
+  static async start(): Promise<Logcat> {
+    await adbStatus('logcat', '-c');
+    const child = spawn(ADB, ['-s', ANDROID_SERIAL, 'logcat', '-v', 'epoch']);
+    return new Logcat(child);
+  }
+
+  protected stampOf(text: string): number {
+    const stamp = /^\s*(\d+)\.(\d{3})\s/.exec(text);
+    return stamp ? Number(stamp[1]) * 1000 + Number(stamp[2]) : Number.NaN;
+  }
+
   stop(): void {
     this.child.kill('SIGKILL');
+  }
+}
+
+/** One launch of the app on the simulator, attached to its console. */
+export interface SimulatorLaunch {
+  /** Log index this launch's output starts at. */
+  readonly start: number;
+  /**
+   * Settles when the console stream ends -- which it does only when the
+   * process does -- with the launcher's exit code.
+   */
+  readonly ended: Promise<number | null>;
+  /** Whether the stream has ended yet. */
+  readonly hasEnded: () => boolean;
+}
+
+/**
+ * The iOS simulator app's stdout/stderr, across every launch in a test file.
+ *
+ * `simctl launch --console-pty` attaches to one process only, so each launch
+ * spawns its own attachment and appends to the same line list; a crashed
+ * launch's stream simply ends. `NSLog` lines (the SDK's and the bridge's,
+ * `BugseeRN report handler ...`) carry the simulator's wall clock, to the
+ * millisecond, which is the timing source; RN's mirrored `console.log` lines
+ * (the `BUGSEE_E2E` markers) carry none.
+ *
+ * `--console-pty`, not `--console`: simctl only streams the app's stdout when
+ * it allocates a pty (see device.ts).
+ */
+export class SimulatorConsole extends DeviceLog {
+  private readonly children = new Set<ChildProcess>();
+
+  static start(): SimulatorConsole {
+    if (IOS_TARGET !== 'simulator') {
+      throw new Error(
+        'the iOS report-handler e2e drives the simulator only (retention and ' +
+          'bundle pulls are simulator-side): set E2E_IOS_TARGET=simulator',
+      );
+    }
+    return new SimulatorConsole();
+  }
+
+  /** `2026-09-28 20:36:59.505 BareExample[95747:11510203] ...`, local time. */
+  protected stampOf(text: string): number {
+    const stamp = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}\.\d{3})\d*(?:[+-]\d{4})? \S+\[\d+:/.exec(
+      text,
+    );
+    return stamp ? new Date(`${stamp[1]}T${stamp[2]}`).getTime() : Number.NaN;
+  }
+
+  /**
+   * Starts the app fresh on the scenario already written to the JSON:
+   * `--terminate-running-process`, as `force-stop` on Android, because
+   * launching a running app only resumes it.
+   */
+  launch(): SimulatorLaunch {
+    const start = this.mark();
+    const child = spawn('xcrun', [
+      'simctl',
+      'launch',
+      '--console-pty',
+      '--terminate-running-process',
+      IOS_SIMULATOR_ID,
+      IOS_BUNDLE_ID,
+    ]);
+    this.children.add(child);
+    child.stdout?.on('data', (chunk: Buffer) => this.feed(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => this.feed(chunk));
+    let over = false;
+    const ended = new Promise<number | null>(resolve => {
+      child.on('close', code => {
+        over = true;
+        this.children.delete(child);
+        resolve(code);
+      });
+      child.on('error', () => {
+        over = true;
+        this.children.delete(child);
+        resolve(null);
+      });
+    });
+    return { start, ended, hasEnded: () => over };
+  }
+
+  stop(): void {
+    for (const child of this.children) {
+      child.kill('SIGKILL');
+    }
+    this.children.clear();
   }
 }
 
@@ -216,4 +339,39 @@ export async function launchScenario(scenario: Scenario): Promise<void> {
     '-d',
     `'${scenarioUri(scenario)}'`,
   );
+}
+
+/**
+ * Waits until Metro serves a bundle carrying `nonce`, so an iOS launch cannot
+ * pick up the previous scenario file: Metro rebuilds on its file watcher, a
+ * beat after the write. (Android steers through the launch URI instead.)
+ */
+export async function awaitMetroServes(nonce: string, timeoutMs = 60_000): Promise<void> {
+  const url = 'http://localhost:8081/index.bundle?platform=ios&dev=true&minify=false';
+  const deadline = Date.now() + timeoutMs;
+  let last = 'no response';
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url);
+      const body = await response.text();
+      if (body.includes(nonce)) {
+        return;
+      }
+      last = `HTTP ${response.status}, ${body.length} bytes without the nonce`;
+    } catch (error) {
+      last = String(error);
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  throw new Error(`Metro never served a bundle carrying nonce ${nonce} (last: ${last}); is it running?`);
+}
+
+/** Whether a host process is alive: simulator apps are host processes. */
+export function hostProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
