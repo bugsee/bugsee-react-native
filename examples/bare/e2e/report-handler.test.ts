@@ -1,5 +1,7 @@
 /**
- * Task 3.4d: the report handler on Android hardware.
+ * Tasks 3.4d and 3.4f: the report handler on an Android handset
+ * (`E2E_PLATFORM=android`) and on iOS (`E2E_PLATFORM=ios`, simulator only:
+ * `E2E_IOS_TARGET=simulator`).
  *
  * Unit tests pin the bridge's logic against fakes; what only a device can
  * show is that the SDK really calls it on the thread we think, that JS edits
@@ -10,8 +12,8 @@
  * SDK really reached Launched, and -- for the crash -- that the process really
  * died of it.
  *
- * Preconditions, as for launch.test.ts: the app is installed on the handset
- * named in device.ts, and for a debug build Metro is running with
+ * Android preconditions, as for launch.test.ts: the app is installed on the
+ * handset named in device.ts, and for a debug build Metro is running with
  * `adb reverse tcp:8081 tcp:8081`. Cases 1-5 run on a debug build. Case 6
  * needs a build without dev support -- a debug build routes the exception to
  * DevSupportManager (a red box) and the process lives: `./gradlew
@@ -19,43 +21,75 @@
  * working), and `-t terminating` to run just that case. All six pass on that
  * build too. `E2E_LOGCAT_DUMP=<file>` saves the whole captured log.
  *
- * Log lines matched, from ReportHandlerBridge (tag BugseeRN):
+ * iOS preconditions: the Debug app is installed on the booted simulator
+ * (IOS_SIMULATOR_ID) and Metro is running. Reports are retained by launching
+ * against a closed loopback port (bundles.ts, DEAD_ENDPOINT), since the
+ * simulator has no airplane mode. iOS prints no commit banner; the SDK's
+ * `Bugsee IOS SDK ver:<v> build:<b>` line and every bundle's
+ * `environment.sdk.version` are checked against the pin instead.
+ *
+ * Log lines matched, from the report handler bridge (ReportHandlerBridge on
+ * Android, tag BugseeRN; BGSRNReportHandlerBridge's NSLog on iOS, prefixed
+ * `BugseeRN`):
  *   report handler <handle> phase=<p> deadline=<ms>       a dispatch to JS
  *   report handler <handle> completed by=<by>              that handle's end
  *   report handler - completed by=<by> phase=<p> report=<id>   never reached JS
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { checkAndroidBanner } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
 import {
+  DEAD_ENDPOINT,
   type PulledBundle,
   airplane,
   clearAndroidBundles,
+  clearIosBundles,
   displayNameOf,
   fileNameOf,
   listAndroidBundles,
+  listIosBundles,
   pullAndroidBundles,
+  pullIosBundles,
+  terminateIosApp,
 } from './bundles';
-import { ANDROID_PACKAGE } from './device';
+import { ANDROID_PACKAGE, IOS_SIMULATOR_ID } from './device';
 import {
+  type DeviceLog,
   type LogLine,
   Logcat,
   type Scenario,
+  SimulatorConsole,
+  type SimulatorLaunch,
   adb,
+  awaitMetroServes,
+  hostProcessAlive,
   launchScenario,
   pidOf,
   resetScenario,
   writeScenario,
 } from './scenario';
 
-const ON_ANDROID = process.env.E2E_PLATFORM === 'android';
-const describeAndroid = ON_ANDROID ? describe : describe.skip;
+const PLATFORM = process.env.E2E_PLATFORM;
+const ON_ANDROID = PLATFORM === 'android';
+const ON_IOS = PLATFORM === 'ios';
+const describeDevice = ON_ANDROID || ON_IOS ? describe : describe.skip;
+const itAndroid = ON_ANDROID ? it : it.skip;
+/**
+ * Case 6 on iOS needs a crash reporter, and the simulator slice of the iOS SDK
+ * has none: 7.0.0-beta3's `ios-arm64_x86_64-simulator` binary carries no
+ * BGSCrashManager or PLCrashReporter symbols (the SDK compiles crash hooks
+ * out under TARGET_OS_SIMULATOR), so a crash there is never recovered and the
+ * case fails at its first recovery assertion (Task 3.4f report). It runs only
+ * when asked for, `E2E_IOS_RECOVERY=1`, until an iPhone is attached.
+ */
+const itIosRecovery = ON_IOS && process.env.E2E_IOS_RECOVERY === '1' ? it : it.skip;
 
 jest.setTimeout(10 * 60_000);
 
-let log: Logcat;
+let log: DeviceLog;
 
 /** Fails with the captured log, so a miss can be read rather than guessed. */
 function must(line: LogLine | undefined, what: string, from = 0): LogLine {
@@ -77,7 +111,12 @@ interface Run {
   readonly launched: LogLine;
   /** Whether the JS bundle was built with __DEV__, as the app reports it. */
   readonly dev: boolean;
+  /** iOS only: the launch's console attachment, which ends with the process. */
+  readonly launch?: SimulatorLaunch;
 }
+
+/** The SDK's version line on iOS, from the `NSLog` it prints at launch. */
+const IOS_SDK_LINE = /Bugsee IOS SDK ver:(\S+) build:(\S+)/;
 
 /**
  * Starts the app on `name` and asserts the per-run preconditions: the app
@@ -85,6 +124,9 @@ interface Run {
  * pinned one, and the SDK reached Launched with the device offline.
  */
 async function startRun(name: string): Promise<Run> {
+  if (ON_IOS) {
+    return startIosRun(name);
+  }
   const scenario = writeScenario(name);
   const start = log.mark();
   await launchScenario(scenario);
@@ -115,17 +157,84 @@ async function startRun(name: string): Promise<Run> {
   return { scenario, start, banner, launched, dev: / dev=true/.test(ran.text) };
 }
 
-/** The retained bundles, once at least `count` exist (or the wait runs out). */
+async function startIosRun(name: string): Promise<Run> {
+  const simulator = log as SimulatorConsole;
+  const scenario = writeScenario(name, { endpoint: DEAD_ENDPOINT });
+  await awaitMetroServes(scenario.nonce);
+  const launch = simulator.launch();
+  const { start } = launch;
+
+  const ran = must(
+    await log.waitFor(
+      new RegExp(`BUGSEE_E2E scenario=${name} nonce=${scenario.nonce} `),
+      120_000,
+      start,
+    ),
+    `the app starting scenario ${name} (nonce ${scenario.nonce})`,
+    start,
+  );
+  // The retention precondition, both halves: the app took the dead endpoint,
+  // and the SDK really failed to reach it.
+  expect(ran.text).toContain(`endpoint=${DEAD_ENDPOINT}`);
+  const banner = must(await log.waitFor(IOS_SDK_LINE, 15_000, start), 'the iOS SDK version line', start);
+  const version = IOS_SDK_LINE.exec(banner.text)![1];
+  if (version !== readNativeVersions().ios.sdk) {
+    throw new Error(`iOS SDK ${version} launched, but the pin is ${readNativeVersions().ios.sdk}`);
+  }
+  must(
+    await log.waitFor(/Session not initialized\. - Could not connect to the server/, 15_000, start),
+    'the SDK failing to reach the dead endpoint',
+    start,
+  );
+  const launched = must(
+    await log.waitFor(/BUGSEE_E2E status=2/, 20_000, ran.index),
+    'Status.Launched with the endpoint dead',
+    start,
+  );
+  return { scenario, start, banner, launched, dev: / dev=true/.test(ran.text), launch };
+}
+
+async function clearBundles(): Promise<void> {
+  return ON_IOS ? clearIosBundles() : clearAndroidBundles();
+}
+
+async function listBundles(): Promise<string[]> {
+  return ON_IOS ? listIosBundles() : listAndroidBundles();
+}
+
+/**
+ * The retained bundles, once at least `count` exist (or the wait runs out).
+ * On iOS, which has no commit banner, each bundle's `environment.sdk` is the
+ * build evidence: its version must be the pin.
+ */
 async function awaitBundles(count: number, timeoutMs = 60_000): Promise<PulledBundle[]> {
   const deadline = Date.now() + timeoutMs;
-  while ((await listAndroidBundles()).length < count && Date.now() < deadline) {
+  while ((await listBundles()).length < count && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 1_000));
   }
-  return pullAndroidBundles();
+  if (!ON_IOS) {
+    return pullAndroidBundles();
+  }
+  const bundles = await pullIosBundles();
+  for (const bundle of bundles) {
+    const sdk = (bundle.request.environment as { sdk?: Record<string, unknown> } | undefined)?.sdk;
+    report(`${bundle.file} environment.sdk`, { version: sdk?.version, build: sdk?.build, type: sdk?.type });
+    expect(sdk?.version).toBe(readNativeVersions().ios.sdk);
+  }
+  return bundles;
+}
+
+/**
+ * iOS: the thread an `NSLog` line came from, `BareExample[<pid>:<tid>]`. The
+ * SDK logs its version line from `launchWithToken:` on the main thread, so
+ * that line's tid is main's -- the witness for which thread a dispatch was on.
+ */
+function threadOf(line: LogLine): string | undefined {
+  return /BareExample\[\d+:(\d+)\]/.exec(line.text)?.[1];
 }
 
 const DISPATCH = (phase: string) =>
-  new RegExp(`BugseeRN.*report handler (rh-\\d+) phase=${phase} deadline=(\\d+)`);
+  new RegExp(`BugseeRN.*report handler (rh-\\d+) phase=(${phase}) deadline=(\\d+)`);
 
 /** Any handle's completion -- minted handles log `<id> completed by=`. */
 function completionOf(handle: string): RegExp {
@@ -134,6 +243,7 @@ function completionOf(handle: string): RegExp {
 
 interface Dispatch {
   readonly handle: string;
+  readonly phase: string;
   readonly deadlineMs: number;
   readonly dispatched: LogLine;
   readonly completed: LogLine;
@@ -141,6 +251,7 @@ interface Dispatch {
   readonly elapsedMs: number;
 }
 
+/** `phase` is a pattern: `before`, `after`, or `before|after`. */
 async function awaitDispatch(
   phase: string,
   from: number,
@@ -151,7 +262,7 @@ async function awaitDispatch(
     `a ${phase} dispatch to JS`,
     from,
   );
-  const [, handle, deadline] = DISPATCH(phase).exec(dispatched.text)!;
+  const [, handle, actualPhase, deadline] = DISPATCH(phase).exec(dispatched.text)!;
   const completed = must(
     await log.waitFor(completionOf(handle!), completionTimeoutMs, dispatched.index),
     `${handle}'s completion`,
@@ -159,6 +270,7 @@ async function awaitDispatch(
   );
   return {
     handle: handle!,
+    phase: actualPhase!,
     deadlineMs: Number(deadline),
     dispatched,
     completed,
@@ -175,11 +287,49 @@ function pick(request: Record<string, unknown>): Record<string, unknown> {
 
 /** Evidence the report is committed, surfaced for the commit body. */
 function report(label: string, value: unknown): void {
-  console.log(`[3.4d] ${label}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
+  const task = ON_IOS ? '3.4f' : '3.4d';
+  console.log(`[${task}] ${label}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
 }
 
-describeAndroid('report handler on an Android handset', () => {
+/**
+ * The simulator's own crash report for `pid`, which macOS writes to the
+ * host's DiagnosticReports: the process-death evidence on iOS, with the
+ * signal that ended it.
+ */
+async function awaitHostCrashReport(
+  pid: number,
+  timeoutMs = 60_000,
+): Promise<{ file: string; type: string; signal: string }> {
+  const dir = join(homedir(), 'Library', 'Logs', 'DiagnosticReports');
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    for (const file of readdirSync(dir).filter(name => /^BareExample.*\.ips$/.test(name))) {
+      const text = readFileSync(join(dir, file), 'utf8');
+      const body = text.slice(text.indexOf('\n') + 1);
+      try {
+        const parsed = JSON.parse(body) as { pid?: number; exception?: { type?: string; signal?: string } };
+        if (parsed.pid === pid) {
+          return { file, type: parsed.exception?.type ?? '?', signal: parsed.exception?.signal ?? '?' };
+        }
+      } catch {
+        // Still being written, or not ours.
+      }
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`no DiagnosticReports crash report for pid ${pid} within ${timeoutMs} ms`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+}
+
+describeDevice(`report handler on ${ON_IOS ? `the iOS simulator (${IOS_SIMULATOR_ID})` : 'an Android handset'}`, () => {
   beforeAll(async () => {
+    if (ON_IOS) {
+      // No network switch to throw: every iOS launch carries DEAD_ENDPOINT
+      // (startIosRun), which is what retains its reports.
+      log = SimulatorConsole.start();
+      return;
+    }
     log = await Logcat.start();
     // 9.3.2: offline before the app starts, and for the whole file, so every
     // report is retained where the test can read it.
@@ -192,10 +342,16 @@ describeAndroid('report handler on an Android handset', () => {
     // network back -- the handset is shared, and a test that leaves it
     // offline breaks the next thing anyone does with it.
     try {
-      await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
-      await clearAndroidBundles().catch(() => {});
+      if (ON_IOS) {
+        await terminateIosApp();
+      } else {
+        await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+      }
+      await clearBundles().catch(() => {});
     } finally {
-      await airplane(false);
+      if (!ON_IOS) {
+        await airplane(false);
+      }
       resetScenario();
       if (log !== undefined) {
         log.stop();
@@ -215,7 +371,7 @@ describeAndroid('report handler on an Android handset', () => {
     let nonce: string;
 
     beforeAll(async () => {
-      await clearAndroidBundles();
+      await clearBundles();
       run = await startRun('rh-live');
       nonce = run.scenario.nonce;
       report('banner', run.banner.text.trim());
@@ -243,6 +399,12 @@ describeAndroid('report handler on an Android handset', () => {
       expect(before.deadlineMs).toBe(25_000);
       expect(before.by).toBe('js');
       expect(after.by).toBe('js');
+      if (ON_IOS) {
+        // And on main, not merely given main's deadline.
+        expect(threadOf(run.banner)).toBeDefined();
+        expect(threadOf(before.dispatched)).toBe(threadOf(run.banner));
+        expect(threadOf(after.dispatched)).toBe(threadOf(run.banner));
+      }
       must(
         log.all(new RegExp(`BUGSEE_E2E rh before type=bug id=\\S+ nonce=${nonce}`), run.start)[0],
         'rh before type=bug',
@@ -301,7 +463,7 @@ describeAndroid('report handler on an Android handset', () => {
   });
 
   it('timeout: a handler that never settles is completed at the deadline and the report still ships', async () => {
-    await clearAndroidBundles();
+    await clearBundles();
     const run = await startRun('rh-hang');
     const { nonce } = run.scenario;
     const before = await awaitDispatch('before', run.launched.index, 40_000);
@@ -332,7 +494,7 @@ describeAndroid('report handler on an Android handset', () => {
   });
 
   it('throw: a throwing handler still ships the report', async () => {
-    await clearAndroidBundles();
+    await clearBundles();
     const run = await startRun('rh-throw');
     const { nonce } = run.scenario;
     const before = await awaitDispatch('before', run.launched.index, 10_000);
@@ -349,8 +511,8 @@ describeAndroid('report handler on an Android handset', () => {
     expect(bundles.map(b => b.request.summary)).toEqual([`upload-${nonce}`]);
   });
 
-  it('terminating: an uncaught Java exception never reaches JS; onAfter does, next launch', async () => {
-    await clearAndroidBundles();
+  itAndroid('terminating: an uncaught Java exception never reaches JS; onAfter does, next launch', async () => {
+    await clearBundles();
     const crash = await startRun('rh-crash');
     // A debug build's red box catches the exception before it can kill the
     // process, which would make every assertion below vacuous.
@@ -492,5 +654,77 @@ describeAndroid('report handler on an Android handset', () => {
     }
     expect(libraries).toHaveLength(4);
     expect(libraries).toContain('libbugsee-crashpad-handler.so');
+  });
+
+  // iOS has no terminating dispatch: the SDK's crash handler runs no report
+  // handlers and never passes isTerminating = YES, so the whole crash reaches
+  // JS at the next launch. The bridge's terminating branch is covered only by
+  // BGSRNReportHandlerBridgeTests' testTerminatingCompletesSynchronouslyAndNeverReachesJs.
+  itIosRecovery('recovery: a crash recovered at the next launch reaches JS off main with deadline=2500', async () => {
+    await clearBundles();
+    const crash = await startRun('rh-crash');
+    const crashNonce = crash.scenario.nonce;
+    const crashing = must(
+      await log.waitFor(new RegExp(`BUGSEE_E2E rh crashing nonce=${crashNonce}`), 15_000, crash.start),
+      'the app calling testNativeCrash()',
+      crash.start,
+    );
+    const pid = Number(/BareExample\[(\d+):/.exec(crash.banner.text)?.[1]);
+    expect(Number.isInteger(pid)).toBe(true);
+
+    // 9.1.4: the process really died of it. testNativeCrash on iOS is
+    // +[Bugsee testCrash], an uncaught NSException that aborts the process.
+    const thrown = must(
+      await log.waitFor(/Terminating app due to uncaught exception 'NSGenericException'/, 20_000, crashing.index),
+      "the uncaught NSException",
+      crash.start,
+    );
+    const code = await Promise.race([
+      crash.launch!.ended,
+      new Promise<'still attached'>(resolve => setTimeout(() => resolve('still attached'), 20_000)),
+    ]);
+    expect(code).not.toBe('still attached');
+    expect(hostProcessAlive(pid)).toBe(false);
+    const died = await awaitHostCrashReport(pid);
+    report('case 6 thrown', thrown.text.trim());
+    report('case 6 died', { pid, consoleExit: code, ...died });
+    expect(died.type).toBe('EXC_CRASH');
+    expect(died.signal).toBe('SIGABRT');
+    const crashEnd = log.mark();
+    report('case 6 dispatches in the crash run', log.all(/report handler/, crash.start, crashEnd).map(l => l.text.trim()));
+
+    // Relaunch, still against the dead endpoint. The handler is registered
+    // before launch(), so JS is attached when the SDK recovers the crash --
+    // off main, so with the recovery deadline.
+    const observe = await startRun('rh-observe');
+    const observeNonce = observe.scenario.nonce;
+    must(
+      log.all(new RegExp(`BUGSEE_E2E rh handler installed scenario=rh-observe nonce=${observeNonce}`), observe.start)[0],
+      'the rh-observe handler being installed',
+      observe.start,
+    );
+    const recovered = await awaitDispatch('before|after', observe.start, 10_000);
+    report('case 6 recovery dispatch', recovered.dispatched.text.trim());
+    report('case 6 recovery completion', `${recovered.completed.text.trim()} (+${recovered.elapsedMs}ms)`);
+    expect(recovered.deadlineMs).toBe(2_500);
+    expect(threadOf(recovered.dispatched)).not.toBe(threadOf(observe.banner));
+    expect(recovered.by).toBe('js');
+    const marker = must(
+      await log.waitFor(
+        new RegExp(`BUGSEE_E2E rh ${recovered.phase} type=crash id=(\\S+) .*nonce=${observeNonce}`),
+        15_000,
+        observe.start,
+      ),
+      `rh ${recovered.phase} type=crash`,
+      observe.start,
+    );
+    report('case 6 JS marker', marker.text.trim());
+    const crashedReport = /id=(\S+)/.exec(marker.text)![1]!;
+    expect(log.all(/report handler - completed by=no-handler/, observe.start)).toEqual([]);
+
+    const bundles = await awaitBundles(1);
+    report('case 6 bundles', bundles.map(b => ({ file: b.file, request: pick(b.request) })));
+    const crashes = bundles.filter(b => b.request.type === 'crash');
+    expect(crashes.map(b => b.file)).toEqual([`${crashedReport}.bundle.zip`]);
   });
 });
