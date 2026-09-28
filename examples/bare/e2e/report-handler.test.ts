@@ -349,7 +349,7 @@ describeAndroid('report handler on an Android handset', () => {
     expect(bundles.map(b => b.request.summary)).toEqual([`upload-${nonce}`]);
   });
 
-  it('terminating: an uncaught Java exception never reaches JS; the recovered report is completed next launch', async () => {
+  it('terminating: an uncaught Java exception never reaches JS; onAfter does, next launch', async () => {
     await clearAndroidBundles();
     const crash = await startRun('rh-crash');
     // A debug build's red box catches the exception before it can kill the
@@ -400,15 +400,16 @@ describeAndroid('report handler on an Android handset', () => {
     expect(log.all(/BUGSEE_E2E rh before/, crash.start, crashEnd)).toEqual([]);
     const crashedReport = /report=(\S+)/.exec(terminating.text)![1]!;
 
-    // Relaunch, still offline, and see which path the recovered report
-    // takes. Two are possible on Android, and this case does not decide
-    // between them -- it asserts whichever one happened, completely:
-    //
-    //   recovery  dispatched off the SDK's live thread (the bounded path,
-    //             Callback.NOOP): the bridge completes it natively at once,
-    //             logging `completed by=recovery`, and JS never sees it.
-    //   live      dispatched on BugseeReportHandlerThread: JS gets onAfter
-    //             with the live deadline, and its edits reach the bundle.
+    // Relaunch, still offline. The app launches the SDK from JS, and on that
+    // path the SDK recovers the crash on its live BugseeReportHandlerThread:
+    // JS gets a real onAfter, with the live 25 s deadline, and its edits
+    // reach the crash bundle. Observed on the WOD_LX1 and ruled the expected
+    // outcome (controller, Task 3.4d). The bridge's `completed by=recovery`
+    // short-circuit is only for the SDK's bounded early-recovery path (the
+    // `bugsee-report-handler-bounded` thread, Callback.NOOP), which cannot be
+    // staged by hand; ReportHandlerBridgeTest's
+    // aNonLiveThreadCompletesAtOnceAndNeverReachesJs covers it. So here a
+    // `by=recovery` line for this report is a failure, not an alternative.
     const observe = await startRun('rh-observe');
     const observeNonce = observe.scenario.nonce;
     must(
@@ -416,49 +417,32 @@ describeAndroid('report handler on an Android handset', () => {
       'the rh-observe handler being installed',
       observe.start,
     );
-    const RECOVERY = /report handler - completed by=recovery phase=(\S+) report=(\S+)/;
-    const first = must(
-      await log.waitFor(new RegExp(`${RECOVERY.source}|${DISPATCH('\\S+').source}`), 30_000, observe.start),
-      'the recovered report reaching the report handler bridge',
+    const after = await awaitDispatch('after', observe.start, 30_000);
+    report('case 6 after dispatch', after.dispatched.text.trim());
+    report('case 6 after completion', `${after.completed.text.trim()} (+${after.elapsedMs}ms)`);
+    expect(after.deadlineMs).toBe(25_000);
+    expect(after.by).toBe('js');
+    const marker = must(
+      await log.waitFor(
+        new RegExp(`BUGSEE_E2E rh after type=crash id=${escape(crashedReport)} labels-set nonce=${observeNonce}`),
+        15_000,
+        observe.start,
+      ),
+      'rh after type=crash carrying the crashed report id',
       observe.start,
     );
-    const path = RECOVERY.test(first.text) ? 'recovery' : 'live';
-    report('case 6 path', path);
-    report('case 6 first bridge line', first.text.trim());
+    report('case 6 after marker', marker.text.trim());
+    // onBefore is at-most-once: the crash already spent it, terminating.
+    expect(log.all(/BUGSEE_E2E rh before/, observe.start)).toEqual([]);
 
-    if (path === 'recovery') {
-      expect(first.text).toContain(`report=${crashedReport}`);
-      const bundles = await awaitBundles(1);
-      // Absence is only evidence if presence was possible: the handler was
-      // registered (above) and the SDK Launched, and it still saw nothing.
-      expect(log.all(/BUGSEE_E2E rh (before|after)/, observe.start)).toEqual([]);
-      expect(log.all(DISPATCH('\\S+'), observe.start)).toEqual([]);
-      report('case 6 bundles', bundles.map(b => ({ file: b.file, request: pick(b.request) })));
-      expect(bundles.filter(b => b.request.type === 'crash')).toHaveLength(1);
-    } else {
-      const after = await awaitDispatch('after', observe.start, 30_000);
-      report('case 6 after dispatch', after.dispatched.text.trim());
-      report('case 6 after completion', `${after.completed.text.trim()} (+${after.elapsedMs}ms)`);
-      expect(after.deadlineMs).toBe(25_000);
-      expect(after.by).toBe('js');
-      const marker = must(
-        await log.waitFor(
-          new RegExp(`BUGSEE_E2E rh after type=crash id=${escape(crashedReport)} labels-set nonce=${observeNonce}`),
-          15_000,
-          observe.start,
-        ),
-        'rh after type=crash for the crashed report',
-        observe.start,
-      );
-      report('case 6 after marker', marker.text.trim());
-      // onBefore is at-most-once: the crash already spent it, terminating.
-      expect(log.all(/BUGSEE_E2E rh before/, observe.start)).toEqual([]);
-      const bundles = await awaitBundles(1);
-      report('case 6 bundles', bundles.map(b => ({ file: b.file, request: pick(b.request) })));
-      const crashes = bundles.filter(b => b.request.type === 'crash');
-      expect(crashes).toHaveLength(1);
-      expect(crashes[0]!.request.labels).toEqual(expect.arrayContaining([observeNonce]));
-    }
+    const bundles = await awaitBundles(1);
+    report('case 6 bundles', bundles.map(b => ({ file: b.file, request: pick(b.request) })));
+    const crashes = bundles.filter(b => b.request.type === 'crash');
+    expect(crashes.map(b => b.file)).toEqual([`${crashedReport}.bundle.zip`]);
+    expect(crashes[0]!.request.labels).toEqual(expect.arrayContaining([observeNonce]));
+    // Checked last, after the bundle exists, so the window covers the whole
+    // recovery rather than only the moment the dispatch arrived.
+    expect(log.all(/report handler - completed by=recovery/, observe.start)).toEqual([]);
 
     // Controller ruling: the NDK's 4th library, the Crashpad handler, only
     // execs at a native crash (StartJavaHandlerAtCrash). The Java exception
