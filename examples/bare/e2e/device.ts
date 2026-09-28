@@ -102,6 +102,7 @@ async function spawnAndroid(): Promise<ChildProcess> {
     'time',
     'ReactNativeJS:V',
     'Bugsee:V',
+    'BugseeRN:V',
     '*:S',
   ]);
   // force-stop first: `am start` on an already-running app resumes it without
