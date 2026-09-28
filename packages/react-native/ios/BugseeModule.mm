@@ -279,6 +279,62 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
+/// No-op stub. The real bridge (Task 3.4e) tells the SDK which phases JS
+/// wants; nothing native mints a handle yet, so there is nothing to enable.
+- (void)setReportHandlerPhases:(BOOL)before
+                         after:(BOOL)after {
+  // Intentionally empty.
+}
+
+/// No-op stub. Nothing native ever hands JS a handle on this bridge, so there
+/// is nothing to acknowledge.
+- (void)completeReportHandler:(NSString *)handleId {
+  // Intentionally empty.
+}
+
+/// Truthful stub: every `report*` call rejects `E_REPORT_HANDLE_DEAD`,
+/// because no handle this stub could recognise was ever minted. Task 3.4e
+/// replaces this with the real handle table.
+- (void)reportRead:(NSString *)handleId
+           resolve:(RCTPromiseResolveBlock)resolve
+            reject:(RCTPromiseRejectBlock)reject {
+  reject(@"E_REPORT_HANDLE_DEAD",
+         @"No report handle exists on this stubbed bridge (Task 3.4e wires the real one).",
+         nil);
+}
+
+- (void)reportUpdate:(NSString *)handleId
+               patch:(NSDictionary *)patch
+             resolve:(RCTPromiseResolveBlock)resolve
+              reject:(RCTPromiseRejectBlock)reject {
+  reject(@"E_REPORT_HANDLE_DEAD",
+         @"No report handle exists on this stubbed bridge (Task 3.4e wires the real one).",
+         nil);
+}
+
+- (void)reportAddFileAttachment:(NSString *)handleId
+                            path:(NSString *)path
+                            name:(NSString *)name
+                        mimeType:(NSString * _Nullable)mimeType
+                            move:(BOOL)move
+                         resolve:(RCTPromiseResolveBlock)resolve
+                          reject:(RCTPromiseRejectBlock)reject {
+  reject(@"E_REPORT_HANDLE_DEAD",
+         @"No report handle exists on this stubbed bridge (Task 3.4e wires the real one).",
+         nil);
+}
+
+- (void)reportAddDataAttachment:(NSString *)handleId
+                          base64:(NSString *)base64
+                            name:(NSString *)name
+                        mimeType:(NSString * _Nullable)mimeType
+                         resolve:(RCTPromiseResolveBlock)resolve
+                          reject:(RCTPromiseRejectBlock)reject {
+  reject(@"E_REPORT_HANDLE_DEAD",
+         @"No report handle exists on this stubbed bridge (Task 3.4e wires the real one).",
+         nil);
+}
+
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams &)params {
   return std::make_shared<facebook::react::NativeBugseeSpecJSI>(params);

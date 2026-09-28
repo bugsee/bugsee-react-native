@@ -8,6 +8,8 @@ import type { SecureRectangle } from './secure/rectangles';
 import { Status } from './status';
 import { statusForEvent } from './wrapper/events';
 import type { LifecycleEvent } from './wrapper/events';
+import { setReportHandler as installReportHandler } from './report/dispatcher';
+import type { BugseeReportHandler } from './report/types';
 
 export { Status } from './status';
 
@@ -120,6 +122,19 @@ class Bugsee {
   }
 
   /**
+   * Installs the handler the SDK hands a report to before and/or after it
+   * builds one. See `BugseeReportHandler` for the phase contract.
+   *
+   * Register before `launch()` to see reports the SDK recovers at launch --
+   * a handler installed afterward misses whatever launch already recovered.
+   * `null` tells the SDK no phase is wanted; a later call can resume
+   * delivery.
+   */
+  setReportHandler(handler: BugseeReportHandler | null): void {
+    installReportHandler(handler);
+  }
+
+  /**
    * Wires up the JS layer when the native SDK launched itself — on Android,
    * from `com.bugsee.app-token` manifest metadata. Deliberately makes no
    * native launch call; doing so would start a second session.
@@ -191,3 +206,12 @@ export default new Bugsee();
 export type { SecureRectangle } from './secure/rectangles';
 
 export type { LifecycleEvent } from './wrapper/events';
+
+export { ReportErrorCode, BugseeReportError } from './report/errors';
+export type {
+  BugseeReport,
+  BugseeReportHandler,
+  BugseeReportSnapshot,
+  ReportPatch,
+  ReportType,
+} from './report/types';

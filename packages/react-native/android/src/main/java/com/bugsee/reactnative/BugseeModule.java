@@ -177,6 +177,68 @@ public class BugseeModule extends NativeBugseeSpec implements WrapperEventBus.Si
         Bugsee.testCrash();
     }
 
+    /**
+     * No-op stub. The real bridge (Task 3.4b) tells the SDK which phases JS
+     * wants; nothing native mints a handle yet, so there is nothing to enable.
+     */
+    @Override
+    public void setReportHandlerPhases(final boolean before, final boolean after) {
+        // Intentionally empty.
+    }
+
+    /**
+     * No-op stub. Nothing native ever hands JS a handle on this bridge, so
+     * there is nothing to acknowledge.
+     */
+    @Override
+    public void completeReportHandler(final String handleId) {
+        // Intentionally empty.
+    }
+
+    /**
+     * Truthful stub: every {@code report*} call rejects {@code
+     * E_REPORT_HANDLE_DEAD}, because no handle this stub could recognise was
+     * ever minted. Task 3.4b replaces this with the real handle table.
+     */
+    @Override
+    public void reportRead(final String handleId, final Promise promise) {
+        rejectHandleDead(promise);
+    }
+
+    @Override
+    public void reportUpdate(final String handleId, final ReadableMap patch, final Promise promise) {
+        rejectHandleDead(promise);
+    }
+
+    @Override
+    public void reportAddFileAttachment(
+            final String handleId,
+            final String path,
+            final String name,
+            @Nullable final String mimeType,
+            final boolean move,
+            final Promise promise
+    ) {
+        rejectHandleDead(promise);
+    }
+
+    @Override
+    public void reportAddDataAttachment(
+            final String handleId,
+            final String base64,
+            final String name,
+            @Nullable final String mimeType,
+            final Promise promise
+    ) {
+        rejectHandleDead(promise);
+    }
+
+    private static void rejectHandleDead(final Promise promise) {
+        promise.reject(
+                "E_REPORT_HANDLE_DEAD",
+                "No report handle exists on this stubbed bridge (Task 3.4b wires the real one).");
+    }
+
     /** Turns the SDK's option map into something the bridge can return. */
     private static WritableMap toWritableMap(@Nullable final Map<String, Serializable> options) {
         final WritableMap result = Arguments.createMap();

@@ -77,6 +77,60 @@ export interface Spec extends TurboModule {
    */
   getLaunchOptions(): Promise<UnsafeObject>;
   testCrash(): void;
+
+  /**
+   * A report handoff, before or after the SDK builds it.
+   *
+   * `handleId` is opaque and native-minted, never reused within a process, and
+   * scopes every `report*` call below to the ONE report this event announces
+   * — a second delivery for the same `reportId` (an `after` phase can fire
+   * more than once) gets its own handle. `phase` is `'before'` or `'after'`;
+   * `type` is an open set (`'bug' | 'crash' | 'error'` today). `deadlineMs` is
+   * the native deadline for THIS handle — JS marks the handle dead locally
+   * once it passes, whether or not the app's callback has settled.
+   */
+  readonly onReportHandlerRequest: EventEmitter<{
+    handleId: string;
+    phase: string;
+    reportId: string;
+    type: string;
+    deadlineMs: number;
+  }>;
+  /**
+   * Tells the SDK which phases JS actually wants delivered. Called once per
+   * `setReportHandler`, from the phases the handler defines — the SDK must
+   * not pay to assemble a callback's worth of work for a phase nothing
+   * listens to.
+   */
+  setReportHandlerPhases(before: boolean, after: boolean): void;
+  /**
+   * Acknowledges one handle, letting the SDK proceed. Called exactly once per
+   * handle from JS, whether the app's callback resolved, rejected, threw, or
+   * never settled before its deadline; a second call for the same handle is a
+   * native no-op.
+   */
+  completeReportHandler(handleId: string): void;
+  /** The live state of the report behind `handleId`, as a plain snapshot. */
+  reportRead(handleId: string): Promise<UnsafeObject>;
+  /**
+   * Applies a validated patch to the report behind `handleId`. All-or-nothing
+   * on both sides of the bridge: JS validates before crossing, and native
+   * applies nothing unless every field in the patch is valid.
+   */
+  reportUpdate(handleId: string, patch: UnsafeObject): Promise<void>;
+  reportAddFileAttachment(
+    handleId: string,
+    path: string,
+    name: string,
+    mimeType: string | null,
+    move: boolean,
+  ): Promise<void>;
+  reportAddDataAttachment(
+    handleId: string,
+    base64: string,
+    name: string,
+    mimeType: string | null,
+  ): Promise<void>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Bugsee');
