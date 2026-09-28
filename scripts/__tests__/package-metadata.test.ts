@@ -55,3 +55,22 @@ describe('the vendoring step', () => {
     expect(podspec).toMatch(/unzip[^\n]*'Bugsee\.xcframework\/\*'/);
   });
 });
+
+describe('the release guard', () => {
+  // The repo pins yarn 4. `yarn npm publish` runs `prepublish` then `prepack`
+  // and never `prepublishOnly`; a tarball from `yarn pack`/`npm pack` skips
+  // `prepublishOnly` too. `prepack` is the one hook all four run.
+  const scripts = (
+    JSON.parse(read('package.json')) as { scripts?: Record<string, string> }
+  ).scripts ?? {};
+
+  it('runs on prepack', () => {
+    expect(scripts.prepack).toBe(
+      'node ../../scripts/cli-check-releasable-pins.ts',
+    );
+  });
+
+  it('is not left on a hook yarn 4 never runs', () => {
+    expect(scripts.prepublishOnly ?? '').not.toMatch(/releasable-pins/);
+  });
+});
