@@ -105,6 +105,12 @@ android {
             // Caution! In production, you need to generate your own keystore file.
             // see https://reactnative.dev/docs/signed-apk-android.
             signingConfig signingConfigs.debug
+            // Device e2e only (e2e/report-handler.test.ts, case 6): a crash
+            // must kill the process, which needs a bundle without dev support,
+            // and the retained report must still be readable, which needs
+            // `run-as` -- so a debuggable release. Dev support follows the
+            // build type, not this flag. Off unless asked for.
+            debuggable findProperty('bugseeE2eDebuggable') == 'true'
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
