@@ -247,6 +247,65 @@ public class BugseeModule extends NativeBugseeSpec
         WrapperChannelHolder.shared().log(message, (int) level);
     }
 
+    /**
+     * Records a named event, with optional params.
+     *
+     * {@code null} params calls the SDK's one-argument overload rather than
+     * passing an empty map: the bundle's event entry has no {@code params}
+     * key at all when none were given (design doc, Phase 4 bundle facts), and
+     * a {@code {}} here would produce one. JS has already validated params
+     * against the accepted value domain and copied it
+     * ({@code src/data/validate.ts}), so nothing here is re-checked -- only
+     * guarded, since a void TurboModule method has no promise to reject and
+     * an escaping exception crashes the host app.
+     */
+    @Override
+    public void event(final String name, @Nullable final ReadableMap params) {
+        try {
+            if (params == null) {
+                Bugsee.event(name);
+            } else {
+                Bugsee.event(name, params.toHashMap());
+            }
+        } catch (RuntimeException e) {
+            Log.e(TAG, "event failed", e);
+        }
+    }
+
+    /** A numeric trace value. Boxed to a {@code Double}, the SDK's own {@code Object} overload. */
+    @Override
+    public void traceNumber(final String name, final double value) {
+        try {
+            Bugsee.trace(name, value);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "traceNumber failed", e);
+        }
+    }
+
+    /** A string trace value. */
+    @Override
+    public void traceString(final String name, final String value) {
+        try {
+            Bugsee.trace(name, value);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "traceString failed", e);
+        }
+    }
+
+    /**
+     * A boolean trace value, boxed explicitly to a {@code Boolean} -- kept
+     * apart from {@link #traceNumber} so it cannot silently arrive as
+     * {@code 0}/{@code 1} on the SDK side.
+     */
+    @Override
+    public void traceBoolean(final String name, final boolean value) {
+        try {
+            Bugsee.trace(name, Boolean.valueOf(value));
+        } catch (RuntimeException e) {
+            Log.e(TAG, "traceBoolean failed", e);
+        }
+    }
+
     @Override
     public void onReportHandlerRequest(
             @NonNull final String handleId,

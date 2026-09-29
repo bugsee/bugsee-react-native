@@ -21,6 +21,7 @@
 #import <BugseeRNSupport/BGSRNReportHandlerBridge.h>
 #import <BugseeRNSupport/BGSRNReportOps.h>
 #import <BugseeRNSupport/BGSRNGuardedEmit.h>
+#import <BugseeRNSupport/BGSRNValues.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -32,6 +33,7 @@
 #import "BGSRNReportHandlerBridge.h"
 #import "BGSRNReportOps.h"
 #import "BGSRNGuardedEmit.h"
+#import "BGSRNValues.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -358,6 +360,51 @@ RCT_EXPORT_MODULE(Bugsee)
     description:(NSString *)description {
   BGSRNRunOnMain(^{
     [Bugsee uploadWithSummary:summary description:description];
+  });
+}
+
+/// Records a named event, with optional params.
+///
+/// `params` is `nil` exactly when JS sent `null` (no params given) rather
+/// than `{}` -- the bundle's event entry has no `params` key at all when none
+/// were given (design doc, Phase 4 bundle facts). JS has already validated
+/// params against the accepted value domain and copied it
+/// (`src/data/validate.ts`), so nothing here is re-checked. On main, like
+/// every other SDK entry point.
+- (void)event:(NSString *)name
+       params:(NSDictionary * _Nullable)params {
+  BGSRNRunOnMain(^{
+    [Bugsee event:name params:params];
+  });
+}
+
+/// A numeric trace value, boxed the ordinary way -- `@(value)` for a
+/// `double` always produces a plain `NSNumber`, not a `CFBoolean`, so there is
+/// no identity hazard here the way there is for `traceBoolean:value:` below.
+- (void)traceNumber:(NSString *)name
+              value:(double)value {
+  BGSRNRunOnMain(^{
+    [Bugsee trace:name value:@(value)];
+  });
+}
+
+/// A string trace value.
+- (void)traceString:(NSString *)name
+              value:(NSString *)value {
+  BGSRNRunOnMain(^{
+    [Bugsee trace:name value:value];
+  });
+}
+
+/// A boolean trace value, through `BGSRNBoolNumber` -- kept apart from
+/// `traceNumber:value:` so it cannot silently arrive as `0`/`1`, and boxed
+/// through the CFBoolean singleton rather than `@(value)` so the SDK's JSON
+/// writer, which special-cases `CFBoolean` by object identity, actually
+/// serialises it as `true`/`false`.
+- (void)traceBoolean:(NSString *)name
+               value:(BOOL)value {
+  BGSRNRunOnMain(^{
+    [Bugsee trace:name value:BGSRNBoolNumber(value)];
   });
 }
 
