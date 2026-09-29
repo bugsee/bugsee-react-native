@@ -41,6 +41,14 @@ FOUNDATION_EXPORT NSString *_Nullable BGSRNReportErrorWireCode(NSError *error);
           toReport:(id<BGSReportContract>)report
              error:(NSError **)error;
 
+/// `applyPatch:toReport:error:` on the JSON text `reportUpdate` receives
+/// (`BGSRNJSONObject`), which is how a `null` -- clear the summary or
+/// description, remove an attribute -- survives the bridge. Text that is not
+/// a JSON object is `BGSRNReportErrorBadArgument`, and nothing is applied.
++ (BOOL)applyPatchJSON:(NSString *)json
+              toReport:(id<BGSReportContract>)report
+                 error:(NSError **)error;
+
 /// `addAttachmentWithFilePath:name:mimeType:move:`. NO with
 /// `BGSRNReportErrorAttachmentRejected` when the SDK returns nil.
 + (BOOL)addFileAtPath:(NSString *)path
