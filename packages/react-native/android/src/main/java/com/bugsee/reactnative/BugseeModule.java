@@ -188,6 +188,32 @@ public class BugseeModule extends NativeBugseeSpec
         }
     }
 
+    // --- Blackout and view-hierarchy capture (design doc §4.1) -----------
+    // Android ignores startBlackout/endBlackout before launch() (a logged
+    // no-op inside the SDK itself); iOS honours them regardless. Recorded in
+    // the plan as a candidate SDK issue, not patched here -- see the Phase 6
+    // preamble's "Planner decisions".
+
+    @Override
+    public void startBlackout() {
+        Bugsee.startBlackout();
+    }
+
+    @Override
+    public void endBlackout() {
+        Bugsee.endBlackout();
+    }
+
+    @Override
+    public void isBlackout(final Promise promise) {
+        promise.resolve(Bugsee.isBlackout());
+    }
+
+    @Override
+    public void captureViewHierarchy() {
+        Bugsee.captureViewHierarchy();
+    }
+
     private static String string(
             @NonNull final ReadableMap map,
             @NonNull final String key,

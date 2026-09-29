@@ -311,6 +311,38 @@ RCT_EXPORT_MODULE(Bugsee)
   free(flat);
 }
 
+#pragma mark - Blackout and view-hierarchy capture (design doc §4.1)
+
+// iOS honours startBlackout/endBlackout regardless of launch state, unlike
+// Android, which ignores them (a logged no-op) before launch() resolves.
+// Recorded in the plan as a candidate SDK issue, not patched here -- see the
+// Phase 6 preamble's "Planner decisions".
+
+- (void)startBlackout {
+  BGSRNRunOnMain(^{
+    [Bugsee startBlackout];
+  });
+}
+
+- (void)endBlackout {
+  BGSRNRunOnMain(^{
+    [Bugsee endBlackout];
+  });
+}
+
+- (void)isBlackout:(RCTPromiseResolveBlock)resolve
+             reject:(RCTPromiseRejectBlock)reject {
+  BGSRNRunOnMain(^{
+    resolve(@([Bugsee isBlackout]));
+  });
+}
+
+- (void)captureViewHierarchy {
+  BGSRNRunOnMain(^{
+    [Bugsee captureViewHierarchy];
+  });
+}
+
 - (void)setWrapperInfo:(NSDictionary *)identity {
   // The SDK holds the wrapper for the process's lifetime and reads it while
   // composing a report's environment, so this must be registered before
