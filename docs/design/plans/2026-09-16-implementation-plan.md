@@ -2547,7 +2547,7 @@ Phase 7 starts after Phase 6's review gate: its root reporter lives in `Bugsee.w
 - **R2. `signature` is kept, as design §9.1 lists it, and it is load-bearing.**
   - Android 7.3.0 parses `signature` out of a JSON reason (`ExceptionSignature.extractFromReason`) into the client signature and into `crash.json` `additional_signature`. iOS writes `additional_signature` the same way (`sdk/reporting/bundle/crash.md`).
   - Without it, every React Native exception on Android shares one client signature: the class name plus the bridge's own Java frames.
-  - It is SHA-1 over the chain's names and frame traces (6.x's algorithm), without 6.x's `build_id` suffix (R3).
+  - It is SHA-1 over the chain's names and frame traces (6.x's `concatExceptionsRecursiveForSignature`), without 6.x's `build_id` suffix (R3) and with 7.x's own source cleaning (`cleanSource` steps 3-4 subsume 6.x's `EXCEPTION_SIGNATURE_CLEANUP_REGEXPRS`). It otherwise differs from 6.x only where already documented elsewhere: `name` is `error.name` verbatim rather than a builtin-`instanceof` name (so a `class X extends TypeError` gives `TypeError` in `X`'s name, intended), and an unparsed line no longer contributes a `<unknown> () ()` frame (review M4, M3). Client-signature continuity across a 6.x-to-7.x upgrade is not expected or attempted: 6.x's signature already changed with every app version (it hashed in `appVersion-config-os`) and every bundle (minified line:column), and Android's own client signature separately hashes the bridge's Java frames, which change with the 7.x bridge regardless.
 - **R3. `build_id` is not sent.** When it is absent, the worker computes `_construct_build_id` = SHA-1 of `<app version>-release-<platform>`. That is the formula 6.x used in a release build. 7.x symbolicates by debug ID (R5, Phase 13), which the worker tries first.
 - **R4. Exception options are exactly `domain`, `labels` and `includeVideo`, flat** (design §9.1: "the wrapper passes all three").
   - 6.x's `mergingRules.skipFrames` is not carried. It indexes the *native* stack, which for a JS exception is the bridge's own frames, and the worker computes a React Native signature from the JS frames without it.
@@ -2637,10 +2637,14 @@ Phase 7 starts after Phase 6's review gate: its root reporter lives in `Bugsee.w
 | `REACT_NATIVE_EXCEPTION_NAME` | `'ReactNativeWebException'` | iOS `BGSRNReactNativeExceptionName`; Android simple class name | The backend routes on this exact substring. |
 | `EXCEPTION_MAX_FRAMES` | `256` | `src/exceptions/payload.ts` | Per node. Bounds the payload; far above any real JS stack. |
 | `EXCEPTION_MAX_CAUSE_DEPTH` | `10` | payload | Android's own nesting cap. |
-| `EXCEPTION_MAX_REASON_LENGTH` | `8192` UTF-16 units | payload | Truncated with `…` (U+2026). Never splits a surrogate pair. |
+| `EXCEPTION_MAX_REASON_LENGTH` | `8192` UTF-16 units | payload | Truncated with `…` (U+2026), which is not counted against the cap -- a truncated reason is 8193 units. Never splits a surrogate pair. |
+| `EXCEPTION_MAX_NAME_LENGTH` | `256` UTF-16 units | payload | Same surrogate-safe cut as `reason` (review I1: `name` was uncapped). |
+| `EXCEPTION_MAX_FIELD_LENGTH` | `1024` UTF-16 units | payload | Caps `traceRaw`, `data.source` and `data.member` (review I1: a hostile stack produced a 76.8 MB payload with these uncapped). |
+| `STACK_MAX_INPUT_LENGTH` | `65536` (64 KiB) | `src/exceptions/stack.ts` | Bounds the whole `stack` string before it is split into lines (review C1). |
+| `STACK_MAX_LINE_LENGTH` | `2048` (2 KiB) | stack | Bounds each line before any pattern runs on it; the guarantee that a pattern's own worst case still finishes in low single-digit milliseconds (review C1). |
 | `EXCEPTION_MAX_AGGREGATE` | `10` | `src/exceptions/report.ts` | R14. |
 | `EXCEPTION_DOMAIN_MAX_LENGTH` | `256` | `src/exceptions/options.ts` | A domain is a grouping tag, not text. |
-| `DEBUG_IDS_MAX` | `64` | `src/exceptions/debugIds.ts` | Map entries sent. One bundle is typical. |
+| `DEBUG_IDS_MAX` | `64` | `src/exceptions/debugIds.ts` | Map entries sent. One bundle is typical. `payload.ts` does not enforce this itself; it belongs to Task 7.3's `debugIds.ts` (review M7). |
 | `UNHANDLED_REPORT_WAIT_MS` | `1500` | report | The most the fatal path waits for native before RN's handler runs. Android writes synchronously; iOS stores the PLCR report synchronously. |
 | `ERROR_BOUNDARY_CAUSE_NAME` | `'ErrorBoundary Error'` | payload | R10, 6.x's name. |
 
@@ -2655,19 +2659,19 @@ The reason is one JSON object. Keys appear in this order, and absent keys are om
 
 | key | type | where | meaning |
 |---|---|---|---|
-| `name` | string | every node | The error's `name` if it is a non-empty string; else `'Error'`. |
+| `name` | string | every node | The error's `name` if it is a non-empty string (whitespace-only counts as non-empty; not trimmed, review M7); else `'Error'`. Capped at `EXCEPTION_MAX_NAME_LENGTH`. |
 | `reason` | string | every node | `message`, trimmed and truncated (constants), or R9's description. |
-| `frames` | frame[] | every node | Parsed from `stack`, top first; the header line is dropped. `[]` when there is no stack. |
+| `frames` | frame[] | every node | Parsed from `stack` with its own `name: message` (or bare `name`) header stripped first, top first; the header is never itself parsed as a frame (review I2 -- it previously was, whenever a message happened to look enough like one). `[]` when there is no stack. |
 | `cause` | node | when present | `error.cause` (any value, R9), to depth 10, stopping at a repeat (`WeakSet`). Then the R10 component-stack node, if any. |
 | `signature` | string | root | `sha1Hex(<name><each frame's trace>…)` down the whole chain, lowercase, 40 hex characters. |
 | `platform_os` | `'android'` \| `'ios'` | root | `Platform.OS`. |
-| `debug_ids` | `{[file]: id}` | root, when non-empty | The R5 map, at most 64 entries. |
+| `debug_ids` | `{[file]: id}` | root, when non-empty | The R5 map. `payload.ts` sends it as given; the 64-entry cap is Task 7.3's `debugIds.ts` to enforce (review M7). |
 
 A frame has these keys, in order:
-- `traceRaw`: the stack line as the engine wrote it;
+- `traceRaw`: the stack line as the engine wrote it, capped at `EXCEPTION_MAX_FIELD_LENGTH`. This keeps a hostile message's own bulk out of the payload (review I1), but a *legitimate* absolute path still reaches the backend verbatim otherwise: an iOS install path (`/private/var/containers/Bundle/Application/<UUID>/…`), an iOS data-container path or an Android `/data/user/0/<pkg>/…` path. That is spec-intended (`traceRaw` is defined as verbatim, matching 6.x) and is recorded here as a privacy note, not a defect (review M5);
 - `trace`: `<member> () (<source>[:line][:column])`, 6.x's form;
-- `data`: `{member, source, line, column}`. `member` defaults to `'<unknown>'`; `line` and `column` are `null` when unknown;
-- `user`: present when the frame has a file. It is `true` iff the frame has a line and a column, and its file contains none of `node_modules`, `native code` or `(native)`;
+- `data`: `{member, source, line, column}`. `member` defaults to `'<unknown>'`; `line` and `column` are `null` when unknown. `member` and `source` are each capped at `EXCEPTION_MAX_FIELD_LENGTH`;
+- `user`: present when the frame has a file (checked on the frame's own file, not the cleaned `source` -- they agree in practice, since none of `source`'s five steps can remove these substrings, but the wording here is what the code now matches, review M6). It is `true` iff the frame has a line and a column, and its file contains none of `node_modules`, `native code` or `(native)`;
 - `debug_id`: present when the frame's file is in the map.
 
 `source` is the frame's file with these removed, in order:
@@ -4068,6 +4072,7 @@ The phase with the most native↔JS round-tripping, hence the most device testin
   - **iOS beta3 compiles `logException:…` and `logUnhandledException:…` out on the simulator** (`#if !TARGET_OS_SIMULATOR`), including the call to `completion`. The no-op may be deliberate; never calling `completion` is not. Task 7.1d settles its promise on a deadline because of it.
   - **iOS beta3 `BugseeExtendedReport` keeps its attributes (and `screenshotInitialized`) in file-scope globals.** Each `createReport` resets the attributes of every earlier created report. Phase 8 P5 allows one created report at a time; `testTheSdkSharesAttributesAcrossExtendedReports` (Task 8.2c) fails when this is fixed.
   - **iOS beta3 `uploadWithSummary:…` files `source.type = "unknown"`** (`BGSReportingTriggerTypeUnknown`), where Android files `code_upload`. Task 8.3b case 3 is `it.failing` on iOS.
+  - **`cleanSource`'s CodePush paths keep the update's hash**: `files/CodePush/<hash>/CodePush/index.android.bundle` and `Library/Application Support/CodePush/<hash>/…` (steps 3-4 strip only the app-bundle/data-container prefix, not the `CodePush/<hash>/` segment itself). 6.x's `^.*\/[^.]+(\.app|CodePush|.*(?=\/))` reduced these to `/index.android.bundle`/`/main.jsbundle`, so a CodePush update did not change `source`/`trace`/the signature. Left as-is in the 7.1a review's fix round: stripping through the last `CodePush/` changes signature stability across CodePush updates, which is a bigger call than a fix round should make silently. Decide, then update `cleanSource` and its tests if so (review M4).
 
 ## Out of scope
 
