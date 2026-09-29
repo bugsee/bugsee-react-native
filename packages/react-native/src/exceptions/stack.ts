@@ -83,24 +83,22 @@ export const STACK_MAX_LINE_LENGTH = 2 * 1024;
 const CHROME_RE =
   /^at (.*?) ?\(((?:file|https?|blob|chrome-extension|native|eval|webpack|<anonymous>|\/|[a-z]:\\|\\\\).*?)(?::(\d+))?(?::(\d+))?\)?$/i;
 
-// A Hermes release frame: "at name (address at file:line:col)". The file
-// group deliberately keeps the "address at " prefix -- `fileKey`/`cleanSource`
-// strip it, so the raw frame's `file` and a registration stack's top frame
-// (Task 7.3) normalise the same way.
-const HERMES_ADDRESS_RE = /^at (.*?) \((address at .*?):(\d+):(\d+)\)$/i;
-
-// A V8/Hermes frame with no function name: "at name (file:line:col)" with a
-// file that has no recognised scheme (a relative bundle-internal path such
-// as `index.android.bundle` or `InternalBytecode.js`, which CHROME_RE's
-// scheme whitelist rejects), or "at file:line:col" with no name and no
-// parentheses at all (an anonymous top-level V8 frame). 6.x's `nodeRe`,
-// split into two patterns rather than one with an optional " (" -- an
-// optional single-character separator, tried at every position a
+// A V8/Hermes frame with no recognised scheme: "at name (file:line:col)"
+// where the file is a relative bundle-internal path such as
+// `index.android.bundle` or `InternalBytecode.js` (CHROME_RE's scheme
+// whitelist rejects these) -- which also covers a Hermes release frame,
+// "at name (address at file:line:col)", identically: the file group here
+// is unrestricted, so it captures "address at file" as one string exactly
+// as a dedicated Hermes pattern would (`fileKey`/`cleanSource` then strip
+// the "address at " prefix the same way). Or "at file:line:col" with no
+// name and no parentheses at all (an anonymous top-level V8 frame). 6.x's
+// `nodeRe`, split into two patterns rather than one with an optional " ("
+// -- an optional single-character separator, tried at every position a
 // same-shaped inner group could also stop at, reintroduces the same
 // super-linear search C1 fixes elsewhere (measured: the combined form hung
 // past 3 s on a 1 MB adversarial "at /x" + spaces + "x" line with no
 // trailing digits; each split half returns in under 5 ms on the same
-// input). Tried after Hermes-address and before JSC.
+// input). Tried after Chrome/V8 and before JSC.
 const NODE_PAREN_RE = /^at ([^\s(][^(]*?) \(([^()]*?):(\d+)(?::(\d+))?\)$/i;
 const NODE_BARE_RE = /^at ([^()]*?):(\d+)(?::(\d+))?$/i;
 
@@ -143,22 +141,6 @@ function parseChrome(line: string): ParsedFrame | null {
     methodName: parts[1] || null,
     lineNumber: parts[3] ? Number(parts[3]) : null,
     column: parts[4] ? Number(parts[4]) : null,
-  };
-}
-
-function parseHermesAddress(line: string): ParsedFrame | null {
-  const parts = HERMES_ADDRESS_RE.exec(line);
-  if (!parts) {
-    return null;
-  }
-
-  return {
-    raw: line,
-    // Group 2 is mandatory in HERMES_ADDRESS_RE, so it is always captured on a match.
-    file: parts[2] as string,
-    methodName: parts[1] || null,
-    lineNumber: Number(parts[3]),
-    column: Number(parts[4]),
   };
 }
 
@@ -229,11 +211,12 @@ function parseComponentStack(line: string): ParsedFrame | null {
 
 /**
  * Parses a JS stack (or a React `componentStack`) into frames, top first.
- * Chrome/V8, a V8/Hermes anonymous frame, Hermes (a Metro-URL frame or a
- * release "address at" frame), JSC and "in X (at f:l)" lines are recognised;
- * anything else -- the "Name: message" header (stripped by the caller
- * before this runs, not here), a blank line, a line no pattern matches --
- * produces no frame and is skipped.
+ * Chrome/V8, a V8/Hermes frame with no recognised scheme (which also covers
+ * a Hermes release "address at" frame and a Metro-URL frame identically),
+ * JSC and "in X (at f:l)" lines are recognised; anything else -- the
+ * "Name: message" header (stripped by the caller before this runs, not
+ * here), a blank line, a line no pattern matches -- produces no frame and
+ * is skipped.
  *
  * Bounded against a hostile `stack` on every axis that matters: the input
  * length, each line's length (`STACK_MAX_INPUT_LENGTH`/`STACK_MAX_LINE_LENGTH`),
@@ -263,11 +246,7 @@ export function parseStack(
     }
 
     const frame =
-      parseChrome(trimmed) ??
-      parseHermesAddress(trimmed) ??
-      parseNode(trimmed) ??
-      parseJsc(trimmed) ??
-      parseComponentStack(trimmed);
+      parseChrome(trimmed) ?? parseNode(trimmed) ?? parseJsc(trimmed) ?? parseComponentStack(trimmed);
 
     if (frame) {
       frames.push({ ...frame, raw });
