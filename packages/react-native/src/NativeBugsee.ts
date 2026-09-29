@@ -143,9 +143,12 @@ export interface Spec extends TurboModule {
   /** A boolean attribute. */
   setAttributeBoolean(name: string, value: boolean): Promise<void>;
   /**
-   * One attribute, read back from the SDK's in-memory copy on Android (the
-   * persisted copy's fractional widening is a `getAllAttributes` concern) and
-   * the same source `setAttribute` verifies against.
+   * One attribute, read back from the SDK's persisted copy on Android --
+   * `AttributeBridge.readOne`, the same copy `getAllAttributes` reads from
+   * (so a fractional value already carries that copy's 32-bit-float
+   * widening), not the SDK's own in-memory `Bugsee.getAttribute`, which only
+   * `setAttribute`'s own verification step (`AttributeBridge.setAndVerify`)
+   * reads.
    *
    * `{}` when absent, else `{ value }` -- never a bare value or `null`,
    * because `UnsafeObject` has no way to say "absent" other than omitting a
