@@ -4,7 +4,8 @@ import {
   JSC_SAMPLE,
   HERMES_RELEASE_SAMPLE,
   HERMES_DEBUG_SAMPLE,
-  COMPONENT_STACK_SAMPLE,
+  COMPONENT_STACK_SAMPLE_HERMES,
+  COMPONENT_STACK_SAMPLE_JSC,
 } from './fixtures/captured-stacks';
 
 describe('parseStack', () => {
@@ -470,6 +471,44 @@ describe('parseStack: bounded against a hostile stack (review C1)', () => {
   });
 });
 
+describe('parseStack: a full-size stack of worst-case lines (review N1)', () => {
+  // Round 1's per-line timing tests found the two regexes N1 flags (see
+  // their own comments in stack.ts), but a per-line budget under 100 ms
+  // hides a per-line cost of a few milliseconds -- multiplied by every
+  // line in a real, cap-sized stack, that still blows the budget. These
+  // time a *whole* STACK_MAX_INPUT_LENGTH-sized stack of the worst line
+  // each pattern is now linear on, not one line of it.
+  const TIME_BUDGET_MS = 100;
+
+  function assertFast(fn: () => void): number {
+    const start = performance.now();
+    fn();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(TIME_BUDGET_MS);
+    return elapsed;
+  }
+
+  it("a full stack of the review's CHROME_RE worst-case line ('at ' + ' (/'x680 + '\\rx')", () => {
+    const worstLine = `at ${' (/'.repeat(680)}\rx`;
+    const lineCount = Math.ceil(STACK_MAX_INPUT_LENGTH / (worstLine.length + 1)) + 1;
+    const stack = Array.from({ length: lineCount }, () => worstLine).join('\n');
+    expect(stack.length).toBeGreaterThanOrEqual(STACK_MAX_INPUT_LENGTH);
+
+    const elapsed = assertFast(() => parseStack(stack));
+    console.log(`CHROME_RE worst-case full stack (${stack.length} chars): ${elapsed.toFixed(2)} ms`);
+  });
+
+  it("a full stack of the review's COMPONENT_STACK_RE worst-case line ('in (at' + spaces + 'x')", () => {
+    const worstLine = `in (at${' '.repeat(2040)}x`;
+    const lineCount = Math.ceil(STACK_MAX_INPUT_LENGTH / (worstLine.length + 1)) + 1;
+    const stack = Array.from({ length: lineCount }, () => worstLine).join('\n');
+    expect(stack.length).toBeGreaterThanOrEqual(STACK_MAX_INPUT_LENGTH);
+
+    const elapsed = assertFast(() => parseStack(stack));
+    console.log(`COMPONENT_STACK_RE worst-case full stack (${stack.length} chars): ${elapsed.toFixed(2)} ms`);
+  });
+});
+
 describe('parseStack: a garbage-prefixed line is rejected, not matched starting later (review M1)', () => {
   it('component-stack: "xin A (at f.js:1)" and "Within A (at f.js:1)" are not frames', () => {
     expect(parseStack('xin A (at f.js:1)')).toEqual([]);
@@ -587,6 +626,69 @@ describe('parseStack: a V8/Hermes anonymous or relative-file frame (6.x parity, 
   });
 });
 
+describe('parseStack: Hermes-address frames with parentheses or an empty name, restored (review N3)', () => {
+  it('a Hermes address frame whose file contains parentheses (an iOS app bundle name)', () => {
+    const line = '    at bugseeE2EThrowSite (address at /My App (Beta).app/main.jsbundle:1:2)';
+    expect(parseStack(line)).toEqual([
+      {
+        raw: line,
+        file: 'address at /My App (Beta).app/main.jsbundle',
+        methodName: 'bugseeE2EThrowSite',
+        lineNumber: 1,
+        column: 2,
+      },
+    ]);
+  });
+
+  it('a Hermes address frame with an empty name (two spaces before the parenthesis)', () => {
+    const line = '    at  (address at index.android.bundle:1:2)';
+    expect(parseStack(line)).toEqual([
+      {
+        raw: line,
+        file: 'address at index.android.bundle',
+        methodName: null,
+        lineNumber: 1,
+        column: 2,
+      },
+    ]);
+  });
+
+  it('a Hermes address frame with both an empty name and a file containing parentheses', () => {
+    const line = '    at  (address at /My App (Beta).app/main.jsbundle:1:2)';
+    expect(parseStack(line)).toEqual([
+      {
+        raw: line,
+        file: 'address at /My App (Beta).app/main.jsbundle',
+        methodName: null,
+        lineNumber: 1,
+        column: 2,
+      },
+    ]);
+  });
+
+  it('a Hermes address frame with a parenthesised file and no column', () => {
+    const line = '    at n (address at /My App (Beta).app/main.jsbundle:1)';
+    expect(parseStack(line)).toEqual([
+      {
+        raw: line,
+        file: 'address at /My App (Beta).app/main.jsbundle',
+        methodName: 'n',
+        lineNumber: 1,
+        column: null,
+      },
+    ]);
+  });
+
+  it("a name containing '(' is a known, accepted limitation (not restored)", () => {
+    // Allowing '(' back into the *name* group would let it compete with
+    // the file group over the same characters again -- the exact shape
+    // C1/N1 removed it to avoid. An unrestricted name is rare in practice
+    // (no captured fixture has one); a file containing parens, restored
+    // above, is the realistic case (an iOS app bundle's display name).
+    expect(parseStack('    at eval(app.js) (address at index.android.bundle:1:2)')).toEqual([]);
+  });
+});
+
 describe('parseStack: real, captured multi-line stacks (review M2)', () => {
   it('a real V8 stack (node) parses every frame, including "node:" and anonymous ones', () => {
     const frames = parseStack(V8_NODE_SAMPLE);
@@ -651,13 +753,59 @@ describe('parseStack: real, captured multi-line stacks (review M2)', () => {
     );
   });
 
-  it('a React componentStack sample parses the two frames with a file, and skips the built-ins', () => {
-    const frames = parseStack(COMPONENT_STACK_SAMPLE);
+  it("a real React 19 componentStack (Hermes shape) parses the user component and the built-in's <anonymous>", () => {
+    const frames = parseStack(COMPONENT_STACK_SAMPLE_HERMES);
 
-    // "    in View (<anonymous>)" and "    in RCTView (<anonymous>)" have no
-    // "(at file:line)" and are skipped -- there is nowhere to point to.
-    expect(frames).toHaveLength(2);
-    expect(frames[0]).toMatchObject({ methodName: 'MyScreen', file: 'App.js', lineNumber: 42 });
-    expect(frames[1]).toMatchObject({ methodName: 'App', file: 'index.js', lineNumber: 7 });
+    expect(frames).toEqual([
+      {
+        raw: '    at MyScreen (App.js:42:10)',
+        file: 'App.js',
+        methodName: 'MyScreen',
+        lineNumber: 42,
+        column: 10,
+      },
+      {
+        raw: '    at View (<anonymous>)',
+        file: '<anonymous>',
+        methodName: 'View',
+        lineNumber: null,
+        column: null,
+      },
+      {
+        raw: '    at App (index.js:7:5)',
+        file: 'index.js',
+        methodName: 'App',
+        lineNumber: 7,
+        column: 5,
+      },
+    ]);
+  });
+
+  it("a real React 19 componentStack (JSC shape) parses the user component and the built-in's unknown:0:0", () => {
+    const frames = parseStack(COMPONENT_STACK_SAMPLE_JSC);
+
+    expect(frames).toEqual([
+      {
+        raw: 'MyScreen@App.js:42:10',
+        file: 'App.js',
+        methodName: 'MyScreen',
+        lineNumber: 42,
+        column: 10,
+      },
+      {
+        raw: 'View@unknown:0:0',
+        file: 'unknown',
+        methodName: 'View',
+        lineNumber: 0,
+        column: 0,
+      },
+      {
+        raw: 'App@index.js:7:5',
+        file: 'index.js',
+        methodName: 'App',
+        lineNumber: 7,
+        column: 5,
+      },
+    ]);
   });
 });
