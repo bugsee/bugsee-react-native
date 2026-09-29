@@ -2447,14 +2447,14 @@ After 1000 ms: log the probe's `measureInWindow` rect; `captureViewHierarchy()`;
 
 B1 showed that only the second exposes a missing origin. Record both runs.
 
-- [ ] **Red** — write the tests and scenarios. Run once before wiring `App.tsx` → FAIL at the first marker.
-- [ ] **Green** — all the cases pass on the WOD_LX1, in both edge-to-edge settings where required.
-- [ ] **Mutate**
+- [x] **Red** — write the tests and scenarios. Run once before wiring `App.tsx` → FAIL at the first marker. *As run: all three suites failed at their first scenario marker (`started`, `rect phase=mounted`, `rect`).*
+- [x] **Green** — all the cases pass on the WOD_LX1, in both edge-to-edge settings where required. *As run: 13/13, three runs of each suite with edge-to-edge on and three of `secure-component` and `view-tree` with it off (`-PedgeToEdgeEnabled=false`, origin 0,51), no flakes. The moving square stops during each post-upload hold: `uiautomator dump` never goes idle while it moves.*
+- [x] **Mutate** *As run: (1) cases 1–5 failed (`by=deadline ms=7`, no `managed`); (2) case 5 failed by 51 px; (3) case 2 failed (new bounds 255, old 0). Reverted.*
   - (1) Set `DataRequestBridge.DEADLINE_MS = 5`. `view-tree` cases 1 and 2 must fail.
   - (2) Under `edgeToEdgeEnabled=false`, drop the origin in `walk.ts`. `view-tree` case 5 must fail.
   - (3) Make `BugseeSecure` skip its measure loop. `secure-component` case 2 must fail.
   - Revert and record.
-- [ ] **Commit** — `test(e2e): blackout, <BugseeSecure> and the view tree on Android`. The body records the banner, both edge-to-edge runs, the video codec, `darkSeconds`, and the request timings.
+- [x] **Commit** — `test(e2e): blackout, <BugseeSecure> and the view tree on Android`. The body records the banner, both edge-to-edge runs, the video codec, `darkSeconds`, and the request timings.
 
 ---
 
