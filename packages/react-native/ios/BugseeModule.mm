@@ -26,6 +26,7 @@
 #import <BugseeRNSupport/BGSRNJSON.h>
 #import <BugseeRNSupport/BGSRNAttributes.h>
 #import <BugseeRNSupport/BGSRNDataRequestBridge.h>
+#import <BugseeRNSupport/BGSRNReactWindow.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -41,6 +42,7 @@
 #import "BGSRNJSON.h"
 #import "BGSRNAttributes.h"
 #import "BGSRNDataRequestBridge.h"
+#import "BGSRNReactWindow.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -158,28 +160,32 @@ static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper) {
   });
 }
 
-/// The on-screen origin, in points, of the key window of the foreground-active
-/// window scene: where the React root's window-relative measurements start,
-/// so JS adds it to put the view tree in the native tree's (screen) space.
-/// nil without one, or off main -- the SDK asks on main, and UIKit must not be
-/// read anywhere else.
-static NSValue *_Nullable BGSRNKeyWindowOrigin(void) {
+/// The `vh` origin: the `frame.origin` (points) of the window hosting the
+/// React root, among the windows the SDK's own view-hierarchy walk visits --
+/// the offset the SDK adds to every native node, so the two trees share one
+/// space by construction (see `BGSRNReactWindow.h`). nil without one, or off
+/// main: the SDK asks on main, and UIKit must not be read anywhere else.
+///
+/// The root is recognised by class name, not by import: `RCTSurfaceHostingView`
+/// is the new architecture's root (the template's `RCTRootView` is its
+/// `RCTSurfaceHostingProxyRootView` subclass); the legacy `RCTRootView` class
+/// is matched too for interop hosts.
+static NSValue *_Nullable BGSRNReactOrigin(void) {
   if (!NSThread.isMainThread) {
     return nil;
   }
-  for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-    if (scene.activationState != UISceneActivationStateForegroundActive ||
-        ![scene isKindOfClass:UIWindowScene.class]) {
-      continue;
-    }
-    UIWindow *window = ((UIWindowScene *)scene).keyWindow;
-    if (window == nil || window.screen == nil) {
-      continue;
-    }
-    return [NSValue valueWithCGPoint:[window convertPoint:CGPointZero
-                                        toCoordinateSpace:window.screen.coordinateSpace]];
-  }
-  return nil;
+  static Class surfaceHostingView;
+  static Class legacyRootView;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    surfaceHostingView = NSClassFromString(@"RCTSurfaceHostingView");
+    legacyRootView = NSClassFromString(@"RCTRootView");
+  });
+  UIWindow *keyWindow = BGSRNSdkKeyWindow();
+  return BGSRNReactRootOrigin(keyWindow, BGSRNSdkWalkedWindows(keyWindow), ^BOOL(UIView *view) {
+    return (surfaceHostingView != Nil && [view isKindOfClass:surfaceHostingView]) ||
+           (legacyRootView != Nil && [view isKindOfClass:legacyRootView]);
+  });
 }
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
@@ -321,7 +327,7 @@ RCT_EXPORT_MODULE(Bugsee)
         }, @"onDataRequest");
       }
       origin:^NSValue *_Nullable {
-        return BGSRNKeyWindowOrigin();
+        return BGSRNReactOrigin();
       }];
 }
 

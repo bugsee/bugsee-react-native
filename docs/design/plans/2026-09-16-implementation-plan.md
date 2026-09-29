@@ -1791,7 +1791,7 @@ The reviewer must independently:
   - If the probe fails at runtime, the view tree is disabled and every request answers `null`, logged once.
 - **Bounds conversion reuses B1's split.**
   - JS measures with `measureInWindow`, which is synchronous under Fabric, and scales by `secureRectangleScale()` (`PixelRatio.get()` on Android, `1` on iOS).
-  - Native supplies the React root's display origin in the request event: on Android, `ReactRootOriginTracker`'s last published origin; on iOS, the key window's origin in `window.screen.coordinateSpace`.
+  - Native supplies the React root's display origin in the request event: on Android, `ReactRootOriginTracker`'s last published origin; on iOS, the `frame.origin` (points) of the window hosting the React root, among the windows the SDK's own view-hierarchy walk visits. That is exactly the offset the SDK adds to every native node (`BGSCaptureViewHierarchyEngine.m:334-336`, SDK `0d9c9d0a3`), so the two trees share one space by construction, whatever the window's position on the physical screen (iPad multitasking).
   - JS adds the origin. Android rounds to integer pixels; iOS keeps points to 2 decimals.
 - **`<BugseeSecure>` re-measures every 100 ms while mounted, with one shared timer for all instances.**
   - `onLayout` does not fire when an ancestor scrolls, so a rectangle measured only on layout goes stale and leaks the region while it moves.
@@ -2280,16 +2280,22 @@ FOUNDATION_EXPORT const int64_t BGSRNDataRequestDeadlineMs;            // 450
 - (instancetype)initWithScheduler:(id (^)(dispatch_block_t task, int64_t delayMs))schedule
                            cancel:(void (^)(id token))cancel
                             clock:(int64_t (^)(void))nowMs;
+- (instancetype)initWithScheduler:(id (^)(dispatch_block_t task, int64_t delayMs))schedule
+                           cancel:(void (^)(id token))cancel
+                            clock:(int64_t (^)(void))nowMs
+                              log:(void (^)(NSString *line))log;   // tests pin the log lines
 @property (atomic) BOOL viewTreeEnabled;
-- (void)attach:(id)sink block:(void (^)(NSDictionary *request))block origin:(NSValue *_Nullable (^)(void))origin; // CGPoint
+// The sink returns whether the emit reached JS (BGSRNGuardedEmit); NO answers nil at once, by=sink-threw.
+- (void)attach:(id)sink block:(BOOL (^)(NSDictionary *request))block origin:(NSValue *_Nullable (^)(void))origin; // CGPoint
 - (void)detach:(id)sink;
 - (void)requestType:(NSString *)type reply:(void (^)(NSString *_Nullable data))reply;
 - (BOOL)complete:(NSString *)requestId payload:(nullable NSString *)payload;
+@property (nonatomic, readonly) NSUInteger outstanding;   // tests: every terminal path returns it to 0
 @end
 ```
 
 - The registry is guarded by `os_unfair_lock`, and the reply always runs outside the lock.
-- The module's `origin` block runs on main, where the SDK calls `requestData`. It takes the key window of the foreground-active `UIWindowScene` and returns `[NSValue valueWithCGPoint:[window convertPoint:CGPointZero toCoordinateSpace:window.screen.coordinateSpace]]`, or `nil` without one.
+- The module's `origin` block runs on main, where the SDK calls `requestData`. It picks the key window the way the SDK does (`BGSTrackerApplication.m:219-264`) and the windows the SDK walks for it (`:185-210`, `:295-320`), finds the one hosting the React root (`RCTSurfaceHostingView`, or legacy `RCTRootView`; key window first, breadth-first, bounded), and returns `[NSValue valueWithCGPoint:window.frame.origin]`, or `nil` without one (`support/BGSRNReactWindow.m`, tested with injected windows). Not the window's screen-space position: the SDK adds `frame.origin` (`BGSCaptureViewHierarchyEngine.m:334-336`). Changed in Task 6.6 fix round 1 (review I1).
 - The request-order rules and the log lines are the same as in 6.5.
 
 - [x] **Red** — `BGSRNDataRequestBridgeTests`, mirroring 6.5's names:
@@ -2309,6 +2315,7 @@ FOUNDATION_EXPORT const int64_t BGSRNDataRequestDeadlineMs;            // 450
 - [x] **Mutate**
   - (1) Drop the once-guard. `testCompleteDeliversThePayloadExactlyOnce` must fail.
   - (2) Call `reply` while holding the lock, and add a test-only reply that re-enters `complete:`. It must deadlock the test run, which the XCTest timeout reports as a failure.
+    - As built: the reply re-enters from another thread and waits at most 2 s, so the deadlock fails the test instead of hanging the run. A same-thread re-entry would trap in `os_unfair_lock` (a recursive lock is a crash, not a deadlock).
   - Revert and record.
 - [x] **Commit** — `feat(ios): answer the vh data request from JS, within the budget`.
 
