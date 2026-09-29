@@ -81,6 +81,43 @@ export interface Spec extends TurboModule {
   /** Captures the view hierarchy immediately, outside a normal snapshot pass. */
   captureViewHierarchy(): void;
 
+  /**
+   * The SDK's request for JS-side data, mid-capture. Only `'vh'` (the view
+   * hierarchy) exists today; native answers any other `type` itself and never
+   * emits this for it. `requestId` is native-minted and never reused within a
+   * process. `originX`/`originY` are the React root's display origin --
+   * Android display pixels, iOS points -- the same units `originTracker`
+   * publishes for secure rectangles, and the frame the view-tree walk's
+   * bounds are offset into (`src/viewtree/walk.ts`'s `WalkEnv`).
+   *
+   * `Task 6.4` (`src/viewtree/requests.ts`) is the only subscriber; `Task
+   * 6.5`/`Task 6.6` are what actually emit it, from the same per-module event
+   * bus every other emitter here goes through.
+   */
+  readonly onDataRequest: EventEmitter<{
+    requestId: string;
+    type: string;
+    originX: number;
+    originY: number;
+  }>;
+  /**
+   * Answers one {@link onDataRequest} delivery. Called exactly once per
+   * `requestId`, synchronously, whether or not there was anything to answer
+   * with -- the SDK waits on this mid-capture. `payload` is JSON text for a
+   * `'vh'` request that found something to walk, `null` for every other
+   * outcome (an unmounted wrapper, an unrecognised `type`, or the walk
+   * itself failing).
+   */
+  replyDataRequest(requestId: string, payload: string | null): void;
+  /**
+   * Turns view-hierarchy capture on or off. The wrapper calls this as
+   * `Bugsee.wrap`'s anchor mounts and unmounts (`src/viewtree/requests.ts`):
+   * on for the first mounted anchor, off once the last one unmounts, so the
+   * SDK only asks for a `'vh'` {@link onDataRequest} while there is a
+   * registered root to answer it from.
+   */
+  setViewTreeEnabled(enabled: boolean): void;
+
   launch(token: string, options: UnsafeObject): Promise<boolean>;
   relaunch(options: UnsafeObject): Promise<boolean>;
   stop(): Promise<boolean>;

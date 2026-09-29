@@ -1,5 +1,7 @@
+import type { ComponentType } from 'react';
 import NativeBugsee from './NativeBugsee';
 import { PACKAGE_VERSION } from './version';
+import { wrap } from './viewtree/anchor';
 import { collectWrapperFacts } from './wrapper/collect';
 import { wrapperIdentity } from './wrapper/identity';
 import { setOwnerRectangles } from './secure/registry';
@@ -151,6 +153,22 @@ class Bugsee {
   /** Captures the view hierarchy immediately, outside a normal snapshot pass. */
   captureViewHierarchy(): void {
     NativeBugsee.captureViewHierarchy();
+  }
+
+  /**
+   * Wraps the app's root component so the SDK can capture the on-screen view
+   * hierarchy ("vh") -- the anonymised tree of what is on screen that
+   * annotates a bug report or a live capture. Without this, the SDK's view-
+   * hierarchy request always comes back empty: there is nothing registered
+   * for it to walk.
+   *
+   * Renders `Root` unchanged, alongside an invisible anchor the view-tree
+   * walk uses to find the app's fiber tree; neither is ever drawn on top of
+   * the app or intercepts a touch. Usage:
+   * `AppRegistry.registerComponent(appName, () => Bugsee.wrap(App))`.
+   */
+  wrap<P extends object>(Root: ComponentType<P>): ComponentType<P> {
+    return wrap(Root);
   }
 
   /**
