@@ -201,6 +201,14 @@ final class ReportHandlerBridge {
         final Handle handle = new Handle(
                 "rh-" + counter.incrementAndGet(), report, sdkCompletion, target);
         handles.put(handle.id, handle);
+        // A detach that ran after the sink read above swept the table before
+        // this handle was in it. detach() clears the sink before it sweeps, so
+        // whichever side comes second catches the handle: its sweep sees the
+        // put, or this sees the cleared (or replaced) sink.
+        if (sink.get() != target) {
+            finish(handle, "detach");
+            return;
+        }
         try {
             // The task holds the handle itself, not its id: a deadline that
             // was already running when JS completed must still hit the guard.
