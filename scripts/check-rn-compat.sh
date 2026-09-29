@@ -64,18 +64,31 @@ echo "    getPublicInstanceFromInternalInstanceHandle is defined and reachable t
 # deleted outright (not folded into ReactFabricPublicInstance.js, which only
 # ever reads the field) by 0.87 — checked only when the file still exists, so
 # its removal is reported, not silently treated as a pass via a substitute.
-ASSIGNS_HANDLE='\.__internalInstanceHandle[[:space:]]*='
+#
+# N4 (review round 1): a plain `[[:space:]]*=` also matches `==`/`===`
+# (a *comparison*, e.g. `if (this.__internalInstanceHandle == null)`, found
+# on ReactFabricPublicInstance.js — a file this guard does not even check
+# today, but the imprecision is in the pattern itself, not in which file
+# happens to be safe from it right now) and matches equally inside a comment
+# line (a commented-out assignment, or a JSDoc mention of the field, would
+# vacuously satisfy it). `=([^=]|$)` requires the `=` immediately after the
+# field name not to be followed by a second `=`; comment lines (their first
+# non-space characters `//` or `*`, covering both `//` line comments and a
+# `/** … */`/JSDoc block's continuation lines) are filtered out first.
+assigns_handle() {
+  grep -v -E '^[[:space:]]*(//|\*)' "$1" | grep -qE '\.__internalInstanceHandle[[:space:]]*=([^=]|$)'
+}
 
 ELEMENT_FILE="$RN_SRC/src/private/webapis/dom/nodes/ReactNativeElement.js"
 [ -f "$ELEMENT_FILE" ] \
   || { echo "FAIL: ReactNativeElement.js not found"; exit 1; }
-grep -qE "$ASSIGNS_HANDLE" "$ELEMENT_FILE" \
-  || { echo "FAIL: no __internalInstanceHandle ASSIGNMENT found in ReactNativeElement.js (a read or a Flow field declaration does not count)"; exit 1; }
+assigns_handle "$ELEMENT_FILE" \
+  || { echo "FAIL: no __internalInstanceHandle ASSIGNMENT found in ReactNativeElement.js (a read, a comparison or a Flow field declaration does not count)"; exit 1; }
 echo "    __internalInstanceHandle is assigned in ReactNativeElement.js"
 
 HOST_COMPONENT_FILE="$RN_SRC/Libraries/ReactNative/ReactFabricPublicInstance/ReactFabricHostComponent.js"
 if [ -f "$HOST_COMPONENT_FILE" ]; then
-  grep -qE "$ASSIGNS_HANDLE" "$HOST_COMPONENT_FILE" \
+  assigns_handle "$HOST_COMPONENT_FILE" \
     || { echo "FAIL: ReactFabricHostComponent.js exists but no longer assigns __internalInstanceHandle"; exit 1; }
   echo "    __internalInstanceHandle is also assigned in ReactFabricHostComponent.js (legacy Fabric public instance, still present)"
 else
