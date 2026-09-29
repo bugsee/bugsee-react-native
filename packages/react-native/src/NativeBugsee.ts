@@ -125,6 +125,55 @@ export interface Spec extends TurboModule {
   wrapperLog(message: string, level: number): void;
 
   /**
+   * Sets a string attribute, verified by a native read-back: neither SDK's
+   * own setter reports a dropped value truthfully (design doc Phase 5,
+   * "Planner decisions"), so this rejects `E_ATTRIBUTE_REJECTED` when the
+   * value the SDK kept does not match what was just set -- the only way
+   * iOS's byte-based archive size limit becomes observable to JS. `name` and
+   * `value` are already validated (`src/attributes/validate.ts`); this never
+   * rejects for a JS-side reason.
+   */
+  setAttributeString(name: string, value: string): Promise<void>;
+  /**
+   * A numeric attribute. Android stores a fractional or large value as a
+   * 32-bit float, so a read-back can differ from what was set -- documented
+   * on `Bugsee.setAttribute`, not treated as a rejection here.
+   */
+  setAttributeNumber(name: string, value: number): Promise<void>;
+  /** A boolean attribute. */
+  setAttributeBoolean(name: string, value: boolean): Promise<void>;
+  /**
+   * One attribute, read back from the SDK's in-memory copy on Android (the
+   * persisted copy's fractional widening is a `getAllAttributes` concern) and
+   * the same source `setAttribute` verifies against.
+   *
+   * `{}` when absent, else `{ value }` -- never a bare value or `null`,
+   * because `UnsafeObject` has no way to say "absent" other than omitting a
+   * member.
+   */
+  getAttribute(name: string): Promise<UnsafeObject>;
+  /**
+   * Every attribute, from the persisted copy the report is built from --
+   * where a fractional value is a 32-bit float, already widened back to a
+   * `Double` the way the SDK's own JSON writer would (design doc Phase 5).
+   * `{}` when none are set.
+   */
+  getAllAttributes(): Promise<UnsafeObject>;
+  clearAttribute(name: string): Promise<void>;
+  clearAllAttributes(): Promise<void>;
+  /**
+   * Sets the user identifier. Synchronous and never read back: no size limit
+   * applies, and the bundle's `request.json` `email` is the device check
+   * (design doc Phase 5). Never called with `''` -- JS maps that to
+   * {@link clearUserIdentifier} instead, since both SDKs treat an empty
+   * identifier as "no identifier" but only iOS treats setting one as a clear.
+   */
+  setUserIdentifier(identifier: string): void;
+  /** `{}` when absent (including a native empty string), else `{ value }`. */
+  getUserIdentifier(): Promise<UnsafeObject>;
+  clearUserIdentifier(): void;
+
+  /**
    * A report handoff, before or after the SDK builds it.
    *
    * `handleId` is opaque and native-minted, never reused within a process, and
