@@ -140,7 +140,7 @@ describeDevice(`wrapper channel on ${TARGET_NAME}`, () => {
       } else {
         await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
       }
-      await clearBundles().catch(() => {});
+      await clearBundles().catch((error: unknown) => report('cleanup clear failed', String(error)));
     } finally {
       // airplane(false) can throw (it shells out to adb/simctl); the bundle
       // cleanup and log stop below must run regardless, so they get their
