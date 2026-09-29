@@ -1,4 +1,11 @@
 import { cleanSource, fileKey, parseStack, STACK_MAX_INPUT_LENGTH, STACK_MAX_LINE_LENGTH } from '../stack';
+import {
+  V8_NODE_SAMPLE,
+  JSC_SAMPLE,
+  HERMES_RELEASE_SAMPLE,
+  HERMES_DEBUG_SAMPLE,
+  COMPONENT_STACK_SAMPLE,
+} from './fixtures/captured-stacks';
 
 describe('parseStack', () => {
   it('parses a Hermes release frame (address at)', () => {
@@ -495,5 +502,80 @@ describe('parseStack: a V8/Hermes anonymous or relative-file frame (6.x parity, 
     expect(
       parseStack('    at bugseeE2EThrowSite (address at index.android.bundle:1:20417)')[0],
     ).toMatchObject({ file: 'address at index.android.bundle' });
+  });
+});
+
+describe('parseStack: real, captured multi-line stacks (review M2)', () => {
+  it('a real V8 stack (node) parses every frame, including "node:" and anonymous ones', () => {
+    const frames = parseStack(V8_NODE_SAMPLE);
+
+    expect(frames).toHaveLength(10);
+    expect(frames.map((f) => f.methodName)).toEqual([
+      'level3',
+      'level2',
+      null, // an anonymous frame, no function name, no parentheses
+      'Array.forEach', // CHROME_RE's "<anonymous>" file keyword
+      'level1',
+      'Object.<anonymous>',
+      'Module._compile', // NODE_PAREN_RE: a "node:" file has no recognised scheme
+      'Object..js',
+      'Module.load',
+      'Module._load',
+    ]);
+    expect(frames[2]).toMatchObject({ file: '/tmp/capture/sample.js', lineNumber: 9, column: 5 });
+    expect(frames[3]).toMatchObject({ file: '<anonymous>' });
+    expect(frames[6]).toMatchObject({
+      file: 'node:internal/modules/cjs/loader',
+      lineNumber: 1830,
+      column: 14,
+    });
+  });
+
+  it('a real JSC stack parses named, anonymous and space-containing frames, and drops the native one', () => {
+    const frames = parseStack(JSC_SAMPLE);
+
+    // "forEach@[native code]" has no location and is dropped (R9/"others
+    // skipped"; 6.x kept it as `<unknown> () ()`, an intended change, M3).
+    expect(frames).toHaveLength(5);
+    expect(frames.map((f) => f.methodName)).toEqual([
+      'level3',
+      'level2',
+      null, // "@sample.js:9:11" -- an anonymous frame, empty name before "@"
+      'level1',
+      'global code', // a name containing a space
+    ]);
+    expect(frames[2]).toMatchObject({ file: 'sample.js', lineNumber: 9, column: 11 });
+    expect(frames[4]).toMatchObject({ file: 'sample.js', lineNumber: 13, column: 9 });
+  });
+
+  it('a Hermes release-shaped stack parses "address at" and native frames', () => {
+    const frames = parseStack(HERMES_RELEASE_SAMPLE);
+
+    expect(frames).toHaveLength(4);
+    expect(frames[0]).toMatchObject({
+      file: 'address at index.android.bundle',
+      methodName: 'bugseeE2EThrowSite',
+    });
+    expect(frames[2]).toMatchObject({ file: 'address at InternalBytecode.js' });
+    expect(frames[3]).toMatchObject({ file: null, methodName: 'forEach' });
+  });
+
+  it('a Hermes debug-shaped (Metro URL) stack parses both frames', () => {
+    const frames = parseStack(HERMES_DEBUG_SAMPLE);
+
+    expect(frames).toHaveLength(2);
+    expect(frames[0]?.file).toBe(
+      'http://localhost:8081/index.bundle//&platform=android&dev=true&minify=false',
+    );
+  });
+
+  it('a React componentStack sample parses the two frames with a file, and skips the built-ins', () => {
+    const frames = parseStack(COMPONENT_STACK_SAMPLE);
+
+    // "    in View (<anonymous>)" and "    in RCTView (<anonymous>)" have no
+    // "(at file:line)" and are skipped -- there is nowhere to point to.
+    expect(frames).toHaveLength(2);
+    expect(frames[0]).toMatchObject({ methodName: 'MyScreen', file: 'App.js', lineNumber: 42 });
+    expect(frames[1]).toMatchObject({ methodName: 'App', file: 'index.js', lineNumber: 7 });
   });
 });

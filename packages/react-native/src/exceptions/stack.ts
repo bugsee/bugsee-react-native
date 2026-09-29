@@ -104,10 +104,13 @@ const HERMES_ADDRESS_RE = /^at (.*?) \((address at .*?):(\d+):(\d+)\)$/i;
 const NODE_PAREN_RE = /^at ([^\s(][^(]*?) \(([^()]*?):(\d+)(?::(\d+))?\)$/i;
 const NODE_BARE_RE = /^at ([^()]*?):(\d+)(?::(\d+))?$/i;
 
-// JavaScriptCore: "name@file:line:col", or just "file:line:col". The name
-// group requires a non-space, non-`@` first character so it cannot start
-// mid-run of the padding a hostile message might contain.
-const JSC_RE = /^(?:([^@\s][^@]*)@)?(\S.*?):(\d+)(?::(\d+))?$/i;
+// JavaScriptCore: "name@file:line:col" (a name may itself contain spaces,
+// as JSC's own "global code" frame does), "@file:line:col" (an anonymous
+// frame -- an empty name, not one starting with whitespace), or just
+// "file:line:col". Real captured JSC output has all three (review M2). The
+// name, when non-empty, must start with a non-space, non-`@` character so
+// it cannot start mid-run of the padding a hostile message might contain.
+const JSC_RE = /^(?:([^@\s][^@]*)?@)?(\S.*?):(\d+)(?::(\d+))?$/i;
 
 // A React `componentStack` line: "in ComponentName (at File.js:10)". Unlike
 // the file-then-line-then-column groups above, whose separators are single

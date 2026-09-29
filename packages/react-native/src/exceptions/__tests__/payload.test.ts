@@ -9,6 +9,7 @@ import {
   type ExceptionPayload,
 } from '../payload';
 import { sha1Hex } from '../sha1';
+import { V8_NODE_SAMPLE, JSC_SAMPLE } from './fixtures/captured-stacks';
 
 function noStack(error: Error): Error {
   (error as unknown as { stack: unknown }).stack = undefined;
@@ -892,5 +893,28 @@ describe('the "Name: message" header is stripped before parsing, not just skippe
     expect(firstPayload.reason).not.toBe(secondPayload.reason);
     expect(firstPayload.frames).toEqual(secondPayload.frames);
     expect(firstPayload.signature).toBe(secondPayload.signature);
+  });
+});
+
+describe('real captured stacks, end to end (review M2)', () => {
+  it('a real V8 stack has its "Error: message" header stripped and all ten frames parsed', () => {
+    const error = new Error('captured stack sample');
+    error.stack = V8_NODE_SAMPLE; // already includes the real "Error: ..." header line
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(10);
+    expect(payload.frames[0]?.data.member).toBe('level3');
+    expect(payload.frames.some((f) => f.traceRaw.includes('captured stack sample'))).toBe(false);
+  });
+
+  it('a real JSC stack (no header to strip) parses its five frames', () => {
+    const error = new Error('captured stack sample');
+    error.stack = JSC_SAMPLE; // JSC never prepends "Name: message"
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(5);
+    expect(payload.frames[4]?.data.member).toBe('global code');
   });
 });
