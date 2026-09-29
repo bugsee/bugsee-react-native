@@ -528,6 +528,85 @@
   XCTAssertEqualObjects(_lines[0], @"BugseeRN data request dr-1 type=vh origin=-3,1.25");
 }
 
+/// Exact, not `%g`'s 6 significant digits: the shortest text that parses
+/// back to the same double, so a device test can recompute bounds from it.
+- (void)testTheTypeLinePrintsTheOriginExactly {
+  [self attachAndEnable];
+  _origin = [NSValue valueWithCGPoint:CGPointMake(1024.333, 1.0 / 3.0)];
+
+  [self requestVh];
+
+  XCTAssertEqualObjects(_lines[0], @"BugseeRN data request dr-1 type=vh origin=1024.333,0.3333333333333333");
+}
+
+#pragma mark - Races, pinned deterministically
+
+/// A detach that lands after the sink was read but before the request is
+/// registered (here: from inside the origin read, which runs outside the
+/// lock). The register-time re-check answers it at once.
+- (void)testADetachDuringTheOriginReadRepliesNilAsDetach {
+  BGSRNDataRequestBridge *bridge = _bridge;
+  NSObject *sink = _sink;
+  NSMutableArray<NSDictionary *> *requests = _requests;
+  [_bridge attach:sink
+            block:^BOOL(NSDictionary *request) {
+              [requests addObject:request];
+              return YES;
+            }
+           origin:^NSValue * {
+             [bridge detach:sink];
+             return [NSValue valueWithCGPoint:CGPointZero];
+           }];
+  _bridge.viewTreeEnabled = YES;
+
+  [self requestVh];
+
+  XCTAssertEqualObjects(_replies, (@[ NSNull.null ]));
+  XCTAssertEqual(_requests.count, 0u);
+  XCTAssertEqual(_tasks.count, 0u);
+  XCTAssertEqual(_bridge.outstanding, 0u);
+  XCTAssertEqualObjects(_lines, (@[ @"BugseeRN data request dr-1 completed by=detach bytes=null ms=0" ]));
+}
+
+/// A detach that lands after the request is registered but before its
+/// deadline is stored (here: from inside the scheduler). The deadline is
+/// cancelled, and the request neither logs a `type=` line after its
+/// `completed` line nor reaches the detached sink.
+- (void)testADetachWhileArmingTheDeadlineCancelsItAndNeverEmits {
+  NSMutableArray<BGSRNDataRequestManualTask *> *tasks = _tasks;
+  NSMutableArray<NSString *> *lines = _lines;
+  NSObject *sink = _sink;
+  __block __weak BGSRNDataRequestBridge *weakBridge = nil;
+  _bridge = [[BGSRNDataRequestBridge alloc]
+      initWithScheduler:^id(dispatch_block_t task, int64_t delayMs) {
+        [weakBridge detach:sink];
+        BGSRNDataRequestManualTask *t = [BGSRNDataRequestManualTask new];
+        t.block = task;
+        [tasks addObject:t];
+        return t;
+      }
+      cancel:^(id token) {
+        ((BGSRNDataRequestManualTask *)token).cancelled = YES;
+      }
+      clock:^int64_t {
+        return 0;
+      }
+      log:^(NSString *line) {
+        [lines addObject:line];
+      }];
+  weakBridge = _bridge;
+  [self attachAndEnable];
+
+  [self requestVh];
+
+  XCTAssertEqualObjects(_replies, (@[ NSNull.null ]));
+  XCTAssertEqual(_tasks.count, 1u);
+  XCTAssertTrue(_tasks[0].cancelled);
+  XCTAssertEqual(_requests.count, 0u);
+  XCTAssertEqual(_bridge.outstanding, 0u);
+  XCTAssertEqualObjects(_lines, (@[ @"BugseeRN data request dr-1 completed by=detach bytes=null ms=0" ]));
+}
+
 #pragma mark - Locking
 
 /// `reply` re-enters the SDK, and must never run under the registry lock:
