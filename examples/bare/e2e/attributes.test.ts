@@ -398,7 +398,7 @@ describeDevice(`attributes and identity round-trip on ${TARGET_NAME}`, () => {
         } else {
           await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
         }
-        await clearBundles().catch(() => {});
+        await clearBundles().catch((error: unknown) => report('cleanup clear failed', String(error)));
       }
     } finally {
       try {
