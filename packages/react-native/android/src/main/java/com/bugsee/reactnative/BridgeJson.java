@@ -13,6 +13,8 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Parses the JSON text an object payload crosses the bridge as
@@ -53,6 +55,40 @@ final class BridgeJson {
     private BridgeJson() {
     }
 
+    /** What libcore's {@code JSONException} messages use to report where they gave up. */
+    private static final Pattern CHARACTER_POSITION = Pattern.compile("character (\\d+)");
+
+    /**
+     * A message for a syntax error that never repeats the input text.
+     *
+     * <p>Android's libcore {@code JSONException} message embeds the ENTIRE
+     * source text it was parsing (e.g. {@code "Unterminated string at
+     * character 15 of {\"a\":\"bad}"}), and that message reaches logcat
+     * ({@code BugseeModule.event}) and a promise rejection
+     * ({@code ReportOps.applyJson}) verbatim. Neither is a safe place for
+     * whatever the app happened to pass as event params or a report patch --
+     * both a size concern and, for a params payload an app built from user
+     * input, a potential information leak. This keeps only the position
+     * libcore reports (when it reports one) and the input's length, and drops
+     * the rest of the message, the exception's own text included.
+     *
+     * <p>Package-private, not {@code private}: {@code BridgeJsonTest} calls it
+     * directly with a hand-built {@link JSONException} shaped like Android's
+     * real libcore message (the reference org.json the JVM tests run against
+     * never embeds the input text the way libcore does, so a real end-to-end
+     * parse cannot exercise the leak this guards against).
+     */
+    @NonNull
+    static String malformedJsonMessage(
+            @NonNull final JSONException e, final int inputLength) {
+        final Matcher matcher = CHARACTER_POSITION.matcher(String.valueOf(e.getMessage()));
+        if (matcher.find()) {
+            return "malformed JSON at character " + matcher.group(1)
+                    + " of " + inputLength + " characters";
+        }
+        return "malformed JSON (" + inputLength + " characters)";
+    }
+
     /**
      * The JSON object {@code json} holds, as plain Java.
      *
@@ -81,7 +117,7 @@ final class BridgeJson {
                 throw new BadJson("trailing text after the JSON object");
             }
         } catch (final JSONException e) {
-            throw new BadJson("malformed JSON: " + e.getMessage());
+            throw new BadJson(malformedJsonMessage(e, json.length()));
         }
         if (!(value instanceof JSONObject)) {
             throw new BadJson("expected a JSON object");
