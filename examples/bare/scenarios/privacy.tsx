@@ -329,6 +329,7 @@ function BugseeE2EViewTreeProbe({ nonce, setMoving }: ProbeProps) {
       <View
         ref={open}
         testID={`vh-open-${nonce}`}
+        nativeID={`vh-open-native-${nonce}`}
         accessible
         accessibilityLabel={VH_OPEN_LABEL}
         collapsable={false}
