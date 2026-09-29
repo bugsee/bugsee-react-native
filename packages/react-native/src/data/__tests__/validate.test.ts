@@ -1,10 +1,15 @@
 import {
+  BUNDLE_NUMBER_LIMIT,
   EVENT_PARAMS_MAX_DEPTH,
   assertEventOrTraceName,
   assertTraceValue,
   copyEventParams,
+  isWithinBundleNumberLimit,
 } from '../validate';
 import type { EventParams } from '../validate';
+
+/** The largest IEEE-754 double strictly below 2^63 (the gap there is 2^11). */
+const LARGEST_DOUBLE_BELOW_2_63 = 9223372036854774784;
 
 /** Nests a leaf `depth` deep, counting the root as depth 1. */
 function nested(depth: number): EventParams {
@@ -221,12 +226,55 @@ describe('copyEventParams', () => {
     expect(encoded).toContain('"s":"a"');
   });
 
+  it('rejects a number at or beyond BUNDLE_NUMBER_LIMIT (2^63), both signs', () => {
+    expect(() => copyEventParams({ n: BUNDLE_NUMBER_LIMIT } as unknown as EventParams))
+      .toThrow(RangeError);
+    expect(() => copyEventParams({ n: BUNDLE_NUMBER_LIMIT } as unknown as EventParams))
+      .toThrow(`params.n must be smaller than 2^63 in magnitude, got ${BUNDLE_NUMBER_LIMIT}`);
+    expect(() => copyEventParams({ n: -BUNDLE_NUMBER_LIMIT } as unknown as EventParams))
+      .toThrow(RangeError);
+  });
+
+  it('accepts the largest double below BUNDLE_NUMBER_LIMIT, both signs', () => {
+    expect(copyEventParams({ n: LARGEST_DOUBLE_BELOW_2_63 } as unknown as EventParams))
+      .toEqual({ n: LARGEST_DOUBLE_BELOW_2_63 });
+    expect(copyEventParams({ n: -LARGEST_DOUBLE_BELOW_2_63 } as unknown as EventParams))
+      .toEqual({ n: -LARGEST_DOUBLE_BELOW_2_63 });
+  });
+
   it('returns a copy: mutating the input afterwards does not change it', () => {
     const params: Record<string, unknown> = { nested: { a: 1 }, list: [1, 2] };
     const copy = copyEventParams(params as unknown as EventParams);
     (params.nested as Record<string, unknown>).a = 999;
     (params.list as number[]).push(3);
     expect(copy).toEqual({ nested: { a: 1 }, list: [1, 2] });
+  });
+});
+
+describe('isWithinBundleNumberLimit', () => {
+  it('true for a finite number strictly under 2^63, both signs', () => {
+    expect(isWithinBundleNumberLimit(0)).toBe(true);
+    expect(isWithinBundleNumberLimit(LARGEST_DOUBLE_BELOW_2_63)).toBe(true);
+    expect(isWithinBundleNumberLimit(-LARGEST_DOUBLE_BELOW_2_63)).toBe(true);
+  });
+
+  it('false at the bound and beyond, both signs', () => {
+    expect(isWithinBundleNumberLimit(BUNDLE_NUMBER_LIMIT)).toBe(false);
+    expect(isWithinBundleNumberLimit(-BUNDLE_NUMBER_LIMIT)).toBe(false);
+    expect(isWithinBundleNumberLimit(BUNDLE_NUMBER_LIMIT * 2)).toBe(false);
+  });
+
+  it('false for a non-finite number', () => {
+    expect(isWithinBundleNumberLimit(NaN)).toBe(false);
+    expect(isWithinBundleNumberLimit(Infinity)).toBe(false);
+    expect(isWithinBundleNumberLimit(-Infinity)).toBe(false);
+  });
+
+  it('false for a non-number', () => {
+    expect(isWithinBundleNumberLimit('42')).toBe(false);
+    expect(isWithinBundleNumberLimit(null)).toBe(false);
+    expect(isWithinBundleNumberLimit(undefined)).toBe(false);
+    expect(isWithinBundleNumberLimit(true)).toBe(false);
   });
 });
 
@@ -292,5 +340,18 @@ describe('assertTraceValue', () => {
       .toThrow('Bugsee.trace requires a string, a finite number or a boolean, got undefined');
     expect(() => assertTraceValue({}))
       .toThrow('Bugsee.trace requires a string, a finite number or a boolean, got Object');
+  });
+
+  it('rejects a number at or beyond BUNDLE_NUMBER_LIMIT (2^63), both signs', () => {
+    expect(() => assertTraceValue(BUNDLE_NUMBER_LIMIT)).toThrow(RangeError);
+    expect(() => assertTraceValue(BUNDLE_NUMBER_LIMIT)).toThrow(
+      `Bugsee.trace requires a number smaller than 2^63 in magnitude, got ${BUNDLE_NUMBER_LIMIT}`,
+    );
+    expect(() => assertTraceValue(-BUNDLE_NUMBER_LIMIT)).toThrow(RangeError);
+  });
+
+  it('accepts the largest double below BUNDLE_NUMBER_LIMIT, both signs', () => {
+    expect(() => assertTraceValue(LARGEST_DOUBLE_BELOW_2_63)).not.toThrow();
+    expect(() => assertTraceValue(-LARGEST_DOUBLE_BELOW_2_63)).not.toThrow();
   });
 });
