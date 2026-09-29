@@ -59,6 +59,28 @@ export interface Spec extends TurboModule {
    * An empty list clears the display's set.
    */
   setSecureRectangles(display: number, coordinates: number[]): void;
+
+  /**
+   * Suppresses everything that describes the screen: the video (black
+   * frames), the report screenshot (black), touch/gesture recording and the
+   * view hierarchy. Logs, network events, custom events and traces keep
+   * recording throughout (design doc §4.1).
+   *
+   * Android ignores this before `launch()` resolves -- a logged no-op, not an
+   * error -- while iOS honours it regardless of launch state. A caller that
+   * needs blackout to hold on both platforms must call this after `launch()`
+   * resolves.
+   *
+   * {@link isBlackout} verifies whether it actually took effect.
+   */
+  startBlackout(): void;
+  /** Resumes everything {@link startBlackout} suppressed. */
+  endBlackout(): void;
+  /** The current blackout state, as {@link startBlackout} / {@link endBlackout} left it. */
+  isBlackout(): Promise<boolean>;
+  /** Captures the view hierarchy immediately, outside a normal snapshot pass. */
+  captureViewHierarchy(): void;
+
   launch(token: string, options: UnsafeObject): Promise<boolean>;
   relaunch(options: UnsafeObject): Promise<boolean>;
   stop(): Promise<boolean>;
