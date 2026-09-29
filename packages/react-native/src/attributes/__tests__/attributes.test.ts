@@ -6,7 +6,7 @@ jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMo
 import { native } from '../../__mocks__/native';
 import Bugsee from '../../index';
 import { AttributeErrorCode, BugseeAttributeError } from '../errors';
-import { BUNDLE_NUMBER_LIMIT } from '../../data/validate';
+import { BUNDLE_NUMBER_LIMIT, BUNDLE_NUMBER_LIMIT_DECIMAL } from '../../data/validate';
 
 /** The largest IEEE-754 double strictly below 2^63 (the gap there is 2^11). */
 const LARGEST_DOUBLE_BELOW_2_63 = 9223372036854774784;
@@ -157,8 +157,24 @@ describe('setAttribute', () => {
   it('names the exact message for a number outside the bundle bound', async () => {
     const error = await Bugsee.setAttribute('k', BUNDLE_NUMBER_LIMIT).catch((e: unknown) => e);
     expect((error as Error).message).toBe(
-      `attribute value must be a finite number smaller than ${BUNDLE_NUMBER_LIMIT} (2^63) in magnitude, got ${BUNDLE_NUMBER_LIMIT}`,
+      `attribute value must be a finite number smaller than ` +
+        `2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`,
     );
+  });
+
+  // The rejected value itself must never appear in the message: a magnitude
+  // this size only ever reaches JS as a float, and printing it -- via
+  // `String`/template-literal conversion, or even `BUNDLE_NUMBER_LIMIT`
+  // itself the same way -- silently rounds, e.g. `1e19` prints as
+  // `10000000000000000000`, and 2^63 itself prints as
+  // `9223372036854776000` rather than the true `9223372036854775808`.
+  it('does not echo the rejected number, at any precision, in the message', async () => {
+    const error = await Bugsee.setAttribute('k', 1e19).catch((e: unknown) => e);
+    const message = (error as Error).message;
+    expect(message).not.toContain('1e19');
+    expect(message).not.toContain('10000000000000000000');
+    expect(message).not.toContain('9223372036854776000');
+    expect(message).toContain(BUNDLE_NUMBER_LIMIT_DECIMAL);
   });
 
   it('names the exact message for an over-long string', async () => {
