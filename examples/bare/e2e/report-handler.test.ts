@@ -1,5 +1,5 @@
 /**
- * Tasks 3.4d and 3.4f: the report handler on an Android handset
+ * Tasks 3.4d and 3.4f (and 4.5's clear case): the report handler on an Android handset
  * (`E2E_PLATFORM=android`) and on iOS (`E2E_PLATFORM=ios`, simulator only:
  * `E2E_IOS_TARGET=simulator`).
  *
@@ -386,6 +386,53 @@ describeDevice(`report handler on ${ON_IOS ? `the iOS simulator (${IOS_SIMULATOR
 
     const bundles = await awaitBundles(1);
     expect(bundles.map(b => b.request.summary)).toEqual([`upload-${nonce}`]);
+  });
+
+  // Task 4.5. A `null` in a report patch clears the summary or description
+  // and removes an attribute. It crosses as JSON text: as an object argument,
+  // iOS's TurboModule conversion dropped every null member, so on iOS all
+  // three edits silently did nothing while Android applied them. The handler
+  // sets each value first (and the upload carries its own summary and
+  // description), so a bundle without them proves they were cleared, not
+  // that they were never there.
+  it('clear: a null summary, description and attribute take effect in the bundle', async () => {
+    await clearBundles();
+    const run = await startRun('rh-clear');
+    const { nonce } = run.scenario;
+    const before = await awaitDispatch('before', run.launched.index, 30_000);
+    expect(before.by).toBe('js');
+    // Assert the experiment: every value really was set before being cleared.
+    const set = must(
+      log.all(new RegExp(`BUGSEE_E2E rh clear set .*nonce=${nonce}`), run.start)[0],
+      'the handler setting summary, description and attributes',
+      run.start,
+    );
+    report('case 7 set', set.text.trim());
+    expect(set.text).toContain(`summary=set-${nonce} description=d-${nonce} `);
+    expect(set.text).toContain(`"gone-${nonce}":"g-${nonce}"`);
+    expect(set.text).toContain(`"kept-${nonce}":"k-${nonce}"`);
+    const cleared = must(
+      log.all(new RegExp(`BUGSEE_E2E rh clear cleared .*nonce=${nonce}`), run.start)[0],
+      'the handler clearing them',
+      run.start,
+    );
+    report('case 7 cleared', cleared.text.trim());
+    expect(cleared.text).toContain('summary=undefined description=undefined ');
+    expect(cleared.text).not.toContain(`gone-${nonce}`);
+    expect(cleared.text).toContain(`"kept-${nonce}":"k-${nonce}"`);
+
+    const bundles = await awaitBundles(1);
+    expect(bundles).toHaveLength(1);
+    const [bundle] = bundles as [PulledBundle];
+    report('case 7 request.json', pick(bundle.request));
+    report('case 7 manifest attrs', bundle.manifest.attrs);
+    expect(bundle.request.type).toBe('bug');
+    // Absent, null or empty -- cleared, whichever way the SDK writes "none";
+    // never the value the handler set nor the one upload() passed.
+    expect([undefined, null, '']).toContain(bundle.request.summary);
+    expect([undefined, null, '']).toContain(bundle.request.description);
+    expect(bundle.manifest.attrs).not.toHaveProperty([`gone-${nonce}`]);
+    expect(bundle.manifest.attrs[`kept-${nonce}`]).toBe(`k-${nonce}`);
   });
 
   itAndroid('terminating: an uncaught Java exception never reaches JS; onAfter does, next launch', async () => {
