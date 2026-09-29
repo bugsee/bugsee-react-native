@@ -297,6 +297,28 @@ describe('getAllAttributes', () => {
     await expect(Bugsee.getAllAttributes()).resolves.toEqual({});
   });
 
+  // "__proto__" is a legal attribute name on both native SDKs. `JSON.parse`
+  // (what the RN bridge's own deserialization behaves like) gives it as an
+  // ordinary own property, not a prototype-chain write -- but a plain `{}`
+  // result built with bracket assignment would still lose it silently to
+  // `Object.prototype`'s own `__proto__` setter. `normalizeAttributesMap` is
+  // built on `Object.create(null)` precisely so this key survives as an
+  // ordinary own key instead.
+  it('keeps an attribute literally named "__proto__" as an ordinary own key, not a prototype write', async () => {
+    const raw = JSON.parse('{"__proto__":"mine","a":1}') as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(raw, '__proto__')).toBe(true);
+    native.getAllAttributes.mockResolvedValueOnce(raw);
+
+    const result = await Bugsee.getAllAttributes();
+
+    expect(Object.prototype.hasOwnProperty.call(result, '__proto__')).toBe(true);
+    expect(result.__proto__).toBe('mine');
+    expect(result.a).toBe(1);
+    // Not polluted: the result's own actual prototype is still whatever
+    // `normalizeAttributesMap` built it with, not `"mine"`.
+    expect(Object.getPrototypeOf(result)).not.toBe('mine');
+  });
+
   // A string is `typeof 'string'`, not `'object'` -- if that half of the
   // guard were dropped, `Object.entries('oops')` would enumerate its indices
   // as own keys ({0: 'o', 1: 'o', ...}) instead of being rejected outright.
