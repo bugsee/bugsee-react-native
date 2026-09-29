@@ -5,9 +5,11 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -16,6 +18,16 @@ import java.util.List;
 import java.util.Map;
 
 public class AttributeBridgeTest {
+
+    // The once-per-type log guard is process-lifetime (a static field), so
+    // every test starts with it cleared -- otherwise an earlier test's
+    // unsupported type (e.g. `readableDropsUnknownTypes`'s `java.util.Date`)
+    // would make a later test's first sighting of that same type silently
+    // not log.
+    @Before
+    public void resetTheOncePerTypeLogGuard() {
+        AttributeBridge.resetLoggedUnsupportedTypesForTest();
+    }
 
     /** A hand-written fake: {@link AttributeBridge.Sdk} is three methods, not forty. */
     private static final class FakeSdk implements AttributeBridge.Sdk {
@@ -145,6 +157,42 @@ public class AttributeBridgeTest {
         persisted.put("dropped", new java.util.Date(0));
         final Map<String, Object> result = AttributeBridge.readable(persisted);
         assertEquals(Collections.singletonMap("kept", (Object) "value"), result);
+    }
+
+    @Test
+    public void anUnsupportedTypeIsLoggedOncePerTypeNotPerEntryOrRead() {
+        final List<String> logged = new ArrayList<>();
+        final AttributeBridge.UnsupportedTypeLogger logger =
+                (attributeName, className) -> logged.add(attributeName + ":" + className);
+
+        // Two entries of the same unsupported type, in one read.
+        final Map<String, Serializable> persisted = new LinkedHashMap<>();
+        persisted.put("first", new java.util.Date(0));
+        persisted.put("second", new java.util.Date(1));
+        AttributeBridge.readable(persisted, logger);
+        assertEquals(Collections.singletonList("first:java.util.Date"), logged);
+
+        // A later read, still the same type: no further log line.
+        final Map<String, Serializable> againLater = new LinkedHashMap<>();
+        againLater.put("third", new java.util.Date(2));
+        AttributeBridge.readable(againLater, logger);
+        assertEquals(Collections.singletonList("first:java.util.Date"), logged);
+    }
+
+    @Test
+    public void aDifferentUnsupportedTypeIsLoggedAgain() {
+        final List<String> logged = new ArrayList<>();
+        final AttributeBridge.UnsupportedTypeLogger logger =
+                (attributeName, className) -> logged.add(className);
+
+        final Map<String, Serializable> persisted = new LinkedHashMap<>();
+        persisted.put("a", new java.util.Date(0));
+        // An ArrayList: Serializable, but not a String/Boolean/Float/Number/Set,
+        // so it takes the same "unsupported" branch as Date, under a different name.
+        persisted.put("b", new ArrayList<>(Collections.singletonList("x")));
+        AttributeBridge.readable(persisted, logger);
+
+        assertEquals(Arrays.asList("java.util.Date", "java.util.ArrayList"), logged);
     }
 
     @Test
