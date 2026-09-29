@@ -3,7 +3,7 @@
  * it is mounted and enabled. The failure every test here guards against is a
  * region that is stale, shrunk or gone while the view is still on screen.
  */
-import { act } from 'react';
+import { act, useLayoutEffect } from 'react';
 import type { ReactElement } from 'react';
 import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
@@ -94,6 +94,22 @@ describe('<BugseeSecure>', () => {
 
     expect(measureInWindow).toHaveBeenCalled();
     expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, MEASURED);
+  });
+
+  // Registered in the commit, before paint: a sibling's layout effect, which
+  // runs after this one's and before any passive effect, already sees it.
+  it('registers before the first paint', () => {
+    const seenBySibling: unknown[][] = [];
+    function Sibling(): null {
+      useLayoutEffect(() => {
+        seenBySibling.push(...native.setSecureRectangles.mock.calls);
+      }, []);
+      return null;
+    }
+
+    render(<><BugseeSecure /><Sibling /></>);
+
+    expect(seenBySibling).toEqual([[0, MEASURED]]);
   });
 
   it('re-measures on every tick while mounted', () => {
