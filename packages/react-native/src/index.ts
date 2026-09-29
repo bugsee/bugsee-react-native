@@ -19,10 +19,45 @@ import {
 } from './data/validate';
 import type { EventParams, TraceValue } from './data/validate';
 import { encodeBridgeObject } from './bridge/json';
+import { AttributeErrorCode, BugseeAttributeError } from './attributes/errors';
+import {
+  assertIdentifierString,
+  normalizeAttributeReadValue,
+  normalizeAttributesMap,
+  normalizeIdentifier,
+  validateAttributeName,
+  validateAttributeValue,
+} from './attributes/validate';
+import type { AttributeReadValue, AttributeValue } from './attributes/validate';
 
 export { Status } from './status';
 
 const KNOWN_STATUSES: ReadonlySet<number> = new Set(Object.values(Status));
+
+const KNOWN_ATTRIBUTE_ERROR_CODES: ReadonlySet<string> = new Set(
+  Object.values(AttributeErrorCode),
+);
+
+/**
+ * Translates a native rejection into a `BugseeAttributeError` carrying the
+ * same `.code`, so a caller can match on `.code` no matter which side raised
+ * it. Anything else -- including a `BugseeAttributeError` already (JS
+ * validation raises those directly) -- passes through unchanged.
+ */
+function toAttributeError(error: unknown): unknown {
+  if (error instanceof BugseeAttributeError) {
+    return error;
+  }
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (typeof code === 'string' && KNOWN_ATTRIBUTE_ERROR_CODES.has(code)) {
+    const message = (error as { message?: unknown }).message;
+    return new BugseeAttributeError(
+      code as AttributeErrorCode,
+      typeof message === 'string' ? message : code,
+    );
+  }
+  return error;
+}
 
 export type LaunchOptions = Record<string, unknown>;
 
@@ -238,6 +273,104 @@ class Bugsee {
   }
 
   /**
+   * Runs `fn`, translating any rejection into a `BugseeAttributeError`.
+   * `fn` validates its own arguments FIRST, synchronously, inside this same
+   * async function body -- a synchronous throw there becomes this promise's
+   * rejection automatically, so a validation failure never crosses the
+   * bridge and never throws synchronously either.
+   */
+  private async runAttributeOp<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (error) {
+      throw toAttributeError(error);
+    }
+  }
+
+  /**
+   * Sets an attribute, dispatching on `typeof value` to one of three typed
+   * native methods -- exactly as {@link trace} does, and for the same
+   * reason: there is no untyped bridge parameter a boolean could not
+   * silently become `0`/`1` through.
+   *
+   * Persists across launches. Android stores a fractional or large number as
+   * a 32-bit float, so `setAttribute('k', 0.1)` can read back as
+   * `0.10000000149011612` -- the value the report itself carries, not a
+   * rounding bug in this wrapper. iOS limits a value by its archived size
+   * (about 1 KB): a long string accepted on Android can be rejected here
+   * with `E_ATTRIBUTE_REJECTED` on iOS.
+   */
+  async setAttribute(name: string, value: AttributeValue): Promise<void> {
+    return this.runAttributeOp(async () => {
+      const validName = validateAttributeName(name);
+      const validValue = validateAttributeValue(value);
+      if (typeof validValue === 'string') {
+        await NativeBugsee.setAttributeString(validName, validValue);
+      } else if (typeof validValue === 'number') {
+        await NativeBugsee.setAttributeNumber(validName, validValue);
+      } else {
+        await NativeBugsee.setAttributeBoolean(validName, validValue);
+      }
+    });
+  }
+
+  /** One attribute's current value, or `undefined` when it is not set. */
+  async getAttribute(name: string): Promise<AttributeReadValue | undefined> {
+    return this.runAttributeOp(async () => {
+      const validName = validateAttributeName(name);
+      const raw = (await NativeBugsee.getAttribute(validName)) as { value?: unknown };
+      return normalizeAttributeReadValue(raw?.value);
+    });
+  }
+
+  /** Every attribute currently set, as the retained report will carry them. */
+  async getAllAttributes(): Promise<Record<string, AttributeReadValue>> {
+    return this.runAttributeOp(async () => normalizeAttributesMap(await NativeBugsee.getAllAttributes()));
+  }
+
+  /** Removes one attribute. A no-op if it was not set. */
+  async clearAttribute(name: string): Promise<void> {
+    return this.runAttributeOp(async () => {
+      const validName = validateAttributeName(name);
+      await NativeBugsee.clearAttribute(validName);
+    });
+  }
+
+  /** Removes every attribute. */
+  async clearAllAttributes(): Promise<void> {
+    return this.runAttributeOp(() => NativeBugsee.clearAllAttributes());
+  }
+
+  /**
+   * Sets the user identifier. Synchronous, unlike the attribute methods: no
+   * size limit applies to it, so there is nothing a native read-back could
+   * usefully reject.
+   *
+   * `''` clears instead of setting an empty identifier -- both SDKs treat an
+   * empty identifier as "no identifier" on read, but only iOS treats SETTING
+   * one as a clear; this makes the two consistent.
+   */
+  setUserIdentifier(identifier: string): void {
+    assertIdentifierString(identifier);
+    if (identifier.length === 0) {
+      NativeBugsee.clearUserIdentifier();
+      return;
+    }
+    NativeBugsee.setUserIdentifier(identifier);
+  }
+
+  /** The current user identifier, or `undefined` when none is set. */
+  async getUserIdentifier(): Promise<string | undefined> {
+    const raw = (await NativeBugsee.getUserIdentifier()) as { value?: unknown };
+    return normalizeIdentifier(raw?.value);
+  }
+
+  /** Clears the user identifier. */
+  clearUserIdentifier(): void {
+    NativeBugsee.clearUserIdentifier();
+  }
+
+  /**
    * Wires up the JS layer when the native SDK launched itself — on Android,
    * from `com.bugsee.app-token` manifest metadata. Deliberately makes no
    * native launch call; doing so would start a second session.
@@ -313,3 +446,6 @@ export type {
 } from './report/types';
 
 export type { EventParams, EventParamValue, TraceValue } from './data/validate';
+
+export { AttributeErrorCode, BugseeAttributeError } from './attributes/errors';
+export type { AttributeReadValue, AttributeValue } from './attributes/validate';
