@@ -103,17 +103,37 @@ export function scenarioArgs({ scenario, nonce }: Scenario, extras: ScenarioExtr
  * tcp:<port>`: the app still asks for 8081 on the handset). The simulator app
  * reaches the host's ports directly, so it is told the port instead, through
  * React Native's own `RCT_jsLocation` default (`metroArgs`).
+ *
+ * Validated like `E2E_PLATFORM` and `E2E_IOS_TARGET`: unset means 8081, and
+ * anything but a plain integer from 1024 to 65535 throws, naming the value,
+ * so a typo fails at once rather than as a wait on `localhost:NaN`.
  */
-export const METRO_PORT = Number(process.env.E2E_METRO_PORT ?? '8081');
+export function parseMetroPort(raw: string | undefined): number {
+  if (raw === undefined) {
+    return 8081;
+  }
+  const port = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!(port >= 1024 && port <= 65535)) {
+    throw new Error(
+      `E2E_METRO_PORT must be an integer from 1024 to 65535, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return port;
+}
+
+/** The configured Metro port (`E2E_METRO_PORT`), validated on every read. */
+export function metroPort(): number {
+  return parseMetroPort(process.env.E2E_METRO_PORT);
+}
 
 /**
  * `-RCT_jsLocation localhost:<port>`, which `RCTBundleURLProvider` reads from
- * NSUserDefaults (the launch arguments' volatile domain), when the port is
- * not the default; nothing otherwise, so a default run launches exactly as
- * before.
+ * NSUserDefaults (the launch arguments' volatile domain), when a port is
+ * configured; nothing when it is unset, so a default run launches exactly as
+ * before. A bad value throws, as `parseMetroPort` says.
  */
-export function metroArgs(): string[] {
-  return process.env.E2E_METRO_PORT === undefined ? [] : ['-RCT_jsLocation', `localhost:${METRO_PORT}`];
+export function metroArgs(raw: string | undefined = process.env.E2E_METRO_PORT): string[] {
+  return raw === undefined ? [] : ['-RCT_jsLocation', `localhost:${parseMetroPort(raw)}`];
 }
 
 /** Runs adb against the handset under test, returning stdout. */
@@ -527,7 +547,7 @@ export async function launchScenario(scenario: Scenario): Promise<void> {
  * beat after the write. (Android steers through the launch URI instead.)
  */
 export async function awaitMetroServes(nonce: string, timeoutMs = 60_000): Promise<void> {
-  const url = `http://localhost:${METRO_PORT}/index.bundle?platform=ios&dev=true&minify=false`;
+  const url = `http://localhost:${metroPort()}/index.bundle?platform=ios&dev=true&minify=false`;
   const deadline = Date.now() + timeoutMs;
   let last = 'no response';
   while (Date.now() < deadline) {
