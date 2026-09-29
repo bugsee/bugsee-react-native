@@ -2754,7 +2754,7 @@ export function describeThrown(value: unknown): { name: string; reason: string }
 
 `buildExceptionPayload` never throws. A getter that throws while the builder reads `name`, `message`, `stack` or `cause` is caught and treated as absent.
 
-- [ ] **Red**
+- [x] **Red**
   - `stack.test.ts`:
     - `parses a Hermes release frame (address at)`;
     - `parses a Hermes frame from a Metro URL`;
@@ -2795,17 +2795,17 @@ export function describeThrown(value: unknown): { name: string; reason: string }
     - `platform_os is the one given`;
     - `a throwing getter is treated as absent`.
   - Run → FAIL.
-- [ ] **Green**
+- [x] **Green**
   - The three modules.
   - Every `payload.test.ts` Proxy test passes.
   - `yarn test` and `yarn mutate:src` (≥ 95%) are green.
-- [ ] **Mutate**
+- [x] **Mutate**
   - (1) Serialise a non-Error object with `JSON.stringify`. `a thrown object gives its string message…` must fail.
   - (2) Drop the cycle guard. `…stops at depth 10 and at a repeat` must fail, or time out.
   - (3) Hash UTF-16 code units. `hashes UTF-8, not UTF-16` must fail.
   - (4) Include the reason in the signature. `the signature does not change with the reason` must fail.
   - Revert and record.
-- [ ] **Commit** — `feat(exceptions): a privacy-safe JS exception payload, with its signature`.
+- [x] **Commit** — `feat(exceptions): a privacy-safe JS exception payload, with its signature`.
 
 ---
 
