@@ -89,6 +89,14 @@ export interface PulledBundle {
    * ends in `.json` (`log`, `events.user`, `traces.user`, ...).
    */
   readonly captures: ReadonlyMap<string, string>;
+  /**
+   * Absolute paths, keyed by manifest `type`, of every entry whose stored
+   * file does *not* end in `.json` -- video (`video`) and screenshots
+   * (`screenshot`), typically -- for a caller that wants to decode them (see
+   * `e2e/media.ts`). A type can have more than one file (several
+   * screenshots), so each key holds an array.
+   */
+  readonly binaries: ReadonlyMap<string, string[]>;
 }
 
 /** Everything the SDK keeps on disk: capture, pending reports, NDK state. */
@@ -188,13 +196,19 @@ export function parseBundle(file: string, dir: string): PulledBundle {
   // A manifest entry whose file is not in the bundle is skipped, not an
   // error: the caller asserting on that capture is where its absence fails.
   const captures = new Map<string, string>();
+  const binaries = new Map<string, string[]>();
   for (const entry of manifest.files as ManifestFile[]) {
     const name = fileNameOf(entry);
-    if (name !== undefined && name.endsWith('.json') && present.has(name)) {
+    if (name === undefined || !present.has(name)) continue;
+    if (name.endsWith('.json')) {
       captures.set(entry.type, readFileSync(join(dir, name), 'utf8'));
+    } else {
+      const paths = binaries.get(entry.type) ?? [];
+      paths.push(join(dir, name));
+      binaries.set(entry.type, paths);
     }
   }
-  return { file, dir, request, manifest, log, captures };
+  return { file, dir, request, manifest, log, captures, binaries };
 }
 
 /**
