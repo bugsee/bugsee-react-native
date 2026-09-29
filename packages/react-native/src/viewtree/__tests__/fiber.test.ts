@@ -19,6 +19,7 @@ function makeFiber(overrides: Partial<FiberLike> = {}): FiberLike {
     sibling: null,
     return: null,
     memoizedProps: {},
+    memoizedState: null,
     stateNode: null,
     ...overrides,
   };
@@ -60,6 +61,40 @@ describe('fiberRootOf', () => {
 
     const hostRootFiber3 = makeFiber({ tag: FiberTag.HostRoot, stateNode: 'not an object' });
     expect(fiberRootOf({ __internalInstanceHandle: hostRootFiber3 })).toBeNull();
+
+    // A stateNode that HAS a `current` key, but it is exactly `null` —
+    // distinct from `{}` (no key at all) above.
+    const hostRootFiber4 = makeFiber({ tag: FiberTag.HostRoot, stateNode: { current: null } });
+    expect(fiberRootOf({ __internalInstanceHandle: hostRootFiber4 })).toBeNull();
+  });
+
+  it('is null instead of hanging on a genuine .return cycle', () => {
+    const a = makeFiber({ tag: FiberTag.FunctionComponent });
+    const b = makeFiber({ tag: FiberTag.FunctionComponent });
+    a.return = b;
+    b.return = a; // a <-> b, never reaching a HostRoot
+
+    expect(() => fiberRootOf({ __internalInstanceHandle: a })).not.toThrow();
+    expect(fiberRootOf({ __internalInstanceHandle: a })).toBeNull();
+  });
+
+  it('the .return chain cap allows exactly FIBER_ROOT_RETURN_CHAIN_CAP hops, not one more', () => {
+    // Mirrors fiber.ts's own FIBER_ROOT_RETURN_CHAIN_CAP (10,000). A real
+    // HostRoot sits exactly one hop past the cap: `steps >= cap` (correct)
+    // gives up right before reaching it (null); `steps > cap` (an off-by-one
+    // mutant) would take that one extra hop and find it.
+    const chainCap = 10_000;
+
+    const hostRootFiber = makeFiber({ tag: FiberTag.HostRoot });
+    const fiberRootObject = { current: hostRootFiber };
+    hostRootFiber.stateNode = fiberRootObject;
+
+    let handle = hostRootFiber;
+    for (let i = 0; i <= chainCap; i += 1) {
+      handle = makeFiber({ tag: FiberTag.FunctionComponent, return: handle });
+    }
+
+    expect(fiberRootOf({ __internalInstanceHandle: handle })).toBeNull();
   });
 });
 
