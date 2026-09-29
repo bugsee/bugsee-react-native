@@ -15,7 +15,17 @@ import { sha1Hex } from './sha1';
 
 export const EXCEPTION_MAX_FRAMES = 256;
 export const EXCEPTION_MAX_CAUSE_DEPTH = 10;
+/**
+ * The most a trimmed `reason` keeps of the original content, in UTF-16
+ * units. A reason actually cut is one unit longer than this: the appended
+ * `…` (`TRUNCATION_ELLIPSIS`) is not counted against the cap, so it is
+ * always visible evidence that a cut happened, matching 6.x.
+ */
 export const EXCEPTION_MAX_REASON_LENGTH = 8192;
+/** `name`, trimmed to this many UTF-16 units (same surrogate-safe cut as `reason`). */
+export const EXCEPTION_MAX_NAME_LENGTH = 256;
+/** `traceRaw`, `data.source` and `data.member`, each trimmed to this many UTF-16 units. */
+export const EXCEPTION_MAX_FIELD_LENGTH = 1024;
 export const ERROR_BOUNDARY_CAUSE_NAME = 'ErrorBoundary Error';
 
 const UNKNOWN_MEMBER = '<unknown>';
@@ -106,20 +116,68 @@ export function describeThrown(value: unknown): { name: string; reason: string }
   return { name: 'Error', reason: `Non-Error thrown: ${typeof value}` };
 }
 
-/** Trims and truncates to `EXCEPTION_MAX_REASON_LENGTH`, never splitting a surrogate pair. */
-function normalizeReason(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.length <= EXCEPTION_MAX_REASON_LENGTH) {
-    return trimmed;
+/** Truncates to `max` UTF-16 units, appending `TRUNCATION_ELLIPSIS`, never splitting a surrogate pair. */
+function truncate(raw: string, max: number): string {
+  if (raw.length <= max) {
+    return raw;
   }
 
-  let cut = EXCEPTION_MAX_REASON_LENGTH;
-  const codeBeforeCut = trimmed.charCodeAt(cut - 1);
+  let cut = max;
+  const codeBeforeCut = raw.charCodeAt(cut - 1);
   if (codeBeforeCut >= 0xd800 && codeBeforeCut <= 0xdbff) {
     cut -= 1;
   }
 
-  return trimmed.slice(0, cut) + TRUNCATION_ELLIPSIS;
+  return raw.slice(0, cut) + TRUNCATION_ELLIPSIS;
+}
+
+/** Trims and truncates to `EXCEPTION_MAX_REASON_LENGTH`, never splitting a surrogate pair. */
+function normalizeReason(raw: string): string {
+  return truncate(raw.trim(), EXCEPTION_MAX_REASON_LENGTH);
+}
+
+/**
+ * Truncates to `EXCEPTION_MAX_NAME_LENGTH`. Not trimmed: the payload table
+ * defines `name` as "the error's `name` if it is a non-empty string", and a
+ * whitespace-only name is still non-empty by that definition (M7).
+ */
+function normalizeName(raw: string): string {
+  return truncate(raw, EXCEPTION_MAX_NAME_LENGTH);
+}
+
+/** Truncates `traceRaw`/`data.source`/`data.member` to `EXCEPTION_MAX_FIELD_LENGTH` (I1). */
+function normalizeField(raw: string): string {
+  return truncate(raw, EXCEPTION_MAX_FIELD_LENGTH);
+}
+
+/**
+ * Strips a stack's own "Name: message" header (I2), matching 6.x's
+ * `getCleanStack`. Hermes and V8 prepend `<name>: <message>` (or just
+ * `<name>` for an empty message) before the real frames; JSC does not, so
+ * this is a no-op there. Tried longest-candidate-first so a message that
+ * itself starts with the bare name does not cause a partial strip.
+ *
+ * `message` may contain newlines; matching it as one literal prefix (rather
+ * than only its first line) strips a multi-line message in one step,
+ * including any later line that happens to look like a frame.
+ */
+function stripKnownHeader(stack: string, name: string, message: string): string {
+  const candidates = message.length > 0 ? [`${name}: ${message}`, name] : [name];
+
+  for (const candidate of candidates) {
+    if (candidate.length > 0 && stack.startsWith(candidate)) {
+      const rest = stack.slice(candidate.length);
+      if (rest.startsWith('\r\n')) {
+        return rest.slice(2);
+      }
+      if (rest.startsWith('\n')) {
+        return rest.slice(1);
+      }
+      return rest;
+    }
+  }
+
+  return stack;
 }
 
 function buildTrace(member: string, source: string, line: number | null, column: number | null): string {
@@ -138,18 +196,22 @@ function isUserSource(source: string): boolean {
 }
 
 function toExceptionFrame(frame: ParsedFrame, debugIds: ReadonlyMap<string, string> | undefined): ExceptionFrame {
-  const source = cleanSource(frame.file);
-  const member = frame.methodName || UNKNOWN_MEMBER;
+  const source = normalizeField(cleanSource(frame.file));
+  const member = normalizeField(frame.methodName || UNKNOWN_MEMBER);
   const { lineNumber: line, column } = frame;
 
   const exceptionFrame: ExceptionFrame = {
-    traceRaw: frame.raw,
+    traceRaw: normalizeField(frame.raw),
     trace: buildTrace(member, source, line, column),
     data: { member, source, line, column },
   };
 
   if (frame.file !== null) {
-    exceptionFrame.user = line !== null && column !== null && isUserSource(source);
+    // "its file" (the payload table's `user` row) -- checked on the frame's
+    // own file, not the cleaned `source`, matching the spec's wording (M6).
+    // In practice this never changes the result: none of `cleanSource`'s
+    // five steps can remove `node_modules`, `native code` or `(native)`.
+    exceptionFrame.user = line !== null && column !== null && isUserSource(frame.file);
 
     const debugId = debugIds?.get(fileKey(frame.file));
     if (debugId !== undefined) {
@@ -168,9 +230,7 @@ function buildFrames(
     return [];
   }
 
-  return parseStack(stack)
-    .slice(0, EXCEPTION_MAX_FRAMES)
-    .map((frame) => toExceptionFrame(frame, debugIds));
+  return parseStack(stack, EXCEPTION_MAX_FRAMES).map((frame) => toExceptionFrame(frame, debugIds));
 }
 
 function buildNode(
@@ -187,9 +247,13 @@ function buildNode(
 
   if (safeIsError(value)) {
     const errorName = safeGetString(value, 'name');
-    name = errorName || 'Error';
+    const effectiveName = errorName || 'Error';
+    name = effectiveName;
     rawReason = safeGetString(value, 'message') ?? '';
-    frames = buildFrames(safeGetString(value, 'stack'), debugIds);
+    const stackVal = safeGetString(value, 'stack');
+    const strippedStack =
+      stackVal !== undefined ? stripKnownHeader(stackVal, effectiveName, rawReason) : undefined;
+    frames = buildFrames(strippedStack, debugIds);
     rawCause = safeGet(value, 'cause');
   } else {
     const described = describeThrown(value);
@@ -202,7 +266,7 @@ function buildNode(
   }
 
   const node: ExceptionNode = {
-    name,
+    name: normalizeName(name),
     reason: normalizeReason(rawReason),
     frames,
   };
