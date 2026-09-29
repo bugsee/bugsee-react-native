@@ -14,10 +14,11 @@
  *   rh-crash    both phases mark, then a Java crash (`testNativeCrash`).
  *   rh-observe  the relaunch after rh-crash: both phases mark, and onAfter
  *               labels the report; the app itself does nothing else.
- *   rh-clear    onBefore sets the summary, description and two attributes,
+ *   rh-clear    onBefore sets the summary, description and three attributes,
  *               then clears the summary and description and removes one
  *               attribute with `null` -- the edits iOS's object-argument
- *               conversion used to drop (Task 4.5).
+ *               conversion used to drop (Task 4.5). The third attribute's
+ *               value ends in half an emoji, which must cross as U+FFFD.
  */
 import Bugsee, {
   IssueSeverity,
@@ -127,13 +128,22 @@ function markingHandler(nonce: string): BugseeReportHandler {
 function clearingHandler(nonce: string): BugseeReportHandler {
   const gone = `gone-${nonce}`;
   const kept = `kept-${nonce}`;
+  const cut = `cut-${nonce}`;
   return {
     async onBeforeReportCreated(report) {
       mark(`before type=${report.type} id=${report.id} nonce=${nonce}`);
+      // Which normaliser encodeBridgeObject uses on this engine.
+      mark(
+        `clear engine toWellFormed=${typeof (String.prototype as { toWellFormed?: unknown }).toWellFormed} ` +
+          `nonce=${nonce}`,
+      );
       await report.setSummary(`set-${nonce}`);
       await report.setDescription(`d-${nonce}`);
       await report.setAttribute(gone, `g-${nonce}`);
       await report.setAttribute(kept, `k-${nonce}`);
+      // Cut mid-emoji: a lone high surrogate. Unnormalised, its `\ud83d`
+      // escape made iOS reject the whole patch.
+      await report.setAttribute(cut, `c-${nonce}-${'\u{1F600}'.slice(0, 1)}`);
       const set = await report.read();
       mark(
         `clear set summary=${String(set.summary)} description=${String(set.description)} ` +
