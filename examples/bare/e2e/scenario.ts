@@ -244,8 +244,10 @@ export class Logcat extends DeviceLog {
   private constructor(child: ChildProcess) {
     super();
     this.child = child;
-    child.stdout?.on('data', (chunk: Buffer) => this.feed(chunk));
-    child.stderr?.on('data', (chunk: Buffer) => this.feed(chunk));
+    // Each stream its own partial-line buffer: stdout and stderr of one
+    // process must not splice either (as IosConsole.launch() does below).
+    child.stdout?.on('data', (chunk: Buffer) => this.feed(chunk, child.stdout));
+    child.stderr?.on('data', (chunk: Buffer) => this.feed(chunk, child.stderr));
   }
 
   /** Clears the device's buffer, then streams from there. */
