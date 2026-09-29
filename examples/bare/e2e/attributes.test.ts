@@ -19,10 +19,26 @@
  * bytes -- `+setAttribute:withValue:` still returns `YES`, so
  * `BGSRNAttributes setValue:forKey:setter:getter:` reads it back and rejects
  * with `E_ATTRIBUTE_REJECTED` when the read-back disagrees. 800 characters
- * fits on both; 900 and 1024 fit only on Android
+ * fits on both; 1024 fits only on Android
  * (`testAn800CharacterAsciiStringFitsTheArchiveLimit`,
- * `testA900CharacterAsciiStringExceedsTheArchiveLimit`,
- * `testA1024CharacterAsciiStringExceedsTheArchiveLimit`).
+ * `testA1024CharacterAsciiStringExceedsTheArchiveLimit`). There is no
+ * 900-character row: by controller ruling (2026-09-29, after this task's
+ * first pass), that length sits in an ambiguous zone where the real
+ * `7.0.0-beta3` binary keeps the value even though the archive math both
+ * `testA900CharacterAsciiStringExceedsTheArchiveLimit` and the SDK source's
+ * own check independently say it should not -- the iOS SDK team has been
+ * asked why, and the row is omitted rather than asserted either way.
+ *
+ * **iOS SDK regression, confirmed by controller ruling:** a live
+ * `Bugsee.upload()` report's `manifest.json` `attrs` and `request.json`
+ * `email` never carry the global attributes or user identifier at all on iOS
+ * 7.0.0-beta3 (`BGSManifestCreator.userAttributes` is never assigned on
+ * nextgen), even though `getAttribute`/`getAllAttributes`/`getUserIdentifier`
+ * all read them back correctly right up to the `upload()` call. Reported to
+ * the iOS SDK team; issue link pending. Case 3's `manifest.attrs`/`email`
+ * assertions therefore run as `it.failing` on iOS only, so the suite stays
+ * green while asserting the CORRECT (currently unmet) behaviour, and turns
+ * red -- forcing an update -- the moment the SDK is fixed.
  *
  * Android preconditions, as for data.test.ts: the debug build is installed on
  * the handset named in device.ts, and Metro is running with
@@ -132,7 +148,6 @@ function androidRows(nonce: string): Row[] {
     resolved('e2e_true', true),
     resolved('e2e_false', false),
     resolved('e2e_mid', 'm'.repeat(800)),
-    resolved('e2e_900', 'n'.repeat(900)),
     resolved('e2e_long', 'x'.repeat(1024)),
     badArgument('e2e_too_long'),
     badArgument('e2e_huge'),
@@ -141,13 +156,15 @@ function androidRows(nonce: string): Row[] {
 }
 
 /**
- * The iOS column of the Phase 5 table. Diverges from Android on exactly
- * three rows: `e2e_tenth` reads back the JS double unwidened (`0.1`), and
- * `e2e_900`/`e2e_long` are archived-size drops -- `+setAttribute:withValue:`
- * returns `YES`, but `BGSRNAttributes`'s read-back verification catches it,
- * so the bridge rejects with `E_ATTRIBUTE_REJECTED` and the value never
- * lands (`read: UNDEFINED`). `e2e_mid` (800 chars) is the matching
- * acceptance: it fits under the archive limit on both platforms.
+ * The iOS column of the Phase 5 table. Diverges from Android on exactly two
+ * rows: `e2e_tenth` reads back the JS double unwidened (`0.1`), and
+ * `e2e_long` is an archived-size drop -- `+setAttribute:withValue:` returns
+ * `YES`, but `BGSRNAttributes`'s read-back verification catches it, so the
+ * bridge rejects with `E_ATTRIBUTE_REJECTED` and the value never lands
+ * (`read: UNDEFINED`). `e2e_mid` (800 chars) is the matching acceptance: it
+ * fits under the archive limit on both platforms. There is no `e2e_900` row
+ * (controller ruling): that length is kept on the real device even though
+ * the archive math predicts a drop, an open question for the iOS SDK team.
  */
 function iosRows(nonce: string): Row[] {
   const resolved = (name: string, value: Value): Row => ({
@@ -177,7 +194,6 @@ function iosRows(nonce: string): Row[] {
     resolved('e2e_true', true),
     resolved('e2e_false', false),
     resolved('e2e_mid', 'm'.repeat(800)),
-    rejected('e2e_900'),
     rejected('e2e_long'),
     badArgument('e2e_too_long'),
     badArgument('e2e_huge'),
@@ -424,7 +440,26 @@ describeDevice(`attributes and identity round-trip on ${ON_IOS ? 'the iOS simula
     expect(all).toStrictEqual(expectedAttrs(nonce));
   });
 
-  it('the retained report carries the attributes and the identifier', () => {
+  /**
+   * Confirmed iOS SDK regression (controller ruling, 2026-09-29):
+   * `BGSManifestCreator.userAttributes` is never assigned on nextgen, so a
+   * live `Bugsee.upload()` report's `manifest.json` `attrs` and
+   * `request.json` `email` never carry the global attributes or user
+   * identifier at all on iOS 7.0.0-beta3 -- `manifest.attrs` comes back `{}`
+   * and `request.json` has no `email` key, even though
+   * `getAttribute`/`getAllAttributes`/`getUserIdentifier` all read them back
+   * correctly right up to the `upload()` call (case 1 above). Reported to the
+   * iOS SDK team; issue link pending.
+   *
+   * `it.failing` (a Jest built-in): the body below asserts the CORRECT
+   * behaviour -- unweakened, identical in shape to Android's -- and this
+   * test passes exactly because those assertions currently fail on iOS. It
+   * turns red the moment the SDK is fixed, forcing this `.failing` to be
+   * removed rather than the regression being silently re-introduced.
+   * Android runs the same body as a normal `it`, since it has no such bug.
+   */
+  const case3 = ON_IOS ? it.failing : it;
+  case3('the retained report carries the attributes and the identifier', () => {
     assertPrecondition();
     const bundle = theBundle();
     expect(bundle.manifest.attrs).toStrictEqual(expectedAttrs(nonce));
@@ -447,7 +482,6 @@ describeDevice(`attributes and identity round-trip on ${ON_IOS ? 'the iOS simula
     expect(raw).not.toMatch(/"e2e_neg"/);
     if (ON_IOS) {
       // Rejected on iOS: never lands in the retained report either.
-      expect(raw).not.toMatch(/"e2e_900"/);
       expect(raw).not.toMatch(/"e2e_long"/);
     }
 
