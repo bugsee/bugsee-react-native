@@ -1,32 +1,63 @@
 /**
  * Task 5.4: attributes and user identity round-trip on an Android handset,
- * and into the retained report.
+ * and into the retained report. Task 5.5: the same five cases on the iOS
+ * simulator.
  *
  * Tasks 5.1 and 5.2 unit-tested the JS validation and the bridge's
  * set-then-verify against fakes. What only a device shows is what the real
  * SDK keeps: that every accepted type reads back as the report will carry it
  * (Android stores a fractional number as a 32-bit float, so `0.1` reads
- * `0.10000000149011612`, and an integral number must cross as `Long` or
- * `9007199254740991` rounds up), that the report's `manifest.json` `attrs`
- * and `request.json` `email` agree with the reads, and that both survive a
- * process restart and a clear sticks.
+ * `0.10000000149011612`; iOS keeps the JS double as given, so `0.1` reads
+ * `0.1`. An integral number must cross as `Long`/`NSNumber` or
+ * `9007199254740991` rounds up on either platform), that the report's
+ * `manifest.json` `attrs` and `request.json` `email` agree with the reads,
+ * and that both survive a process restart and a clear sticks.
  *
- * Preconditions, as for data.test.ts: the debug build is installed on the
- * handset named in device.ts, and Metro is running with
+ * The two platforms disagree on the 800-1024 character band: Android's
+ * `NSKeyedArchiver`-free bridge keeps a 1024-character string, but iOS
+ * archives the value and silently drops it past `BGSRNAttributeArchiveLimit`
+ * bytes -- `+setAttribute:withValue:` still returns `YES`, so
+ * `BGSRNAttributes setValue:forKey:setter:getter:` reads it back and rejects
+ * with `E_ATTRIBUTE_REJECTED` when the read-back disagrees. 800 characters
+ * fits on both; 900 and 1024 fit only on Android
+ * (`testAn800CharacterAsciiStringFitsTheArchiveLimit`,
+ * `testA900CharacterAsciiStringExceedsTheArchiveLimit`,
+ * `testA1024CharacterAsciiStringExceedsTheArchiveLimit`).
+ *
+ * Android preconditions, as for data.test.ts: the debug build is installed on
+ * the handset named in device.ts, and Metro is running with
  * `adb reverse tcp:8081 tcp:8081`. Retention is airplane mode (bundles.ts).
+ *
+ * iOS preconditions, as for report-handler.test.ts and data.test.ts: the
+ * Debug app is installed on the booted simulator (IOS_SIMULATOR_ID) and Metro
+ * is running. Retention goes through the closed loopback endpoint
+ * (bundles.ts, DEAD_ENDPOINT). The identifier and attributes live in the
+ * simulator's Keychain, which -- unlike the SDK's own data directory --
+ * survives `clearIosBundles`/app reinstall, and is only erased with the
+ * simulator itself. That is exactly why the precondition marker
+ * (`pre-all`/`pre-id`, asserted empty by every case) matters more here than
+ * on Android: a value an earlier run left in the Keychain would otherwise
+ * silently pass this run. `afterAll` clears both through the SDK's own JS API
+ * (a real `attributes-persist` run) and, only as a last resort if that was
+ * not seen to take, resets the whole simulator Keychain
+ * (`xcrun simctl keychain <device> reset`) -- the iOS analogue of Android's
+ * `pm clear` fallback.
  *
  * Every value is synthetic: until bugsee-android#186 ships, the Android SDK
  * writes attribute values and the identifier to its internal log. Nothing
  * here asserts on `log.internal`, either way.
  *
- * Markers, from scenarios/attributes.ts (console.log, tag ReactNativeJS):
+ * Markers, from scenarios/attributes.ts (console.log, tag ReactNativeJS on
+ * Android; mirrored to the simulator's console-pty stream on iOS):
  *   BUGSEE_E2E attr <label> <json>
  */
+import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
-import { type PulledBundle, airplane, removePulledBundles } from './bundles';
-import { ANDROID_PACKAGE } from './device';
+import { type PulledBundle, airplane, removePulledBundles, terminateIosApp } from './bundles';
+import { ANDROID_PACKAGE, IOS_SIMULATOR_ID } from './device';
 import {
   ON_IOS,
   type Run,
@@ -38,7 +69,17 @@ import {
   startRun,
   useLog,
 } from './harness';
-import { type DeviceLog, Logcat, adb, adbStatus, pidOf, resetScenario } from './scenario';
+import {
+  type DeviceLog,
+  Logcat,
+  SimulatorConsole,
+  adb,
+  adbStatus,
+  pidOf,
+  resetScenario,
+} from './scenario';
+
+const execFileAsync = promisify(execFile);
 
 jest.setTimeout(5 * 60_000);
 
@@ -99,10 +140,60 @@ function androidRows(nonce: string): Row[] {
   ];
 }
 
+/**
+ * The iOS column of the Phase 5 table. Diverges from Android on exactly
+ * three rows: `e2e_tenth` reads back the JS double unwidened (`0.1`), and
+ * `e2e_900`/`e2e_long` are archived-size drops -- `+setAttribute:withValue:`
+ * returns `YES`, but `BGSRNAttributes`'s read-back verification catches it,
+ * so the bridge rejects with `E_ATTRIBUTE_REJECTED` and the value never
+ * lands (`read: UNDEFINED`). `e2e_mid` (800 chars) is the matching
+ * acceptance: it fits under the archive limit on both platforms.
+ */
+function iosRows(nonce: string): Row[] {
+  const resolved = (name: string, value: Value): Row => ({
+    name,
+    set: 'resolved',
+    read: readOf(value),
+  });
+  const rejected = (name: string): Row => ({
+    name,
+    set: 'E_ATTRIBUTE_REJECTED',
+    read: UNDEFINED,
+  });
+  const badArgument = (name: string): Row => ({
+    name,
+    set: 'E_ATTRIBUTE_BAD_ARGUMENT',
+    read: UNDEFINED,
+  });
+  return [
+    resolved('e2e_str', `blue-${nonce}`),
+    resolved('e2e_empty', ''),
+    resolved('e2e_int', 42),
+    resolved('e2e_neg', -7),
+    resolved('e2e_int64', 2147483648),
+    resolved('e2e_safe', 9007199254740991),
+    resolved('e2e_half', 1.5),
+    resolved('e2e_tenth', 0.1),
+    resolved('e2e_true', true),
+    resolved('e2e_false', false),
+    resolved('e2e_mid', 'm'.repeat(800)),
+    rejected('e2e_900'),
+    rejected('e2e_long'),
+    badArgument('e2e_too_long'),
+    badArgument('e2e_huge'),
+    badArgument('e2e_over_long'),
+  ];
+}
+
+/** The platform's column of the Phase 5 table. */
+function rows(nonce: string): Row[] {
+  return ON_IOS ? iosRows(nonce) : androidRows(nonce);
+}
+
 /** Every resolved row but the cleared `e2e_neg`, as a name -> value map. */
 function expectedAttrs(nonce: string): Record<string, Value> {
   const attrs: Record<string, Value> = {};
-  for (const row of androidRows(nonce)) {
+  for (const row of rows(nonce)) {
     if (row.set === 'resolved' && row.name !== 'e2e_neg') {
       attrs[row.name] = row.read.value as Value;
     }
@@ -119,7 +210,15 @@ const INTEGRAL_RAW: Array<[string, string]> = [
 
 const MARKER = /BUGSEE_E2E attr (\S+) (.*)$/;
 
-describeDevice('attributes and identity round-trip on an Android handset', () => {
+/** iOS: the pid an NSLog line's `BareExample[<pid>:<tid>]` prefix carries. */
+const IOS_PID_LINE = /BareExample\[(\d+):/;
+
+/** The app's current pid -- `pidof` on Android, the run's own banner line on iOS. */
+async function currentPid(bannerText: string): Promise<string | undefined> {
+  return ON_IOS ? IOS_PID_LINE.exec(bannerText)?.[1] : pidOf();
+}
+
+describeDevice(`attributes and identity round-trip on ${ON_IOS ? 'the iOS simulator' : 'an Android handset'}`, () => {
   let log: DeviceLog;
   let run: Run;
   let nonce: string;
@@ -167,30 +266,31 @@ describeDevice('attributes and identity round-trip on an Android handset', () =>
   }
 
   /** A run of `attributes-persist`: what survived, then the clear. */
-  async function persistRun(): Promise<Map<string, unknown>> {
+  async function persistRun(): Promise<{ marks: Map<string, unknown>; run: Run }> {
     const persist = await startRun('attributes-persist');
     const found = await collect('attributes-persist', persist.scenario.nonce, persist.start);
     leftClean =
       JSON.stringify(found.get('cleared-all')) === '{}' &&
       JSON.stringify(found.get('cleared-id')) === JSON.stringify(UNDEFINED);
-    return found;
+    return { marks: found, run: persist };
   }
 
   beforeAll(async () => {
-    if (ON_IOS) {
-      throw new Error('Task 5.4 is the Android run; the iOS column is Task 5.5');
+    log = ON_IOS ? SimulatorConsole.start() : await Logcat.start();
+    useLog(log, '5.5');
+    if (!ON_IOS) {
+      // 9.3.2: offline before the app starts, so the report is retained.
+      await airplane(true);
     }
-    log = await Logcat.start();
-    useLog(log, '5.4');
-    // 9.3.2: offline before the app starts, so the report is retained.
-    await airplane(true);
+    // iOS retention goes through startRun's DEAD_ENDPOINT instead (no
+    // airplane mode on the simulator); see bundles.ts.
     await clearBundles();
 
     run = await startRun('attributes');
     nonce = run.scenario.nonce;
     report('banner', run.banner.text.trim());
     marks = await collect('attributes', nonce, run.start);
-    firstPid = await pidOf();
+    firstPid = await currentPid(run.banner.text);
     for (const [label, value] of marks) {
       report(`attr ${label}`, value);
     }
@@ -202,9 +302,12 @@ describeDevice('attributes and identity round-trip on an Android handset', () =>
       report(`${bundle.file} request email`, bundle.request.email);
     }
 
-    // Case 5's restart: a fresh process (launchScenario force-stops first).
-    persistMarks = await persistRun();
-    secondPid = await pidOf();
+    // Case 5's restart: a real separate process. Android's launchScenario
+    // force-stops before starting; iOS's SimulatorConsole.launch() passes
+    // `--terminate-running-process` to the same effect.
+    const persisted = await persistRun();
+    persistMarks = persisted.marks;
+    secondPid = await currentPid(persisted.run.banner.text);
     report('pids', { first: firstPid, second: secondPid });
     for (const [label, value] of persistMarks) {
       report(`persist ${label}`, value);
@@ -223,21 +326,41 @@ describeDevice('attributes and identity round-trip on an Android handset', () =>
             report('cleanup run failed', String(error));
             return undefined;
           });
-          report('cleanup run', cleanup === undefined ? '(none)' : Object.fromEntries(cleanup));
+          report('cleanup run', cleanup === undefined ? '(none)' : Object.fromEntries(cleanup.marks));
         }
         if (!leftClean) {
-          // Last resort: the attributes and identifier live in the app's
-          // shared preferences.
-          const cleared = await adbStatus('shell', 'pm', 'clear', ANDROID_PACKAGE);
-          report('pm clear (cleanup fallback)', cleared.output.trim());
+          if (ON_IOS) {
+            // Last resort: the identifier and attributes live in the
+            // simulator's Keychain, which survives clearIosBundles and an app
+            // reinstall -- only erasing the simulator (or its Keychain)
+            // clears it.
+            const { stdout, stderr } = await execFileAsync('xcrun', [
+              'simctl',
+              'keychain',
+              IOS_SIMULATOR_ID,
+              'reset',
+            ]);
+            report('simctl keychain reset (cleanup fallback)', (stdout + stderr).trim());
+          } else {
+            // Last resort: the attributes and identifier live in the app's
+            // shared preferences.
+            const cleared = await adbStatus('shell', 'pm', 'clear', ANDROID_PACKAGE);
+            report('pm clear (cleanup fallback)', cleared.output.trim());
+          }
         }
       } finally {
-        await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+        if (ON_IOS) {
+          await terminateIosApp();
+        } else {
+          await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+        }
         await clearBundles().catch(() => {});
       }
     } finally {
       try {
-        await airplane(false);
+        if (!ON_IOS) {
+          await airplane(false);
+        }
       } finally {
         try {
           const { removed, kept } = removePulledBundles();
@@ -272,7 +395,7 @@ describeDevice('attributes and identity round-trip on an Android handset', () =>
 
   it('every accepted type reads back as the report will carry it', () => {
     assertPrecondition();
-    for (const row of androidRows(nonce)) {
+    for (const row of rows(nonce)) {
       const set = mark(marks, `set:${row.name}`) as { result: string; code?: string };
       expect({ name: row.name, set: set.result === 'resolved' ? 'resolved' : set.code }).toEqual({
         name: row.name,
@@ -310,7 +433,8 @@ describeDevice('attributes and identity round-trip on an Android handset', () =>
     }
 
     // What JSON.parse cannot tell apart: an integer stays an integer (no
-    // `.0`, no exponent), and 0.1 is the float's widening.
+    // `.0`, no exponent), and Android's 0.1 is the float's widening (iOS
+    // keeps the JS double as given).
     const raw = readFileSync(join(bundle.dir, 'manifest.json'), 'utf8');
     for (const [name, text] of INTEGRAL_RAW) {
       expect({ name, raw: new RegExp(`"${name}"\\s*:\\s*${text}\\s*[,}]`).test(raw) }).toEqual({
@@ -318,8 +442,14 @@ describeDevice('attributes and identity round-trip on an Android handset', () =>
         raw: true,
       });
     }
-    expect(raw).toMatch(/"e2e_tenth"\s*:\s*0\.10000000149011612\s*[,}]/);
+    const tenthText = ON_IOS ? '0\\.1' : '0\\.10000000149011612';
+    expect(raw).toMatch(new RegExp(`"e2e_tenth"\\s*:\\s*${tenthText}\\s*[,}]`));
     expect(raw).not.toMatch(/"e2e_neg"/);
+    if (ON_IOS) {
+      // Rejected on iOS: never lands in the retained report either.
+      expect(raw).not.toMatch(/"e2e_900"/);
+      expect(raw).not.toMatch(/"e2e_long"/);
+    }
 
     expect(bundle.request.email).toBe(`e2e-user-${nonce}`);
   });
