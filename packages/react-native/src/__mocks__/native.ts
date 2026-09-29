@@ -77,7 +77,8 @@ export const native = {
   testCrash: jest.fn<void, []>(),
   upload: jest.fn<void, [string, string]>(),
   wrapperLog: jest.fn<void, [string, number]>(),
-  event: jest.fn<void, [string, Record<string, unknown> | null]>(),
+  /** `paramsJson` is JSON text (`encodeBridgeObject`), or null for no params. */
+  event: jest.fn<void, [string, string | null]>(),
   traceNumber: jest.fn<void, [string, number]>(),
   traceString: jest.fn<void, [string, string]>(),
   traceBoolean: jest.fn<void, [string, boolean]>(),
@@ -115,7 +116,8 @@ export const native = {
   setReportHandlerPhases: jest.fn<void, [boolean, boolean]>(),
   completeReportHandler: jest.fn<void, [string]>(),
   reportRead: jest.fn<Promise<unknown>, [string]>(),
-  reportUpdate: jest.fn<Promise<void>, [string, unknown]>(),
+  /** `patchJson` is the validated patch as JSON text (`encodeBridgeObject`). */
+  reportUpdate: jest.fn<Promise<void>, [string, string]>(),
   reportAddFileAttachment:
     jest.fn<Promise<void>, [string, string, string, string | null, boolean]>(),
   reportAddDataAttachment:
@@ -146,3 +148,44 @@ export const native = {
 };
 
 export const nativeMock = { __esModule: true, default: native };
+
+/** Key-sorted JSON, so two values compare by content rather than key order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>;
+    // Read, never assigned: a "__proto__" member stays an ordinary key here.
+    const members = Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
+    return `{${members.join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * An asymmetric matcher for an object payload that crosses as JSON text:
+ * matches only a STRING that parses to a value deep-equal to `expected` (key
+ * order aside). An object where the text should be fails it, so
+ * `toHaveBeenCalledWith('h1', jsonOf({ summary: null }))` pins both the
+ * transport and the content.
+ */
+export function jsonOf(expected: unknown): unknown {
+  const want = canonicalJson(expected);
+  return {
+    $$typeof: Symbol.for('jest.asymmetricMatcher'),
+    asymmetricMatch(actual: unknown): boolean {
+      if (typeof actual !== 'string') return false;
+      try {
+        return canonicalJson(JSON.parse(actual)) === want;
+      } catch {
+        return false;
+      }
+    },
+    toString: () => 'jsonOf',
+    toAsymmetricMatcher: () => `jsonOf(${want})`,
+    getExpectedType: () => 'string',
+  };
+}
