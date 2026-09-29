@@ -1219,6 +1219,14 @@ Export `EventParams`, `EventParamValue` and `TraceValue` as types from `src/inde
 
 ---
 
+### Task 4.X — Separate build directories for the standalone and example Android builds
+
+Added by controller ruling, not originally in this plan. `packages/react-native/android` is built by two Gradle builds -- the standalone unit-test build at the repo root (`:bugsee-android-bridge`) and the example app (`examples/bare/android`, via autolinking as `:bugsee_react-native`) -- and both defaulted to writing into the same `packages/react-native/android/build/`, so running one after the other without a clean in between left each build seeing the other's stale classes, generated codegen and test results; this had already misled two implementers into reading a real pass as a `ClassNotFoundException` failure. The root `settings.gradle` now redirects only the standalone project's output, via `gradle.beforeProject` and `layout.buildDirectory`, to `<repo root>/build/android-bridge` (already covered by the existing bare `build/` gitignore entry), leaving the example build's own default untouched; no CI step, script (`cli-check-java-signatures.ts` takes its paths as arguments and never hardcoded the shared directory) or doc hardcoded the old shared output path, so nothing else needed updating. `scripts/build-dir-redirect.ts` + `scripts/__tests__/build-dir-redirect.test.ts` (100% mutation score standalone) assert the redirect is in place and that no tracked script or CI file references the old path. Verified from clean in both orders -- root `test`, then example `testDebugUnitTest` + `assembleDebug`, and the reverse -- all green: 123 tests in the example build, 114 in the standalone build (which excludes the TurboModule/`ReactRootOriginTracker` tests that need the RN classpath the example alone provides). Full report: `.superpowers/sdd/2026-09-16-implementation-plan/task-4.X-report.md`.
+
+- [x] **Commit** — `build(android): give the standalone test build its own build directory`.
+
+---
+
 ### Task 4.3 — Device verification, Android: lines, events and traces in a retained bundle
 
 **Files:**
