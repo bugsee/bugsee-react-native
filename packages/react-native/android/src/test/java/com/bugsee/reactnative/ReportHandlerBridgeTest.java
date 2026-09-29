@@ -421,6 +421,44 @@ public class ReportHandlerBridgeTest {
     }
 
     /**
+     * The dispatch-vs-detach race, interleaved by hand: detach() runs after
+     * dispatch() has read the sink but before it has put the handle. The
+     * detach's sweep cannot see a handle not yet in the table, so dispatch
+     * itself must notice the sink it read has gone, and complete the handle
+     * as the detach would have -- not emit it to the dead runtime and leave
+     * the report waiting out the whole deadline.
+     *
+     * <p>{@code liveMs()} is the seam: dispatch calls it after reading the
+     * sink and before putting the handle.
+     */
+    @Test
+    public void aDetachBetweenTheSinkReadAndThePutStillCompletesTheHandle() {
+        final ReportHandlerBridge[] racing = new ReportHandlerBridge[1];
+        racing[0] = new ReportHandlerBridge(scheduler, () -> {
+            racing[0].detach(sink);
+            return ReportHandlerDeadlines.LIVE_DEADLINE_MS;
+        }, lines::add);
+        racing[0].attach(sink);
+        racing[0].setPhases(true, true);
+
+        onThread(ReportHandlerDeadlines.LIVE_HANDLER_THREAD,
+                () -> racing[0].dispatch(Phase.AFTER, report, false, completion));
+
+        assertEquals("the SDK completion must run, and exactly once", 1, completions.get());
+        assertTrue("nothing may be emitted to the detached runtime", sink.requests.isEmpty());
+        for (final ManualScheduler.Task task : scheduler.tasks) {
+            assertTrue("no deadline may be left armed", task.cancelled);
+        }
+        assertEquals("report handler rh-1 completed by=detach", lines.get(lines.size() - 1));
+        assertNull(racing[0].reportFor("rh-1"));
+
+        // Nothing left for a later deadline or JS to complete a second time.
+        scheduler.fireEvenIfCancelled();
+        assertFalse(racing[0].complete("rh-1"));
+        assertEquals(1, completions.get());
+    }
+
+    /**
      * A new sink is a new JS runtime, which has registered nothing yet. Until
      * it does, a dispatch must not wait on a listener that does not exist.
      */
