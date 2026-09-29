@@ -87,9 +87,10 @@ export async function launchAndWaitForSequence(
   platform: Platform,
   steps: readonly Step[],
   androidUri?: string,
+  iosArgs: readonly string[] = [],
 ): Promise<SequenceResult> {
   const child =
-    platform === 'android' ? await spawnAndroid(androidUri) : spawnIos();
+    platform === 'android' ? await spawnAndroid(androidUri) : spawnIos(iosArgs);
   return collect(child, steps);
 }
 
@@ -134,7 +135,11 @@ async function spawnAndroid(uri?: string): Promise<ChildProcess> {
   return logcat;
 }
 
-function spawnIos(): ChildProcess {
+/**
+ * `args` are the app's launch arguments (scenario.ts, `scenarioArgs`): the
+ * iOS per-launch scenario channel.
+ */
+function spawnIos(args: readonly string[]): ChildProcess {
   if (IOS_TARGET === 'simulator') {
     // --console-pty, not --console: simctl only streams the app's stdout when
     // it allocates a pty, and RN's console.log goes to stdout. With --console
@@ -147,8 +152,11 @@ function spawnIos(): ChildProcess {
       '--terminate-running-process',
       IOS_SIMULATOR_ID,
       IOS_BUNDLE_ID,
+      ...args,
     ]);
   }
+  // `--` ends devicectl's own options, so the app's `-bugseeE2e...`
+  // arguments reach the app.
   return spawn('xcrun', [
     'devicectl',
     'device',
@@ -159,6 +167,8 @@ function spawnIos(): ChildProcess {
     '--console',
     '--terminate-existing',
     IOS_BUNDLE_ID,
+    '--',
+    ...args,
   ]);
 }
 
