@@ -22,7 +22,9 @@ trap 'rm -rf "$WORK"' EXIT
 echo "--- installing react-native@~${RN}.0"
 cd "$WORK"
 echo '{ "name": "rn-compat-probe", "version": "0.0.0", "private": true }' > package.json
-npm i --silent --no-audit --no-fund "react-native@~${RN}.0" "@react-native/codegen@~${RN}.0" typescript@5.6 >/dev/null
+# @types/react: <BugseeSecure> is .tsx, and the automatic JSX runtime and the
+# hooks it uses are typed there, not by react-native.
+npm i --silent --no-audit --no-fund "react-native@~${RN}.0" "@react-native/codegen@~${RN}.0" typescript@5.6 "@types/react@19" >/dev/null
 ACTUAL="$(node -p "require('react-native/package.json').version")"
 echo "    resolved ${ACTUAL}"
 
@@ -125,7 +127,7 @@ node -e "
   const co = JSON.parse(base).compilerOptions;
   co.noEmit = true; delete co.declaration;
   fs.writeFileSync('tsconfig.json', JSON.stringify(
-    { compilerOptions: co, include: ['tscheck/**/*.ts'] }, null, 2));
+    { compilerOptions: co, include: ['tscheck/**/*.ts', 'tscheck/**/*.tsx'] }, null, 2));
 "
 ./node_modules/.bin/tsc -p tsconfig.json
 echo "    typecheck clean"

@@ -13,6 +13,7 @@
   "coverageAnalysis": "perTest",
   "mutate": [
     "packages/react-native/src/**/*.ts",
+    "packages/react-native/src/**/*.tsx",
     "!**/__tests__/**",
     "!**/__mocks__/**"
   ],

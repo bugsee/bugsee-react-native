@@ -9,6 +9,9 @@
     // RN's own sanctioned opt-in to the typed deep-import surface, which is
     // where codegen types such as UnsafeObject live.
     "customConditions": ["react-native-legacy-deep-imports"],
+    // <BugseeSecure> is the library's first .tsx; the automatic runtime is
+    // what React Native's Babel preset compiles it with.
+    "jsx": "react-jsx",
     "resolveJsonModule": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,

@@ -53,7 +53,7 @@ export default tseslint.config(
     // jest.mock is hoisted above the import block, so its factory cannot
     // close over an imported binding — require() is the only thing that
     // works here, not a style choice.
-    files: ['**/__tests__/**/*.ts', '**/__mocks__/**/*.ts'],
+    files: ['**/__tests__/**/*.ts', '**/__tests__/**/*.tsx', '**/__mocks__/**/*.ts'],
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },
   {
