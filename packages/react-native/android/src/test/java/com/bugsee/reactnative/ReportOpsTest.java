@@ -101,6 +101,26 @@ public class ReportOpsTest {
     }
 
     /**
+     * Parity with the JS proxy, which rejects it before crossing: an empty
+     * attribute name is a bad argument like any other malformed field, and
+     * fails the whole patch -- the valid name next to it included.
+     */
+    @Test
+    public void rejectsAnEmptyAttributeNameAndAppliesNothing() {
+        try {
+            ReportOps.apply(report, patch(
+                    "summary", "new summary",
+                    "attributes", patch("ok", "v", "", "x")));
+            fail("expected BadArgument");
+        } catch (final ReportOps.BadArgument expected) {
+            assertEquals("attribute name must be a non-empty string", expected.getMessage());
+        }
+        assertNull(state.summary);
+        assertTrue(state.attributes.isEmpty());
+        assertEquals(Collections.emptyList(), state.mutations());
+    }
+
+    /**
      * One call, not clear-then-add: between the two, the SDK (or a concurrent
      * reader) would see a report with no labels at all.
      */
