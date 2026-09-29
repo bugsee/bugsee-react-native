@@ -241,9 +241,10 @@ export async function airplane(on: boolean): Promise<void> {
 /**
  * The loopback port every iOS run launches against, so every report is
  * retained (see the top of this file). Port 9 (discard) is closed on a Mac
- * and on an iPhone, whose own loopback it is there.
+ * and on an iPhone, whose own loopback it is there. The app's own
+ * placeholder-token rule uses the same one (endpoint.ts).
  */
-export const DEAD_ENDPOINT = 'https://127.0.0.1:9';
+export { DEAD_ENDPOINT } from '../endpoint';
 
 /** Whether iOS means the iPhone; read when used, so Android never asks. */
 function onDevice(): boolean {
