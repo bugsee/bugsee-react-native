@@ -238,6 +238,22 @@ describe('copyEventParams', () => {
       .toThrow(RangeError);
   });
 
+  // The bound applies at every nesting depth `copyObject`/`copyArray` recurse
+  // through, not just at the top level: `copyValue` is the one place a
+  // number is ever checked, called the same way regardless of how deep it
+  // is nested.
+  it('rejects a number at or beyond BUNDLE_NUMBER_LIMIT nested inside an object and an array', () => {
+    expect(() =>
+      copyEventParams({ nested: { a: { b: [1, BUNDLE_NUMBER_LIMIT] } } } as unknown as EventParams),
+    ).toThrow(RangeError);
+    expect(() =>
+      copyEventParams({ nested: { a: { b: [1, BUNDLE_NUMBER_LIMIT] } } } as unknown as EventParams),
+    ).toThrow(`params.nested.a.b[1] must be smaller than 2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`);
+    expect(() =>
+      copyEventParams({ list: [{ n: -BUNDLE_NUMBER_LIMIT }] } as unknown as EventParams),
+    ).toThrow(`params.list[0].n must be smaller than 2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`);
+  });
+
   // `BUNDLE_NUMBER_LIMIT` is a `number` -- printing it (or the rejected value)
   // via `String`/template-literal conversion rounds: `String(BUNDLE_NUMBER_LIMIT)`
   // reads `9223372036854776000`, not the true `9223372036854775808`.
