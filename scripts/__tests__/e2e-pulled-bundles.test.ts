@@ -24,6 +24,11 @@ describe('pulled bundle roots', () => {
   }
 
   afterEach(() => {
+    // Taken and reset first, so a failure below cannot carry this test's
+    // roots into the next test's check and fail that one too.
+    const ours = created;
+    created = [];
+
     // removePulledBundles() empties its tracked list whether it deletes a
     // root or keeps it -- so a root a case asked to keep is untracked
     // afterwards, and this hook can no longer remove it. It can only ever
@@ -35,8 +40,7 @@ describe('pulled bundle roots', () => {
 
     // No root this test created survives it, whether the case above cleaned
     // it up via removePulledBundles() or by hand.
-    expect(created.filter(existsSync)).toEqual([]);
-    created = [];
+    expect(ours.filter(existsSync)).toEqual([]);
   });
 
   it('removes every root created, and reports them', () => {
