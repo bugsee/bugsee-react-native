@@ -53,3 +53,17 @@ describe('captureViewHierarchy', () => {
     expect(native.captureViewHierarchy).toHaveBeenCalledWith();
   });
 });
+
+// The only other coverage of this facade method was a regex over
+// examples/bare/index.js (scripts/__tests__/example-wiring.test.ts), which
+// pins that the EXAMPLE calls it, not that the facade itself delegates to
+// `viewtree/anchor.tsx`'s `wrap`.
+describe('wrap', () => {
+  it('delegates to viewtree/anchor.tsx', () => {
+    function Root(): null {
+      return null;
+    }
+
+    expect(Bugsee.wrap(Root).displayName).toBe('BugseeRoot(Root)');
+  });
+});
