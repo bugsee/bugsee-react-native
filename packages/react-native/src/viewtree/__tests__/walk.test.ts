@@ -3,13 +3,15 @@
  * the native side eventually serialises. Every test here uses fake fibers
  * (`fakeFibers.ts`), never React or `react-test-renderer`: `walk.ts` is pure,
  * and its contract is entirely about what it does with the `FiberLike` shape
- * and the `WalkEnv` it is given.
+ * and the `WalkEnv` it is given. `realFiberNaming.test.ts` cross-checks the
+ * naming-sensitive fixtures (ForwardRef/Memo/SimpleMemo) against real fibers.
  */
 import { FiberTag } from '../fiber';
 import type { WindowRect } from '../fiber';
 import type { ManagedNode, WalkEnv } from '../walk';
 import { VH_MAX_DEPTH, VH_MAX_NODES, VH_TAG_MAX_LENGTH, buildViewTree } from '../walk';
 import {
+  buildFiberTree,
   classComponent,
   consumer,
   fiberRoot,
@@ -17,13 +19,17 @@ import {
   forwardRefFiber,
   fragment,
   host,
+  legacyHidden,
   memoFiber,
   mode,
   offscreen,
+  offscreenWithUnknownState,
   portal,
   provider,
+  simpleMemoFiber,
   text,
   trackedProps,
+  trackedStateNode,
 } from './fakeFibers';
 import type { FiberSpec } from './fakeFibers';
 
@@ -69,6 +75,20 @@ describe('buildViewTree', () => {
     const hostNode = tree?.subitems?.[0]?.subitems?.[0];
     expect(hostNode?.class_name).toBe('RCTView');
     expect(hostNode?.options.kind).toBe('host');
+  });
+
+  it('a non-string host type never runs an arbitrary toString', () => {
+    // A malformed/hostile fiber with a non-string `type` — hardening only
+    // (real host types are always strings), but a plain `String(x)` would
+    // run whatever `toString` the value carries.
+    let toStringCalled = false;
+    const poisoned = { toString: () => ((toStringCalled = true), 'LEAK') };
+    const spec: FiberSpec = { tag: FiberTag.HostComponent, type: poisoned, stateNode: { rect: RECT }, children: [] };
+
+    const tree = buildViewTree([fiberRoot(spec)], makeEnv());
+
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Unknown');
+    expect(toStringCalled).toBe(false);
   });
 
   it("a composite's class_name is displayName, then name, then Anonymous", () => {
@@ -120,6 +140,81 @@ describe('buildViewTree', () => {
     expect(names).toEqual(['InnerForwardRef', 'InnerMemo']);
   });
 
+  it('SimpleMemo (tag 15) is named from fiber.type directly — the memo wrapper survives only on elementType', () => {
+    function InnerSimpleMemo(): null {
+      return null;
+    }
+
+    const tree = buildViewTree([fiberRoot(simpleMemoFiber(InnerSimpleMemo, [host('View', RECT)]))], makeEnv());
+
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('InnerSimpleMemo');
+  });
+
+  it("ForwardRef, Memo and SimpleMemo prefer the wrapper's own displayName over the inner name", () => {
+    function InnerFR(): null {
+      return null;
+    }
+    function InnerMemo(): null {
+      return null;
+    }
+    function InnerSimple(): null {
+      return null;
+    }
+    const forwardRefWithDisplayName: FiberSpec = {
+      tag: FiberTag.ForwardRef,
+      type: { render: InnerFR, displayName: 'OuterFR' },
+      children: [host('A', RECT)],
+    };
+
+    const tree = buildViewTree(
+      [
+        fiberRoot(
+          fragment([
+            forwardRefWithDisplayName,
+            memoFiber(InnerMemo, [host('B', RECT)], 'OuterMemo'),
+            simpleMemoFiber(InnerSimple, [host('C', RECT)], 'OuterSimple'),
+          ]),
+        ),
+      ],
+      makeEnv(),
+    );
+
+    const names = tree?.subitems?.[0]?.subitems?.map((n) => n.class_name);
+    expect(names).toEqual(['OuterFR', 'OuterMemo', 'OuterSimple']);
+  });
+
+  it('an empty wrapper displayName falls through to the inner name, the same as no displayName at all', () => {
+    function InnerFR(): null {
+      return null;
+    }
+    const forwardRefWithEmptyDisplayName: FiberSpec = {
+      tag: FiberTag.ForwardRef,
+      type: { render: InnerFR, displayName: '' },
+      children: [host('A', RECT)],
+    };
+
+    const tree = buildViewTree([fiberRoot(forwardRefWithEmptyDisplayName)], makeEnv());
+
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('InnerFR');
+  });
+
+  it('a plain FunctionComponent is named from its own type, never from an unrelated elementType', () => {
+    // FunctionComponent/ClassComponent are named via `nameOf(fiber.type)`
+    // only — `elementType` (SimpleMemo's own unwrap target) must never be
+    // consulted for these tags, even when it happens to be a different
+    // object with a name of its own.
+    const spec: FiberSpec = {
+      tag: FiberTag.FunctionComponent,
+      type: {},
+      elementType: { displayName: 'ShouldNeverBeUsed' },
+      children: [host('A', RECT)],
+    };
+
+    const tree = buildViewTree([fiberRoot(spec)], makeEnv());
+
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Anonymous');
+  });
+
   it('fragments, providers, modes and portals are flattened into their parent', () => {
     const tree = buildViewTree(
       [fiberRoot(fragment([provider([consumer([mode([portal([host('View', RECT)])])])])]))],
@@ -142,34 +237,76 @@ describe('buildViewTree', () => {
     expect(outer?.subitems?.[0]?.class_name).toBe('Inner');
   });
 
-  it('no prop other than testID and nativeID is ever read', () => {
+  it('no prop other than testID and nativeID is ever read off a host fiber', () => {
     const reads = new Set<string>();
-    const props = () =>
-      trackedProps(
-        { testID: 'tid', nativeID: 'nid', onPress: () => undefined, style: { flex: 1 }, children: 'nope' },
-        reads,
-      );
-
-    const tree = buildViewTree(
-      [
-        fiberRoot(
-          fn(
-            function Composite() {
-              return null;
-            },
-            [host('View', RECT, [], props())],
-            props(),
-          ),
-        ),
-      ],
-      makeEnv(),
+    const props = trackedProps(
+      { testID: 'tid', nativeID: 'nid', onPress: () => undefined, style: { flex: 1 }, children: 'nope' },
+      reads,
     );
+
+    const tree = buildViewTree([fiberRoot(host('View', RECT, [], props))], makeEnv());
 
     expect(tree).not.toBeNull();
     expect(reads.size).toBeGreaterThan(0);
     for (const key of reads) {
       expect(['testID', 'nativeID']).toContain(key);
     }
+  });
+
+  it("a composite's props are never read at all — not even testID/nativeID", () => {
+    const reads = new Set<string>();
+    const props = trackedProps({ testID: 'composite-tid', nativeID: 'composite-nid', other: 1 }, reads);
+
+    const tree = buildViewTree(
+      [fiberRoot(fn(function Composite() { return null; }, [host('Inner', RECT)], props))],
+      makeEnv(),
+    );
+
+    expect(tree).not.toBeNull();
+    expect(reads.size).toBe(0);
+  });
+
+  it("a composite's testID/nativeID are never emitted, host nodes only per the plan", () => {
+    const tree = buildViewTree(
+      [
+        fiberRoot(
+          fn(function Composite() { return null; }, [host('Inner', RECT)], { testID: 'composite-tid', nativeID: 'composite-nid' }),
+        ),
+      ],
+      makeEnv(),
+    );
+
+    const composite = tree?.subitems?.[0]?.subitems?.[0];
+    expect(composite?.options.kind).toBe('composite');
+    expect(composite?.options.tag).toBeUndefined();
+    expect(composite?.options.native_id).toBeUndefined();
+    expect(Object.keys(composite?.options ?? {})).not.toContain('tag');
+    expect(Object.keys(composite?.options ?? {})).not.toContain('native_id');
+  });
+
+  it("nothing is read off a host's stateNode beyond what the environment's own measure() touches", () => {
+    const reads = new Set<string>();
+    const trackedNode = trackedStateNode({ rect: RECT }, reads);
+    const spec: FiberSpec = { tag: FiberTag.HostComponent, type: 'View', stateNode: trackedNode, children: [] };
+
+    const tree = buildViewTree([fiberRoot(spec)], makeEnv());
+
+    expect(tree).not.toBeNull();
+    expect(reads).toEqual(new Set(['rect']));
+  });
+
+  it('nothing is read at all under a secure boundary — not testID, not nativeID, not via has/ownKeys', () => {
+    const reads = new Set<string>();
+    const SecureBoundary = {};
+    const props = trackedProps({ testID: 'x', nativeID: 'y', other: 1 }, reads);
+
+    const tree = buildViewTree(
+      [fiberRoot(fn(SecureBoundary, [host('Inner', RECT, [], props)]))],
+      makeEnv({ isSecureBoundary: (fiber) => fiber.type === SecureBoundary }),
+    );
+
+    expect(tree).not.toBeNull();
+    expect(reads.size).toBe(0);
   });
 
   it('testID becomes options.tag and nativeID options.native_id', () => {
@@ -204,6 +341,75 @@ describe('buildViewTree', () => {
     expect(keptNode?.options.native_id).toBe(kept);
     expect(withheldNode?.options.tag).toBeUndefined();
     expect(withheldNode?.options.native_id).toBeUndefined();
+  });
+
+  it('a throwing testID getter withholds the tag instead of crashing the walk', () => {
+    const props: { testID?: string } = {};
+    Object.defineProperty(props, 'testID', {
+      get(): string {
+        throw new Error('boom');
+      },
+    });
+
+    const tree = buildViewTree([fiberRoot(host('View', RECT, [], props))], makeEnv());
+
+    // Not just "no tag" — the host itself must still be there. A tagOptions
+    // that returned `undefined` instead of `{}` on the throw would make the
+    // host vanish entirely instead of merely losing its tag, and `undefined`
+    // would satisfy `.options.tag === undefined` just as well.
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('View');
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.options.tag).toBeUndefined();
+  });
+
+  it('a throwing env.measure treats the host as unmeasurable (dropped/promoted), not as measured', () => {
+    const tree = buildViewTree(
+      [fiberRoot(host('Outer', RECT, [host('InnerShown', RECT)]))],
+      makeEnv({
+        measure: (fiber) =>
+          fiber.type === 'Outer' ? (() => { throw new Error('boom'); })() : RECT,
+      }),
+    );
+
+    // "Outer" itself never appears (unmeasurable), but its child is promoted
+    // and still shown — the same as a `measure` that plainly returned null.
+    const names = tree?.subitems?.[0]?.subitems?.map((n) => n.class_name);
+    expect(names).toEqual(['InnerShown']);
+  });
+
+  it('a throwing env.isSecureBoundary is treated as "not secure", not as "secure"', () => {
+    const tree = buildViewTree(
+      [fiberRoot(host('View', RECT))],
+      makeEnv({
+        isSecureBoundary: () => {
+          throw new Error('boom');
+        },
+      }),
+    );
+
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.options.secure).toBeUndefined();
+  });
+
+  it('a throwing env.isWrapper is treated as "not the wrapper", not as "is the wrapper" (the fiber is still emitted)', () => {
+    const tree = buildViewTree(
+      [fiberRoot(host('View', RECT))],
+      makeEnv({
+        isWrapper: () => {
+          throw new Error('boom');
+        },
+      }),
+    );
+
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('View');
+  });
+
+  it('a non-finite or non-number env.now() is treated as 0, and the walk proceeds normally', () => {
+    const tree = buildViewTree(
+      [fiberRoot(host('View', RECT))],
+      makeEnv({ now: () => 'not-a-number' as unknown as number }),
+    );
+
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('View');
+    expect(tree?.truncated).toBeUndefined();
   });
 
   it('everything under BugseeSecure is secure and carries no tag or native_id', () => {
@@ -253,6 +459,11 @@ describe('buildViewTree', () => {
     const composite = tree?.subitems?.[0]?.subitems?.[0];
     expect(composite?.options.kind).toBe('composite');
     expect(composite?.bounds).toEqual([5, 5, 20, 20]);
+    // Nothing here was cut off — a composite recursing normally must start
+    // from "not truncated", not carry a stale truncated flag into a subtree
+    // that never needed one.
+    expect(composite?.truncated).toBeUndefined();
+    expect(tree?.truncated).toBeUndefined();
   });
 
   it('a union of iOS bounds is rounded again, cleaning up floating-point drift from the union arithmetic', () => {
@@ -275,7 +486,7 @@ describe('buildViewTree', () => {
     expect(composite?.bounds).toEqual([0.1, 0, 25.1, 10]);
   });
 
-  it('a subtree with no measurable host is dropped', () => {
+  it('a subtree with no measurable host anywhere in it is dropped', () => {
     const tree = buildViewTree(
       [
         fiberRoot(
@@ -290,18 +501,43 @@ describe('buildViewTree', () => {
     expect(tree).toBeNull();
   });
 
-  it('a hidden Offscreen subtree is dropped', () => {
+  it('an unmeasurable host promotes its children instead of dropping the whole subtree', () => {
     const tree = buildViewTree(
-      [
-        fiberRoot(
-          fragment([offscreen(false, [host('Hidden', RECT)]), host('Visible', RECT)]),
-        ),
-      ],
+      [fiberRoot(host('Unmeasurable', null, [host('StillShown', RECT)]))],
+      makeEnv(),
+    );
+
+    const names = tree?.subitems?.[0]?.subitems?.map((n) => n.class_name);
+    expect(names).toEqual(['StillShown']);
+  });
+
+  it('a hidden Offscreen subtree (memoizedState holding baseLanes/cachePool) is dropped', () => {
+    const tree = buildViewTree(
+      [fiberRoot(fragment([offscreen(false, [host('Hidden', RECT)]), host('Visible', RECT)]))],
       makeEnv(),
     );
 
     const names = tree?.subitems?.[0]?.subitems?.map((n) => n.class_name);
     expect(names).toEqual(['Visible']);
+  });
+
+  it('a visible Offscreen subtree (memoizedState null) is shown', () => {
+    const tree = buildViewTree([fiberRoot(offscreen(true, [host('Shown', RECT)]))], makeEnv());
+    expect(tree?.subitems?.[0]?.subitems?.map((n) => n.class_name)).toEqual(['Shown']);
+  });
+
+  it('an Offscreen fiber with an unrecognised memoizedState shape fails closed (dropped, not shown)', () => {
+    const tree = buildViewTree(
+      [fiberRoot(offscreenWithUnknownState('some-future-shape', [host('Shown', RECT)]))],
+      makeEnv(),
+    );
+
+    expect(tree).toBeNull();
+  });
+
+  it('LegacyHidden is always dropped — no verified visible signal for an unstable, unexposed tag', () => {
+    const tree = buildViewTree([fiberRoot(legacyHidden([host('NeverShown', RECT)]))], makeEnv());
+    expect(tree).toBeNull();
   });
 
   it('the wrap component and the anchor are not emitted', () => {
@@ -328,9 +564,6 @@ describe('buildViewTree', () => {
   });
 
   it('Android bounds add the X origin, not just the Y one', () => {
-    // The brief's own worked example fixes originX at 0, where adding and
-    // subtracting the origin happen to look the same. A non-zero originX
-    // tells them apart.
     const tree = buildViewTree(
       [fiberRoot(host('View', { x: 10, y: 0, width: 5, height: 5 }))],
       makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 0 }),
@@ -350,17 +583,44 @@ describe('buildViewTree', () => {
     expect(node?.bounds).toEqual([11.13, 22.67, 5.56, 6.45]);
   });
 
-  it('stops at 2000 nodes and marks truncated on the node and the root', () => {
+  it('stops at exactly VH_MAX_NODES nodes emitted in total — root and surface reserved up front, not overshot', () => {
     const children = Array.from({ length: VH_MAX_NODES + 5 }, (_, i) => host(`Child${i}`, RECT));
     const tree = buildViewTree([fiberRoot(fragment(children))], makeEnv());
 
+    expect(tree).not.toBeNull();
+    const all = flatten(tree as ManagedNode);
+    expect(all).toHaveLength(VH_MAX_NODES);
+
     const surface = tree?.subitems?.[0];
-    expect(surface?.subitems).toHaveLength(VH_MAX_NODES);
+    // Root (1) + surface (1) reserved up front leaves VH_MAX_NODES - 2 hosts.
+    expect(surface?.subitems).toHaveLength(VH_MAX_NODES - 2);
     expect(surface?.truncated).toBe(true);
     expect(tree?.truncated).toBe(true);
   });
 
-  it('stops at depth 64 and marks that node truncated', () => {
+  it('ids stay gap-free (a strict preorder 0..n-1) even when a candidate fiber is dropped along the way', () => {
+    const tree = buildViewTree(
+      [
+        fiberRoot(
+          fragment([
+            host('A', RECT),
+            fn(function DroppedComposite() {
+              return null;
+            }, [host('Unmeasurable', null)]),
+            host('B', RECT),
+          ]),
+        ),
+      ],
+      makeEnv(),
+    );
+
+    expect(tree).not.toBeNull();
+    const all = flatten(tree as ManagedNode);
+    const ids = all.map((n) => Number(n.id)).sort((a, b) => a - b);
+    expect(ids).toEqual(Array.from({ length: ids.length }, (_, i) => i));
+  });
+
+  it('stops at depth 64 and marks that node — and the root — truncated', () => {
     let deepest = host('Bottom', RECT);
     for (let i = 0; i < VH_MAX_DEPTH + 10; i += 1) {
       deepest = host(`Level${i}`, RECT, [deepest]);
@@ -378,6 +638,128 @@ describe('buildViewTree', () => {
     expect(depth).toBe(VH_MAX_DEPTH - 1);
     expect(node?.truncated).toBe(true);
     expect(node?.subitems).toBeUndefined();
+    // Per the plan, only the node where the cut happened and the root need
+    // to carry `truncated` — an intermediate ancestor (the surface here)
+    // that fully absorbed and re-emitted its child is not itself missing
+    // anything of its own.
+    expect(tree?.truncated).toBe(true);
+  });
+
+  it('a depth cut landing on a composite still marks the nearest emitted (host) ancestor and the root', () => {
+    // 63 nested hosts wrapping a composite whose own child (a host) sits one
+    // level too deep. The composite is dropped (nothing measurable of its
+    // own), but the innermost host — its nearest emitted ancestor — and the
+    // root must both carry `truncated: true`.
+    let deepest: FiberSpec = fn(function TooDeep() {
+      return null;
+    }, [host('NeverShown', RECT)]);
+    for (let i = 0; i < 63; i += 1) {
+      deepest = host(`Level${i}`, RECT, [deepest]);
+    }
+
+    const tree = buildViewTree([fiberRoot(deepest)], makeEnv());
+
+    let node = tree?.subitems?.[0]?.subitems?.[0];
+    let count = 0;
+    let innermost: ManagedNode | undefined;
+    while (node) {
+      innermost = node;
+      count += 1;
+      node = node.subitems?.[0];
+    }
+
+    expect(count).toBe(63);
+    expect(innermost?.class_name).not.toBe('TooDeep');
+    expect(innermost?.truncated).toBe(true);
+    expect(tree?.truncated).toBe(true);
+  });
+
+  it('a host at the depth limit whose only child is HostText is not marked truncated (nothing was ever going to show)', () => {
+    let deepest: FiberSpec = host('TextOnly', RECT, [text()]);
+    for (let i = 0; i < VH_MAX_DEPTH - 1; i += 1) {
+      deepest = host(`Level${i}`, RECT, [deepest]);
+    }
+
+    const tree = buildViewTree([fiberRoot(deepest)], makeEnv());
+
+    let node = tree?.subitems?.[0]?.subitems?.[0];
+    let innermost: ManagedNode | undefined;
+    while (node) {
+      innermost = node;
+      node = node.subitems?.[0];
+    }
+
+    expect(innermost?.class_name).toBe('TextOnly');
+    expect(innermost?.truncated).toBeUndefined();
+    expect(tree?.truncated).toBeUndefined();
+  });
+
+  it('a composite at the depth limit whose only child is HostText is not marked truncated', () => {
+    let deepest: FiberSpec = fn(function TextOnly() {
+      return null;
+    }, [text()]);
+    for (let i = 0; i < VH_MAX_DEPTH - 1; i += 1) {
+      deepest = host(`Level${i}`, RECT, [deepest]);
+    }
+
+    // The composite has nothing measurable (its only child is HostText, and
+    // HostText is never emitted) — dropped regardless, per "no measurable
+    // host". The point here is that dropping it must NOT taint the root,
+    // since nothing was actually cut off.
+    const tree = buildViewTree([fiberRoot(deepest)], makeEnv());
+    expect(tree?.truncated).toBeUndefined();
+  });
+
+  it('an empty leaf composite (no children at all) does not taint its ancestor when dropped', () => {
+    const tree = buildViewTree(
+      [
+        fiberRoot(
+          fragment([
+            fn(function EmptyLeaf() {
+              return null;
+            }),
+            host('Shown', RECT),
+          ]),
+        ),
+      ],
+      makeEnv(),
+    );
+
+    const names = tree?.subitems?.[0]?.subitems?.map((n) => n.class_name);
+    expect(names).toEqual(['Shown']);
+    expect(tree?.truncated).toBeUndefined();
+  });
+
+  it('a node-budget cap applies to composites too, and stops at exactly VH_MAX_NODES total', () => {
+    const manyComposites = Array.from({ length: VH_MAX_NODES + 5 }, (_, i) =>
+      fn(function () {
+        return null;
+      }, [host(`Inner${i}`, RECT)]),
+    );
+
+    const tree = buildViewTree([fiberRoot(fragment(manyComposites))], makeEnv());
+
+    expect(tree).not.toBeNull();
+    expect(flatten(tree as ManagedNode)).toHaveLength(VH_MAX_NODES);
+    expect(tree?.truncated).toBe(true);
+  });
+
+  it('a root that emits nothing but is truncated (a local cycle) still marks the final root truncated, via another root that succeeds', () => {
+    // root1: an unmeasurable host that is its own sibling. It contributes
+    // nothing (unmeasurable, no children), but the self-reference is still
+    // caught as a cycle on the second (self) visit, marking root1's own
+    // frame truncated — via the *local* visited-set, not the global stop
+    // flag a budget/node-cap trip would set (which would also cut off
+    // every other root, defeating this test's point).
+    const a = buildFiberTree(host('Unmeasurable', null));
+    a.sibling = a;
+
+    const tree = buildViewTree([{ current: a }, fiberRoot(host('Shown', RECT))], makeEnv());
+
+    expect(tree).not.toBeNull();
+    expect(tree?.subitems).toHaveLength(1);
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Shown');
+    expect(tree?.truncated).toBe(true);
   });
 
   it('a true leaf sitting exactly at the depth limit is not marked truncated', () => {
@@ -400,14 +782,15 @@ describe('buildViewTree', () => {
     expect(count).toBe(VH_MAX_DEPTH);
     expect(node?.class_name).toBe('Bottom');
     expect(node?.truncated).toBeUndefined();
+    expect(tree?.truncated).toBeUndefined();
   });
 
-  it("stops when the 250 ms budget runs out and marks the root truncated", () => {
-    // Deterministic clock: `now()` is called once per fiber visited
-    // (walkFiber's own entry check). The 5th call (index 4) is the first to
-    // report being over budget: call 0 establishes startedAt, call 1 is the
-    // Fragment itself, calls 2 and 3 are Child0 and Child1, and call 4 is
-    // Child2 — which is what stops the walk.
+  it('stops when the 250 ms budget runs out and marks both the nearest node and the root truncated', () => {
+    // Deterministic clock: `now()` is called once per fiber visited. The 5th
+    // call (index 4) is the first to report being over budget: call 0
+    // establishes startedAt, call 1 is the Fragment itself, calls 2 and 3
+    // are Child0 and Child1, and call 4 is Child2 — which is what stops the
+    // walk.
     let calls = 0;
     const now = (): number => {
       const value = calls >= 4 ? 1000 : 0;
@@ -422,7 +805,10 @@ describe('buildViewTree', () => {
     const surface = tree?.subitems?.[0];
     expect(surface?.subitems).toHaveLength(2);
     expect(surface?.subitems?.map((n) => n.class_name)).toEqual(['Child0', 'Child1']);
-    expect(surface?.truncated).toBeUndefined();
+    // Per the plan's payload contract, `truncated` marks wherever children
+    // went unvisited regardless of *why* (depth, node cap or time budget) —
+    // there is no "the root, not the node" carve-out for the time budget.
+    expect(surface?.truncated).toBe(true);
   });
 
   it('the time budget trips strictly after VH_WALK_BUDGET_MS, not at or before it', () => {
@@ -448,16 +834,15 @@ describe('buildViewTree', () => {
 
     expect(tree?.subitems?.[0]?.subitems).toHaveLength(1);
     expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('AtBudget');
+    expect(tree?.subitems?.[0]?.truncated).toBe(true);
     expect(tree?.truncated).toBe(true);
   });
 
-  it('a time-budget cutoff nested behind a transparent Fragment does not mark its composite ancestor', () => {
-    // Unlike the node-budget case, a budget cutoff bubbling up through a
-    // transparent Fragment must NOT mark the enclosing composite truncated
-    // (only the root is, per the "the root, not the node" rule for time)
-    // — exercising the ancestor's own fallback `ctx.stopped` check with a
-    // reason other than 'nodes', since `result.cutByNodeBudget` alone
-    // (always false for a budget stop) cannot signal it.
+  it('a time-budget cutoff nested behind a transparent Fragment marks its composite ancestor too', () => {
+    // Per the plan's payload contract there is no special case for *why* the
+    // walk stopped: a budget cutoff bubbling up through a transparent
+    // Fragment must mark the enclosing composite `truncated`, the same as a
+    // node-budget or depth cutoff would.
     let calls = 0;
     const now = (): number => {
       const value = calls >= 6 ? 1000 : 0;
@@ -480,8 +865,245 @@ describe('buildViewTree', () => {
     const outer = tree?.subitems?.[0]?.subitems?.[0];
     expect(outer?.class_name).toBe('Outer');
     expect(outer?.subitems?.map((n) => n.class_name)).toEqual(['First', 'Deep0', 'Deep1']);
-    expect(outer?.truncated).toBeUndefined();
+    expect(outer?.truncated).toBe(true);
     expect(tree?.truncated).toBe(true);
+  });
+
+  it('a node-budget cutoff nested inside the last child still marks its ancestor truncated', () => {
+    const manySiblings = Array.from({ length: VH_MAX_NODES + 5 }, (_, i) => host(`Deep${i}`, RECT));
+
+    const tree = buildViewTree(
+      [
+        fiberRoot(
+          fn(function Outer() {
+            return null;
+          }, [host('First', RECT), fragment(manySiblings)]),
+        ),
+      ],
+      makeEnv(),
+    );
+
+    const outer = tree?.subitems?.[0]?.subitems?.[0];
+    expect(outer?.class_name).toBe('Outer');
+    expect(outer?.truncated).toBe(true);
+    expect(tree?.truncated).toBe(true);
+  });
+
+  it('a chain of 5000 Fragments returns a tree without throwing (no stack growth, iterative walk)', () => {
+    let deepest: FiberSpec = host('Bottom', RECT);
+    for (let i = 0; i < 5000; i += 1) {
+      deepest = fragment([deepest]);
+    }
+
+    expect(() => buildViewTree([fiberRoot(deepest)], makeEnv())).not.toThrow();
+    const tree = buildViewTree([fiberRoot(deepest)], makeEnv());
+    expect(tree?.subitems?.[0]?.subitems?.map((n) => n.class_name)).toEqual(['Bottom']);
+  });
+
+  it('a child cycle does not hang and does not throw, and is reported truncated', () => {
+    const a = buildFiberTree(host('A', RECT));
+    a.child = a; // a is its own child
+
+    expect(() => buildViewTree([{ current: a }], makeEnv())).not.toThrow();
+    const tree = buildViewTree([{ current: a }], makeEnv());
+    expect(tree).not.toBeNull();
+    expect(tree?.truncated).toBe(true);
+  });
+
+  it('a sibling cycle does not hang and does not throw, and is reported truncated', () => {
+    const parent = buildFiberTree(fragment([]));
+    const a = buildFiberTree(host('A', RECT));
+    const b = buildFiberTree(host('B', RECT));
+    a.return = parent;
+    b.return = parent;
+    a.sibling = b;
+    b.sibling = a; // a <-> b cycle
+    parent.child = a;
+
+    expect(() => buildViewTree([{ current: parent }], makeEnv())).not.toThrow();
+    const tree = buildViewTree([{ current: parent }], makeEnv());
+    expect(tree).not.toBeNull();
+    // At least the first sibling in the cycle is emitted before it is caught.
+    expect(tree?.subitems?.[0]?.subitems?.map((n) => n.class_name)).toContain('A');
+    expect(tree?.truncated).toBe(true);
+  });
+
+  it('a transparent wrapper around ordinary content is not itself marked truncated', () => {
+    // A control for the cycle/cutoff-propagation tests above: an ordinary
+    // Fragment over ordinary content must NOT taint its parent, proving the
+    // propagation is conditional (`||`), not unconditional.
+    const tree = buildViewTree([fiberRoot(fragment([host('View', RECT)]))], makeEnv());
+
+    expect(tree?.truncated).toBeUndefined();
+    expect(tree?.subitems?.[0]?.truncated).toBeUndefined();
+  });
+
+  it('a huge purely-transparent run before a single trailing host stops before ever reaching it, via the fiber-visit budget alone', () => {
+    // 20,000 empty Fragments (never emitted, so `emittedCount` never grows —
+    // the node cap cannot be what stops this) followed by one real host.
+    // Correct behaviour never reaches the host at all (the fiber-visit
+    // budget trips first); without that budget, the walk would eventually
+    // get there (nothing else bounds a merely wide, non-cyclic, finite
+    // fan-out) and emit it.
+    const manyEmptyFragments = Array.from({ length: 20_000 }, () => fragment([]));
+    const tree = buildViewTree(
+      [fiberRoot(fragment([...manyEmptyFragments, host('NeverReached', RECT)]))],
+      makeEnv(),
+    );
+
+    expect(tree).toBeNull();
+  });
+
+  it('the fiber-visit budget allows exactly its own count of visits, not one more or one fewer', () => {
+    // Mirrors walk.ts's own VH_FIBER_VISIT_BUDGET (VH_MAX_NODES * 8): sized
+    // so the trailing host is visited exactly on the budget-th visit — the
+    // fragment itself is visit 1, each of the N empty fragments is one more
+    // visit, and the host is the last. `> BUDGET` (correct) lets exactly
+    // BUDGET visits through; `>= BUDGET` (an off-by-one mutant) would not.
+    const fiberVisitBudget = VH_MAX_NODES * 8;
+    const emptyFragmentCount = fiberVisitBudget - 2;
+    const manyEmptyFragments = Array.from({ length: emptyFragmentCount }, () => fragment([]));
+
+    const tree = buildViewTree(
+      [fiberRoot(fragment([...manyEmptyFragments, host('LastOneIn', RECT)]))],
+      makeEnv(),
+    );
+
+    expect(tree?.subitems?.[0]?.subitems?.map((n) => n.class_name)).toEqual(['LastOneIn']);
+  });
+
+  it('a depth-cut check on a cyclic sibling chain conservatively assumes there might be content', () => {
+    let deepest: FiberSpec = host('AtLimit', RECT);
+    for (let i = 0; i < VH_MAX_DEPTH - 1; i += 1) {
+      deepest = host(`Level${i}`, RECT, [deepest]);
+    }
+    const root = buildFiberTree(deepest);
+
+    let innermost = root;
+    while (innermost.child !== null) {
+      innermost = innermost.child;
+    }
+    const textFiber = buildFiberTree(text());
+    textFiber.sibling = textFiber; // a HostText that is its own sibling
+    textFiber.return = innermost;
+    innermost.child = textFiber;
+
+    const tree = buildViewTree([{ current: root }], makeEnv());
+
+    let node = tree?.subitems?.[0]?.subitems?.[0];
+    let last: ManagedNode | undefined;
+    while (node) {
+      last = node;
+      node = node.subitems?.[0];
+    }
+
+    expect(last?.class_name).toBe('AtLimit');
+    expect(last?.truncated).toBe(true);
+  });
+
+  it('a depth-cut check gives up after SIBLING_PEEK_CAP siblings and conservatively assumes there might be content', () => {
+    // All 10,005 children really are HostText (nothing would ever have been
+    // shown), but giving up the scan after the cap must still report
+    // "might have content" rather than silently swallowing a truncation
+    // that could have been genuine.
+    const manyTextSiblings = Array.from({ length: 10_005 }, () => text());
+    let deepest: FiberSpec = host('AtLimit', RECT, manyTextSiblings);
+    for (let i = 0; i < VH_MAX_DEPTH - 1; i += 1) {
+      deepest = host(`Level${i}`, RECT, [deepest]);
+    }
+
+    const tree = buildViewTree([fiberRoot(deepest)], makeEnv());
+
+    let node = tree?.subitems?.[0]?.subitems?.[0];
+    let last: ManagedNode | undefined;
+    while (node) {
+      last = node;
+      node = node.subitems?.[0];
+    }
+
+    expect(last?.class_name).toBe('AtLimit');
+    expect(last?.truncated).toBe(true);
+  });
+
+  it('the depth-cut sibling scan allows exactly SIBLING_PEEK_CAP siblings before giving up, not one more or one fewer', () => {
+    // Mirrors walk.ts's own SIBLING_PEEK_CAP (10,000). Exactly that many
+    // HostText siblings are fully scanned (the chain ends exactly as the
+    // budget would have run out) and correctly found to hold nothing real;
+    // one more forces giving up before the scan finishes, which
+    // conservatively reports "might have content" instead.
+    const siblingPeekCap = 10_000;
+
+    const exactlyAtCap = Array.from({ length: siblingPeekCap }, () => text());
+    let atCapChain: FiberSpec = host('AtLimit', RECT, exactlyAtCap);
+    for (let i = 0; i < VH_MAX_DEPTH - 1; i += 1) {
+      atCapChain = host(`Level${i}`, RECT, [atCapChain]);
+    }
+    const atCapTree = buildViewTree([fiberRoot(atCapChain)], makeEnv());
+    let atCapNode = atCapTree?.subitems?.[0]?.subitems?.[0];
+    let atCapLast: ManagedNode | undefined;
+    while (atCapNode) {
+      atCapLast = atCapNode;
+      atCapNode = atCapNode.subitems?.[0];
+    }
+    expect(atCapLast?.class_name).toBe('AtLimit');
+    expect(atCapLast?.truncated).toBeUndefined();
+
+    const oneOverCap = Array.from({ length: siblingPeekCap + 1 }, () => text());
+    let overCapChain: FiberSpec = host('AtLimit', RECT, oneOverCap);
+    for (let i = 0; i < VH_MAX_DEPTH - 1; i += 1) {
+      overCapChain = host(`Level${i}`, RECT, [overCapChain]);
+    }
+    const overCapTree = buildViewTree([fiberRoot(overCapChain)], makeEnv());
+    let overCapNode = overCapTree?.subitems?.[0]?.subitems?.[0];
+    let overCapLast: ManagedNode | undefined;
+    while (overCapNode) {
+      overCapLast = overCapNode;
+      overCapNode = overCapNode.subitems?.[0];
+    }
+    expect(overCapLast?.class_name).toBe('AtLimit');
+    expect(overCapLast?.truncated).toBe(true);
+  });
+
+  it('a clock that is corrupted only on its first call still lets the time budget trip on a later, valid reading', () => {
+    // safeNow() falling back to 0 for a bad first reading must not corrupt
+    // ctx.startedAt into something a later *valid* reading can no longer be
+    // compared against (e.g. a mutant that let a non-number through would
+    // make every later `now() - startedAt` a NaN, which is never `> budget`).
+    let calls = 0;
+    const now = (): number => {
+      calls += 1;
+      return calls === 1 ? ('garbage' as unknown as number) : 100_000;
+    };
+
+    const tree = buildViewTree(
+      [fiberRoot(fragment([host('A', RECT), host('B', RECT)]))],
+      makeEnv({ now }),
+    );
+
+    // The budget trips on the very next check (a huge, valid elapsed time),
+    // before either host is ever visited — nothing is emitted at all. A
+    // corrupted `startedAt` that later comparisons can't subtract from
+    // (NaN, never `> budget`) would instead let both hosts through.
+    expect(tree).toBeNull();
+  });
+
+  it('undefined child/sibling links are tolerated the same as null', () => {
+    const a = buildFiberTree(host('A', RECT));
+    (a as unknown as { child: undefined }).child = undefined;
+    (a as unknown as { sibling: undefined }).sibling = undefined;
+
+    expect(() => buildViewTree([{ current: a }], makeEnv())).not.toThrow();
+    const tree = buildViewTree([{ current: a }], makeEnv());
+    expect(tree?.subitems?.[0]?.subitems?.map((n) => n.class_name)).toEqual(['A']);
+  });
+
+  it('a frozen clock with a very wide fan-out still stops, via the fiber-visit budget rather than the clock', () => {
+    const manySiblings = Array.from({ length: 20_000 }, (_, i) => host(`S${i}`, RECT));
+    const tree = buildViewTree([fiberRoot(fragment(manySiblings))], makeEnv({ now: () => 0 }));
+
+    expect(tree).not.toBeNull();
+    expect(tree?.truncated).toBe(true);
+    expect(tree?.subitems?.[0]?.subitems?.length ?? 0).toBeLessThan(20_000);
   });
 
   it('ids are preorder and unique', () => {
@@ -546,6 +1168,55 @@ describe('buildViewTree', () => {
   it('returns null when nothing is emitted', () => {
     expect(buildViewTree([], makeEnv())).toBeNull();
     expect(buildViewTree([fiberRoot(fragment([]))], makeEnv())).toBeNull();
+  });
+
+  it('a malformed root ({ current: null }) is silently skipped, not treated as truncated', () => {
+    const tree = buildViewTree(
+      [{ current: null as unknown as never }, fiberRoot(host('Shown', RECT))],
+      makeEnv(),
+    );
+
+    expect(tree?.subitems).toHaveLength(1);
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Shown');
+    expect(tree?.truncated).toBeUndefined();
+  });
+
+  it('a root that legitimately has nothing to show is not treated as truncated', () => {
+    const tree = buildViewTree(
+      [fiberRoot(fragment([])), fiberRoot(host('Shown', RECT))],
+      makeEnv(),
+    );
+
+    expect(tree?.subitems).toHaveLength(1);
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Shown');
+    expect(tree?.truncated).toBeUndefined();
+  });
+
+  it('a non-object root is silently skipped, not treated as truncated', () => {
+    const tree = buildViewTree(
+      [42 as unknown as { current: never }, fiberRoot(host('Shown', RECT))],
+      makeEnv(),
+    );
+
+    expect(tree?.subitems).toHaveLength(1);
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Shown');
+    expect(tree?.truncated).toBeUndefined();
+  });
+
+  it('a null root entry does not throw (isObject(null) is false, not true)', () => {
+    // `null` specifically, not `{ current: null }`: `typeof null === 'object'`
+    // is a JS quirk `isObject` must not be fooled by, or this root would be
+    // treated as an object and `(null).current` would throw.
+    expect(() =>
+      buildViewTree([null as unknown as { current: never }, fiberRoot(host('Shown', RECT))], makeEnv()),
+    ).not.toThrow();
+
+    const tree = buildViewTree(
+      [null as unknown as { current: never }, fiberRoot(host('Shown', RECT))],
+      makeEnv(),
+    );
+    expect(tree?.subitems).toHaveLength(1);
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Shown');
   });
 
   it("a class component's class_name is its name", () => {
@@ -625,31 +1296,6 @@ describe('buildViewTree', () => {
     expect(names).toEqual(['Anonymous', 'Anonymous']);
   });
 
-  it('SimpleMemo also unwraps to the inner name', () => {
-    function InnerSimpleMemo(): null {
-      return null;
-    }
-    const spec: FiberSpec = {
-      tag: FiberTag.SimpleMemo,
-      type: { type: InnerSimpleMemo },
-      children: [host('View', RECT)],
-    };
-
-    const tree = buildViewTree([fiberRoot(spec)], makeEnv());
-    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('InnerSimpleMemo');
-  });
-
-  it('an Offscreen subtree with _visibility set is shown when the visible bit is on', () => {
-    const tree = buildViewTree([fiberRoot(offscreen(true, [host('Shown', RECT)]))], makeEnv());
-    expect(tree?.subitems?.[0]?.subitems?.map((n) => n.class_name)).toEqual(['Shown']);
-  });
-
-  it('an Offscreen fiber with no usable _visibility is treated as visible', () => {
-    const spec: FiberSpec = { tag: FiberTag.Offscreen, stateNode: null, children: [host('Shown', RECT)] };
-    const tree = buildViewTree([fiberRoot(spec)], makeEnv());
-    expect(tree?.subitems?.[0]?.subitems?.map((n) => n.class_name)).toEqual(['Shown']);
-  });
-
   it('a null memoizedProps never crashes and withholds tag/native_id', () => {
     const root = fiberRoot(host('View', RECT));
     root.current.memoizedProps = null;
@@ -707,29 +1353,5 @@ describe('buildViewTree', () => {
     }
 
     expect(buildViewTree([fiberRoot(deepest)], makeEnv())).toBeNull();
-  });
-
-  it('a node-budget cutoff nested inside the last child still marks its ancestor truncated', () => {
-    // The many siblings sit behind a Fragment (transparent), not another
-    // composite: a composite would absorb the cutoff into its own
-    // `truncated` flag, which would hide whether the ancestor's own
-    // cutoff-propagation path was exercised at all.
-    const manySiblings = Array.from({ length: VH_MAX_NODES + 5 }, (_, i) => host(`Deep${i}`, RECT));
-
-    const tree = buildViewTree(
-      [
-        fiberRoot(
-          fn(function Outer() {
-            return null;
-          }, [host('First', RECT), fragment(manySiblings)]),
-        ),
-      ],
-      makeEnv(),
-    );
-
-    const outer = tree?.subitems?.[0]?.subitems?.[0];
-    expect(outer?.class_name).toBe('Outer');
-    expect(outer?.truncated).toBe(true);
-    expect(tree?.truncated).toBe(true);
   });
 });
