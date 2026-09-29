@@ -6,29 +6,41 @@
 import { useLayoutEffect, useRef } from 'react';
 import type { ComponentRef, ComponentType, ReactElement } from 'react';
 import { View } from 'react-native';
+import { VH_ANCHOR_NATIVE_ID } from './constants';
 import { markWrapComponent, registerAnchor, unregisterAnchor } from './requests';
 
-/**
- * The `nativeID` carried by the invisible anchor view `wrap` renders below,
- * so `./requests.ts`'s view-tree walk can recognise that view's own fiber by
- * its props (the same `nativeID` a host fiber's own props may legitimately
- * carry, per the walk's privacy rule) and leave it out of the captured tree,
- * rather than by trying to keep hold of the fiber itself across renders.
- */
-export const VH_ANCHOR_NATIVE_ID = '__bugsee_view_tree_anchor';
+// Re-exported from the leaf `./constants` module (see its own doc comment
+// for why the constant does not live here directly): `anchor.tsx` is this
+// value's documented public home, per the brief, even though `requests.ts`
+// no longer needs to import THIS module to read it.
+export { VH_ANCHOR_NATIVE_ID };
 
 /**
- * `displayName`, then `name`, then `'Anonymous'` -- the same rule `walk.ts`'s
- * own `nameOf` uses for a composite fiber, and for the same reason: an
- * anonymous function's `.name` is `''`, not `undefined`, so `??` alone would
- * never fall through to `'Anonymous'` for it.
+ * `displayName`, then a plain function's `.name`, then -- for `React.memo`
+ * and `React.forwardRef`, which are plain OBJECTS, not functions, and so
+ * have no `.name` of their own -- the same unwrap `walk.ts`'s own
+ * `compositeClassName` does for a fiber: `.type` (what `memo(...)` wraps) or
+ * `.render` (what `forwardRef(...)` wraps), recursively. `'Anonymous'` only
+ * once none of those resolves to a non-empty string.
+ *
+ * Never `??`: an anonymous function's `.name` is `''`, not `undefined`, so
+ * `??` alone would never fall through past it to `'Anonymous'`.
  */
-function nameOf(component: { displayName?: unknown; name?: unknown }): string {
-  if (typeof component.displayName === 'string' && component.displayName.length > 0) {
-    return component.displayName;
-  }
-  if (typeof component.name === 'string' && component.name.length > 0) {
-    return component.name;
+function nameOf(component: unknown): string {
+  if (typeof component === 'function' || (typeof component === 'object' && component !== null)) {
+    const named = component as { displayName?: unknown; name?: unknown; type?: unknown; render?: unknown };
+    if (typeof named.displayName === 'string' && named.displayName.length > 0) {
+      return named.displayName;
+    }
+    if (typeof named.name === 'string' && named.name.length > 0) {
+      return named.name;
+    }
+    if (named.type !== undefined) {
+      return nameOf(named.type);
+    }
+    if (named.render !== undefined) {
+      return nameOf(named.render);
+    }
   }
   return 'Anonymous';
 }
