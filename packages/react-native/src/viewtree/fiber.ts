@@ -12,8 +12,13 @@
 
 // React's own fiber tags (react-reconciler/src/ReactWorkTags.js). Only the
 // tags this package's walk needs to recognise are listed; the numeric values
-// are the ones React itself assigns and are stable across the supported
-// versions (checked by the compat script's internals guard).
+// are the ones React itself assigns and have been stable across the
+// supported versions for years. The compat script's internals guard pins two
+// of them at a distinctive, version-independent call site each — `SimpleMemo`
+// (15, where a plain-function `memo()` downgrades to it) and `Offscreen` (22,
+// compared directly against a fiber's `.tag`) — not all seventeen; the rest
+// rely on React's own tag numbering never being renumbered wholesale, the
+// same assumption every consumer of these internals makes.
 export const FiberTag = {
   FunctionComponent: 0,
   ClassComponent: 1,
@@ -39,6 +44,12 @@ export const FiberTag = {
  * narrower than React's own (unexported) `Fiber` type: everything the walk
  * needs and nothing it doesn't, so a fake fiber tree in a test is exactly as
  * capable as a real one for this package's purposes.
+ *
+ * `child`/`sibling`/`return` are typed as `FiberLike | null`, but nothing in
+ * `walk.ts` trusts that a real or malformed fiber actually honours it —
+ * `undefined`, or a non-object value entirely, is tolerated the same as
+ * `null` throughout, since only React's own reconciler is obliged to keep
+ * that promise and this package reads fibers it did not build.
  */
 export interface FiberLike {
   tag: number;
@@ -48,6 +59,16 @@ export interface FiberLike {
   sibling: FiberLike | null;
   return: FiberLike | null;
   memoizedProps: unknown;
+  /**
+   * Only ever inspected on an `Offscreen`/`LegacyHidden` fiber, to tell a
+   * hidden subtree from a visible one: React's `updateOffscreenComponent`
+   * sets this to a `{ baseLanes, cachePool }` object while `mode === "hidden"`
+   * and to `null` otherwise (both current and stale-then-cleared cases) —
+   * the same field React's own commit phase relies on, not a prop and not
+   * the `_visibility` bit some renderer versions also keep on `stateNode`.
+   * See `walk.ts`'s `isHidden`.
+   */
+  memoizedState: unknown;
   stateNode: unknown;
 }
 
@@ -61,37 +82,75 @@ export interface WindowRect {
 /**
  * A host public instance (what a `ref` to a host component resolves to, e.g.
  * a `View`) carries the fiber it was created for on `__internalInstanceHandle`
- * — assigned in `ReactFabricHostComponent.js` on React Native <= 0.8x and in
- * `ReactNativeElement.js` (its DOM-shaped replacement) on newer versions; both
- * are covered by the compat script. Walking `.return` from there to the
- * nearest `HostRoot` fiber and reading that fiber's `stateNode` recovers the
+ * — assigned in `ReactNativeElement.js` on every supported version, and also
+ * in `ReactFabricHostComponent.js` on React Native 0.81 (removed outright,
+ * not folded elsewhere, by 0.87 — `ReactFabricPublicInstance.js` only ever
+ * *reads* the field). Both assignment sites are covered by the compat
+ * script's internals guard, which checks for an actual assignment, not a
+ * read or a type declaration. Walking `.return` from there to the nearest
+ * `HostRoot` fiber and reading that fiber's `stateNode` recovers the
  * `FiberRoot`, whose `.current` is the tree's current root fiber — the
  * argument `buildViewTree` (`walk.ts`) walks from.
+ *
+ * Never throws and never loops forever: a missing, non-object or cyclic
+ * `.return` chain (all of which would be a bug elsewhere, never legitimate)
+ * ends the walk with `null` rather than a `TypeError` or a hang.
  */
+const FIBER_ROOT_RETURN_CHAIN_CAP = 10_000;
+
+/**
+ * True for a real object, `false` for `null`, `undefined` and every
+ * primitive — a single, once-tested answer to "is this safe to treat as a
+ * fiber/handle/state node", instead of a `=== null || typeof !== 'object'`
+ * (or `== null || …`) repeated at each of `fiberRootOf`'s four checks, which
+ * would leave each repetition's own redundancy to prove on its own.
+ */
+function isObject(value: unknown): value is object {
+  return value !== null && typeof value === 'object';
+}
+
 export function fiberRootOf(publicInstance: unknown): { current: FiberLike } | null {
-  if (publicInstance === null || typeof publicInstance !== 'object') {
+  // No blanket try/catch: every property this function reads is read only
+  // after a type check has already proven it safe to read, so nothing here
+  // throws for any malformed-but-plain-object input — and a blanket catch
+  // around checks that already make the function safe would only turn every
+  // one of them into an equally-safe no-op if it were ever deleted, not a
+  // failure. (A fiber whose `.return`/`.stateNode` is a *throwing getter*
+  // is not defended against — but a fiber object is never adversarial,
+  // user-supplied data the way a component's props are.)
+  if (!isObject(publicInstance)) {
     return null;
   }
 
   const handle = (publicInstance as { __internalInstanceHandle?: unknown }).__internalInstanceHandle;
-  // `typeof handle !== 'object'` already covers both `null` (a JS quirk:
-  // `typeof null === 'object'`, so it needs its own check) and `undefined`
-  // (whose typeof is the distinct string `'undefined'`, already excluded).
-  if (handle === null || typeof handle !== 'object') {
+  if (!isObject(handle)) {
     return null;
   }
 
   let fiber = handle as FiberLike;
-  while (fiber.tag !== FiberTag.HostRoot) {
+  for (let steps = 0; fiber.tag !== FiberTag.HostRoot; steps += 1) {
+    if (steps >= FIBER_ROOT_RETURN_CHAIN_CAP) {
+      // A `.return` chain this long is a cycle (or some other corruption),
+      // never a real tree: React's own depth cap is nowhere near this.
+      return null;
+    }
+    // `isObject`, not just `!== null`: a malformed fiber's `.return` being
+    // `undefined` (rather than the `null` React itself would leave at the
+    // top), or any other non-object value, ends the walk the same way, not
+    // with a `TypeError` on the next iteration.
     const parent = fiber.return;
-    if (parent === null) {
+    if (!isObject(parent)) {
       return null;
     }
     fiber = parent;
   }
 
   const stateNode = fiber.stateNode;
-  if (stateNode === null || typeof stateNode !== 'object' || !('current' in stateNode)) {
+  if (!isObject(stateNode)) {
+    return null;
+  }
+  const current = (stateNode as { current?: unknown }).current;
+  if (!isObject(current)) {
     return null;
   }
   return stateNode as { current: FiberLike };
