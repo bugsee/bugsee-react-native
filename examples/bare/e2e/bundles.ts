@@ -20,6 +20,21 @@
  * server.`), and the test asserts that line as the retention precondition.
  * The simulator's data container is a host directory, so clearing and
  * pulling are plain file operations.
+ *
+ * iPhone (`E2E_IOS_TARGET=device`, the default). The same dead endpoint:
+ * `127.0.0.1` is then the phone's own loopback, where nothing listens on
+ * port 9, and airplane mode has no command-line switch. The data container
+ * is reached through devicectl's file service
+ * (`--domain-type appDataContainer`): `info files` lists, `copy from` pulls.
+ * devicectl cannot delete a single path; its one removal,
+ * `copy to --remove-existing-content true`, empties the whole container
+ * whatever the destination (seen on the XS: a file in Documents/ and one in
+ * Library/Preferences/ went too) and keeps only its standard directories. So
+ * clearing an iPhone wipes the app's whole container -- the SDK's data and
+ * the crash reporter's queue under Library/Caches, and the SDK's defaults
+ * under Library/Preferences -- and then asserts both SDK directories are
+ * gone. The Keychain (attributes, identifier) is not in the container and is
+ * untouched.
  */
 import { execFile } from 'node:child_process';
 import {
@@ -43,8 +58,9 @@ import {
   ANDROID_SERIAL,
   IOS_BUNDLE_ID,
   IOS_SIMULATOR_ID,
+  IOS_TARGET,
 } from './device';
-import { adb, adbStatus } from './scenario';
+import { adb, adbStatus, devicePidsOfApp, devicectl } from './scenario';
 
 const execFileAsync = promisify(execFile);
 
@@ -223,63 +239,132 @@ export async function airplane(on: boolean): Promise<void> {
 }
 
 /**
- * The loopback port the iOS simulator run launches against, so every report
- * is retained (see the top of this file). Port 9 (discard) is closed on a Mac.
+ * The loopback port every iOS run launches against, so every report is
+ * retained (see the top of this file). Port 9 (discard) is closed on a Mac
+ * and on an iPhone, whose own loopback it is there.
  */
 export const DEAD_ENDPOINT = 'https://127.0.0.1:9';
 
-/** The SDK's data directory in the simulator app's data container. */
-async function iosSdkData(): Promise<string> {
+const ON_DEVICE = IOS_TARGET !== 'simulator';
+
+/** The SDK's data directory, relative to the app's data container. */
+const IOS_SDK_DATA = 'Library/Caches/com.bugsee.data';
+/** PLCrashReporter's queue: a crash not yet turned into a report. */
+const IOS_CRASH_QUEUE = 'Library/Caches/com.bugsee.crashreporter';
+/** `<capture>/bundles/<requestId>.bundle.zip`, as the iOS SDK writes them. */
+const IOS_BUNDLES = `${IOS_SDK_DATA}/capture/bundles`;
+
+/** The simulator app's data container, a host directory. */
+async function simulatorContainer(): Promise<string> {
   const { stdout } = await execFileAsync(
     'xcrun',
     ['simctl', 'get_app_container', IOS_SIMULATOR_ID, IOS_BUNDLE_ID, 'data'],
     { encoding: 'utf8' },
   );
-  return join(stdout.trim(), 'Library', 'Caches', 'com.bugsee.data');
+  return stdout.trim();
 }
 
-/** `<capture>/bundles/<requestId>.bundle.zip`, as the iOS SDK writes them. */
-async function iosBundlesDir(): Promise<string> {
-  return join(await iosSdkData(), 'capture', 'bundles');
+const CONTAINER = ['--domain-type', 'appDataContainer', '--domain-identifier', IOS_BUNDLE_ID];
+
+/**
+ * The names directly under `subdirectory` of the iPhone app's container, or
+ * undefined when it does not exist (devicectl then fails to list it).
+ */
+async function deviceEntries(subdirectory: string): Promise<string[] | undefined> {
+  let result: Record<string, unknown>;
+  try {
+    result = await devicectl('info', 'files', ...CONTAINER, '--subdirectory', subdirectory, '--no-recurse');
+  } catch (error) {
+    if (/failed to get a list of files/.test(String(error))) {
+      return undefined;
+    }
+    throw error;
+  }
+  const files = (result.files ?? []) as Array<{ name?: string; relativePath?: string }>;
+  return files.map(f => f.name ?? f.relativePath ?? '').filter(name => name !== '' && !name.includes('/'));
 }
 
-/** Stops the simulator app; not running is fine. */
+/**
+ * Stops the iOS app; not running is fine. On an iPhone, by pid through
+ * devicectl, and then asserted: a live process would write straight after a
+ * clear, as Android's did.
+ */
 export async function terminateIosApp(): Promise<void> {
-  await execFileAsync('xcrun', ['simctl', 'terminate', IOS_SIMULATOR_ID, IOS_BUNDLE_ID]).catch(
-    () => {},
-  );
+  if (!ON_DEVICE) {
+    await execFileAsync('xcrun', ['simctl', 'terminate', IOS_SIMULATOR_ID, IOS_BUNDLE_ID]).catch(
+      () => {},
+    );
+    return;
+  }
+  for (const pid of await devicePidsOfApp()) {
+    await devicectl('process', 'terminate', '--pid', String(pid)).catch(() => {});
+  }
+  const deadline = Date.now() + 15_000;
+  let left = await devicePidsOfApp();
+  while (left.length > 0 && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    left = await devicePidsOfApp();
+  }
+  if (left.length > 0) {
+    throw new Error(`terminateIosApp: BareExample still running on the iPhone (pids ${left.join(', ')})`);
+  }
 }
 
 /**
  * The iOS counterpart of `clearAndroidBundles`, and as wide, for the same
  * reasons: stop the app first, then remove the SDK's whole data directory
- * (pending reports and crash state included), and assert it is gone.
+ * (pending reports and crash state included), and assert it is gone. On an
+ * iPhone that means the whole container (see the top of this file), and
+ * the crash reporter's queue is asserted gone too: an earlier run's crash
+ * still queued there would be recovered into this one.
  */
 export async function clearIosBundles(): Promise<void> {
   await terminateIosApp();
-  const data = await iosSdkData();
-  rmSync(data, { recursive: true, force: true });
-  if (existsSync(data)) {
-    throw new Error(`clearIosBundles: ${data} is still there after removing it`);
+  if (!ON_DEVICE) {
+    const data = join(await simulatorContainer(), IOS_SDK_DATA);
+    rmSync(data, { recursive: true, force: true });
+    if (existsSync(data)) {
+      throw new Error(`clearIosBundles: ${data} is still there after removing it`);
+    }
+    return;
+  }
+  const empty = mkdtempSync(join(tmpdir(), 'bugsee-empty-'));
+  try {
+    // The destination only has to exist after the wipe: `tmp` always does.
+    await devicectl('copy', 'to', ...CONTAINER, '--source', empty, '--destination', 'tmp', '--remove-existing-content', 'true');
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+  }
+  const caches = await deviceEntries('Library/Caches');
+  const left = (caches ?? []).filter(name => [IOS_SDK_DATA, IOS_CRASH_QUEUE].some(path => path.endsWith(`/${name}`)));
+  if (left.length > 0) {
+    throw new Error(`clearIosBundles: still on the iPhone after the wipe: Library/Caches/{${left.join(',')}}`);
   }
 }
 
 export async function listIosBundles(): Promise<string[]> {
-  const dir = await iosBundlesDir();
+  if (ON_DEVICE) {
+    return ((await deviceEntries(IOS_BUNDLES)) ?? []).filter(name => name.endsWith('.bundle.zip'));
+  }
+  const dir = join(await simulatorContainer(), IOS_BUNDLES);
   if (!existsSync(dir)) {
     return [];
   }
   return readdirSync(dir).filter(name => name.endsWith('.bundle.zip'));
 }
 
-/** Copies, unzips and parses every retained bundle. */
+/** Copies (an iPhone: `devicectl copy from`), unzips and parses every retained bundle. */
 export async function pullIosBundles(): Promise<PulledBundle[]> {
-  const source = await iosBundlesDir();
   const root = newPulledRoot();
   const bundles: PulledBundle[] = [];
+  const container = ON_DEVICE ? undefined : await simulatorContainer();
   for (const file of await listIosBundles()) {
     const zip = join(root, file);
-    copyFileSync(join(source, file), zip);
+    if (container === undefined) {
+      await devicectl('copy', 'from', ...CONTAINER, '--source', `${IOS_BUNDLES}/${file}`, '--destination', zip);
+    } else {
+      copyFileSync(join(container, IOS_BUNDLES, file), zip);
+    }
     const dir = join(root, file.replace(/\.bundle\.zip$/, ''));
     mkdirSync(dir);
     extractZip(readFileSync(zip), dir);

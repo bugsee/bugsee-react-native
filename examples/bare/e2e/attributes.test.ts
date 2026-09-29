@@ -1,7 +1,7 @@
 /**
  * Task 5.4: attributes and user identity round-trip on an Android handset,
  * and into the retained report. Task 5.5: the same five cases on the iOS
- * simulator.
+ * simulator; Task 3.H: on an iPhone.
  *
  * Tasks 5.1 and 5.2 unit-tested the JS validation and the bridge's
  * set-then-verify against fakes. What only a device shows is what the real
@@ -67,6 +67,14 @@
  * (`xcrun simctl keychain <device> reset`) -- the iOS analogue of Android's
  * `pm clear` fallback.
  *
+ * On an iPhone (Task 3.H) the same holds, with one difference: the device's
+ * Keychain survives the container wipe and an uninstall, and has no reset
+ * from outside the app, so the SDK's own clear is the only one there is.
+ * The `attributes` run clears both first (and asserts it took, `pre-all`/
+ * `pre-id`), the `attributes-persist` run clears both last (and asserts it
+ * took, across a real process restart), and `afterAll` fails loudly if the
+ * last clear was not seen to take.
+ *
  * Every value is synthetic: until bugsee-android#186 ships, the Android SDK
  * writes attribute values and the identifier to its internal log. Nothing
  * here asserts on `log.internal`, either way.
@@ -81,12 +89,13 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { type PulledBundle, airplane, removePulledBundles, terminateIosApp } from './bundles';
-import { ANDROID_PACKAGE, IOS_SIMULATOR_ID } from './device';
+import { ANDROID_PACKAGE, IOS_SIMULATOR_ID, IOS_TARGET } from './device';
 import {
   ON_IOS,
   type Run,
   awaitBundles,
   clearBundles,
+  TARGET_NAME,
   describeDevice,
   must,
   report,
@@ -96,7 +105,7 @@ import {
 import {
   type DeviceLog,
   Logcat,
-  SimulatorConsole,
+  IosConsole,
   adb,
   adbStatus,
   pidOf,
@@ -242,7 +251,7 @@ async function currentPid(bannerText: string): Promise<string | undefined> {
   return ON_IOS ? IOS_PID_LINE.exec(bannerText)?.[1] : pidOf();
 }
 
-describeDevice(`attributes and identity round-trip on ${ON_IOS ? 'the iOS simulator' : 'an Android handset'}`, () => {
+describeDevice(`attributes and identity round-trip on ${TARGET_NAME}`, () => {
   let log: DeviceLog;
   let run: Run;
   let nonce: string;
@@ -300,7 +309,7 @@ describeDevice(`attributes and identity round-trip on ${ON_IOS ? 'the iOS simula
   }
 
   beforeAll(async () => {
-    log = ON_IOS ? SimulatorConsole.start() : await Logcat.start();
+    log = ON_IOS ? IosConsole.start() : await Logcat.start();
     useLog(log, '5.5');
     if (!ON_IOS) {
       // 9.3.2: offline before the app starts, so the report is retained.
@@ -327,8 +336,9 @@ describeDevice(`attributes and identity round-trip on ${ON_IOS ? 'the iOS simula
     }
 
     // Case 5's restart: a real separate process. Android's launchScenario
-    // force-stops before starting; iOS's SimulatorConsole.launch() passes
-    // `--terminate-running-process` to the same effect.
+    // force-stops before starting; iOS's IosConsole.launch() terminates the
+    // running app first (`--terminate-running-process` on the simulator,
+    // `--terminate-existing` on an iPhone) to the same effect.
     const persisted = await persistRun();
     persistMarks = persisted.marks;
     secondPid = await currentPid(persisted.run.banner.text);
@@ -353,7 +363,17 @@ describeDevice(`attributes and identity round-trip on ${ON_IOS ? 'the iOS simula
           report('cleanup run', cleanup === undefined ? '(none)' : Object.fromEntries(cleanup.marks));
         }
         if (!leftClean) {
-          if (ON_IOS) {
+          if (ON_IOS && IOS_TARGET !== 'simulator') {
+            // An iPhone has no last resort: its Keychain survives the
+            // container wipe and an uninstall, and nothing outside the app
+            // can erase one app's items. Say so loudly rather than leave
+            // the values behind unremarked.
+            throw new Error(
+              'attributes/identifier cleanup was not seen to take on the iPhone, and its ' +
+                'Keychain cannot be reset from outside the app: run the attributes-persist ' +
+                'scenario again until it logs cleared-all {} and cleared-id undefined.',
+            );
+          } else if (ON_IOS) {
             // Last resort: the identifier and attributes live in the
             // simulator's Keychain, which survives clearIosBundles and an app
             // reinstall -- only erasing the simulator (or its Keychain)
