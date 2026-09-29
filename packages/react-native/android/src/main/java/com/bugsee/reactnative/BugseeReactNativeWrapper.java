@@ -148,10 +148,14 @@ final class BugseeReactNativeWrapper implements BugseeWrapper {
      * pulls through is replaced when setWrapperInfo runs. See
      * {@link SecureRectangleStore} for the version contract, which is what
      * makes the SDK notice a change at all.
+     *
+     * <p>Through {@link SecureRectanglePulls}, which also uses the pull to keep
+     * the React root's display origin fresh when the window moves without a
+     * relayout.
      */
     @Override
     public int[] getSecureRectangles(final int display) {
-        return SecureRectangleStore.shared().snapshot(display);
+        return SecureRectanglePulls.shared().pull(display);
     }
 
     /**

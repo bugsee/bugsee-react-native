@@ -300,4 +300,42 @@ public class ReactRootOriginTrackerTest {
         assertEquals(1, lifecycle.added);
         assertEquals(0, lifecycle.removed);
     }
+
+    // Ruling I1: a window that moves WITHOUT a relayout (freeform, split
+    // screen, PiP) fires no layout listener, and JS re-publishes nothing when
+    // its measurement is unchanged. The SDK's own pull must bring the origin
+    // up to date, so the pull after next serves the region where it now is.
+    @Test
+    public void aPullRefreshesTheOriginForTheNextPull() {
+        final FakeRoot rootHandle = new FakeRoot();
+        rootHandle.location = new int[] { 100, 40 };
+        rootHandle.displayId = 7;
+        final QueueRootFinder finder = new QueueRootFinder();
+        finder.queue.add(rootHandle);
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(7, new int[] { 10, 10, 20, 20 });
+        final ReactRootOriginTracker tracker =
+                new ReactRootOriginTracker(new FakeLifecycleSource(), finder, store);
+        tracker.refresh();
+
+        // The UI thread, run by hand: the pull may only post to it.
+        final java.util.Deque<Runnable> uiThread = new java.util.ArrayDeque<>();
+        final long[] now = { 1_000 };
+        final SecureRectanglePulls pulls = new SecureRectanglePulls(store, () -> now[0]);
+        pulls.setRefresher(() -> uiThread.add(tracker::refresh));
+
+        // The window moves; no layout pass follows.
+        rootHandle.location = new int[] { 400, 300 };
+
+        final int[] beforeRefresh = pulls.pull(7);
+        assertArrayEquals(new int[] { 110, 50, 120, 60 }, java.util.Arrays.copyOfRange(beforeRefresh, 2, 6));
+        now[0] += 10;
+        pulls.pull(7);
+        assertEquals(1, uiThread.size());
+
+        uiThread.poll().run();
+
+        final int[] afterRefresh = pulls.pull(7);
+        assertArrayEquals(new int[] { 410, 310, 420, 320 }, java.util.Arrays.copyOfRange(afterRefresh, 2, 6));
+    }
 }

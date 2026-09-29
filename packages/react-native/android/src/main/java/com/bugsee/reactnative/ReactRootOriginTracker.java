@@ -35,8 +35,10 @@ import java.util.Arrays;
  * window's own position on the display.
  *
  * <p>Re-read on every global layout of the root (rotation, insets arriving,
- * a window resize), on host resume, and on every JS publish. All view access is
- * on the UI thread; the store is thread-safe.
+ * a window resize), on host resume, on every JS publish, and at most every
+ * {@link SecureRectanglePulls#ORIGIN_REFRESH_MIN_INTERVAL_MS} while the SDK
+ * pulls (a window can move without a relayout). All view access is on the UI
+ * thread; the store is thread-safe.
  */
 final class ReactRootOriginTracker implements LifecycleEventListener {
 
