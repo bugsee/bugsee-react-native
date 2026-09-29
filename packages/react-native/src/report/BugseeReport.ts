@@ -69,7 +69,15 @@ function normalizeSnapshot(raw: unknown): BugseeReportSnapshot {
         typeof value === 'number' ||
         typeof value === 'boolean'
       ) {
-        attributes[key] = value;
+        // Defined, not assigned: `attributes["__proto__"] = value` would hit
+        // Object.prototype's setter and drop the attribute. The object itself
+        // stays ordinary (hasOwnProperty, toString): callers get it as-is.
+        Object.defineProperty(attributes, key, {
+          value,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
       }
     }
   }
