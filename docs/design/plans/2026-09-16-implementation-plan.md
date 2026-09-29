@@ -51,7 +51,7 @@ Ordered so each phase is independently shippable and so the riskiest work lands 
 | 3 | Wrapper contract | Reports carry wrapper identity; lifecycle events; secure rectangles; report handler |
 | 4 | Logging, events, traces | `log`, `event`, `trace` |
 | 5 | Attributes & identity | `setAttribute` family, `setUserIdentifier` family |
-| 6 | Privacy | Blackout, `<BugseeSecure>`, secure rects, `captureViewHierarchy` |
+| 6 | Privacy | Blackout, `<BugseeSecure>`, secure rects, `captureViewHierarchy`, the `vh` view tree (`Bugsee.wrap`) |
 | 7 | Exceptions | `logException`, `logUnhandledException`, `ErrorBoundary`, debug IDs |
 | 8 | Reporting | `showReportDialog`, `upload`, `createReport`, attachments |
 | 9 | Capture & filters | console, network, breadcrumbs, and their filter callbacks |
@@ -60,7 +60,7 @@ Ordered so each phase is independently shippable and so the riskiest work lands 
 | 12 | Feedback package | `@bugsee/react-native-feedback` |
 | 13 | Build tooling | Source maps, dSYM upload, Expo config plugin |
 
-Phases 4–6 are deliberately small and mechanical — they establish the bridging pattern that 7–11 reuse, so the hard parts arrive after the pattern is proven.
+Phases 4 and 5 are deliberately small — they settle how values cross the bridge, the pattern 7–11 reuse, so the hard parts arrive after the pattern is proven. Phase 6 carries the first native→JS round trip on the capture path (the `vh` data request), so it is the largest of the three.
 
 ---
 
@@ -929,17 +929,1428 @@ Added by controller ruling after the Phase 3 final review; not part of the origi
 
 ---
 
-## Phases 4–6 — the mechanical middle
+## Phases 4–6 — shared ground
 
-Each is small by design: they establish the bridging pattern that the harder phases reuse.
+These three phases run **in order: 4, then 5, then 6**. Each ends with its own review gate, and the next phase does not start until the gate is satisfied. Phases 4 and 5 are small: they settle how values cross the bridge, a pattern Phases 7–11 reuse. Phase 6 carries the first native→JS round trip on the capture path (the `vh` data request), so it is the largest of the three.
 
-**Phase 4 — Logging, events, traces.** `log(text, level)`, `event(name, params)`, `trace(name, value)`. Tests: level mapping both directions; params survive the bridge. Device test asserting the lines appear in a report. `log()` builds on `forwardLog` / `wrapperLog` (Task 3.5a); do not add a second native route.
+**Implementers never create external resources.** That means no GitHub issues, PRs or branches in any other repository; no pushes; no Bugsee applications, tokens or uploads; and no published packages. When a task finds something that needs one (an SDK defect, a specs correction), it writes the finding into its task report for the controller and carries on or stops, as the task says.
 
-**Phase 5 — Attributes & identity.** `setAttribute`/`getAttribute`/`getAllAttributes`/`clearAttribute`/`clearAllAttributes`; `setUserIdentifier`/`getUserIdentifier`/`clearUserIdentifier`. Tests include round-tripping non-string values, since Android takes `Serializable` and iOS takes `id`.
+**Paths used below.**
+- `src/…` = `packages/react-native/src/…`
+- `android/…` = `packages/react-native/android/src/main/java/com/bugsee/reactnative/…`
+- `androidTest/…` = `packages/react-native/android/src/test/java/com/bugsee/reactnative/…`
+- `support/…` = `packages/react-native/ios/Support/Sources/BugseeRNSupport/…`, with headers under `support/include/…`
+- `supportTests/…` = `packages/react-native/ios/Support/Tests/BugseeRNSupportTests/…`
+- `ios/BugseeModule.mm` = `packages/react-native/ios/BugseeModule.mm`
+- `e2e/…` and `scenarios/…` are under `examples/bare/`
 
-**Phase 6 — Privacy.** `startBlackout`/`endBlackout`/`isBlackout`; `<BugseeSecure>` wrapping children and disposing on unmount; secure rectangles; `captureViewHierarchy`. `<BugseeSecure>` replaces `toggleProtected` — declarative, and it cannot leak a registration. Device test: a blackout window really blanks the video.
+**Commands used below.**
+- JS: `yarn test`, then `yarn mutate:src` (break threshold 95%).
+- Android JVM: `./gradlew :bugsee-android-bridge:testDebugUnitTest`.
+- iOS Support: `cd packages/react-native/ios/Support && xcodebuild test -scheme BugseeRNSupport -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5'`.
+- RN floor: `./scripts/check-rn-compat.sh 0.81`.
+- Android device: `yarn workspace bugsee-example-bare device:android`, then `E2E_PLATFORM=android yarn workspace bugsee-example-bare e2e <file>`.
+- iOS device: `yarn workspace bugsee-example-bare device:ios`, then `E2E_PLATFORM=ios yarn workspace bugsee-example-bare e2e <file>`.
 
-Each phase ends in a review gate.
+**Rules for every native method added in these phases.**
+- On iOS, every SDK call runs on main through `BGSRNRunOnMain` (Global Constraints). A promise resolves from inside that block.
+- On Android, calls run on the native-modules thread. Every SDK method used here is documented thread-safe.
+- A void TurboModule method never lets an exception escape: nothing can reject it, so an exception would crash the host. It catches `RuntimeException` on Android (logging at `BugseeRN`); on iOS it guards with `respondsToSelector:` or `isKindOfClass:`, never with `@try`.
+- Every new spec method gets a stub or an implementation on both platforms **in the same commit**. `ios-spec-coverage.test.ts` and the `check-rn-compat.sh` java-signatures step stay green at every commit.
+- The JS mock (`src/__mocks__/native.ts`) gains a `jest.fn` for every new method, and `reset()` restores its default.
+
+**Devices.** Android runs on the WOD_LX1 (`AMRJCP4718402860`). iOS runs on the iOS 26.5 simulator (iPhone 17 Pro) until an iPhone is attached. The per-run preconditions are 3.4d's (Android) and 3.4f's (iOS), asserted through `startRun()` in `e2e/harness.ts`: the SDK build banner or version line matches the pin, bundles are cleared and the clear is asserted, retention is set up (airplane mode, or `DEAD_ENDPOINT`), and the SDK reaches `Launched`. **Hardware pass: add to Task 3.H** means the case joins the hardware-pass list the Phase 3 gate requires before merge. If Task 3.H does not yet exist as its own task, append the case to the Phase 3 review gate's hardware-pass paragraph instead. Every iOS device task below joins that list whole. Where a phase also names a gated case, it runs only behind its environment variable and joins the list too. A device test never accepts "either outcome": when a platform genuinely differs, the test states each platform's expected value, and when a precondition cannot be met, the test fails and the task stops and reports.
+
+---
+
+## Phase 4 — Logging, events, traces
+
+**Ships:** `Bugsee.log(message, level?)`, `Bugsee.event(name, params?)`, `Bugsee.trace(name, value)`.
+
+### Rulings (controller, 2026-09-29)
+
+- **Ruling:** Phase 4 runs first. Phase 5 does not start until Phase 4's review gate is satisfied.
+- **Ruling:** `log()` goes through the existing `forwardLog` → `wrapperLog` → wrapper-channel route **only**. Its source stays `Custom` (98) and its level maps by value. No second native route.
+- **Ruling:** `event` and `trace` call the SDKs' public APIs.
+- **Ruling:** params must survive the bridge with their types and nesting intact. JS rejects any value outside the accepted domain before it crosses.
+- **Ruling:** device tests assert the lines, events and traces in retained bundles on both platforms.
+
+### Planner decisions (reviewable; change them here, not inside a task)
+
+- **`log()` is a facade over `forwardLog`, not `forwardLog` itself.** The public signature is 6.x's `log(text, level)`, a method on the default export like every other entry point. `forwardLog` stays internal: Phase 9 routes `console.*` through it, and that caller may need things the public method must not expose. The facade adds nothing but the name. A static test holds the "one route" rule: `index.ts` never calls `wrapperLog` directly.
+- **Consequence to document on `log()`:** a line sent through the channel is filtered by the app's log filter, unlike the native `Bugsee.log`, which bypasses it by default. That is §10.3's rule. A line sent before `launch()` is dropped, because the channel is inert until then (3.5b, 3.5d).
+- **Typed trace methods, one per value type** (`traceNumber`, `traceString`, `traceBoolean`), rather than one `UnsafeObject` wrapper. Codegen has no union parameter type. A typed boolean reaches iOS as a `CFBoolean` and Android as a `Boolean`, so it cannot arrive as a `0`/`1` number, which is the silent failure an untyped path allows.
+- **Event params cross as `UnsafeObject | null`, unconverted.** Both SDKs serialise nested maps, lists, strings, booleans, numbers and null (verified facts below). Both write an integral double as an integer, so no Long normalisation is needed on this path. Phase 5 needs it for attributes; events and traces do not.
+
+### Verified facts these tasks rely on (2026-09-29)
+
+**Android** (`bugsee-android` `234dcddfc`, the pinned SNAPSHOT):
+- API: `Bugsee.event(String, HashMap<String,Object>)`, `Bugsee.event(String)` and `Bugsee.trace(String, Object)`.
+- A null or empty name, or a null trace value, is a no-op.
+- There is no launch gate: before start the consumer is null and the call is dropped.
+- JSON writer (`shared/serialization/json/Writer.java`):
+  - an integral `Number` is written as an integer (`3.0` → `3`);
+  - a fractional one is written with `Double.toString`;
+  - NaN and ±Infinity are written as **strings**.
+- `Map` and `Iterable` nest.
+
+**iOS** (`7.0.0-beta3`, `74af69ee8`):
+- API: `+event:params:` (nullable `NSDictionary`) and `+trace:value:` (nonnull `id`).
+- Both are no-ops unless the SDK is Launched or Launching (`bugseeAvailableForUserDumps`).
+- `BGSJSONWriter`:
+  - a `CFBoolean` is written as `true`/`false`;
+  - a double is written in its shortest round-trip `%g` form (`3`, `9007199254740991`);
+  - NaN and ±Infinity are written as `null`;
+  - `NSNull`, arrays and dictionaries nest.
+- MessagePack accepts `NSNull`.
+- User traces are re-emitted at every capture-part switch (snapshot replay), so one `trace()` call can produce several entries with the same value.
+
+**Bundle files** (`bugsee/specs` `sdk/reporting/bundle/`):
+- `log` holds `{timestamp, level, source, tag?, message}`.
+- `events.user` holds `{timestamp, displayId?, name, params?}`; `params` is present only if non-empty.
+- `traces.user` holds `{timestamp, displayId?, name, value}`.
+
+**Harness gap:** `e2e/bundles.ts` `PulledBundle` exposes only the `log` file.
+
+### Constants
+
+| Name | Value | Why |
+|---|---|---|
+| `EVENT_PARAMS_MAX_DEPTH` | `16` | Nesting past this is almost certainly a cycle or an accident. It is rejected with the path. |
+
+| Error | When |
+|---|---|
+| `TypeError` | A value of the wrong type: a non-string message or name, a param value outside the domain (the message names its path, e.g. `params.nested.list[2]`), or a trace value that is not a string, finite number or boolean. |
+| `RangeError` | A log level outside 1–5 (already thrown by `forwardLog`), an empty event or trace name, a non-finite number, or nesting deeper than 16. |
+
+All errors are thrown synchronously, before anything crosses. The three methods are fire-and-forget (`void`), like `upload`.
+
+**The accepted value domain.**
+- Event params are a *plain object*: its prototype is `Object.prototype` or `null`. Its values, recursively, are:
+  - `string`;
+  - finite `number`;
+  - `boolean`;
+  - `null`;
+  - arrays of these;
+  - plain objects of these.
+- An `undefined` object member is **omitted**, as `JSON.stringify` does, and this is documented.
+- Everything else is rejected, with its path:
+  - `undefined` as an array element;
+  - `NaN` and `±Infinity`;
+  - `bigint`, `symbol` and functions;
+  - `Date`, `Map`, `Set`, typed arrays and class instances;
+  - a cycle;
+  - depth greater than 16.
+- A trace value is a `string`, a finite `number` or a `boolean`. Anything else, `null` included, is rejected.
+
+---
+
+### Task 4.1 — `Bugsee.log()`: the public facade over `forwardLog`
+
+**Files:**
+- Modify: `src/index.ts`
+- Create: `src/__tests__/log.test.ts`, `scripts/__tests__/single-log-route.test.ts`
+
+**Interface (exact):**
+
+```ts
+// src/index.ts, on class Bugsee
+/**
+ * One line into the Bugsee log, attributed to the wrapper (source Custom, no
+ * tag) and filtered natively by the app's log filter, exactly once. Dropped
+ * before launch() -- the channel is inert until then.
+ */
+log(message: string, level: LogLevel = LogLevel.Info): void {
+  forwardLog(message, level);
+}
+```
+
+`forwardLog` stays unexported from `src/index.ts`.
+
+- [ ] **Red**
+  - `log.test.ts`, mocking `../wrapper/channel` with a spy:
+    - `log forwards message and level through forwardLog`;
+    - `log defaults to Info (3)`;
+    - `log is a method on the default export`.
+  - `log.test.ts`, with the native mock and no channel mock:
+    - `log rejects 0, 6 and 2.5 before crossing` (RangeError, `wrapperLog` not called);
+    - `log rejects a non-string message before crossing` (TypeError);
+    - `forwardLog is still not exported from the package entry`.
+  - `single-log-route.test.ts`:
+    - `only src/wrapper/channel.ts references wrapperLog`: read every `src/**/*.ts(x)` outside `__tests__` and `__mocks__`, strip comments, and allow `NativeBugsee.ts` (the declaration) and `wrapper/channel.ts` only;
+    - `src/index.ts reaches the channel only through forwardLog`.
+  - Run → FAIL.
+- [ ] **Green** — the method above, plus its JSDoc (source Custom, filtered natively, dropped before launch).
+- [ ] **Mutate**
+  - (1) Replace the body with `NativeBugsee.wrapperLog(message, level)`. `only src/wrapper/channel.ts references wrapperLog` must fail.
+  - (2) Default to `LogLevel.Debug`. `log defaults to Info (3)` must fail.
+  - Revert each and record the results.
+- [ ] **Commit** — `feat(log): Bugsee.log over the wrapper channel, the one native route`.
+
+**Acceptance:** `Bugsee.log` exists. It cannot reach native except through `forwardLog`, and no new native code exists.
+
+---
+
+### Task 4.2 — `event` and `trace`: JS validation, spec, and both bridges
+
+**Files:**
+- Create: `src/data/validate.ts`, `src/data/__tests__/validate.test.ts`, `src/__tests__/event-trace.test.ts`
+- Modify: `src/NativeBugsee.ts`, `src/index.ts`, `src/__mocks__/native.ts`
+- Modify: `android/BugseeModule.java`
+- Modify: `ios/BugseeModule.mm` (both `#if __has_include` import branches if a Support header is added; `ios-delivery-parity.test.ts` enforces it)
+- Create: `support/BGSRNValues.m`, `support/include/BGSRNValues.h`, `supportTests/BGSRNValuesTests.m`
+
+**TurboModule additions (exact):**
+
+```ts
+event(name: string, params: UnsafeObject | null): void;
+traceNumber(name: string, value: number): void;
+traceString(name: string, value: string): void;
+traceBoolean(name: string, value: boolean): void;
+```
+
+**Public JS API (exact):**
+
+```ts
+// src/data/validate.ts
+export type EventParamValue =
+  | string | number | boolean | null
+  | readonly EventParamValue[]
+  | { readonly [key: string]: EventParamValue | undefined };
+export type EventParams = { readonly [key: string]: EventParamValue | undefined };
+export type TraceValue = string | number | boolean;
+export const EVENT_PARAMS_MAX_DEPTH = 16;
+/** Throws TypeError/RangeError; returns a fresh plain copy with undefined members omitted. */
+export function copyEventParams(params: EventParams): Record<string, unknown>;
+export function assertEventOrTraceName(kind: 'event' | 'trace', name: unknown): asserts name is string;
+export function assertTraceValue(value: unknown): asserts value is TraceValue;
+
+// src/index.ts, on class Bugsee
+event(name: string, params?: EventParams): void;   // params undefined -> native null
+trace(name: string, value: TraceValue): void;      // dispatches on typeof value
+```
+
+Export `EventParams`, `EventParamValue` and `TraceValue` as types from `src/index.ts`.
+
+**Android** (`BugseeModule.java`):
+- `event(String name, @Nullable ReadableMap params)` calls `Bugsee.event(name)` when `params == null`. Otherwise it calls `Bugsee.event(name, params.toHashMap())`.
+- `traceNumber(String name, double value)` calls `Bugsee.trace(name, value)` (a boxed `Double`).
+- `traceString` calls `Bugsee.trace(name, value)`.
+- `traceBoolean(String name, boolean value)` calls `Bugsee.trace(name, Boolean.valueOf(value))`.
+- Each is wrapped in `try { … } catch (RuntimeException e) { Log.e("BugseeRN", "<method> failed", e); }`.
+
+**iOS** (`BugseeModule.mm`), each inside `BGSRNRunOnMain`:
+- `event:params:` calls `[Bugsee event:name params:params]`, where `params` is `nil` when JS sent `null`.
+- `traceNumber:value:` calls `[Bugsee trace:name value:@(value)]`.
+- `traceString:value:` calls `[Bugsee trace:name value:value]`.
+- `traceBoolean:value:` calls `[Bugsee trace:name value:BGSRNBoolNumber(value)]`.
+
+`support/BGSRNValues.h` declares `FOUNDATION_EXPORT NSNumber *BGSRNBoolNumber(BOOL value);`. It returns `(__bridge NSNumber *)kCFBooleanTrue` or `kCFBooleanFalse`, so the boolean identity cannot depend on how `@(…)` boxes a `BOOL` on a given architecture.
+
+- [ ] **Red**
+  - `validate.test.ts`:
+    - `accepts nested objects and arrays of JSON values`;
+    - `omits undefined object members`;
+    - `rejects NaN, Infinity and -Infinity, naming the path` (e.g. `params.a.b[1]`);
+    - `rejects undefined inside an array`;
+    - `rejects functions, symbols and bigint`;
+    - `rejects Date, Map, Set, Uint8Array and a class instance`;
+    - `rejects a cycle`;
+    - `rejects nesting deeper than 16 and accepts exactly 16`;
+    - `rejects params that are not a plain object` (`[]`, `null`, `new (class {})()`);
+    - `accepts an object with a null prototype`;
+    - `returns a copy: mutating the input afterwards does not change it`;
+    - `rejects an empty or non-string name` (both kinds);
+    - `trace accepts a string, a finite number and a boolean`;
+    - `trace rejects null, undefined, NaN, Infinity and objects`.
+  - `event-trace.test.ts` (native mock):
+    - `event forwards name and the copied params`;
+    - `event without params sends null`;
+    - `event with {} sends {}`;
+    - `event validates before crossing` (the native `event` not called on a bad value);
+    - `a number trace goes to traceNumber`;
+    - `a string trace goes to traceString`;
+    - `a boolean trace goes to traceBoolean`;
+    - `a bad trace crosses nothing`.
+  - `BGSRNValuesTests.m`:
+    - `testTrueIsTheCFBooleanSingleton`;
+    - `testFalseIsTheCFBooleanSingleton`;
+    - `testABoolNumberIsNotAnInteger` (`CFGetTypeID` is `CFBooleanGetTypeID()`).
+  - Run → FAIL.
+- [ ] **Green**
+  - The modules above.
+  - The mock gains `event`, `traceNumber`, `traceString` and `traceBoolean`.
+  - Android and iOS as specified.
+  - `ios-spec-coverage`, `check-rn-compat.sh 0.81` and both example builds green.
+- [ ] **Mutate**
+  - (1) Drop the `Number.isFinite` check. `rejects NaN, Infinity and -Infinity` must fail.
+  - (2) Send booleans to `traceNumber`. `a boolean trace goes to traceBoolean` must fail.
+  - (3) Drop cycle detection. `rejects a cycle` must fail (a stack overflow is not the expected `TypeError`).
+  - (4) Make `BGSRNBoolNumber` return `@((int)value)`. `testTrueIsTheCFBooleanSingleton` must fail.
+  - Revert each and record the results.
+- [ ] **Commit** — `feat(data): event and trace with a validated value domain, both bridges`.
+
+**Acceptance:** both methods reject every out-of-domain value in JS before it crosses. Each value type reaches the SDK as that type on both platforms, and every build is green.
+
+---
+
+### Task 4.3 — Device verification, Android: lines, events and traces in a retained bundle
+
+**Files:**
+- Modify: `e2e/bundles.ts`, adding `captures` and `captureEvents`
+- Create: `scripts/__tests__/e2e-capture-files.test.ts`, `scenarios/data.ts`, `e2e/data.test.ts`
+- Modify: `App.tsx` (dispatch the `data` scenario; `preLaunchDataProbe` before `launch()`, like `preLaunchChannelProbe`)
+
+**Harness additions (exact):**
+
+```ts
+// PulledBundle gains:
+readonly captures: ReadonlyMap<string, string>;  // raw text, keyed by manifest `type`, for every entry whose stored file ends in `.json`
+// and:
+export function captureEvents(bundle: PulledBundle, type: string): Array<Record<string, unknown>>; // `events` of that file; [] when the manifest has none
+```
+
+`parseBundle` fills `captures` for both platforms, and `log` stays as it is.
+
+**Scenario `data` (`scenarios/data.ts`).** Every name and value carries the run's nonce `<n>`.
+
+Before `launch()`:
+- `Bugsee.log('pre-<n>')`;
+- `Bugsee.event('pre-<n>')`;
+- `Bugsee.trace('pre-<n>', 1)`;
+- then the marker `BUGSEE_E2E data pre-sent nonce=<n>`.
+
+After `Launched`:
+- `Bugsee.log('BUGSEE_E2E data log L<l> <n>', l)` for `l` of 1–5, then `Bugsee.log('BUGSEE_E2E data log default <n>')`;
+- `Bugsee.event('data-<n>', PARAMS)`, where `PARAMS = { str: 's-<n>', int: 3, neg: -7, frac: 1.5, big: 9007199254740991, yes: true, no: false, nil: null, nested: { list: [1, 'two', { deep: false }], empty: {} }, skipped: undefined }`;
+- `Bugsee.event('data-bare-<n>')`;
+- `Bugsee.trace('data-num-<n>', 42)`, `Bugsee.trace('data-frac-<n>', 0.25)`, `Bugsee.trace('data-str-<n>', 'on')` and `Bugsee.trace('data-bool-<n>', true)`;
+- the marker `BUGSEE_E2E data sent nonce=<n>`;
+- `Bugsee.upload('data-<n>', '')`.
+
+**Cases (`e2e/data.test.ts`, one run, one retained bundle):**
+1. `lines land as Custom at the level they were sent at` — for each `l` in 1–5 the `log` file has exactly one event whose `message` is `BUGSEE_E2E data log L<l> <n>`, with `level = l`, `source = 98` and no `tag` key. The `default` line has `level = 3`.
+2. `an event's params survive the bridge`
+   - `captureEvents(b, 'events.user')` has exactly one entry named `data-<n>`, whose `params` deep-equal `PARAMS` without `skipped`.
+   - The raw `events.user` text matches `/"big":9007199254740991[,}]/` and `/"int":3[,}]/`: integers, with no exponent and no `.0`.
+   - The entry named `data-bare-<n>` has no `params` key.
+3. `traces keep their value and their type` — for each of the four names, `traces.user` has at least one entry, and **every** entry with that name has a `value` `===` the one sent (`42`, `0.25`, `'on'`, `true`). `typeof` must match, since snapshot replay may repeat an entry.
+4. `nothing sent before launch reaches the bundle`
+   - The marker `data pre-sent` precedes `Launched` in the log (the experiment really ran).
+   - No log message, event name or trace name contains `pre-<n>`.
+
+- [ ] **Red**
+  - `e2e-capture-files.test.ts` (fixture directory in a temp root):
+    - `reads every JSON capture the manifest names, keyed by type`;
+    - `captureEvents is empty for a type the manifest lacks`;
+    - `a manifest entry whose file is missing is skipped`.
+  - Write the device test and the scenario. Run once before wiring `App.tsx` → FAIL at the first marker.
+- [ ] **Green** — wire `App.tsx`. All four cases pass on the WOD_LX1.
+- [ ] **Mutate**
+  - (1) Temporarily make `Bugsee.event` send `null` params. Case 2 must fail.
+  - (2) Temporarily make Android `traceBoolean` call `Bugsee.trace(name, value ? 1 : 0)`. Case 3 must fail on `typeof`.
+  - Revert and record.
+- [ ] **Commit** — `test(e2e): log, event and trace in an Android bundle`. The commit body records the banner line and one event line and one trace line from the pulled files.
+
+---
+
+### Task 4.4 — Device verification, iOS (simulator): the same four cases
+
+**Files:**
+- Modify: `e2e/data.test.ts`, which runs under `E2E_PLATFORM=ios` through `startRun`/`awaitBundles`, exactly as 3.5d reused 3.4f
+
+Cases 1–4 of 4.3 apply unchanged. Two iOS notes:
+- Case 4's pre-launch drop is the SDK's own gate (`bugseeAvailableForUserDumps`) for `event` and `trace`, and the channel holder's for `log` (no wrapper is registered before `launch()`). Say so in the test's header comment, as `scenarios/channel.ts` does.
+- iOS writes `displayId: 0` on every user event and trace. The test does not assert on `displayId`.
+
+- [ ] **Red/Green** — all four cases pass on the simulator.
+- [ ] **Mutate** — temporarily make iOS `traceBoolean` pass `@(value ? 1 : 0)` as an `int`. Case 3 must fail. Revert and record.
+- [ ] **Commit** — `test(e2e): log, event and trace in an iOS bundle`.
+
+**Hardware pass: add to Task 3.H** — Task 4.4 on a physical iPhone.
+
+---
+
+### Phase 4 review gate
+
+Spawn a reviewer subagent. It must independently:
+- run `yarn test`, `yarn mutate:src`, the JVM tests, the Support XCTests and `check-rn-compat.sh 0.81`;
+- confirm by reading the code that no path other than `forwardLog` reaches `wrapperLog`;
+- confirm that no out-of-domain value can reach either native `event`/`trace` method without passing `src/data/validate.ts`;
+- **rerun** 4.3 and 4.4 rather than trust the reported output.
+
+Address its findings, and re-review until the reviewer is satisfied.
+
+---
+
+## Phase 5 — Attributes & identity
+
+**Ships:**
+- `setAttribute`, `getAttribute`, `getAllAttributes`, `clearAttribute` and `clearAllAttributes`;
+- `setUserIdentifier`, `getUserIdentifier` and `clearUserIdentifier`.
+
+### Rulings (controller, 2026-09-29)
+
+- **Ruling:** Phase 5 starts after Phase 4's gate.
+- **Ruling:** Android takes `Serializable` and iOS takes `id`. JS defines the value domain the bridge accepts and rejects the rest before crossing. Every accepted type has a round-trip test.
+- **Ruling:** tests never rely on the SDK's internal log. Until Android 7.3.0 and the next iOS beta, `setUserIdentifier`/`setAttribute` values are written verbatim to Android's SDK-internal log (fixed in `bugsee-android#186`). Device tests therefore use **synthetic, non-sensitive values only**, and assert nothing, either way, about `log.internal`.
+
+### Planner decisions (reviewable)
+
+- **The domain is the intersection of both SDKs:** `string | number | boolean`.
+  - Android also takes `Set<String>`; iOS takes any property-list object. Neither is common to both, so neither is accepted.
+  - Numbers must be finite with `|v| < 3.4028234663852886e38` (`FLOAT32_MAX`). Android stores a double as a 32-bit float and silently drops `≥ Float.MAX_VALUE`. A large negative becomes `-Infinity`, which its JSON writer emits as a *string*.
+  - Strings are limited to `≤ 1024` UTF-16 units, Android's per-value limit.
+- **`setAttribute` returns `Promise<void>` and verifies on the native side.** Neither SDK reports a dropped value truthfully:
+  - Android's public `setAttribute` is `void`, and `BugseeAttributes.put`'s `false` is discarded.
+  - iOS returns `YES` even when it drops a value for size.
+  - So each bridge reads the attribute back immediately and rejects with `E_ATTRIBUTE_REJECTED` if the SDK did not keep the value. This is how iOS's byte-based size limit, which JS cannot compute, becomes observable.
+- **Android integral numbers cross as `Long`.** A value that is integral with `|v| ≤ 2^53−1` is sent as `Long`; anything else as `Double`. Without this, Android's float storage rounds `9007199254740991` to `9007199254740992`.
+- **Reads return what the report will carry.** On Android, `getAttribute` and `getAllAttributes` both read `Bugsee.getAllAttributes()`, the persisted copy the report is built from, where a fractional value is a `Float`. `Bugsee.getAttribute` reads the in-memory copy, which still holds the original `Double`. A `Float` is widened with `doubleValue()`, the same widening the SDK's JSON writer applies. So `0.1` reads back as `0.10000000149011612` on Android, exactly as `manifest.json` shows it, and as `0.1` on iOS. This is documented on `setAttribute`.
+- **An empty identifier clears.** iOS treats `''` as clear; Android stores `''` and omits it from `request.json`. JS maps `setUserIdentifier('')` to `clearUserIdentifier()`, and `getUserIdentifier()` maps `null` and `''` to `undefined` on both platforms.
+- **Identity stays synchronous (`void`) and is not read back.** No size limit applies, and the bundle's `request.json` `email` is the device check. Attribute methods are all `Promise`-returning, so their ordering and rejection are uniform.
+
+### Verified facts (2026-09-29)
+
+**Android `234dcddfc`:**
+- `Bugsee.setAttribute(String, Serializable)` → `BugseeAttributes.put`. It accepts:
+  - `String` (length ≤ 1024);
+  - `Integer`, `Long`, `Float`, `Boolean`;
+  - `Double` (`< Float.MAX_VALUE`, stored as `float`);
+  - `Set<String>`.
+- The total of name and value lengths must stay ≤ 25 KB.
+- A rejected value is silently dropped. A `null` value removes the attribute.
+- `getAttribute` reads memory; `getAllAttributes` and the report's `manifest.json` `attrs` read the persisted preferences.
+- `setUserIdentifier` stores the string as given (`""` included). `request.json` carries it as `email` only when non-empty.
+
+**iOS `74af69ee8`:**
+- `+setAttribute:withValue:` archives the value with `NSKeyedArchiver`. It ignores the value when the archive exceeds `CUSTOM_ATTRIBUTE_SIZE_LIMIT` 1124 bytes, or the whole set exceeds 25700 bytes — **returning `YES` either way**.
+- Attributes are stored in `NSUserDefaults`.
+- `+setUserIdentifier:` clears on nil, empty or non-string, and stores in the **Keychain**, which on a physical device survives an app reinstall.
+
+**Report placement:** attributes land in `manifest.json` `attrs`, and the identifier in `request.json` `email`.
+
+### Constants
+
+| Name | Value |
+|---|---|
+| `ATTRIBUTE_STRING_MAX_LENGTH` | `1024` (UTF-16 units, inclusive) |
+| `ATTRIBUTE_NUMBER_LIMIT` | `3.4028234663852886e38` (exclusive, on `Math.abs`) |
+| `MAX_SAFE_LONG` (Android) | `9007199254740991` |
+
+| Error code | Meaning |
+|---|---|
+| `E_ATTRIBUTE_BAD_ARGUMENT` | JS rejected the name or value before crossing. |
+| `E_ATTRIBUTE_REJECTED` | The SDK did not keep the value: it was over a size limit, or dropped for any other reason. Detected by native read-back. |
+
+---
+
+### Task 5.1 — Attributes and identity: JS API, validation, spec, stubs
+
+**Files:**
+- Create: `src/attributes/validate.ts`, `src/attributes/errors.ts`, `src/attributes/__tests__/attributes.test.ts`, `src/attributes/__tests__/identity.test.ts`
+- Modify: `src/NativeBugsee.ts`, `src/index.ts`, `src/__mocks__/native.ts`
+- Modify (stubs only): `android/BugseeModule.java`, `ios/BugseeModule.mm`
+
+**TurboModule additions (exact):**
+
+```ts
+setAttributeString(name: string, value: string): Promise<void>;
+setAttributeNumber(name: string, value: number): Promise<void>;
+setAttributeBoolean(name: string, value: boolean): Promise<void>;
+getAttribute(name: string): Promise<UnsafeObject>;   // {} when absent, else { value }
+getAllAttributes(): Promise<UnsafeObject>;           // {} when none
+clearAttribute(name: string): Promise<void>;
+clearAllAttributes(): Promise<void>;
+setUserIdentifier(identifier: string): void;         // never ''; JS maps '' to clear
+getUserIdentifier(): Promise<UnsafeObject>;          // {} when absent, else { value }
+clearUserIdentifier(): void;
+```
+
+**Public JS API (exact):**
+
+```ts
+// src/attributes/errors.ts
+export const AttributeErrorCode = {
+  BadArgument: 'E_ATTRIBUTE_BAD_ARGUMENT',
+  Rejected: 'E_ATTRIBUTE_REJECTED',
+} as const;
+export class BugseeAttributeError extends Error {
+  readonly code: (typeof AttributeErrorCode)[keyof typeof AttributeErrorCode];
+}
+// src/attributes/validate.ts
+export type AttributeValue = string | number | boolean;
+export type AttributeReadValue = string | number | boolean | string[]; // string[]: a Set<String> native code set on Android
+export const ATTRIBUTE_STRING_MAX_LENGTH = 1024;
+export const ATTRIBUTE_NUMBER_LIMIT = 3.4028234663852886e38;
+// facade
+setAttribute(name: string, value: AttributeValue): Promise<void>;
+getAttribute(name: string): Promise<AttributeReadValue | undefined>;
+getAllAttributes(): Promise<Record<string, AttributeReadValue>>;
+clearAttribute(name: string): Promise<void>;
+clearAllAttributes(): Promise<void>;
+setUserIdentifier(identifier: string): void;     // TypeError on non-string; '' clears
+getUserIdentifier(): Promise<string | undefined>;
+clearUserIdentifier(): void;
+```
+
+- Validation failures in the promise methods **reject** with `BugseeAttributeError` code `E_ATTRIBUTE_BAD_ARGUMENT`, without crossing. They never throw synchronously.
+- A native rejection with code `E_ATTRIBUTE_REJECTED` surfaces as `BugseeAttributeError` with that code.
+- A non-string or empty `name` is `E_ATTRIBUTE_BAD_ARGUMENT`.
+- Export `AttributeErrorCode`, `BugseeAttributeError`, `AttributeValue` and `AttributeReadValue` from `src/index.ts`.
+- **Document on `setAttribute`:** attributes persist across launches; Android stores fractional numbers as 32-bit floats (so `0.1` reads back as `0.10000000149011612`, as the report carries it); iOS limits a value by its archived size (about 1 KB), so a long string accepted on Android can be rejected on iOS.
+
+**Stubs:** every promise method resolves `{}` or `undefined`, and the void methods are no-ops. Each stub is commented `Task 5.2` or `Task 5.3`.
+
+- [ ] **Red**
+  - `attributes.test.ts`:
+    - `a string goes to setAttributeString`;
+    - `a number goes to setAttributeNumber`;
+    - `a boolean goes to setAttributeBoolean`;
+    - `rejects NaN, Infinity and -Infinity with E_ATTRIBUTE_BAD_ARGUMENT before crossing`;
+    - `rejects ±3.4028234663852886e38 and accepts ±3.4e38`;
+    - `accepts ±9007199254740991`;
+    - `accepts a 1024-unit string and rejects 1025`;
+    - `counts UTF-16 units, not code points` (512 emoji = 1024 units accepted; 513 rejected);
+    - `rejects null, undefined, an array, an object and a bigint`;
+    - `rejects an empty or non-string name`;
+    - `a native E_ATTRIBUTE_REJECTED surfaces as BugseeAttributeError`;
+    - `getAttribute unwraps {value} and maps {} to undefined`;
+    - `getAllAttributes maps a native {} to {}`;
+    - `clearAttribute validates the name`;
+    - `AttributeErrorCode values are exactly the two stable strings`.
+  - `identity.test.ts`:
+    - `setUserIdentifier forwards a non-empty string`;
+    - `setUserIdentifier('') clears instead`;
+    - `setUserIdentifier rejects a non-string with TypeError before crossing`;
+    - `getUserIdentifier maps {} and {value: ''} to undefined`;
+    - `clearUserIdentifier forwards`.
+  - Run → FAIL.
+- [ ] **Green** — the modules, the mock and the stubs. `ios-spec-coverage`, `check-rn-compat.sh 0.81` and both example builds green.
+- [ ] **Mutate**
+  - (1) Make the number bound `<=` instead of `<`. `rejects ±3.4028234663852886e38` must fail.
+  - (2) Forward `''` to `setUserIdentifier`. `setUserIdentifier('') clears instead` must fail.
+  - (3) Measure strings with `[...value].length`. `counts UTF-16 units` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(attributes): attributes and user identity, validated in JS, bridge stubbed`.
+
+---
+
+### Task 5.2 — Attributes and identity: Android bridge
+
+**Files:**
+- Create: `android/AttributeBridge.java`, `androidTest/AttributeBridgeTest.java`
+- Modify: `android/BugseeModule.java` (replace the 5.1 stubs)
+
+**Interface (plain Java, JVM-testable):**
+
+```java
+final class AttributeBridge {
+    static final long MAX_SAFE_LONG = 9_007_199_254_740_991L;
+    interface Sdk {                                          // prod adapter: Bugsee.*
+        void set(String name, Serializable value);
+        @Nullable Object getInMemory(String name);           // Bugsee.getAttribute
+        @Nullable Map<String, Serializable> getPersisted();  // Bugsee.getAllAttributes
+    }
+    static Serializable numberValue(double v);   // integral && |v| <= MAX_SAFE_LONG -> Long (-0.0 -> 0L); else Double
+    static boolean setAndVerify(Sdk sdk, String name, Serializable value);  // set, then getInMemory(name).equals(value)
+    static Map<String, Object> readable(@Nullable Map<String, Serializable> persisted);
+        // String, Boolean as-is; Float -> (double) f.floatValue() widened; other Number -> doubleValue();
+        // Set<?> -> List<String> of its String elements; anything else dropped (logged once at BugseeRN)
+    static @Nullable Object readOne(Sdk sdk, String name);  // readable(getPersisted()).get(name)
+    static @Nullable String identifier(@Nullable String raw);  // null or "" -> null
+}
+```
+
+**Module:**
+- `setAttribute*` → `setAndVerify`. It resolves on `true` and rejects `E_ATTRIBUTE_REJECTED` (message names the attribute) on `false`.
+- `getAttribute` resolves a `WritableMap` with a `value` key (`putString`/`putBoolean`/`putDouble`/`putArray`) or empty.
+- `getAllAttributes` converts `readable(...)` into a `WritableMap`.
+- `clearAttribute` → `Bugsee.clearAttribute(name)`, then resolve. `clearAllAttributes` → `Bugsee.clearAllAttributes()`, then resolve.
+- `setUserIdentifier` → `Bugsee.setUserIdentifier(id)`. `getUserIdentifier` resolves `{ value }` only when `identifier(...)` is non-null. `clearUserIdentifier` → `Bugsee.clearUserIdentifier()`.
+- Any `RuntimeException` in a promise method rejects `E_ATTRIBUTE_REJECTED`.
+
+- [ ] **Red** — `AttributeBridgeTest`:
+  - `integralNumbersBecomeLong` (`42.0`, `-7.0`, `2147483648.0` and `9007199254740991.0` become the matching `Long`);
+  - `negativeZeroBecomesLongZero`;
+  - `fractionalNumbersStayDouble` (`1.5`);
+  - `integralBeyondTheSafeRangeStaysDouble` (`2^60`);
+  - `verifiedWhenTheSdkKeepsTheValue`;
+  - `rejectedWhenTheSdkDropsTheValue` (the fake ignores `set`);
+  - `rejectedWhenTheSdkKeepsAnOlderValue`;
+  - `readableWidensAFloatExactlyAsTheReportWritesIt` (`0.1f` → `0.10000000149011612`, which is `Double.toString((double) 0.1f)`);
+  - `readableKeepsALongIntegral`;
+  - `readableTurnsAStringSetIntoAList`;
+  - `readableDropsUnknownTypes`;
+  - `readOneReadsThePersistedCopyNotTheMemoryCopy` (memory `Double 0.1`, persisted `Float 0.1f` → the widened value);
+  - `emptyIdentifierReadsAsAbsent`.
+  - Run → FAIL.
+- [ ] **Green** — the class and the module. The Android example builds.
+- [ ] **Mutate**
+  - (1) Send every number as `Double`. `integralNumbersBecomeLong` must fail.
+  - (2) Skip the verification (return `true`). `rejectedWhenTheSdkDropsTheValue` must fail.
+  - (3) Make `readOne` read `getInMemory`. `readOneReadsThePersistedCopyNotTheMemoryCopy` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(android): attributes by value with read-back verification, and identity`.
+
+---
+
+### Task 5.3 — Attributes and identity: iOS bridge
+
+**Files:**
+- Create: `support/BGSRNAttributes.m`, `support/include/BGSRNAttributes.h`, `supportTests/BGSRNAttributesTests.m`
+- Modify: `ios/BugseeModule.mm` (replace the stubs; both import branches)
+
+**Interface.** The Support package links no SDK, so the SDK arrives as blocks:
+
+```objc
+FOUNDATION_EXPORT const NSInteger BGSRNAttributeArchiveLimit;   // 1124, mirrors CUSTOM_ATTRIBUTE_SIZE_LIMIT
+@interface BGSRNAttributes : NSObject
++ (BOOL)setValue:(id)value forKey:(NSString *)key
+          setter:(BOOL (^)(NSString *key, id value))setter
+          getter:(id _Nullable (^)(NSString *key))getter;       // YES only if getter(key) isEqual: value afterwards
++ (NSDictionary<NSString *, id> *)readable:(nullable NSDictionary *)raw;  // NSString; NSNumber (CFBoolean kept); NSArray of NSString; else dropped
++ (nullable NSString *)identifier:(nullable NSString *)raw;              // nil/@"" -> nil
+@end
+```
+
+**Module (each inside `BGSRNRunOnMain`):**
+- `setAttributeString` passes the `NSString`.
+- `setAttributeNumber` passes `@(value)`: iOS stores a double exactly, so no integral conversion is needed.
+- `setAttributeBoolean` passes `BGSRNBoolNumber(value)` (Task 4.2).
+- Each uses `setter = ^(k, v){ return [Bugsee setAttribute:k withValue:v]; }` and `getter = ^(k){ return [Bugsee getAttribute:k]; }`. `NO` rejects `E_ATTRIBUTE_REJECTED`.
+- `getAttribute`/`getAllAttributes` go through `readable:`.
+- The clear methods call `clearAttribute:`/`clearAllAttributes`.
+- `setUserIdentifier:`, `getUserIdentifier` (through `identifier:`) and `clearUserIdentifier` call their SDK counterparts.
+
+- [ ] **Red** — `BGSRNAttributesTests`:
+  - `testVerifiedWhenTheStoreKeepsTheValue`;
+  - `testRejectedWhenTheSetterSaysYesButTheStoreDroppedIt` (iOS's size path);
+  - `testRejectedWhenTheStoreKeepsAnOlderValue`;
+  - `testReadableKeepsBooleansAsCFBooleans`;
+  - `testReadableTurnsAStringArrayIntoAnArray`;
+  - `testReadableDropsUnknownTypes` (`NSDate`, `NSData`);
+  - `testEmptyIdentifierReadsAsAbsent`;
+  - `testA900CharacterAsciiStringFitsTheArchiveLimit`;
+  - `testA1024CharacterAsciiStringExceedsTheArchiveLimit`.
+
+  The last two pin, with `NSKeyedArchiver archivedDataWithRootObject:requiringSecureCoding:NO`, the fact Task 5.5 depends on. If either fails, stop and report; do not change 5.5's expectations inside this task. Run → FAIL.
+- [ ] **Green** — the class and the module. The iOS example builds on both delivery paths.
+- [ ] **Mutate**
+  - (1) Return `YES` from `setValue:…` without reading back. `testRejectedWhenTheSetterSaysYesButTheStoreDroppedIt` must fail.
+  - (2) Map booleans through `@((int)b)` in `readable:`. `testReadableKeepsBooleansAsCFBooleans` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(ios): attributes with read-back verification, and identity`.
+
+---
+
+### Task 5.4 — Device verification, Android: attributes and identity round-trip, in the report
+
+**Files:** create `scenarios/attributes.ts` (scenarios `attributes` and `attributes-persist`) and `e2e/attributes.test.ts`; modify `App.tsx`.
+
+**Scenario `attributes`** (after `Launched`; every step awaited in order, and every result logged as `BUGSEE_E2E attr <label> <json>`):
+1. **Precondition:** `clearAllAttributes()` and `clearUserIdentifier()`, then log `getAllAttributes()` and `getUserIdentifier()`. The test asserts `{}` and `undefined`. Identity is persistent (and on iOS lives in the Keychain), so a stale value from an earlier run would otherwise pass.
+2. Set each row of the table below. Log `resolved` or the rejection `code`, then `getAttribute(name)` with its `typeof`.
+3. `clearAttribute('e2e_neg')`, then log `getAttribute('e2e_neg')`.
+4. Log `getAllAttributes()`.
+5. `setUserIdentifier('e2e-user-<n>')` and log the get. `setUserIdentifier('')` and log the get. `setUserIdentifier('e2e-user-<n>')` again.
+6. `Bugsee.upload('attrs-<n>', '')`.
+
+| name | value sent | Android: set / read back | iOS: set / read back |
+|---|---|---|---|
+| `e2e_str` | `'blue-<n>'` | resolves / `'blue-<n>'` | resolves / `'blue-<n>'` |
+| `e2e_empty` | `''` | resolves / `''` | resolves / `''` |
+| `e2e_int` | `42` | resolves / `42` | resolves / `42` |
+| `e2e_neg` | `-7` | resolves / `-7` | resolves / `-7` |
+| `e2e_int64` | `2147483648` | resolves / `2147483648` | resolves / `2147483648` |
+| `e2e_safe` | `9007199254740991` | resolves / `9007199254740991` | resolves / `9007199254740991` |
+| `e2e_half` | `1.5` | resolves / `1.5` | resolves / `1.5` |
+| `e2e_tenth` | `0.1` | resolves / `0.10000000149011612` | resolves / `0.1` |
+| `e2e_true` | `true` | resolves / `true` (boolean) | resolves / `true` (boolean) |
+| `e2e_false` | `false` | resolves / `false` (boolean) | resolves / `false` (boolean) |
+| `e2e_mid` | `'m'.repeat(900)` | resolves / same | resolves / same |
+| `e2e_long` | `'x'.repeat(1024)` | resolves / same | rejects `E_ATTRIBUTE_REJECTED` / `undefined` |
+| `e2e_too_long` | `'x'.repeat(1025)` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
+| `e2e_huge` | `3.5e38` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
+
+**Scenario `attributes-persist`** (a fresh process, the next run): log `getAllAttributes()` and `getUserIdentifier()`; then `clearAllAttributes()` and `clearUserIdentifier()`; then log both again.
+
+**Cases (`e2e/attributes.test.ts`):**
+1. `every accepted type reads back as the report will carry it` — the platform's column of the table, compared with `===` and `typeof`.
+2. `a cleared attribute is gone` — `e2e_neg` reads `undefined` and is absent from `getAllAttributes`.
+3. `the retained report carries the attributes and the identifier`
+   - `manifest.json` `attrs` has every resolved row except `e2e_neg`, with the platform's read-back value and JSON type. On Android, `e2e_tenth` is the JSON number `0.10000000149011612`.
+   - `request.json` `email` is `e2e-user-<n>`.
+4. `an empty identifier clears it` — the get after `setUserIdentifier('')` is `undefined`.
+5. `attributes and identity survive a restart, and clearing them sticks`
+   - The `attributes-persist` run's first log equals case 1's final `getAllAttributes()` and identifier.
+   - Its second log is `{}` and `undefined`.
+
+Use no real user data anywhere. The Android SDK logs these values to its internal log (`bugsee-android#186`); they are synthetic.
+
+- [ ] **Red/Green** — all five cases pass on the WOD_LX1.
+- [ ] **Mutate** — temporarily make Android send every number as `Double`. Case 1 must fail on `e2e_safe` (`9007199254740992`). Revert and record.
+- [ ] **Commit** — `test(e2e): attributes and identity round-trip on Android`.
+
+---
+
+### Task 5.5 — Device verification, iOS (simulator)
+
+The Task 5.4 cases apply unchanged, using the iOS column of the table.
+- **The precondition matters more here:** the Keychain survives app reinstalls on a physical device, and survives until the device is erased on a simulator.
+- The iOS `e2e_long` rejection is SDK behaviour, pinned by `testA1024CharacterAsciiStringExceedsTheArchiveLimit`.
+
+- [ ] **Red/Green** — the five cases pass on the simulator.
+- [ ] **Mutate** — temporarily return `YES` from `BGSRNAttributes setValue:…` without reading back. The `e2e_long` row must fail. Revert and record.
+- [ ] **Commit** — `test(e2e): attributes and identity round-trip on iOS`.
+
+**Hardware pass: add to Task 3.H** — Task 5.5 on a physical iPhone, including case 5 across a real process restart. Clear the Keychain identity first and last.
+
+---
+
+### Phase 5 review gate
+
+The reviewer must independently:
+- run all unit, JVM, XCTest and mutation suites;
+- confirm by reading the code that every accepted JS type has a round-trip case on both platforms (unit, and device case 1);
+- confirm that no path reports success for a value the SDK dropped;
+- confirm that no test reads `log.internal`;
+- **rerun** 5.4 and 5.5.
+
+---
+
+## Phase 6 — Privacy
+
+**Ships:**
+- `startBlackout`, `endBlackout`, `isBlackout` and `captureViewHierarchy`;
+- `<BugseeSecure>`, which replaces 6.x `toggleProtected`;
+- the `vh` data request, answered by a JS view tree;
+- `Bugsee.wrap(Root)`, the root anchor the view tree needs.
+
+### Rulings (controller, 2026-09-29)
+
+- **Ruling:** Phase 6 starts after Phase 5's gate.
+- **Ruling:** `<BugseeSecure>` registers secure rectangles through the existing 3.3 store (`setSecureRectangles` → `SecureRectangleStore` / `BGSRNSecureRectangles`) and disposes of them on unmount.
+- **Ruling:** the `vh` data request is implemented. The JS view tree is sent within the 500 ms budget, with privacy per spec: no text content, and no free-text labels on nodes marked secure. `bounds` are `[x, y, w, h]` in **screen** coordinates in each platform's unit: Android pixels, through the same display-offset conversion as B1; iOS points.
+- **Ruling:** a blackout device test defines what is observable in a bundle and asserts it: the video, the screenshot, the view tree and the `capture` trace.
+- **Ruling:** anything the simulator cannot show becomes an explicit gated case on the hardware-pass list (Task 3.H), never an either-path assertion.
+
+### Planner decisions (reviewable)
+
+- **Root discovery is explicit: `Bugsee.wrap(Root)`.**
+  - React Native offers no public way to enumerate mounted roots. `AppRegistry.setWrapperComponentProvider` holds a single provider and has no getter, so taking it would silently drop an app's own provider. The DevTools global hook is the only other channel, and it belongs to React DevTools.
+  - `wrap` renders the app's root beside a zero-size anchor `View`. From the anchor's host instance, the walk reaches the React fiber root.
+  - An app that does not wrap gets `null` for every `vh` request, answered at once natively, which the spec allows ("null means nothing to contribute").
+  - `wrap` is new public API not listed in design §10.1. It is chosen so later root-level features (Phase 7's boundary, Phase 9's touch breadcrumbs) can share one integration point.
+- **React internals are confined to one file, `src/viewtree/fiber.ts`.**
+  - It reads `__internalInstanceHandle` on a host public instance, and fiber fields (`tag`, `type`, `elementType`, `child`, `sibling`, `return`, `memoizedProps`, `stateNode`).
+  - It calls `getPublicInstanceFromInternalInstanceHandle` and `measureInWindow` through `react-native/Libraries/ReactNative/RendererProxy`.
+  - Verified on RN 0.81.6 and 0.87.1 (below). `check-rn-compat.sh` gains greps that fail CI when a matrix version drops any of them.
+  - If the probe fails at runtime, the view tree is disabled and every request answers `null`, logged once.
+- **Bounds conversion reuses B1's split.**
+  - JS measures with `measureInWindow`, which is synchronous under Fabric, and scales by `secureRectangleScale()` (`PixelRatio.get()` on Android, `1` on iOS).
+  - Native supplies the React root's display origin in the request event: on Android, `ReactRootOriginTracker`'s last published origin; on iOS, the key window's origin in `window.screen.coordinateSpace`.
+  - JS adds the origin. Android rounds to integer pixels; iOS keeps points to 2 decimals.
+- **`<BugseeSecure>` re-measures every 100 ms while mounted, with one shared timer for all instances.**
+  - `onLayout` does not fire when an ancestor scrolls, so a rectangle measured only on layout goes stale and leaks the region while it moves.
+  - 100 ms is well under the SDK's 2–3 pulls a second.
+  - A measurement that throws keeps the last rectangle (fails closed).
+  - Design §6.2 also prefers `addSecureView(nativeView)` where a component resolves to a real view. The ruling above chose the rectangle path; the residual exposure during fast scrolls (at most one re-measure interval plus the SDK's own pull lag) is recorded here for the controller.
+- **`setSecureRectangles` and `<BugseeSecure>` share one JS registry.** It keys each owner's rectangles (`manual:<display>` for `setSecureRectangles`, one token per component instance) and publishes the per-display union. It crosses the bridge only when the union changes, and the first publish always crosses. A component unmounting therefore never clears a manual set, and the reverse holds too.
+- **Blackout is forwarded as the SDKs implement it, and the Android pre-launch gap is documented rather than patched.** Android's `startBlackout` is a no-op before launch (`Log.w` only); iOS honours it, failing closed. Device case 5 pins both behaviours, so a change in either SDK is caught. This is recorded for the controller as a candidate SDK issue; implementers do not file it.
+
+### Verified facts (2026-09-29)
+
+**Data requests today:**
+- Both wrappers answer every data request with `null`, synchronously: `BugseeReactNativeWrapper.requestData` → `callback.onResult(null)`; `BugseeModule.mm` `requestDataWithType:callback:` → `[callback onResult:nil]`.
+
+**Android `234dcddfc`:**
+- `DataRequestTypes.VIEW_HIERARCHY = "vh"` and `VIEW_HIERARCHY_TIMEOUT_MS = 500`.
+- `requestData` is called on main, once per display per non-best-effort pass. It carries no display id.
+- A pass runs on snapshot creation (not terminating) and on `Bugsee.captureViewHierarchy()`, and never for a display under blackout.
+- The #118 fix is in (`BugseeCaptureDataProviderViewHierarchy.onBeforeSnapshotCreated`): off main, the snapshot **waits** for the reply up to 500 + 250 ms. On main it does not wait, and an async reply lands in the next report.
+- `startBlackout`/`endBlackout` are no-ops before launch. Each dispatches `BlackoutStarted`/`BlackoutEnded`.
+- While blacked out, `ScreenCaptureScreenshot` returns a black frame and video frames are black (`processAndSendEmptyFrame`).
+- The `capture` system trace carries `{state: "blackout" | "active" | "partial_blackout", displays?}`.
+- Secure regions are painted `Color.BLACK`.
+
+**iOS `74af69ee8`:**
+- `requestDataWithType:callback:` is called on main. The snapshot waits 1000 ms for the main-thread walk plus up to 500 + 250 ms for the reply.
+- After 3 consecutive timeouts the budget drops to 50 ms until the next start or an in-time reply.
+- `startBlackout` is not gated on launch.
+- While blacked out: the report screenshot is `blackReportScreenshot` (solid black), video frames are black placeholders, and no view-hierarchy pass runs.
+- The `capture` trace behaves as on Android.
+- `hideViewColor` is black.
+
+**RN internals:**
+- 0.81.6 (`npm pack`) and 0.87.1 (installed):
+  - `RendererProxy` exports `getPublicInstanceFromInternalInstanceHandle`.
+  - Both public-instance classes (`ReactFabricHostComponent`, `ReactNativeElement`) set `__internalInstanceHandle`.
+  - Fabric's `measureInWindow` (`UIManagerBinding.cpp`, `NativeDOM.cpp`) invokes its callback **synchronously**, from the current shadow-tree revision.
+- React 19.1 and 19.2 fiber tags: FunctionComponent 0, ClassComponent 1, HostRoot 3, HostPortal 4, HostComponent 5, HostText 6, Fragment 7, Mode 8, ContextConsumer 9, ContextProvider 10, ForwardRef 11, Profiler 12, Suspense 13, Memo 14, SimpleMemo 15, Offscreen 22, LegacyHidden 23.
+
+**Specs:**
+- The viewer does not yet parse `managed` as the SDKs write it (`wrapper-data-requests` open item 2). The payload will not render in the dashboard until the viewer changes. This does not block us; it is recorded.
+- `wrapper-data-requests` says `bounds` are "physical screen pixels" while also requiring "the same coordinate space as the native tree". On iOS, the native tree is in points. The ruling and workbook 6.6 (the unit of each platform's native tree) decide: iOS uses points. A specs correction is for the controller to raise.
+
+**Tooling:**
+- `ffmpeg` and `ffprobe` are at `/opt/homebrew/bin`.
+- The `jest` root config runs `ts-jest` in a node environment, and nothing in `src/` is `.tsx` yet.
+- `stryker.src.json` mutates `src/**/*.ts` only.
+
+### Constants
+
+| Name | Value | Where | Why |
+|---|---|---|---|
+| `SECURE_REMEASURE_MS` | `100` | `src/secure/measureLoop.ts` | Well under the SDK's ~350 ms pull interval. |
+| `VH_DATA_TYPE` | `'vh'` | JS, Android, iOS | `DataRequestTypes.VIEW_HIERARCHY`; the Android test pins the equality. |
+| `DATA_REQUEST_DEADLINE_MS` | `450` | Android `DataRequestBridge`, iOS `BGSRNDataRequestDeadlineMs` | Below the SDK's 500 ms; the Android test pins `< VIEW_HIERARCHY_TIMEOUT_MS`. |
+| `VH_WALK_BUDGET_MS` | `250` | `src/viewtree/walk.ts` | Leaves at least 200 ms for JS-thread queueing and two bridge hops. |
+| `VH_MAX_NODES` | `2000` | walk | Bounds CPU and payload size. |
+| `VH_MAX_DEPTH` | `64` | walk | Android's own native walk cap. |
+| `VH_TAG_MAX_LENGTH` | `99` | walk | Android emits `tag` only when shorter than 100 characters. |
+| `VH_IOS_DECIMALS` | `2` | walk | Points, rounded for a compact payload. |
+| `VH_ANCHOR_NATIVE_ID` | `'__bugsee_view_tree_anchor'` | `src/viewtree/anchor.tsx` | Lets the walk skip the anchor. |
+| `LUMA_DARK_MAX` / `LUMA_BRIGHT_MIN` | `24` / `150` | `e2e/media.ts` | Limited-range black is Y≈16, white is Y≈235. |
+| `BLACKOUT_MIN_DARK_S` | `1.5` | `e2e/media.ts` | The shortest dark run that counts as the blackout. |
+
+**Log lines** (Android `Log.i("BugseeRN", …)`, iOS `NSLog(@"BugseeRN …")`); the device tests match these:
+- `data request <id> type=<type> origin=<x>,<y>`
+- `data request <id> completed by=<js|deadline|no-js|no-origin|unknown-type|detach|sink-threw> bytes=<n|null> ms=<elapsed>`
+
+Here `<id>` is `dr-<counter>` and `ms` is measured from the moment `requestData` was entered.
+
+### The `vh` payload (exact)
+
+A single JSON object, the synthetic root. Keys appear in this order: `id`, `class_name`, `bounds`, `options`, `subitems`, `truncated`. Absent keys are omitted, never `null`.
+
+| key | type | presence | meaning |
+|---|---|---|---|
+| `id` | string | always | Preorder index within this snapshot: `"0"` is the root. Never a React `key` (keys are free text). |
+| `class_name` | string | always | Root `"ReactNative"`. Surface `"ReactSurface"`. Host: the host type (`fiber.type`, e.g. `"RCTView"`). Composite: `type.displayName`, else `type.name`, else `"Anonymous"`; ForwardRef and Memo unwrap to the inner component's name. |
+| `bounds` | number[4] | always | `[x, y, w, h]`, screen coordinates. Android: integer display pixels, `Math.round(v·scale) + origin`. iOS: points, rounded to 2 decimals, plus the origin. A composite, surface or root takes the union of its emitted children. |
+| `options.kind` | string | always | `"root"`, `"surface"`, `"composite"` or `"host"`. |
+| `options.secure` | `true` | when true | This node or an ancestor is a `<BugseeSecure>`. |
+| `options.tag` | string | host nodes, not secure, `testID` a string of length ≤ 99 | The `testID`, like Android's `options.tag`. |
+| `options.native_id` | string | same rule, for `nativeID` | |
+| `subitems` | node[] | when non-empty | Emitted children. |
+| `truncated` | `true` | when true | The walk stopped here with children unvisited (depth, node cap or budget). The root also carries it when any node does. |
+
+**Never emitted:**
+- `HostText` fibers (text content) and any other prop — the walk reads `testID` and `nativeID` only, pinned by a test;
+- a hidden `Offscreen` or `LegacyHidden` subtree;
+- a subtree with no measurable host node;
+- the `Bugsee.wrap` component and its anchor.
+
+**Flattened (their children are promoted):** HostRoot, HostPortal, Fragment, Mode, ContextConsumer, ContextProvider, Profiler, Suspense and any unknown tag.
+
+```json
+{"id":"0","class_name":"ReactNative","bounds":[0,0,1080,2340],"options":{"kind":"root"},
+ "subitems":[{"id":"1","class_name":"ReactSurface","bounds":[0,0,1080,2340],"options":{"kind":"surface"},
+  "subitems":[{"id":"2","class_name":"App","bounds":[0,0,1080,2340],"options":{"kind":"composite"},
+   "subitems":[{"id":"3","class_name":"RCTView","bounds":[0,0,1080,2340],"options":{"kind":"host","tag":"home"}},
+    {"id":"4","class_name":"BugseeSecure","bounds":[79,788,394,158],"options":{"kind":"composite","secure":true},
+     "subitems":[{"id":"5","class_name":"RCTView","bounds":[79,788,394,158],"options":{"kind":"host","secure":true}}]}]}]}]}
+```
+
+**Sources.**
+- The node table in `bugsee/specs` `sdk/wrapper-data-requests` §Payload (`class_name`, `bounds`, `id`, `subitems`, `options`), which describes what the viewer reads (`RecordingViewTreeNode`).
+- The Android view-node names from `sdk/reporting/platforms/android.md` (`options.tag`, `options.secure`, node-level `truncated`).
+- The privacy rules from `sdk/reporting/bundle/viewtree.md` §Privacy.
+- The spec's open item 5 says this table is "as observed" and to be confirmed with the viewer owners once a second producer exists. That confirmation is for the controller.
+
+---
+
+### Task 6.1 — Blackout and `captureViewHierarchy`: facade and both bridges
+
+**Files:**
+- Modify: `src/NativeBugsee.ts`, `src/index.ts`, `src/__mocks__/native.ts`, `android/BugseeModule.java`, `ios/BugseeModule.mm`
+- Create: `src/__tests__/blackout.test.ts`
+
+**TurboModule additions (exact):**
+
+```ts
+startBlackout(): void;
+endBlackout(): void;
+isBlackout(): Promise<boolean>;
+captureViewHierarchy(): void;
+```
+
+The facade methods have the same names and signatures. Document on `startBlackout`:
+- it suppresses the video (black frames), the report screenshot (black), touches and the view hierarchy, while logs, network, events and traces continue (design §4.1);
+- **Android ignores it before `launch()`**, while iOS honours it; call it after `launch()` resolves when it must hold on both;
+- `isBlackout()` verifies.
+
+On Android, the methods call `Bugsee.startBlackout()`, `endBlackout()`, `isBlackout()` and `captureViewHierarchy()`. On iOS, the same calls run inside `BGSRNRunOnMain`, and `isBlackout` resolves `@([Bugsee isBlackout])` there.
+
+- [ ] **Red** — `blackout.test.ts`:
+  - `startBlackout forwards`;
+  - `endBlackout forwards`;
+  - `isBlackout resolves what native reports` (true and false);
+  - `captureViewHierarchy forwards`;
+  - `startBlackout never calls endBlackout` (call counts).
+  - Run → FAIL.
+- [ ] **Green** — as specified; spec coverage and both builds green.
+- [ ] **Mutate** — make the facade's `startBlackout` call `endBlackout`. `startBlackout forwards` must fail. Revert and record.
+- [ ] **Commit** — `feat(privacy): blackout and captureViewHierarchy on both platforms`.
+
+---
+
+### Task 6.2 — `<BugseeSecure>` and the shared secure-rectangle registry
+
+**Files:**
+- Create: `src/secure/registry.ts`, `src/secure/measureLoop.ts`, `src/secure/BugseeSecure.tsx`
+- Create tests: `src/secure/__tests__/registry.test.ts`, `src/secure/__tests__/measureLoop.test.ts`, `src/secure/__tests__/BugseeSecure.test.tsx`
+- Modify: `src/index.ts` (`setSecureRectangles` goes through the registry; export `BugseeSecure` and `BugseeSecureProps`)
+- Tooling: root `package.json` devDependencies `react@19.2.3`, `react-test-renderer@19.2.3` and `@types/react@^19.2.0` (the versions `examples/bare` resolves); `tsconfig.base.json` `"jsx": "react-jsx"`; `stryker.src.json` `mutate` adds `packages/react-native/src/**/*.tsx`; `scripts/check-rn-compat.sh` typechecks `tscheck/**/*.tsx` too and installs `@types/react@19`
+
+**Interfaces (exact):**
+
+```ts
+// src/secure/registry.ts
+export type SecureOwner = object | `manual:${number}`;
+export function setOwnerRectangles(owner: SecureOwner, display: number, rectangles: readonly SecureRectangle[]): void;
+export function clearOwner(owner: SecureOwner): void;
+// publishes, per affected display, flattenSecureRectangles(union in owner-insertion order, secureRectangleScale())
+// via NativeBugsee.setSecureRectangles, only when the flat list differs from the last one published for that display.
+// Validation (flattenSecureRectangles) runs BEFORE the owner's entry changes: an invalid call changes nothing.
+
+// src/secure/measureLoop.ts
+export const SECURE_REMEASURE_MS = 100;
+export function addMeasurer(measure: () => void): () => void;  // one shared setInterval while >= 1 measurer
+
+// src/secure/BugseeSecure.tsx
+export interface BugseeSecureProps extends ViewProps { enabled?: boolean; children?: React.ReactNode; }
+export function BugseeSecure(props: BugseeSecureProps): React.ReactElement;
+```
+
+`BugseeSecure` is a plain function component: no `memo`, no `forwardRef`. The view-tree walk identifies it by identity. It behaves as follows:
+- It renders `<View {...rest} ref={ref} collapsable={false} onLayout={…}>`, calling the caller's `onLayout` too.
+- While `enabled` (default `true`) and mounted, it measures on mount, on layout and on every loop tick, with `ref.current.measureInWindow((x, y, width, height) => setOwnerRectangles(token, 0, [{ x, y, width, height }]))`.
+- If `measureInWindow` throws, the last rectangle stands and the error is logged once (`console.warn('[Bugsee] BugseeSecure could not measure', e)`).
+- On unmount, or on `enabled` becoming `false`, it calls `clearOwner(token)` and removes its measurer.
+
+`Bugsee.setSecureRectangles(rects, display)` keeps its signature and validation, and becomes `setOwnerRectangles(\`manual:${display}\`, display, rects)`.
+
+- [ ] **Red**
+  - `registry.test.ts`:
+    - `a manual set and a component region coexist on display 0`;
+    - `clearing an owner republishes the rest`;
+    - `an unchanged union does not cross the bridge again`;
+    - `the first publish always crosses, even when empty`;
+    - `a manual set on display 2 leaves display 0 alone`;
+    - `an invalid rectangle changes nothing and publishes nothing`.
+  - `measureLoop.test.ts` (fake timers):
+    - `one interval serves every measurer`;
+    - `the interval stops when the last measurer leaves`;
+    - `ticks every 100 ms`.
+  - `BugseeSecure.test.tsx` (react-test-renderer; `react-native` mocked with `View: 'View'`, `PixelRatio.get = () => 2`, `Platform.OS = 'android'`; `createNodeMock` returns `{ measureInWindow }`):
+    - `registers its measured rectangle on mount, scaled for Android`;
+    - `re-measures on every tick while mounted`;
+    - `removes its rectangle on unmount`;
+    - `enabled={false} removes its rectangle and stops measuring`;
+    - `a throwing measureInWindow keeps the last rectangle`;
+    - `calls the caller's onLayout`;
+    - `renders a non-collapsable View with the caller's props`.
+  - The existing `secure/__tests__/facade.test.ts` stays green unchanged.
+  - Run → FAIL.
+- [ ] **Green** — the modules and the tooling. `yarn test`, `yarn mutate:src` (now including `.tsx`) and `check-rn-compat.sh 0.81` green.
+- [ ] **Mutate**
+  - (1) Skip `clearOwner` in the unmount cleanup. `removes its rectangle on unmount` must fail.
+  - (2) Measure only on layout (no loop). `re-measures on every tick while mounted` must fail.
+  - (3) Clear the owner when `measureInWindow` throws. `a throwing measureInWindow keeps the last rectangle` must fail.
+  - (4) Replace the owner map with a single slot. `a manual set and a component region coexist` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(privacy): <BugseeSecure>, measured continuously, disposed on unmount`.
+
+---
+
+### Task 6.3 — The view-tree walk (JS, pure) and the internals guard
+
+**Files:**
+- Create: `src/viewtree/fiber.ts`, `src/viewtree/walk.ts`
+- Create tests: `src/viewtree/__tests__/walk.test.ts`, `src/viewtree/__tests__/fiber.test.ts`, `src/viewtree/__tests__/fakeFibers.ts` (a builder for fake fiber trees)
+- Modify: `scripts/check-rn-compat.sh`, adding the internals greps below
+
+**Interfaces (exact):**
+
+```ts
+// src/viewtree/fiber.ts -- the ONLY module that reads React or RN internals
+export const FiberTag = { FunctionComponent: 0, ClassComponent: 1, HostRoot: 3, HostPortal: 4,
+  HostComponent: 5, HostText: 6, Fragment: 7, Mode: 8, ContextConsumer: 9, ContextProvider: 10,
+  ForwardRef: 11, Profiler: 12, Suspense: 13, Memo: 14, SimpleMemo: 15, Offscreen: 22, LegacyHidden: 23 } as const;
+export interface FiberLike { tag: number; type: unknown; elementType?: unknown; child: FiberLike | null;
+  sibling: FiberLike | null; return: FiberLike | null; memoizedProps: unknown; stateNode: unknown; }
+export interface WindowRect { x: number; y: number; width: number; height: number; }
+/** __internalInstanceHandle -> walk .return to HostRoot -> its stateNode (the FiberRoot); null if any step is missing. */
+export function fiberRootOf(publicInstance: unknown): { current: FiberLike } | null;
+/** RendererProxy.getPublicInstanceFromInternalInstanceHandle(fiber).measureInWindow(cb);
+ *  null unless the callback ran synchronously with four finite numbers. Never throws. */
+export function measureHostFiber(fiber: FiberLike): WindowRect | null;
+
+// src/viewtree/walk.ts -- pure; no import of react or react-native
+export const VH_WALK_BUDGET_MS = 250, VH_MAX_NODES = 2000, VH_MAX_DEPTH = 64, VH_TAG_MAX_LENGTH = 99, VH_IOS_DECIMALS = 2;
+export interface ManagedNode { id: string; class_name: string; bounds: [number, number, number, number];
+  options: { kind: 'root' | 'surface' | 'composite' | 'host'; secure?: true; tag?: string; native_id?: string };
+  subitems?: ManagedNode[]; truncated?: true; }
+export interface WalkEnv {
+  measure(fiber: FiberLike): WindowRect | null;
+  isSecureBoundary(fiber: FiberLike): boolean;   // type/elementType === BugseeSecure
+  isWrapper(fiber: FiberLike): boolean;          // the Bugsee.wrap component or the anchor
+  platform: 'android' | 'ios';
+  scale: number; originX: number; originY: number;
+  now(): number;                                 // ms; budget measured from the first call
+}
+export function buildViewTree(roots: readonly { current: FiberLike }[], env: WalkEnv): ManagedNode | null; // null when nothing emitted
+```
+
+**Internals guard (`check-rn-compat.sh`, per matrix version)** — fail with a named message unless:
+- `Libraries/ReactNative/RendererImplementation.js` or `RendererProxy.js` exports `getPublicInstanceFromInternalInstanceHandle`;
+- `Libraries/ReactNative/ReactFabricPublicInstance/ReactFabricHostComponent.js` and `src/private/webapis/dom/nodes/ReactNativeElement.js` both assign `__internalInstanceHandle`;
+- `ReactCommon/react/renderer/uimanager/UIManagerBinding.cpp` in the `measureInWindow` branch calls `callbackFunction.call(` (synchronous).
+
+- [ ] **Red**
+  - `walk.test.ts`:
+    - `emits a ReactNative root with one ReactSurface per fiber root`;
+    - `a host node's class_name is its host type`;
+    - `a composite's class_name is displayName, then name, then Anonymous`;
+    - `ForwardRef and Memo unwrap to the inner name`;
+    - `fragments, providers, modes and portals are flattened into their parent`;
+    - `HostText is never emitted`;
+    - `no prop other than testID and nativeID is ever read` (`memoizedProps` is a `Proxy` recording key reads);
+    - `testID becomes options.tag and nativeID options.native_id`;
+    - `a testID of 100 characters is withheld`;
+    - `everything under BugseeSecure is secure and carries no tag or native_id`;
+    - `a composite's bounds are the union of its emitted children`;
+    - `a subtree with no measurable host is dropped`;
+    - `a hidden Offscreen subtree is dropped`;
+    - `the wrap component and the anchor are not emitted`;
+    - `Android bounds are rounded pixels plus the origin` (scale `2.625`, origin `(0, 63)`, window rect `{10.2, 20.4, 100.1, 50.3}` → `[27, 117, 263, 132]`);
+    - `iOS bounds are points to two decimals plus the origin`;
+    - `stops at 2000 nodes and marks truncated on the node and the root`;
+    - `stops at depth 64 and marks that node truncated`;
+    - `stops when the 250 ms budget runs out and marks the root truncated` (fake `now`);
+    - `ids are preorder and unique`;
+    - `keys serialise in the documented order` (compares `JSON.stringify` with a literal);
+    - `returns null when nothing is emitted`.
+  - `fiber.test.ts`:
+    - `fiberRootOf walks __internalInstanceHandle up to the HostRoot's FiberRoot`;
+    - `fiberRootOf is null without __internalInstanceHandle`;
+    - `fiberRootOf is null when the chain never reaches a HostRoot`;
+    - `measureHostFiber returns the rect a synchronous callback delivers`;
+    - `measureHostFiber is null when the callback does not run synchronously`;
+    - `measureHostFiber is null when the renderer throws` (`RendererProxy` mocked).
+  - Run → FAIL.
+- [ ] **Green** — both modules. The guard passes for 0.81 and 0.87 locally (`./scripts/check-rn-compat.sh 0.81`, `… 0.87`).
+- [ ] **Mutate**
+  - (1) Emit HostText as a node with `class_name: 'RCTRawText'`. `HostText is never emitted` must fail.
+  - (2) Stop propagating `secure` to descendants. `everything under BugseeSecure is secure` must fail.
+  - (3) Drop the origin. `Android bounds are rounded pixels plus the origin` must fail.
+  - (4) Remove the budget check. `stops when the 250 ms budget runs out` must fail.
+  - (5) Delete one grep from the guard, and point the guard at a copy of 0.87 with `__internalInstanceHandle` renamed. The guard must fail (run by hand; record it).
+  - Revert and record.
+- [ ] **Commit** — `feat(viewtree): a privacy-safe managed view tree from the fiber tree`.
+
+---
+
+### Task 6.4 — The `vh` request in JS: `Bugsee.wrap`, the dispatcher, spec and stubs
+
+**Files:**
+- Create: `src/viewtree/anchor.tsx`, `src/viewtree/requests.ts`
+- Create tests: `src/viewtree/__tests__/requests.test.ts`, `src/viewtree/__tests__/anchor.test.tsx`
+- Modify: `src/NativeBugsee.ts`, `src/index.ts`, `src/__mocks__/native.ts`, `examples/bare/index.js` (`AppRegistry.registerComponent(appName, () => Bugsee.wrap(App))`), `scripts/__tests__/example-wiring.test.ts`
+- Modify (stubs): `android/BugseeModule.java`, `ios/BugseeModule.mm`
+
+**TurboModule additions (exact):**
+
+```ts
+readonly onDataRequest: EventEmitter<{
+  requestId: string;   // 'dr-<n>', native-minted, never reused in a process
+  type: string;        // only 'vh' today; native answers any other type itself
+  originX: number;     // the React root's display origin: Android display px, iOS points
+  originY: number;
+}>;
+replyDataRequest(requestId: string, payload: string | null): void;
+setViewTreeEnabled(enabled: boolean): void;
+```
+
+**JS (exact):**
+
+```ts
+// src/viewtree/anchor.tsx
+export const VH_ANCHOR_NATIVE_ID = '__bugsee_view_tree_anchor';
+export function wrap<P extends object>(Root: React.ComponentType<P>): React.ComponentType<P>;
+// renders <><Root {...props} /><View ref nativeID={VH_ANCHOR_NATIVE_ID} collapsable={false}
+//   pointerEvents="none" style={{ position: 'absolute', width: 0, height: 0 }} /></>;
+// displayName `BugseeRoot(${name})`; mount -> registerAnchor(instance); unmount -> unregisterAnchor(instance)
+// src/viewtree/requests.ts
+export const VH_DATA_TYPE = 'vh';
+export function registerAnchor(instance: unknown): void;   // 0 -> 1: subscribe once (stays subscribed), setViewTreeEnabled(true)
+export function unregisterAnchor(instance: unknown): void; // 1 -> 0: setViewTreeEnabled(false)
+// on onDataRequest: payload = type === 'vh' ? JSON.stringify(buildViewTree(roots deduped by identity, env)) : null;
+// any throw -> payload null, console.warn once; ALWAYS replyDataRequest(requestId, payload) exactly once, synchronously.
+// facade: Bugsee.wrap = wrap
+```
+
+**Stubs:**
+- `setViewTreeEnabled` and `replyDataRequest` are no-ops, commented `Task 6.5` on Android and `Task 6.6` on iOS.
+- The wrappers keep answering `null`, and nothing emits `onDataRequest` yet.
+- `event-emitter-wiring.test.ts` stays green; the spec now declares two emitters.
+
+- [ ] **Red**
+  - `requests.test.ts` (native mock, `buildViewTree` spied):
+    - `a vh request replies the tree as JSON`;
+    - `a non-vh type replies null`;
+    - `no anchor mounted replies null`;
+    - `a throwing walk replies null and warns once`;
+    - `every request is replied to exactly once`;
+    - `the origin in the request reaches the walk env`;
+    - `the first anchor enables the view tree and the last disables it`;
+    - `subscribes to onDataRequest once across many anchors`;
+    - `two anchors in one surface walk that root once`.
+  - `anchor.test.tsx`:
+    - `wrap renders the root with its props`;
+    - `wrap's anchor is zero-size, absolute, non-collapsable, pointerEvents none`;
+    - `mounting registers and unmounting unregisters the anchor`;
+    - `displayName names the wrapped root`.
+  - `example-wiring.test.ts`: `the example registers Bugsee.wrap(App)`.
+  - Run → FAIL.
+- [ ] **Green** — the modules, the mock (`onDataRequest` subscribe, `emitDataRequest(event)`, and `jest.fn`s for `replyDataRequest` and `setViewTreeEnabled`), the stubs and the example. All gates green.
+- [ ] **Mutate**
+  - (1) Skip the reply when the walk throws. `every request is replied to exactly once` must fail.
+  - (2) Never call `setViewTreeEnabled(false)`. `the last disables it` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(viewtree): Bugsee.wrap and the vh request in JS, bridge stubbed`.
+
+---
+
+### Task 6.5 — The `vh` request, Android bridge
+
+**Files:**
+- Create: `android/DataRequestBridge.java`, `androidTest/DataRequestBridgeTest.java`
+- Modify:
+  - `android/BugseeReactNativeWrapper.java`: `requestData` → `DataRequestBridge.shared().request(dataType, callback::onResult)`;
+  - `android/ReactRootOriginTracker.java`: add `@UiThread @Nullable int[] currentOrigin()`;
+  - `androidTest/ReactRootOriginTrackerTest.java`;
+  - `android/BugseeModule.java`: attach and detach, emit, and the two methods.
+
+**Interface (plain Java, JVM-testable; mirrors `ReportHandlerBridge`):**
+
+```java
+final class DataRequestBridge {
+    static final String VIEW_HIERARCHY = "vh";
+    static final long DEADLINE_MS = 450;
+    interface Sink { void onDataRequest(String requestId, String type, int originX, int originY); }
+    interface OriginSource { @Nullable int[] currentOrigin(); }        // called on the requesting (main) thread
+    interface Reply { void onResult(@Nullable String data); }
+    interface Scheduler { Cancellable schedule(Runnable task, long delayMs); }   // prod: one daemon thread "BugseeRN-DataRequestDeadline"
+    interface Cancellable { void cancel(); }
+    interface Clock { long nowMs(); }
+    static DataRequestBridge shared();
+    DataRequestBridge(Scheduler scheduler, Clock clock);   // package-private, for tests
+    void setViewTreeEnabled(boolean enabled);
+    void attach(Sink sink, OriginSource origin);
+    void detach(Sink stale);                 // identity-checked; completes all outstanding with null (by=detach); disables the view tree
+    void request(String type, Reply reply);  // never throws; order below
+    boolean complete(String requestId, @Nullable String payload);  // true only for the call that delivered
+}
+```
+
+**`request` order (each step is a test):**
+1. A type other than `"vh"` → reply `null` synchronously (`by=unknown-type`).
+2. No sink, or the view tree disabled → `null` synchronously (`by=no-js`).
+3. `origin.currentOrigin()` is `null` → `null` synchronously (`by=no-origin`).
+4. Otherwise:
+   - mint `"dr-" + counter` and store `{reply, AtomicBoolean done, startMs}`;
+   - arm `DEADLINE_MS` → `complete(id, null)` (`by=deadline`);
+   - call the sink. A throwing sink completes with `null` (`by=sink-threw`).
+
+`complete`:
+- runs once behind the `AtomicBoolean`;
+- cancels the timer and removes the entry;
+- runs `reply.onResult` inside `try/catch (Throwable)`;
+- logs the `completed` line.
+
+**`ReactRootOriginTracker.currentOrigin()`:**
+- calls `refresh()`;
+- returns a copy of the `{x, y}` it last passed to `store.setOrigin`, kept in a field it writes there;
+- returns `null` if no origin was ever published.
+
+**Module:**
+- The constructor calls `DataRequestBridge.shared().attach(this::emitRequest, originTracker::currentOrigin)`, and `invalidate()` detaches.
+- `emitRequest` builds the map and calls `emitOnDataRequest`.
+- `replyDataRequest(id, payload)` → `complete`.
+- `setViewTreeEnabled(b)` → the bridge.
+
+- [ ] **Red**
+  - `DataRequestBridgeTest`:
+    - `theTypeMatchesTheSdkConstant` (`DataRequestTypes.VIEW_HIERARCHY`);
+    - `theDeadlineIsBelowTheSdkBudget` (`< DataRequestTypes.VIEW_HIERARCHY_TIMEOUT_MS`);
+    - `anUnknownTypeRepliesNullSynchronously`;
+    - `noSinkRepliesNullSynchronously`;
+    - `aDisabledViewTreeRepliesNullSynchronously`;
+    - `noOriginRepliesNullSynchronously`;
+    - `theSinkGetsTheOrigin`;
+    - `completeDeliversThePayloadExactlyOnce`;
+    - `aSecondCompleteIsANoOp`;
+    - `theDeadlineRepliesNull` (manual scheduler);
+    - `completingCancelsTheDeadline`;
+    - `aThrowingSinkRepliesNull`;
+    - `aThrowingReplyDoesNotEscape`;
+    - `detachRepliesNullToEverythingOutstandingAndDisables`;
+    - `detachingAStaleSinkLeavesTheCurrentOne`;
+    - `eachRequestGetsAFreshId`.
+  - `ReactRootOriginTrackerTest`:
+    - `currentOriginIsTheLastPublishedOrigin`;
+    - `currentOriginIsNullBeforeAnyRootIsFound`.
+  - Run → FAIL.
+- [ ] **Green** — as specified. The example builds.
+- [ ] **Mutate**
+  - (1) Drop the `AtomicBoolean`. `completeDeliversThePayloadExactlyOnce` must fail.
+  - (2) Set `DEADLINE_MS = 600`. `theDeadlineIsBelowTheSdkBudget` must fail.
+  - (3) Emit even when disabled. `aDisabledViewTreeRepliesNullSynchronously` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(android): answer the vh data request from JS, within the budget`.
+
+---
+
+### Task 6.6 — The `vh` request, iOS bridge
+
+**Files:**
+- Create: `support/BGSRNDataRequestBridge.m`, `support/include/BGSRNDataRequestBridge.h`, `supportTests/BGSRNDataRequestBridgeTests.m`
+- Modify: `ios/BugseeModule.mm`
+  - The category's `requestDataWithType:callback:` becomes `[BGSRNDataRequestBridge.shared requestType:dataType reply:^(NSString *d){ [callback onResult:d]; }]`.
+  - The module attaches in `attachToBridges` and detaches in `invalidate`.
+  - It gains `replyDataRequest:payload:` and `setViewTreeEnabled:`.
+  - Both import branches are updated.
+
+**Interface (mirrors 6.5):**
+
+```objc
+FOUNDATION_EXPORT NSString *const BGSRNDataRequestTypeViewHierarchy;   // @"vh"
+FOUNDATION_EXPORT const int64_t BGSRNDataRequestDeadlineMs;            // 450
+@interface BGSRNDataRequestBridge : NSObject
+@property (class, readonly) BGSRNDataRequestBridge *shared;
+- (instancetype)initWithScheduler:(id (^)(dispatch_block_t task, int64_t delayMs))schedule
+                           cancel:(void (^)(id token))cancel
+                            clock:(int64_t (^)(void))nowMs;
+@property (atomic) BOOL viewTreeEnabled;
+- (void)attach:(id)sink block:(void (^)(NSDictionary *request))block origin:(NSValue *_Nullable (^)(void))origin; // CGPoint
+- (void)detach:(id)sink;
+- (void)requestType:(NSString *)type reply:(void (^)(NSString *_Nullable data))reply;
+- (BOOL)complete:(NSString *)requestId payload:(nullable NSString *)payload;
+@end
+```
+
+- The registry is guarded by `os_unfair_lock`, and the reply always runs outside the lock.
+- The module's `origin` block runs on main, where the SDK calls `requestData`. It takes the key window of the foreground-active `UIWindowScene` and returns `[NSValue valueWithCGPoint:[window convertPoint:CGPointZero toCoordinateSpace:window.screen.coordinateSpace]]`, or `nil` without one.
+- The request-order rules and the log lines are the same as in 6.5.
+
+- [ ] **Red** — `BGSRNDataRequestBridgeTests`, mirroring 6.5's names:
+  - `testDeadlineIsBelowTheSdkBudget` (`< 500`);
+  - `testAnUnknownTypeRepliesNilSynchronously`;
+  - `testNoSinkRepliesNilSynchronously`;
+  - `testADisabledViewTreeRepliesNilSynchronously`;
+  - `testNoOriginRepliesNilSynchronously`;
+  - `testTheSinkGetsTheOrigin`;
+  - `testCompleteDeliversThePayloadExactlyOnce`;
+  - `testTheDeadlineRepliesNil`;
+  - `testCompletingCancelsTheDeadline`;
+  - `testDetachRepliesNilToEverythingOutstandingAndDisables`;
+  - `testEachRequestGetsAFreshId`.
+  - Run → FAIL.
+- [ ] **Green** — as specified. The iOS example builds on both delivery paths.
+- [ ] **Mutate**
+  - (1) Drop the once-guard. `testCompleteDeliversThePayloadExactlyOnce` must fail.
+  - (2) Call `reply` while holding the lock, and add a test-only reply that re-enters `complete:`. It must deadlock the test run, which the XCTest timeout reports as a failure.
+  - Revert and record.
+- [ ] **Commit** — `feat(ios): answer the vh data request from JS, within the budget`.
+
+---
+
+### Task 6.7 — E2E media helpers (pure, unit-tested)
+
+**Files:** create `e2e/media.ts` and `scripts/__tests__/e2e-media.test.ts`; modify `e2e/bundles.ts` (`PulledBundle` gains `binaries: ReadonlyMap<string, string[]>`, the absolute paths of every non-JSON manifest file keyed by `type`, e.g. `video`, `screenshot`).
+
+**Interfaces (exact):**
+
+```ts
+export const LUMA_DARK_MAX = 24, LUMA_BRIGHT_MIN = 150, BLACKOUT_MIN_DARK_S = 1.5;
+export async function probeCodec(file: string): Promise<string | undefined>;
+  // ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 <file>
+export async function frameLumas(file: string): Promise<Array<{ t: number; luma: number }>>;
+  // ffmpeg -v info -i <file> -vf "crop=iw/2:ih/2,scale=32:32,format=gray,showinfo" -f rawvideo -
+  // 1024-byte frames on stdout (mean = luma), pts_time from showinfo on stderr, zipped in order
+export async function regionLuma(file: string, region: { x: number; y: number; w: number; h: number }): Promise<number>;
+  // ffmpeg -v error -i <file> -vf "crop=w:h:x:y,scale=16:16,format=gray" -frames:v 1 -f rawvideo -
+export async function imageSize(file: string): Promise<{ width: number; height: number }>;
+export type Shade = 'bright' | 'dark' | 'other';
+export function shadeOf(luma: number): Shade;
+export function blackoutPattern(frames: Array<{ t: number; luma: number }>):
+  { ok: true; darkSeconds: number } | { ok: false; reason: string };
+  // ok iff: a bright frame, then a contiguous dark run of >= 1.5 s (by t), then a bright frame; 'other' breaks a run
+```
+
+- [ ] **Red** — `e2e-media.test.ts` (pure functions only; no ffmpeg in `yarn test`):
+  - `shadeOf splits at 24 and 150`;
+  - `blackoutPattern accepts bright, a dark run of at least 1.5 s, bright`;
+  - `rejects a dark run shorter than 1.5 s`;
+  - `rejects dark with nothing bright before it`;
+  - `rejects a video that never recovers`;
+  - `an other frame breaks a dark run`;
+  - `reports the dark run's length`.
+  - Run → FAIL.
+- [ ] **Green** — as specified. By hand, run `probeCodec` and `frameLumas` once on any pulled Android bundle video and record the output in the commit.
+- [ ] **Mutate** — make `blackoutPattern` ignore the trailing bright requirement. `rejects a video that never recovers` must fail. Revert and record.
+- [ ] **Commit** — `test(e2e): decode bundle video and screenshots for pixel assertions`.
+
+---
+
+### Task 6.8 — Device verification, Android: blackout, `<BugseeSecure>`, and the view tree
+
+**Files:**
+- Create: `scenarios/privacy.tsx` (scenarios `blackout`, `blackout-prelaunch`, `secure-component` and `view-tree`)
+- Create: `e2e/blackout.test.ts`, `e2e/secure-component.test.ts`, `e2e/view-tree.test.ts`
+- Modify: `App.tsx`
+
+**The white stage (shared by every privacy scenario).** A full-screen `#FFFFFF` view, with a 40×40 `#000000` square animated left↔right across the top 15% of the screen (`Animated.loop`, `useNativeDriver: true`). Two reasons:
+- iOS captures adaptively and Android skips unchanged frames, so frames need to keep flowing;
+- the square sits outside every centre crop and region used below.
+
+**Scenario `blackout`** (after `Launched` and 3000 ms on the stage):
+1. `startBlackout()`, then log `BUGSEE_E2E blackout started t=<Date.now()> isBlackout=<await isBlackout()>`.
+2. Wait 2000 ms; `captureViewHierarchy()`; wait 500 ms.
+3. `upload('blackout-during-<n>', '')`, then log `… uploaded-during t=<ms>`.
+4. Wait 2000 ms; `endBlackout()`; log `… ended t=<ms> isBlackout=<…>`.
+5. Wait 3000 ms; `upload('blackout-after-<n>', '')`.
+
+A lifecycle subscription logs `BUGSEE_E2E blackout lifecycle <name>` for `BlackoutStarted` and `BlackoutEnded`.
+
+**Scenario `blackout-prelaunch`:**
+1. `startBlackout()` **before** `launch()`, then log `… prelaunch-called`.
+2. After `Launched`, log `… prelaunch isBlackout=<…>`.
+3. `endBlackout()`, then log `… prelaunch-cleared isBlackout=<…>`.
+
+**Scenario `secure-component`**, on the stage, inside a `ScrollView` whose content is 3× the screen height:
+- `<BugseeSecure accessible accessibilityLabel="bugsee-secure-component" style={{ position: 'absolute', top: 260, left: 60, width: 180, height: 90, backgroundColor: '#FFFFFF' }} />`. It is white on white, so a dark region can only be the SDK's mask.
+- Steps:
+  1. After 1500 ms, log `… rect x= y= w= h= screen=<Dimensions screen w>x<h> ratio=<PixelRatio>`, then `upload('secure-mounted-<n>', '')`.
+  2. `scrollTo({ y: 100, animated: false })`; wait 1500 ms; log the new rect; `upload('secure-scrolled-<n>', '')`. The new position (top 160) stays clear of the animated band.
+  3. Unmount the component; wait 1500 ms; `upload('secure-unmounted-<n>', '')`.
+
+**Scenario `view-tree`**, on the stage, a component named `BugseeE2EViewTreeProbe` rendering:
+- `<View testID="vh-open-<n>" accessible accessibilityLabel="vh-open-probe" collapsable={false} style={{ position: 'absolute', top: 300, left: 30, width: 150, height: 60 }}><Text>secret-text-<n></Text></View>`
+- `<BugseeSecure testID="vh-secure-<n>" style={{ position: 'absolute', top: 400, left: 30, width: 150, height: 60 }}><View testID="vh-inner-<n>" nativeID="vh-native-<n>" collapsable={false} style={{ flex: 1 }} /></BugseeSecure>`
+- `<TextInput defaultValue="typed-<n>" style={{ position: 'absolute', top: 500, left: 30, width: 150, height: 40 }} />`
+
+After 1000 ms: log the probe's `measureInWindow` rect; `captureViewHierarchy()`; wait 1000 ms; `upload('vh-<n>', '')`.
+
+**Ground truth.** On Android, the screenshot mapping uses `uiautomator dump` bounds (display pixels, as in B1) and `adb shell wm size` (the physical display size). A rectangle in display pixels maps to screenshot pixels by `screenshot.width / displayWidth`. **Precondition, asserted:** every report checked below has at least one `screenshot` entry, and `probeCodec` answers for it. The bundle `video` must be `h264`. If any of these fails, the test fails, and the task stops and reports: it must not skip.
+
+**Cases.**
+
+`e2e/blackout.test.ts`:
+1. `isBlackout and the lifecycle report the blackout`
+   - `started … isBlackout=true` and `ended … isBlackout=false`.
+   - `lifecycle BlackoutStarted` appears after `started`, and `lifecycle BlackoutEnded` after `ended`.
+2. `a report taken during blackout has a black screenshot and no view tree`
+   - In bundle `blackout-during-<n>`, every `screenshot` has centre-crop luma `≤ 24`.
+   - No `viewtree` entry has a `timestamp` in `[startedT, uploadedDuringT + 1000]`.
+   - No `BugseeRN data request` line appears between the `started` and `ended` markers. The example is wrapped, so the view tree is live: the SDK did not ask.
+3. `the capture trace brackets the blackout` — in bundle `blackout-after-<n>`, `traces.system` has an entry `name = capture` with `value.state = 'blackout'` whose `timestamp ∈ [startedT − 1000, startedT + 1000]`, and a later `capture` entry with `state = 'active'` whose `timestamp ∈ [endedT − 1000, endedT + 1000]`.
+4. `the video is black for the blackout and only for it`
+   - In bundle `blackout-after-<n>`, `blackoutPattern(await frameLumas(video))` is `ok`.
+   - `|darkSeconds − (endedT − startedT)/1000| ≤ 1.0`.
+5. `a blackout started before launch` — `prelaunch isBlackout=false` on **Android**, where the SDK drops the pre-launch call (see Planner decisions), and `prelaunch-cleared isBlackout=false`.
+
+`e2e/secure-component.test.ts`:
+1. `the component's region is masked in the report`
+   - In `secure-mounted-<n>`, the region's inner 60% has luma `≤ 24`.
+   - A same-size control region starting 40 px below its bottom edge has luma `≥ 150`.
+   - The served rectangle (`BugseeRN secure published … served=`, with `log.tag.BugseeRN` set to `DEBUG` as in B1) covers the uiautomator bounds of `bugsee-secure-component` within 1 px per edge.
+2. `the mask follows a scroll` — in `secure-scrolled-<n>`, the region at the **new** bounds is dark, and the region at the **old** bounds (now white content) is bright.
+3. `unmounting disposes the mask`
+   - In `secure-unmounted-<n>`, the region at the last bounds is bright.
+   - The last `served=` line reports count `0`.
+
+`e2e/view-tree.test.ts`:
+1. `the SDK asks and JS answers within budget` — after `Launched`, at least 2 `data request dr-<k> type=vh` lines. Each is followed by `completed by=js … ms=<m>` with `m < 450`, and no `by=deadline` appears.
+2. `the managed tree is in the report it was asked for` — every `viewtree` entry in `vh-<n>` carries both `native` and a non-empty string `managed`, and there are at least 2 of them: the explicit capture and the snapshot.
+3. `the managed tree has the documented shape`. `JSON.parse(managed)` gives:
+   - the root `id "0"`, `class_name "ReactNative"`, `options.kind "root"`;
+   - a `ReactSurface` child;
+   - a composite node `BugseeE2EViewTreeProbe`;
+   - a host node with `options.tag = 'vh-open-<n>'`;
+   - a composite `BugseeSecure` with `options.secure` true, as is every descendant's;
+   - unique `id`s.
+4. `nothing private is in the payload`
+   - The raw `managed` string contains none of `secret-text-<n>`, `typed-<n>`, `vh-secure-<n>`, `vh-inner-<n>`, `vh-native-<n>` or `vh-open-probe`.
+   - No node's `class_name` is `RCTRawText`.
+5. `bounds are display pixels on screen` — the `vh-open-<n>` node's `[x, y, w, h]` matches the uiautomator bounds of `vh-open-probe` within 1 px per edge.
+
+**Edge-to-edge.** Run `view-tree` case 5 and `secure-component` case 1 twice:
+- with the example's default `edgeToEdgeEnabled=true`;
+- rebuilt with `edgeToEdgeEnabled=false` in `examples/bare/android/gradle.properties` (reverted afterwards).
+
+B1 showed that only the second exposes a missing origin. Record both runs.
+
+- [ ] **Red** — write the tests and scenarios. Run once before wiring `App.tsx` → FAIL at the first marker.
+- [ ] **Green** — all the cases pass on the WOD_LX1, in both edge-to-edge settings where required.
+- [ ] **Mutate**
+  - (1) Set `DataRequestBridge.DEADLINE_MS = 5`. `view-tree` cases 1 and 2 must fail.
+  - (2) Under `edgeToEdgeEnabled=false`, drop the origin in `walk.ts`. `view-tree` case 5 must fail.
+  - (3) Make `BugseeSecure` skip its measure loop. `secure-component` case 2 must fail.
+  - Revert and record.
+- [ ] **Commit** — `test(e2e): blackout, <BugseeSecure> and the view tree on Android`. The body records the banner, both edge-to-edge runs, the video codec, `darkSeconds`, and the request timings.
+
+---
+
+### Task 6.9 — Device verification, iOS (simulator)
+
+**Files:** the three tests from 6.8, running under `E2E_PLATFORM=ios`.
+
+**Step 0 — establish what the simulator produces, once, before writing any iOS assertion.**
+- Run `blackout` and `secure-component` once and pull the bundles.
+- Record in this task's "As run":
+  - whether each report carries a `screenshot` entry and a `video` entry;
+  - what `probeCodec` answers for each.
+- If any is missing or undecodable, **stop and report** to the controller. The controller then rules which cases become gated (`E2E_IOS_MEDIA=1`) and joins the Task 3.H list. The implementer does not decide gating, and no case may accept "either".
+
+**iOS differences, stated per case (single-path):**
+- `blackout` case 5: `prelaunch isBlackout=true`. iOS honours a pre-launch blackout.
+- `secure-component` ground truth: there is no uiautomator. The region comes from the scenario's logged JS rectangle (points) mapped by `screenshot.width / Dimensions.screen.width`. The simulator window is full-screen, so window points equal screen points. The served-rectangle check (case 1's third assertion) is Android-only, because iOS logs no served buffer.
+- `view-tree` case 5: the `vh-open-<n>` node's bounds equal the logged `measureInWindow` rectangle to within `0.01`, plus the origin, which is `(0, 0)` on the full-screen simulator window. The non-zero-origin arithmetic is covered by Task 6.3's unit tests only.
+- `view-tree` case 1: the log lines come from `NSLog` via the simulator console stream, as in 3.4f.
+
+- [ ] **Step 0** — as above. Record the result.
+- [ ] **Red/Green** — the cases pass on the simulator, as ruled after Step 0.
+- [ ] **Mutate** — set `BGSRNDataRequestDeadlineMs` to `5`. `view-tree` cases 1 and 2 must fail. Revert and record.
+- [ ] **Commit** — `test(e2e): blackout, <BugseeSecure> and the view tree on iOS`.
+
+**Hardware pass: add to Task 3.H:**
+- Task 6.9 whole on a physical iPhone;
+- `view-tree` case 5 on an iPad in Stage Manager or Split View, where the window origin is not `(0, 0)`;
+- any case the controller gates after Step 0.
+
+---
+
+### Phase 6 review gate
+
+The reviewer must independently:
+- run every unit, JVM, XCTest and mutation suite, and `check-rn-compat.sh` for 0.81 and 0.87;
+- confirm by reading the code that:
+  - every `requestData` call is answered exactly once on every path (unknown type, no JS, disabled, no origin, JS reply, deadline, sink throws, detach/reload) on both platforms;
+  - no deadline reaches the SDK's 500 ms;
+  - the walk reads no prop other than `testID` and `nativeID`;
+  - a `<BugseeSecure>` rectangle cannot outlive its component;
+  - `setSecureRectangles` and `<BugseeSecure>` cannot clear each other;
+- **rerun** 6.8 (both edge-to-edge settings) and 6.9;
+- compare the `vh` JSON the device produced with the table in "The `vh` payload" above.
+
+Record, for the controller, the three items this phase leaves open:
+- the viewer does not parse `managed` (specs open item 2);
+- the specs' "physical pixels" wording for iOS;
+- Android's pre-launch blackout gap.
 
 ---
 
@@ -1019,6 +2430,11 @@ The phase with the most native↔JS round-tripping, hence the most device testin
 - **Option manifests** — schema merged as `bugsee/specs#14`; neither SDK publishes one yet. Blocks Phase 2.7 only.
 - **`bugsee/bugsee-cocoa#91` / `bugsee-android#90`** — **resolved**, via the wrapper channel rather than the public source-aware overload originally filed for it (`bugsee/specs` `sdk/wrapper-channel`; Android #149, iOS #137–#140). The wrapper records `LogSource.Custom` through `onWrapperChannelAvailable` (Task 3.5). `bugsee-android#90` is closed; `bugsee-cocoa#91` is still open on GitHub and should be closed as superseded.
 - **`bugsee/bugsee-android#178`** — screenshot display ids are not returned in ascending order. Open; the bridge sorts them itself (`getScreenshotDisplayIds`, Task 3.4a) until it lands.
+- **`bugsee/bugsee-android#186`** — `setUserIdentifier`/`setAttribute` values written verbatim to the SDK-internal log; fixed there, shipping with Android 7.3.0 (and the next iOS beta). Phase 5's device tests use synthetic values and assert nothing about `log.internal`.
+- **To raise (controller; implementers never file these):**
+  - `bugsee/specs` `sdk/wrapper-data-requests` says `vh` bounds are "physical screen pixels" but also "the native tree's coordinate space", which is points on iOS; Phase 6 follows the latter (workbook 6.6).
+  - That spec's open item 2 (the viewer does not parse `managed`) means the RN view tree will not render in the dashboard until the viewer changes.
+  - Android's `startBlackout` is a no-op before launch, while iOS honours it (fails closed); Phase 6 case `blackout` 5 pins both behaviours.
 
 ## Out of scope
 
