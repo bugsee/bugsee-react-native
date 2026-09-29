@@ -29,74 +29,195 @@ ACTUAL="$(node -p "require('react-native/package.json').version")"
 echo "    resolved ${ACTUAL}"
 
 echo "--- view-tree internals guard"
-# src/viewtree/fiber.ts (Task 6.3) is the only module that reads React /
-# React Native internals, and it depends on three things staying put. This
-# fails loudly, with a named reason, the day any of them move — instead of
-# the view-tree walk silently going blind on a device.
+# src/viewtree/fiber.ts and walk.ts (Task 6.3) are the only modules that read
+# React / React Native internals, and they depend on several things staying
+# put. This fails loudly, with a named reason, the day any of them move —
+# instead of the view-tree walk silently going blind on a device. Every check
+# below matches an actual definition/assignment/call, not merely a mention —
+# a comment, an import, or a type declaration must not satisfy it.
 RN_SRC="node_modules/react-native"
 
 # (1) getPublicInstanceFromInternalInstanceHandle is what turns the fiber's
 # internal instance handle into the public instance `measureInWindow` lives
-# on. It is defined in RendererImplementation.js and re-exported (`export *`)
-# by RendererProxy.js, so either file naming it satisfies fiber.ts's import
-# from RendererProxy.
-grep -q 'getPublicInstanceFromInternalInstanceHandle' \
-    "$RN_SRC/Libraries/ReactNative/RendererImplementation.js" \
-    "$RN_SRC/Libraries/ReactNative/RendererProxy.js" \
-  || { echo "FAIL: getPublicInstanceFromInternalInstanceHandle is not exported by RendererImplementation.js or RendererProxy.js"; exit 1; }
-echo "    getPublicInstanceFromInternalInstanceHandle is exported"
+# on. fiber.ts imports it from RendererProxy, which only re-exports it
+# (`export * from './RendererImplementation'`) — so both the actual
+# definition in RendererImplementation.js and RendererProxy.js's re-export of
+# it (directly or via the star-export) must hold.
+RENDERER_IMPL="$RN_SRC/Libraries/ReactNative/RendererImplementation.js"
+RENDERER_PROXY="$RN_SRC/Libraries/ReactNative/RendererProxy.js"
+[ -f "$RENDERER_IMPL" ] \
+  || { echo "FAIL: RendererImplementation.js not found"; exit 1; }
+grep -qE 'export (const|function) getPublicInstanceFromInternalInstanceHandle' "$RENDERER_IMPL" \
+  || { echo "FAIL: getPublicInstanceFromInternalInstanceHandle is not defined (export const|function) in RendererImplementation.js"; exit 1; }
+[ -f "$RENDERER_PROXY" ] \
+  || { echo "FAIL: RendererProxy.js not found"; exit 1; }
+grep -qE "export (const|function) getPublicInstanceFromInternalInstanceHandle|export \\* from '\\./RendererImplementation'" "$RENDERER_PROXY" \
+  || { echo "FAIL: RendererProxy.js neither re-exports RendererImplementation nor defines getPublicInstanceFromInternalInstanceHandle itself"; exit 1; }
+echo "    getPublicInstanceFromInternalInstanceHandle is defined and reachable through RendererProxy"
 
-# (2) __internalInstanceHandle is what fiberRootOf walks up from. Through
-# 0.81 it is assigned in its own file, ReactFabricHostComponent.js; 0.87
-# folded that file into ReactFabricPublicInstance.js. Either location
-# satisfies this — a fixed path would silently stop checking anything on
-# whichever version moved it.
-HOST_COMPONENT_FILE=""
-for candidate in \
-  "$RN_SRC/Libraries/ReactNative/ReactFabricPublicInstance/ReactFabricHostComponent.js" \
-  "$RN_SRC/Libraries/ReactNative/ReactFabricPublicInstance/ReactFabricPublicInstance.js"
-do
-  if [ -f "$candidate" ] && grep -q '__internalInstanceHandle' "$candidate"; then
-    HOST_COMPONENT_FILE="$candidate"
-    break
-  fi
-done
-[ -n "$HOST_COMPONENT_FILE" ] \
-  || { echo "FAIL: no __internalInstanceHandle assignment found in ReactFabricHostComponent.js or ReactFabricPublicInstance.js"; exit 1; }
-echo "    __internalInstanceHandle is assigned in $(basename "$HOST_COMPONENT_FILE")"
+# (2) __internalInstanceHandle is what fiberRootOf walks up from — an actual
+# assignment (`.__internalInstanceHandle = …`), not a read (both
+# ReactFabricPublicInstance.js and the Flow field declaration in
+# ReactNativeElement.js itself would otherwise satisfy a bare-name grep) and
+# not a type declaration. ReactNativeElement.js assigns it on every supported
+# version; ReactFabricHostComponent.js also did through 0.81, then was
+# deleted outright (not folded into ReactFabricPublicInstance.js, which only
+# ever reads the field) by 0.87 — checked only when the file still exists, so
+# its removal is reported, not silently treated as a pass via a substitute.
+ASSIGNS_HANDLE='\.__internalInstanceHandle[[:space:]]*='
 
 ELEMENT_FILE="$RN_SRC/src/private/webapis/dom/nodes/ReactNativeElement.js"
-[ -f "$ELEMENT_FILE" ] && grep -q '__internalInstanceHandle' "$ELEMENT_FILE" \
-  || { echo "FAIL: no __internalInstanceHandle assignment found in ReactNativeElement.js"; exit 1; }
+[ -f "$ELEMENT_FILE" ] \
+  || { echo "FAIL: ReactNativeElement.js not found"; exit 1; }
+grep -qE "$ASSIGNS_HANDLE" "$ELEMENT_FILE" \
+  || { echo "FAIL: no __internalInstanceHandle ASSIGNMENT found in ReactNativeElement.js (a read or a Flow field declaration does not count)"; exit 1; }
 echo "    __internalInstanceHandle is assigned in ReactNativeElement.js"
+
+HOST_COMPONENT_FILE="$RN_SRC/Libraries/ReactNative/ReactFabricPublicInstance/ReactFabricHostComponent.js"
+if [ -f "$HOST_COMPONENT_FILE" ]; then
+  grep -qE "$ASSIGNS_HANDLE" "$HOST_COMPONENT_FILE" \
+    || { echo "FAIL: ReactFabricHostComponent.js exists but no longer assigns __internalInstanceHandle"; exit 1; }
+  echo "    __internalInstanceHandle is also assigned in ReactFabricHostComponent.js (legacy Fabric public instance, still present)"
+else
+  echo "    ReactFabricHostComponent.js removed (0.8x+) — ReactNativeElement is the only public instance"
+fi
 
 # (3) measureHostFiber assumes measureInWindow's native callback runs
 # synchronously (it reads the result the same tick, never awaiting a
-# promise). Scoped to the measureInWindow branch specifically, not just
-# "somewhere in this file" — the neighbouring `measure` branch has its own,
-# unrelated callbackFunction.call(...).
-BINDING_CPP="$RN_SRC/ReactCommon/react/renderer/uimanager/UIManagerBinding.cpp"
-[ -f "$BINDING_CPP" ] \
-  || { echo "FAIL: UIManagerBinding.cpp not found — measureHostFiber's synchronous-callback assumption cannot be checked"; exit 1; }
+# promise). Two independent public-instance shapes can come back from
+# getPublicInstanceFromInternalInstanceHandle, and both must be checked:
+# - ReactNativeElement.js's measureInWindow (the DOM-node instance, the only
+#   one left once ReactFabricHostComponent.js is gone) calls
+#   NativeDOM::measureInWindow in NativeDOM.cpp;
+# - ReactFabricHostComponent.js's measureInWindow (legacy, while it exists)
+#   calls into UIManagerBinding.cpp's own "measureInWindow" branch.
+# Both are tightened to require the real rect (`rect.x`/`rect.width`) reaching
+# the callback synchronously in the same function body, not just any
+# `callback(`/`callback.call(` — which a `{0,0,0,0}` early-return stub, or an
+# unrelated call, would also match.
+# A Node check, not grep: the method spans several lines, and plain `grep`
+# matches one line at a time — it can never see a call that is not on the
+# same line as the method's own name.
 node -e '
   const fs = require("fs");
   const src = fs.readFileSync(process.argv[1], "utf8");
-  const marker = "\"measureInWindow\"";
+  const marker = "measureInWindow(callback";
   const start = src.indexOf(marker);
   if (start === -1) {
-    console.error("FAIL: no measureInWindow branch found in UIManagerBinding.cpp");
+    console.error("FAIL: no measureInWindow(callback...) method found in ReactNativeElement.js");
     process.exit(1);
   }
-  const nextBranch = src.indexOf("if (methodName ==", start + marker.length);
-  const branch = src.slice(start, nextBranch === -1 ? undefined : nextBranch);
-  if (!branch.includes("callbackFunction.call(")) {
+  const body = src.slice(start, start + 400);
+  if (!body.includes("NativeDOM.measureInWindow(")) {
+    console.error("FAIL: ReactNativeElement.js'"'"'s measureInWindow no longer calls NativeDOM.measureInWindow(...)");
+    process.exit(1);
+  }
+' "$ELEMENT_FILE"
+echo "    ReactNativeElement.js's measureInWindow calls NativeDOM.measureInWindow"
+
+NATIVE_DOM_CPP="$RN_SRC/ReactCommon/react/nativemodule/dom/NativeDOM.cpp"
+[ -f "$NATIVE_DOM_CPP" ] \
+  || { echo "FAIL: NativeDOM.cpp not found — the DOM-node measureInWindow path cannot be checked"; exit 1; }
+node -e '
+  const fs = require("fs");
+  const src = fs.readFileSync(process.argv[1], "utf8");
+  const marker = "NativeDOM::measureInWindow(";
+  const start = src.indexOf(marker);
+  if (start === -1) {
+    console.error("FAIL: NativeDOM::measureInWindow not found in NativeDOM.cpp");
+    process.exit(1);
+  }
+  const nextFn = src.indexOf("NativeDOM::", start + marker.length);
+  const body = src.slice(start, nextFn === -1 ? undefined : nextFn);
+  const callsBack = /callback\.call\(|callback\(/.test(body);
+  if (!callsBack || !body.includes("rect.x") || !body.includes("rect.width")) {
     console.error(
-      "FAIL: the measureInWindow branch of UIManagerBinding.cpp no longer calls its callback synchronously (callbackFunction.call(...))",
+      "FAIL: NativeDOM::measureInWindow no longer calls its callback synchronously with the real rect (rect.x/rect.width)",
     );
     process.exit(1);
   }
-' "$BINDING_CPP"
-echo "    measureInWindow calls its callback synchronously"
+' "$NATIVE_DOM_CPP"
+echo "    NativeDOM::measureInWindow calls its callback synchronously with the real rect"
+
+NATIVE_DOM_H="$RN_SRC/ReactCommon/react/nativemodule/dom/NativeDOM.h"
+if [ -f "$NATIVE_DOM_H" ] && grep -q 'MeasureInWindowOnSuccessCallback' "$NATIVE_DOM_H"; then
+  grep -qE 'MeasureInWindowOnSuccessCallback[[:space:]]*=[[:space:]]*SyncCallback' "$NATIVE_DOM_H" \
+    || { echo "FAIL: NativeDOM.h's MeasureInWindowOnSuccessCallback is no longer a SyncCallback"; exit 1; }
+  echo "    NativeDOM.h declares MeasureInWindowOnSuccessCallback as a SyncCallback"
+else
+  echo "    NativeDOM.h has no separate MeasureInWindowOnSuccessCallback alias on this version (measureInWindow takes a plain jsi::Function) — synchronicity is proven by the .cpp body above regardless"
+fi
+
+if [ -f "$HOST_COMPONENT_FILE" ]; then
+  node -e '
+    const fs = require("fs");
+    const src = fs.readFileSync(process.argv[1], "utf8");
+    const marker = "measureInWindow(callback";
+    const start = src.indexOf(marker);
+    if (start === -1) {
+      console.error("FAIL: no measureInWindow(callback...) method found in ReactFabricHostComponent.js");
+      process.exit(1);
+    }
+    const body = src.slice(start, start + 400);
+    if (!body.includes("fabricMeasureInWindow(")) {
+      console.error("FAIL: ReactFabricHostComponent.js'"'"'s measureInWindow no longer calls the Fabric UIManager'"'"'s measureInWindow");
+      process.exit(1);
+    }
+  ' "$HOST_COMPONENT_FILE"
+  echo "    ReactFabricHostComponent.js's measureInWindow calls the Fabric UIManager"
+
+  BINDING_CPP="$RN_SRC/ReactCommon/react/renderer/uimanager/UIManagerBinding.cpp"
+  [ -f "$BINDING_CPP" ] \
+    || { echo "FAIL: UIManagerBinding.cpp not found — the legacy measureInWindow path cannot be checked"; exit 1; }
+  node -e '
+    const fs = require("fs");
+    const src = fs.readFileSync(process.argv[1], "utf8");
+    const marker = "\"measureInWindow\"";
+    const start = src.indexOf(marker);
+    if (start === -1) {
+      console.error("FAIL: no measureInWindow branch found in UIManagerBinding.cpp");
+      process.exit(1);
+    }
+    const nextBranch = src.indexOf("if (methodName ==", start + marker.length);
+    const branch = src.slice(start, nextBranch === -1 ? undefined : nextBranch);
+    const callsBack = /callbackFunction\.call\(|callbackFunction\(/.test(branch);
+    if (!callsBack || !branch.includes("rect.x") || !branch.includes("rect.width")) {
+      console.error(
+        "FAIL: the measureInWindow branch of UIManagerBinding.cpp no longer calls its callback synchronously with the real rect",
+      );
+      process.exit(1);
+    }
+  ' "$BINDING_CPP"
+  echo "    UIManagerBinding.cpp's measureInWindow branch calls its callback synchronously with the real rect (legacy path, still present)"
+else
+  echo "    ReactFabricHostComponent.js removed — the legacy UIManagerBinding.cpp measureInWindow path is not reachable and is not checked"
+fi
+
+# (4) Offscreen/LegacyHidden hidden detection (walk.ts's isHidden) reads
+# `memoizedState`, which React's updateOffscreenComponent sets to a
+# `{ baseLanes, cachePool }` object while hidden and to `null` while visible —
+# checked directly in the bundled renderer (both dev, for readable stack
+# traces in a debug build, and prod, where the property names survive
+# minification) so a shape change here is caught the same way a moved
+# internal would be, not left to fiber.ts's stale-comment fate from before.
+# The two fiber-tag literals `isHidden`/`classify` switch on for SimpleMemo
+# and Offscreen are pinned at one distinctive, stable call site each — a
+# renderer that renumbers React's own work tags would fail here first.
+for RENDERER_BUNDLE in \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-dev.js" \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-prod.js"
+do
+  BUNDLE_NAME="$(basename "$RENDERER_BUNDLE")"
+  [ -f "$RENDERER_BUNDLE" ] \
+    || { echo "FAIL: $BUNDLE_NAME not found"; exit 1; }
+  grep -qE 'baseLanes:[[:space:]]*0,[[:space:]]*cachePool:[[:space:]]*null' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $BUNDLE_NAME no longer sets memoizedState to { baseLanes, cachePool } for a hidden Offscreen fiber"; exit 1; }
+  grep -qE '\.tag = 15\b' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $BUNDLE_NAME no longer downgrades a plain-function memo() fiber to tag 15 (SimpleMemo)"; exit 1; }
+  grep -qE '22 === [a-zA-Z_$]+\.tag' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $BUNDLE_NAME no longer compares a fiber's tag against 22 (Offscreen)"; exit 1; }
+done
+echo "    Offscreen's hidden signal (memoizedState) and the SimpleMemo/Offscreen tag numbers are unchanged in both renderer bundles"
 
 # A package shaped like ours, carrying the real codegenConfig and the real spec.
 mkdir -p pkg/src
