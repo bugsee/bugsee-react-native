@@ -1855,6 +1855,7 @@ The reviewer must independently:
 | `VH_MAX_DEPTH` | `64` | walk | Android's own native walk cap. |
 | `VH_TAG_MAX_LENGTH` | `99` | walk | Android emits `tag` only when shorter than 100 characters. |
 | `VH_IOS_DECIMALS` | `2` | walk | Points, rounded for a compact payload. |
+| `VH_FIBER_VISIT_BUDGET` | `VH_MAX_NODES * 8` (16 000) | walk (internal, not exported) | Bounds total fibers *visited* (not just emitted), so a wide fan-out or long transparent chain under a frozen clock still stops even though the iterative walk can no longer overflow the stack. Added during Task 6.3's review round 1 (I6); flagged there as a real cap a large screen could hit before `VH_MAX_NODES` (2000) does. |
 | `VH_ANCHOR_NATIVE_ID` | `'__bugsee_view_tree_anchor'` | `src/viewtree/anchor.tsx` | Lets the walk skip the anchor. |
 | `LUMA_DARK_MAX` / `LUMA_BRIGHT_MIN` | `24` / `150` | `e2e/media.ts` | Limited-range black is Y≈16, white is Y≈235. |
 | `BLACKOUT_MIN_DARK_S` | `1.5` | `e2e/media.ts` | The shortest dark run that counts as the blackout. |
