@@ -85,10 +85,12 @@ jobs:
       # The library's own unit tests, from the root build.
       - run: ./gradlew :bugsee-android-bridge:testDebugUnitTest
       # The example carries its own wrapper and settings; the root build knows
-      # nothing about it, so it is built from its own directory.
+      # nothing about it, so it is built from its own directory. The
+      # example-only bugsee-e2e-native module (Task 7.6a) is only reachable
+      # through the example's autolinking, so its JVM tests run here too.
       - name: Assemble the example
         working-directory: examples/bare/android
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug :bugsee-e2e-native:testDebugUnitTest
 
   ios-unit:
     name: ios unit (BugseeRNSupport)
