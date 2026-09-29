@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import type { ComponentRef, ReactElement, ReactNode } from 'react';
 import { View } from 'react-native';
 import type { LayoutChangeEvent, ViewProps } from 'react-native';
@@ -69,7 +69,10 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
     }
   };
 
-  useEffect(() => {
+  // A layout effect, not a passive one: it runs in the commit, so on Fabric
+  // the first rectangle is registered before the first frame is painted
+  // rather than after it. Cleanup semantics are the same either way.
+  useLayoutEffect(() => {
     if (!enabled) {
       return undefined;
     }
