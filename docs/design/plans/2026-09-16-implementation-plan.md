@@ -2641,7 +2641,8 @@ Phase 7 starts after Phase 6's review gate: its root reporter lives in `Bugsee.w
 | `EXCEPTION_MAX_NAME_LENGTH` | `256` UTF-16 units | payload | Same surrogate-safe cut as `reason` (review I1: `name` was uncapped). |
 | `EXCEPTION_MAX_FIELD_LENGTH` | `1024` UTF-16 units | payload | Caps `traceRaw`, `data.source` and `data.member` (review I1: a hostile stack produced a 76.8 MB payload with these uncapped). |
 | `STACK_MAX_INPUT_LENGTH` | `65536` (64 KiB) | `src/exceptions/stack.ts` | Bounds the whole `stack` string before it is split into lines (review C1). |
-| `STACK_MAX_LINE_LENGTH` | `2048` (2 KiB) | stack | Bounds each line before any pattern runs on it; the guarantee that a pattern's own worst case still finishes in low single-digit milliseconds (review C1). |
+| `STACK_MAX_LINE_LENGTH` | `2048` (2 KiB) | stack | Bounds each line before any pattern runs on it. Every pattern is also linear in the line's length on its own (review N1 -- fix round 1's claim that the cap alone made a quadratic pattern's cost negligible was wrong: a genuinely quadratic pattern at this cap, multiplied by every line in a 64 KiB stack and every node in a cause chain, measured over a second). |
+| `EXCEPTION_MAX_TOTAL_STACK_LENGTH` | `131072` (128 KiB) | `src/exceptions/payload.ts` | Bounds the *sum* of `error.stack`/`componentStack`/`fallbackStack` parsed across one whole cause chain (review N1): each node's own stack is separately capped at `STACK_MAX_INPUT_LENGTH`, but nothing bounded the total across the chain's up to 11 nodes plus `componentStack`, which could still reach 12x one node's own worst case. Shared via one mutable counter; once it is spent, a later node's frames are `[]`. |
 | `EXCEPTION_MAX_AGGREGATE` | `10` | `src/exceptions/report.ts` | R14. |
 | `EXCEPTION_DOMAIN_MAX_LENGTH` | `256` | `src/exceptions/options.ts` | A domain is a grouping tag, not text. |
 | `DEBUG_IDS_MAX` | `64` | `src/exceptions/debugIds.ts` | Map entries sent. One bundle is typical. `payload.ts` does not enforce this itself; it belongs to Task 7.3's `debugIds.ts` (review M7). |
@@ -2661,7 +2662,7 @@ The reason is one JSON object. Keys appear in this order, and absent keys are om
 |---|---|---|---|
 | `name` | string | every node | The error's `name` if it is a non-empty string (whitespace-only counts as non-empty; not trimmed, review M7); else `'Error'`. Capped at `EXCEPTION_MAX_NAME_LENGTH`. |
 | `reason` | string | every node | `message`, trimmed and truncated (constants), or R9's description. |
-| `frames` | frame[] | every node | Parsed from `stack` with its own `name: message` (or bare `name`) header stripped first, top first; the header is never itself parsed as a frame (review I2 -- it previously was, whenever a message happened to look enough like one). `[]` when there is no stack. |
+| `frames` | frame[] | every node | Parsed from `stack` with its own `name: message` (or bare `name`, or bare `message` when `name` is `''`) header stripped first, top first; the header is never itself parsed as a frame (review I2 -- it previously was, whenever a message happened to look enough like one). A candidate is accepted only when followed by the end of the string, `\n` or `\r` (review N2 -- a bare `name` prefix match alone let a real frame whose own function name starts with the error's name, e.g. `TypeErrorFactory` for a `TypeError`, lose its own leading text). A bare (no `"@"`) parsed frame whose file contains `": "` is dropped rather than kept, as a second guard for a header a mismatched `name`/`message` could not identify and therefore left unstripped. `[]` when there is no stack. |
 | `cause` | node | when present | `error.cause` (any value, R9), to depth 10, stopping at a repeat (`WeakSet`). Then the R10 component-stack node, if any. |
 | `signature` | string | root | `sha1Hex(<name><each frame's trace>…)` down the whole chain, lowercase, 40 hex characters. |
 | `platform_os` | `'android'` \| `'ios'` | root | `Platform.OS`. |
@@ -2671,7 +2672,7 @@ A frame has these keys, in order:
 - `traceRaw`: the stack line as the engine wrote it, capped at `EXCEPTION_MAX_FIELD_LENGTH`. This keeps a hostile message's own bulk out of the payload (review I1), but a *legitimate* absolute path still reaches the backend verbatim otherwise: an iOS install path (`/private/var/containers/Bundle/Application/<UUID>/…`), an iOS data-container path or an Android `/data/user/0/<pkg>/…` path. That is spec-intended (`traceRaw` is defined as verbatim, matching 6.x) and is recorded here as a privacy note, not a defect (review M5);
 - `trace`: `<member> () (<source>[:line][:column])`, 6.x's form;
 - `data`: `{member, source, line, column}`. `member` defaults to `'<unknown>'`; `line` and `column` are `null` when unknown. `member` and `source` are each capped at `EXCEPTION_MAX_FIELD_LENGTH`;
-- `user`: present when the frame has a file (checked on the frame's own file, not the cleaned `source` -- they agree in practice, since none of `source`'s five steps can remove these substrings, but the wording here is what the code now matches, review M6). It is `true` iff the frame has a line and a column, and its file contains none of `node_modules`, `native code` or `(native)`;
+- `user`: present when the frame has a file (checked on the frame's own file, not the cleaned `source` -- they agree in practice, since none of `source`'s five steps can remove these substrings, but the wording here is what the code now matches, review M6). It is `true` iff the frame has a line and a column, its file contains none of `node_modules`, `native code` or `(native)`, and it is not React 19's own built-in-component sentinel: `describeBuiltInComponentFrame` (`ReactFabric-dev.js`) writes a built-in host component's frame (`View`, `Text`, ...) as `<anonymous>` with no line/column on an engine whose own stacks say "at" (already excluded, having no line/column at all), or as file `unknown`, line `0`, column `0` on one that does not (JSC) -- `0` is a real number, not absent, so this needs its own check (review N4);
 - `debug_id`: present when the frame's file is in the map.
 
 `source` is the frame's file with these removed, in order:
@@ -2682,6 +2683,8 @@ A frame has these keys, in order:
 5. `^/data/(data|user/\d+)/[^/]+/` (the Android app data directory, where CodePush keeps bundles).
 
 The **file key** used by R5's join is the same string with steps 1–2 only, so it matches between the registration stack and the crash stack even where step 3–5 would not.
+
+**Known limitation (review N3):** a Hermes `"at NAME (address at FILE:LINE:COL)"` frame whose *name* itself contains `(` is not parsed (produces no frame at all). `stack.ts`'s name groups exclude `(` everywhere, on purpose (review N1/C1): letting a name contain `(` reintroduces the same super-linear scan those reviews removed, since it lets the name and the following file group compete over the same characters. A file containing `(`/`)` (an iOS app bundle such as `"My App (Beta).app"`) is parsed correctly; only the name side of this is unsupported, and no captured fixture (M2) has one.
 
 ```json
 {"name":"TypeError","reason":"E2E handled 3f9a","frames":[
