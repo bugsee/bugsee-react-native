@@ -908,6 +908,31 @@ Added by controller ruling. Pending — runs after 3.P3, against the flipped, re
 
 ---
 
+### Task 3.T — Phase 3 pre-merge tidy-ups (done)
+
+Added by controller ruling. Commits `5ef0b60`..`ec4220e`. Both reviews are clean.
+
+- [x] The root tracker's listener handle is simplified to `LayoutListenerToken.release()`. It holds only weak references and is idempotent, and the observer is re-homed only while the saved observer is dead and the view is attached. This closes the leak when a root is replaced inside a live window. The B1 conversion is byte-identical.
+- [x] The Android dispatch-vs-detach race is closed: the sink is re-checked after the put.
+- [x] Report attribute names: empty names are rejected in JS and natively. `"__proto__"` is sent and read back as an own key.
+- [x] Small leftovers: the e2e `finally` ordering, the pulled-bundles test cascade, the dispatcher's trailing `.catch`.
+
+### Task 3.H — Hardware pass (required before merge)
+
+Added by controller ruling. Run it once a physical iPhone (the XS) is attached, together with the WOD_LX1 (`AMRJCP4718402860`). Every item is a real run on hardware with its evidence recorded. None may accept "either outcome".
+
+- [ ] **Harness: physical-iPhone path.** A `DeviceConsole` over `devicectl … --console`. Bundle pull with `devicectl device copy from --domain-type appDataContainer`. Clear by deleting that directory and asserting it's gone. `DEAD_ENDPOINT` retention (the phone's own loopback). Process death proved by the end of the console stream plus the recovered crash bundle, not the host's DiagnosticReports. Check the `threadOf()` prefix survives `devicectl` output. Build it on the shared `e2e/harness.ts` helpers.
+- [ ] **iOS:**
+  - 3.4f case 6 (recovery), with `E2E_IOS_RECOVERY=1`;
+  - 3.5d (the channel);
+  - Task 4.4;
+  - Task 5.5, including across a real process restart, and clearing the Keychain identity first and last;
+  - Task 6.9, plus any cases gated during Phase 6.
+- [ ] **Android on the WOD_LX1:**
+  - 3.4d case 6 (the native-crash recovery case; it flakes on the emulator);
+  - the B1 secure-rectangle check with `edgeToEdgeEnabled=false`, run as an e2e assertion rather than the one-off manual numbers.
+- [ ] **Record** the device models and OS versions, the SDK banner or version, and the per-case evidence in the commit body.
+
 ### Phase 3 review gate
 
 Spawn a reviewer subagent. It must independently: run `yarn test`, `BUGSEE_RELEASE=1 yarn test` (and report every blocker it prints), the Android JVM tests and the `BugseeRNSupport` XCTests; confirm `mavenLocal` is either absent or SNAPSHOT-filtered; confirm by reading the code that the SDK completion runs exactly once on every path (terminating, no handler, phase unregistered, JS resolve, JS throw, deadline, JS reload) on both platforms, and that no deadline can exceed the SDK's cap; confirm no report op hops to the iOS main queue; confirm network events cannot leave our code with `requiresFiltering = false`; and **rerun** the device tests of 3.4d, 3.5b, 3.4f and 3.5d rather than trust reported output. The phase is not releasable while `releaseBlockers` is non-empty.
