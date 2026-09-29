@@ -17,6 +17,13 @@
  *
  * Timestamps: the scenario's `t=` values are the device's `Date.now()`, the
  * same clock the SDK stamps bundle entries with.
+ *
+ * Task 6.9: the same file under `E2E_PLATFORM=ios` (`E2E_IOS_TARGET` stated),
+ * retained by the dead endpoint every iOS launch carries. Where iOS differs,
+ * each case states the iOS value: the bridge's lines are `NSLog`
+ * (`bridgeLine`); the video holds one black frame for the whole blackout
+ * rather than a run of them (media.ts `heldBlackout`); and a pre-launch
+ * `startBlackout()` is honoured (`isBlackout=true` once Launched).
  */
 import {
   type PulledBundle,
@@ -24,20 +31,32 @@ import {
   captureEvents,
   removePulledBundles,
 } from './bundles';
-import { ANDROID_PACKAGE } from './device';
-import { ON_ANDROID, type Run, awaitBundles, clearBundles, escape, must, report, startRun, useLog } from './harness';
-import { LUMA_DARK_MAX, blackoutPattern, frameLumas, imageSize, regionLuma, shadeOf } from './media';
-import { type LogLine, Logcat, adb, resetScenario } from './scenario';
+import {
+  ON_IOS,
+  type Run,
+  TARGET_NAME,
+  awaitBundles,
+  bridgeLine,
+  clearBundles,
+  describeDevice,
+  escape,
+  must,
+  report,
+  startDeviceLog,
+  startRun,
+  stopApp,
+  stopDeviceLog,
+} from './harness';
+import { LUMA_DARK_MAX, blackoutPattern, frameLumas, heldBlackout, imageSize, regionLuma, shadeOf } from './media';
+import { type DeviceLog, type LogLine, resetScenario } from './scenario';
 import { type Media, assertMedia, bundleBySummary, centreRegion, numberIn } from './screen';
-
-const describeAndroid = ON_ANDROID ? describe : describe.skip;
 
 jest.setTimeout(6 * 60_000);
 
 type Entry = Record<string, unknown>;
 
-describeAndroid('blackout on an Android handset', () => {
-  let log: Logcat;
+describeDevice(`blackout on ${TARGET_NAME}`, () => {
+  let log: DeviceLog;
   let run: Run;
   let nonce: string;
   let started: LogLine;
@@ -62,9 +81,11 @@ describeAndroid('blackout on an Android handset', () => {
     );
 
   beforeAll(async () => {
-    log = await Logcat.start();
-    useLog(log, '6.8');
-    await airplane(true);
+    log = await startDeviceLog('6.8', '6.9');
+    if (!ON_IOS) {
+      // iOS retains through DEAD_ENDPOINT, which every iOS launch carries.
+      await airplane(true);
+    }
 
     await clearBundles();
     run = await startRun('blackout');
@@ -110,15 +131,17 @@ describeAndroid('blackout on an Android handset', () => {
 
   afterAll(async () => {
     try {
-      await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+      await stopApp();
       await clearBundles().catch((error: unknown) => report('cleanup clear failed', String(error)));
     } finally {
       try {
-        await airplane(false);
+        if (!ON_IOS) {
+          await airplane(false);
+        }
       } finally {
         const { removed, kept } = removePulledBundles();
         report('pulled bundle roots', { removed: removed.length, kept });
-        log?.stop();
+        stopDeviceLog(log);
         resetScenario();
       }
     }
@@ -166,11 +189,11 @@ describeAndroid('blackout on an Android handset', () => {
 
     // The example is wrapped, so the view tree is live: had the SDK asked
     // while blacked out, the bridge would have logged it.
-    const asked = log.all(/BugseeRN\s*:\s*data request /, started.index, ended.index);
+    const asked = log.all(bridgeLine('data request '), started.index, ended.index);
     report('data request lines inside the blackout', asked.map(line => line.text.trim()));
     expect(asked).toEqual([]);
     // Precondition: the same log does carry such lines outside it.
-    expect(log.all(/BugseeRN\s*:\s*data request dr-\d+ type=vh /, run.start).length).toBeGreaterThan(0);
+    expect(log.all(bridgeLine('data request dr-\\d+ type=vh '), run.start).length).toBeGreaterThan(0);
     // And outside the blackout the capture does produce trees: the report
     // taken after it carries the snapshot of its own upload.
     const afterTrees = captureEvents(after, 'viewtree').map(tree => tree.timestamp as number);
@@ -200,8 +223,12 @@ describeAndroid('blackout on an Android handset', () => {
   it('the video is black for the blackout and only for it', async () => {
     const frames = await frameLumas(afterMedia.video);
     report('after: video frames (t, luma)', frames.map(f => [Number(f.t.toFixed(3)), Math.round(f.luma)]));
-    const pattern = blackoutPattern(frames);
-    report('after: blackoutPattern', pattern);
+    // Android keeps encoding while blacked out, so the dark run is many
+    // frames and its span is the measure. iOS stops encoding: one black
+    // frame, held until recording resumes (media.ts heldBlackout), so the
+    // measure is how long that frame is on screen.
+    const pattern = ON_IOS ? heldBlackout(frames) : blackoutPattern(frames);
+    report(`after: ${ON_IOS ? 'heldBlackout' : 'blackoutPattern'}`, pattern);
     expect(pattern.ok).toBe(true);
     const expected = (endedT - startedT) / 1000;
     const darkSeconds = (pattern as { darkSeconds: number }).darkSeconds;
@@ -211,7 +238,8 @@ describeAndroid('blackout on an Android handset', () => {
     // Only for it: that is the one dark stretch with recording on both
     // sides. (Every Android bundle video, blacked out or not, also opens
     // with one black frame at t=0 and closes with two at report time -- an
-    // SDK artefact at the recording's edges, recorded in the task report.)
+    // SDK artefact at the recording's edges, recorded in the task report.
+    // iOS videos have no such edge frames.)
     const shades = frames.map(f => shadeOf(f.luma));
     const interiorDarkRuns = shades.filter(
       (shade, i) =>
@@ -241,11 +269,31 @@ describeAndroid('blackout on an Android handset', () => {
       prelaunchRun.start,
     );
     report('prelaunch', [called.text.trim(), state.text.trim(), cleared.text.trim()]);
-    // Android: the SDK drops a startBlackout() before launch (a logged no-op).
-    expect(state.text).toMatch(/ isBlackout=false /);
-    expect(cleared.text).toMatch(/ isBlackout=false /);
-    // ...and says nothing about it: the lifecycle listener, subscribed before
-    // the call, hears no BlackoutStarted for this run.
-    expect(log.all(new RegExp(`BUGSEE_E2E blackout lifecycle BlackoutStarted .*nonce=${prelaunchNonce}`), prelaunchRun.start)).toEqual([]);
+    const lifecycle = (name: string) =>
+      log.all(new RegExp(`BUGSEE_E2E blackout lifecycle ${name} .*nonce=${prelaunchNonce}`), prelaunchRun.start);
+    report('prelaunch lifecycle', {
+      started: lifecycle('BlackoutStarted').map(line => line.text.trim()),
+      ended: lifecycle('BlackoutEnded').map(line => line.text.trim()),
+    });
+    if (ON_IOS) {
+      // iOS honours a startBlackout() made before launch: the SDK is blacked
+      // out once Launched, until endBlackout().
+      expect(state.text).toMatch(/ isBlackout=true /);
+      expect(cleared.text).toMatch(/ isBlackout=false /);
+      // The lifecycle listener, subscribed before the call, hears no
+      // BlackoutStarted for it, and exactly one BlackoutEnded, after
+      // endBlackout() (as measured on the simulator; see the task report).
+      expect(lifecycle('BlackoutStarted')).toEqual([]);
+      const ended = lifecycle('BlackoutEnded');
+      expect(ended).toHaveLength(1);
+      expect(ended[0]!.index).toBeGreaterThan(state.index);
+    } else {
+      // Android: the SDK drops a startBlackout() before launch (a logged no-op).
+      expect(state.text).toMatch(/ isBlackout=false /);
+      expect(cleared.text).toMatch(/ isBlackout=false /);
+      // ...and says nothing about it: the lifecycle listener, subscribed before
+      // the call, hears no BlackoutStarted for this run.
+      expect(lifecycle('BlackoutStarted')).toEqual([]);
+    }
   });
 });
