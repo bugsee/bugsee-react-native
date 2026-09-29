@@ -916,10 +916,28 @@ Added by controller ruling. Pending — runs after 3.P3, against the flipped, re
 
 **Why:** `option-keys.json` (`scripts/cli-extract-option-keys.ts`) is a committed fixture generated from the Android and iOS SDK sources. It was last regenerated against Android 7.2.0. 7.3.0 is the release the wrapper channel, the report-contract methods and `com.bugsee.option.$$WRAPPER` shipped in (Phase 3's rulings); Android's option surface has moved since, and the fixture has not been asked to notice.
 
-- [ ] Regenerate `option-keys.json` (and the `shared`/`android`-only/`iOS`-only split it derives) from the `7.3.0` Android sources and the pinned iOS `7.0.0-beta3` sources.
-- [ ] Expose any option `7.3.0` added that Android carries and this wrapper does not yet surface as a first-class accessor — at minimum, confirm none of the new keys are silently dropped the way `19a034a` fixed for deprecated-but-registered options.
-- [ ] `option-manifest-parity.test.ts` and `option-keys.test.ts` stay green against the regenerated fixture.
-- [ ] **Commit** — `build(options): regenerate option-keys.json against 7.3.0`.
+- [x] Regenerate `option-keys.json` (and the `shared`/`android`-only/`iOS`-only split it derives) from the `7.3.0` Android sources and the pinned iOS `7.0.0-beta3` sources.
+- [x] Expose any option `7.3.0` added that Android carries and this wrapper does not yet surface as a first-class accessor — at minimum, confirm none of the new keys are silently dropped the way `19a034a` fixed for deprecated-but-registered options.
+- [x] `option-manifest-parity.test.ts` and `option-keys.test.ts` stay green against the regenerated fixture.
+- [x] **Commit** — `build(options): regenerate option-keys.json against 7.3.0`.
+
+**As run (2026-09-29).**
+- **Sources:** regenerated from Android `v7.3.0` (`beb390dc0`) and iOS `7.0.0-beta3` (`0d9c9d0a3`).
+- **Key surface against the 7.2.0 fixture:** shared goes from 47 to 48, iOS-only from 22 to 21, Android-only from 27 to 30. Nothing was removed.
+  - **Moved:** `config.max-data-size`, from iOS-only to shared. Both SDKs read it in megabytes; the defaults are iOS 50 and Android 150.
+  - **Added, Android-only:** `config.max-pending-reports`, `config.max-pending-report-age`, and `detect.exit.bg_low_memory_as_error` (#190).
+  - These four keys are exactly what `v7.2.0..v7.3.0` added to `Options.java`.
+- **Surfaced:**
+  - `maxDataSize` moves from `IOSLaunchOptions` to `BugseeLaunchOptions`.
+  - `AndroidLaunchOptions` gains `detectAndReportExitLowMemoryBackgroundAsError`, `maxPendingReports` and `maxPendingReportAge`.
+- **Guard against silently dropped keys:** `option-manifest-parity.test.ts` now requires the key fixture and the manifest to agree in both directions. The only exceptions are the named hidden internals `$$DEBUG`, `$$ENDPOINT` and `$$WRAPPER`.
+- **Mutations:**
+  - Putting the 7.2.0 fixture back fails 7 tests, including `writes only keys its own platform accepts` for Android.
+  - Dropping `bg_low_memory_as_error` from the manifest fails 3 tests.
+- **Checks:**
+  - `yarn test`: 1177 passed, 1 skipped.
+  - `BUGSEE_RELEASE=1 yarn test`: 1178 passed.
+  - Lint and typecheck are clean.
 
 ---
 
