@@ -1,0 +1,2 @@
+# The NDK's CMake working tree, next to the module (examples/bare ignores its own).
+android/.cxx/

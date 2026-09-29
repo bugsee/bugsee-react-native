@@ -4290,6 +4290,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"bugsee-e2e-native@workspace:*, bugsee-e2e-native@workspace:examples/e2e-native":
+  version: 0.0.0-use.local
+  resolution: "bugsee-e2e-native@workspace:examples/e2e-native"
+  dependencies:
+    react-native: "npm:0.87.1"
+  peerDependencies:
+    react-native: "*"
+  languageName: unknown
+  linkType: soft
+
 "bugsee-example-bare@workspace:examples/bare":
   version: 0.0.0-use.local
   resolution: "bugsee-example-bare@workspace:examples/bare"
@@ -4308,6 +4318,7 @@ __metadata:
     "@types/jest": "npm:^29.5.14"
     "@types/node": "npm:^22.10.2"
     "@types/react": "npm:^19.2.0"
+    bugsee-e2e-native: "workspace:*"
     eslint: "npm:^8.19.0"
     jest: "npm:^29.7.0"
     prettier: "npm:2.8.8"

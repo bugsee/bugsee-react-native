@@ -3,6 +3,8 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 
 const workspaceRoot = path.resolve(__dirname, '..', '..');
 const library = path.resolve(workspaceRoot, 'packages', 'react-native');
+// The example-only native test helpers (Task 7.6a), a workspace sibling.
+const e2eNative = path.resolve(workspaceRoot, 'examples', 'e2e-native');
 
 /**
  * The app's own copies. The library's `react` and `react-native` imports must
@@ -26,7 +28,7 @@ const appOrigin = path.resolve(__dirname, 'index.js');
  * @type {import('@react-native/metro-config').MetroConfig}
  */
 const config = {
-  watchFolders: [library, path.resolve(workspaceRoot, 'node_modules')],
+  watchFolders: [library, e2eNative, path.resolve(workspaceRoot, 'node_modules')],
   resolver: {
     // extraNodeModules below is only a FALLBACK: Metro tries the hierarchical
     // node_modules lookup first. From the library's sources that lookup finds
@@ -52,6 +54,7 @@ const config = {
     ],
     extraNodeModules: {
       '@bugsee/react-native': library,
+      'bugsee-e2e-native': e2eNative,
       // The library declares react and react-native as peers; point them at
       // the app's single copy so there are never two Reacts in the bundle.
       react: path.resolve(__dirname, 'node_modules', 'react'),
