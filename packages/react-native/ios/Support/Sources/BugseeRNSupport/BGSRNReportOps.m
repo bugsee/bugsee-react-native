@@ -180,6 +180,10 @@ static NSNumber *WireNumber(NSNumber *number) {
                                                @"finite number or null",
                                                key]);
       }
+      // Parity with the JS proxy, which rejects it before crossing.
+      if ([(NSString *)key length] == 0) {
+        return Fail(error, BGSRNReportErrorBadArgument, @"attribute name must be a non-empty string");
+      }
       attributes[key] = IsFiniteNumber(value) ? WireNumber(value) : value;
     }
   }
