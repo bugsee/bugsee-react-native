@@ -18,17 +18,34 @@
  * `E2E_EDGE_TO_EDGE=true|false` must name the setting the installed build was
  * made with: `false` also asserts the request carried a non-zero origin, so
  * case 5 exercises the origin conversion (B1).
+ *
+ * Task 6.9: the same file under `E2E_PLATFORM=ios`. The bridge's lines are
+ * `NSLog` on the simulator console stream (`bridgeLine`), the origin is the
+ * React root window's `frame.origin` in points -- `(0, 0)` on the simulator's
+ * full-screen window -- and case 5's ground truth is the scenario's logged
+ * `measureInWindow` rectangle plus that origin, to within 0.01 pt.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { type PulledBundle, airplane, captureEvents, removePulledBundles } from './bundles';
-import { ANDROID_PACKAGE } from './device';
-import { ON_ANDROID, type Run, awaitBundles, clearBundles, must, report, startRun, useLog } from './harness';
-import { type LogLine, Logcat, adb, resetScenario } from './scenario';
-import { type Rect, assertMedia, boundsIn, bundleBySummary, numberIn, uiDump } from './screen';
-
-const describeAndroid = ON_ANDROID ? describe : describe.skip;
+import {
+  ON_IOS,
+  type Run,
+  TARGET_NAME,
+  awaitBundles,
+  bridgeLine,
+  clearBundles,
+  describeDevice,
+  must,
+  report,
+  startDeviceLog,
+  startRun,
+  stopApp,
+  stopDeviceLog,
+} from './harness';
+import { type DeviceLog, type LogLine, resetScenario } from './scenario';
+import { type Rect, assertMedia, boundsIn, bundleBySummary, markerRect, numberIn, uiDump } from './screen';
 
 jest.setTimeout(5 * 60_000);
 
@@ -62,11 +79,13 @@ function filesUnder(dir: string): string[] {
   });
 }
 
-describeAndroid('the vh data request on an Android handset', () => {
-  let log: Logcat;
+describeDevice(`the vh data request on ${TARGET_NAME}`, () => {
+  let log: DeviceLog;
   let run: Run;
   let nonce: string;
   let openBounds: Rect;
+  /** iOS: the open view's `measureInWindow` rectangle, in points. */
+  let openRect: Rect;
   let captured: LogLine;
   let capturedT: number;
   let uploadedT: number;
@@ -76,14 +95,15 @@ describeAndroid('the vh data request on an Android handset', () => {
   let upTo: number;
 
   beforeAll(async () => {
-    if (EDGE_TO_EDGE !== 'true' && EDGE_TO_EDGE !== 'false') {
+    if (!ON_IOS && EDGE_TO_EDGE !== 'true' && EDGE_TO_EDGE !== 'false') {
       throw new Error(
         `E2E_EDGE_TO_EDGE must state how the installed build was made, "true" or "false"; got ${JSON.stringify(EDGE_TO_EDGE)}`,
       );
     }
-    log = await Logcat.start();
-    useLog(log, '6.8');
-    await airplane(true);
+    log = await startDeviceLog('6.8', '6.9');
+    if (!ON_IOS) {
+      await airplane(true);
+    }
 
     await clearBundles();
     run = await startRun('view-tree');
@@ -114,8 +134,15 @@ describeAndroid('the vh data request on an Android handset', () => {
     );
     capturedT = numberIn(captured, 't');
     uploadedT = numberIn(uploaded, 't');
-    openBounds = boundsIn((await uiDump()).xml, 'vh-open-probe');
-    report('vh-open-probe on screen (uiautomator)', openBounds);
+    if (ON_IOS) {
+      // No accessibility dump: the ground truth is the scenario's own
+      // measureInWindow rectangle (the brief's iOS rule).
+      openRect = markerRect(rect);
+      report('vh-open measureInWindow (points)', openRect);
+    } else {
+      openBounds = boundsIn((await uiDump()).xml, 'vh-open-probe');
+      report('vh-open-probe on screen (uiautomator)', openBounds);
+    }
 
     const bundles = await awaitBundles(1);
     vh = bundleBySummary(bundles, `vh-${nonce}`);
@@ -128,15 +155,17 @@ describeAndroid('the vh data request on an Android handset', () => {
 
   afterAll(async () => {
     try {
-      await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+      await stopApp();
       await clearBundles().catch((error: unknown) => report('cleanup clear failed', String(error)));
     } finally {
       try {
-        await airplane(false);
+        if (!ON_IOS) {
+          await airplane(false);
+        }
       } finally {
         const { removed, kept } = removePulledBundles();
         report('pulled bundle roots', { removed: removed.length, kept });
-        log?.stop();
+        stopDeviceLog(log);
         resetScenario();
       }
     }
@@ -153,10 +182,10 @@ describeAndroid('the vh data request on an Android handset', () => {
   }
 
   it('the SDK asks and JS answers within budget', () => {
-    const requests = log.all(/BugseeRN\s*:\s*data request dr-\d+ type=vh /, run.launched.index, upTo);
-    const completions = log.all(/BugseeRN\s*:\s*data request dr-\d+ completed /, run.launched.index, upTo);
-    report('requests', requests.map(line => line.text.replace(/^.*BugseeRN\s*:\s*/, '')));
-    report('completions', completions.map(line => line.text.replace(/^.*BugseeRN\s*:\s*/, '')));
+    const requests = log.all(bridgeLine('data request dr-\\d+ type=vh '), run.launched.index, upTo);
+    const completions = log.all(bridgeLine('data request dr-\\d+ completed '), run.launched.index, upTo);
+    report('requests', requests.map(line => line.text.replace(/^.*BugseeRN\s*:?\s*/, '')));
+    report('completions', completions.map(line => line.text.replace(/^.*BugseeRN\s*:?\s*/, '')));
     expect(requests.length).toBeGreaterThanOrEqual(2);
     for (const request of requests) {
       const id = /data request (dr-\d+) /.exec(request.text)![1]!;
@@ -175,7 +204,11 @@ describeAndroid('the vh data request on an Android handset', () => {
     const origins = requests.map(line => /origin=(-?\d+),(-?\d+)/.exec(line.text)!.slice(1, 3).map(Number));
     report('request origins', { edgeToEdge: EDGE_TO_EDGE, origins });
     for (const [x, y] of origins) {
-      if (EDGE_TO_EDGE === 'false') {
+      if (ON_IOS) {
+        // The React root window's frame.origin, in points: (0, 0) on the
+        // simulator's full-screen window.
+        expect([x, y]).toEqual([0, 0]);
+      } else if (EDGE_TO_EDGE === 'false') {
         expect(y).toBeGreaterThan(0);
       } else {
         expect([x, y]).toEqual([0, 0]);
@@ -286,12 +319,30 @@ describeAndroid('the vh data request on an Android handset', () => {
     report('files carrying the TextInput value (informational)', typed);
   });
 
-  it('bounds are display pixels on screen', () => {
+  it(ON_IOS ? 'bounds are points on screen' : 'bounds are display pixels on screen', () => {
     for (const { root } of managedTrees()) {
       const open = nodesOf(root).filter(node => node.options.tag === `vh-open-${nonce}`);
       expect(open).toHaveLength(1);
       const [x, y, w, h] = open[0]!.bounds;
       const node = { left: x, top: y, right: x + w, bottom: y + h };
+      if (ON_IOS) {
+        // The logged measureInWindow rectangle plus the requests' origin --
+        // (0, 0) on the simulator's full-screen window (case 1) -- to within
+        // 0.01 pt. A non-zero origin's arithmetic is Task 6.3's unit tests'
+        // (and an iPad's, on the Task 3.H list).
+        const origins = log
+          .all(bridgeLine('data request dr-\\d+ type=vh '), run.launched.index, upTo)
+          .map(line => /origin=(-?[\d.]+),(-?[\d.]+)/.exec(line.text)!.slice(1, 3).map(Number));
+        expect(origins.length).toBeGreaterThan(0);
+        expect(new Set(origins.map(o => o.join(','))).size).toBe(1);
+        const origin = { x: origins[0]![0]!, y: origins[0]![1]! };
+        report('vh-open node vs measureInWindow + origin', { node, rect: openRect, origin });
+        expect(Math.abs(node.left - (openRect.left + origin.x))).toBeLessThanOrEqual(0.01);
+        expect(Math.abs(node.top - (openRect.top + origin.y))).toBeLessThanOrEqual(0.01);
+        expect(Math.abs(node.right - (openRect.right + origin.x))).toBeLessThanOrEqual(0.01);
+        expect(Math.abs(node.bottom - (openRect.bottom + origin.y))).toBeLessThanOrEqual(0.01);
+        continue;
+      }
       report('vh-open node vs on screen', { edgeToEdge: EDGE_TO_EDGE, node, onScreen: openBounds });
       expect(Math.abs(node.left - openBounds.left)).toBeLessThanOrEqual(1);
       expect(Math.abs(node.top - openBounds.top)).toBeLessThanOrEqual(1);
