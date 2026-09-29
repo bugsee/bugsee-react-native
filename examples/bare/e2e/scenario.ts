@@ -334,11 +334,14 @@ export abstract class IosConsole extends DeviceLog {
     const child = this.spawnLaunch(args);
     this.children.add(child);
     const output: LogLine[] = [];
-    const take = (chunk: Buffer) => {
-      output.push(...this.feed(chunk, child));
-    };
-    child.stdout?.on('data', take);
-    child.stderr?.on('data', take);
+    // Each stream its own partial-line buffer: stdout and stderr of one
+    // process must not splice either.
+    child.stdout?.on('data', (chunk: Buffer) => {
+      output.push(...this.feed(chunk, child.stdout));
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      output.push(...this.feed(chunk, child.stderr));
+    });
     let over = false;
     const ended = new Promise<number | null>(resolve => {
       child.on('close', code => {
