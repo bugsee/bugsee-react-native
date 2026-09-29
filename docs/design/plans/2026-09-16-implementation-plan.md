@@ -3259,6 +3259,10 @@ export class RootErrorReporter extends React.Component<{ children?: React.ReactN
 - Create: `examples/bare/scenarios/native.ts` (scenario `e2e-native-smoke`), `examples/bare/e2e/e2e-native.test.ts`
 - Modify: `examples/bare/App.tsx`, `scripts/__tests__/example-wiring.test.ts`
 
+> **As built (Task 7.6a):**
+> - `e2eNative/` is `examples/e2e-native/`: the root `workspaces` glob is `examples/*`, so this is where a workspace package resolves.
+> - The module also ships `ios/Package.swift` and `ios/react-native-spm-prefix.h`. CI's `ios (spm)` job needs them: on SwiftPM, React Native refuses an autolinked dependency that has no `Package.swift`. `example-wiring.test.ts` pins the manifest.
+
 **Spec and JS (exact):**
 
 ```ts
