@@ -17,10 +17,14 @@ import java.util.List;
 /**
  * Parses the JSON text an object payload crosses the bridge as
  * ({@code encodeBridgeObject} in {@code src/bridge/json.ts}) into plain Java:
- * a {@code HashMap<String, Object>} (a {@code LinkedHashMap}, so key order
- * survives; {@code HashMap} because that is what {@code Bugsee.event} takes) of {@code null}, {@code Boolean},
+ * a {@code HashMap<String, Object>} ({@code HashMap} because that is what
+ * {@code Bugsee.event} takes) of {@code null}, {@code Boolean},
  * {@code String}, {@code Integer}/{@code Long}/{@code Double}, nested maps and
- * {@code List}s.
+ * {@code List}s. Key order is not part of the contract: the maps are
+ * {@code LinkedHashMap}s, but the order they are filled in is whatever
+ * {@code JSONObject.keys()} yields -- source order with Android's libcore
+ * org.json, hash order with the reference org.json the JVM tests run -- and
+ * nothing downstream depends on it.
  *
  * <p>Why JSON rather than a {@code ReadableMap}: iOS's TurboModule argument
  * conversion drops every {@code null} member of an object argument (React
@@ -54,6 +58,13 @@ final class BridgeJson {
      *
      * @throws BadJson when {@code json} is not exactly one JSON object -- a
      *     syntax error, another kind of value, or trailing text after it.
+     *     Best effort: Android's libcore {@code JSONTokener} is lenient (it
+     *     takes unquoted strings, single quotes, comments, {@code =>} and
+     *     {@code ;} separators), so some text that is not strict JSON parses.
+     *     The only producer is {@code JSON.stringify} in
+     *     {@code encodeBridgeObject}, whose output is always strict JSON, so
+     *     this rejects what can actually arrive malformed -- truncated text, a
+     *     non-object, trailing text -- and does not pretend to be a validator.
      */
     @NonNull
     static HashMap<String, Object> parseObject(@Nullable final String json) throws BadJson {
