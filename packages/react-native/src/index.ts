@@ -10,6 +10,8 @@ import { statusForEvent } from './wrapper/events';
 import type { LifecycleEvent } from './wrapper/events';
 import { setReportHandler as installReportHandler } from './report/dispatcher';
 import type { BugseeReportHandler } from './report/types';
+import { forwardLog } from './wrapper/channel';
+import { LogLevel } from './options/enums';
 
 export { Status } from './status';
 
@@ -172,6 +174,15 @@ class Bugsee {
       );
     }
     NativeBugsee.upload(summary, description);
+  }
+
+  /**
+   * One line into the Bugsee log, attributed to the wrapper (source Custom, no
+   * tag) and filtered natively by the app's log filter, exactly once. Dropped
+   * before launch() -- the channel is inert until then.
+   */
+  log(message: string, level: LogLevel = LogLevel.Info): void {
+    forwardLog(message, level);
   }
 
   /**
