@@ -240,6 +240,26 @@ public class ReactRootOriginTrackerTest {
         assertEquals(1, releases[0]);
     }
 
+    // The production token's re-home decision, as a pure predicate: the
+    // listener itself needs a real View/ViewTreeObserver, which a plain JVM
+    // test cannot fake, so what feeds it is covered by review. A live saved
+    // observer is always the one holding the listener (AOSP), so it is never
+    // replaced -- re-homing it while the root sits in a different window
+    // would aim release() at an observer that never held the listener. A
+    // dead one is replaced only while the view is attached, because only
+    // then is getViewTreeObserver() the window's observer that dispatches.
+    @Test
+    public void reHomesOnlyADeadObserverAndOnlyWhileTheViewIsAttached() {
+        assertEquals("dead saved observer, view attached", true,
+                ReactRootOriginTracker.shouldRehome(false, true));
+        assertEquals("live saved observer, view attached (maybe elsewhere)", false,
+                ReactRootOriginTracker.shouldRehome(true, true));
+        assertEquals("dead saved observer, view detached", false,
+                ReactRootOriginTracker.shouldRehome(false, false));
+        assertEquals("live saved observer, view detached", false,
+                ReactRootOriginTracker.shouldRehome(true, false));
+    }
+
     @Test
     public void refreshFindsANewRootOnceTheOldOneIsGone() {
         final FakeRoot first = new FakeRoot();
