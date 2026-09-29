@@ -121,6 +121,67 @@ describe('a vh request', () => {
   });
 });
 
+describe('a walk that finds nothing', () => {
+  // `buildViewTree` returns `null` whenever no surface emits a node: nothing
+  // measurable yet, everything under a hidden Offscreen, or every root's
+  // `.current` empty. `JSON.stringify(null)` is the four-character STRING
+  // `"null"`, not the value `null` -- replying with it would make the SDK
+  // store a real (if odd) `managed` payload instead of recognising "nothing
+  // to report".
+  it('replies null, not the string "null"', () => {
+    const { instance } = anchorUnderNewRoot();
+    requests.registerAnchor(instance);
+    buildViewTree.mockReturnValue(null);
+
+    emit({ requestId: 'dr-null-tree' });
+
+    expect(native.replyDataRequest).toHaveBeenCalledWith('dr-null-tree', null);
+  });
+
+  // Not a contract `buildViewTree` documents, but the payload must survive it
+  // regardless -- `undefined` must not reach `replyDataRequest` unconverted
+  // either (it crosses a TurboModule boundary far worse than a stray string).
+  it('replies null when the walk returns undefined', () => {
+    const { instance } = anchorUnderNewRoot();
+    requests.registerAnchor(instance);
+    buildViewTree.mockReturnValue(undefined);
+
+    emit({ requestId: 'dr-undefined-tree' });
+
+    expect(native.replyDataRequest).toHaveBeenCalledWith('dr-undefined-tree', null);
+  });
+
+  // `JSON.stringify` can also return `undefined` WITHOUT throwing -- for a
+  // bare function, symbol, or (here, standing in for either) `undefined`
+  // itself at the top level. A non-null, non-undefined `tree` is not really
+  // what `buildViewTree` returns, but the payload conversion must not let a
+  // non-string `JSON.stringify` result slip through as a payload either.
+  it('replies null when JSON.stringify itself returns undefined for a non-null tree', () => {
+    const { instance } = anchorUnderNewRoot();
+    requests.registerAnchor(instance);
+    buildViewTree.mockReturnValue(() => {});
+
+    emit({ requestId: 'dr-unstringifiable-tree' });
+
+    expect(native.replyDataRequest).toHaveBeenCalledWith('dr-unstringifiable-tree', null);
+  });
+
+  // A cyclic structure (or a BigInt) reaching `JSON.stringify` throws rather
+  // than returning a string; the reply must still be exactly one, and null.
+  it('replies null when JSON.stringify throws on the tree', () => {
+    const { instance } = anchorUnderNewRoot();
+    requests.registerAnchor(instance);
+    const cyclic: Record<string, unknown> = {};
+    cyclic['self'] = cyclic;
+    buildViewTree.mockReturnValue(cyclic);
+
+    emit({ requestId: 'dr-cyclic-tree' });
+
+    expect(native.replyDataRequest).toHaveBeenCalledTimes(1);
+    expect(native.replyDataRequest).toHaveBeenCalledWith('dr-cyclic-tree', null);
+  });
+});
+
 describe('a non-vh type', () => {
   it('replies null without walking anything', () => {
     const { instance } = anchorUnderNewRoot();
@@ -163,6 +224,47 @@ describe('a throwing walk', () => {
     expect(native.replyDataRequest).toHaveBeenCalledWith('dr-5', null);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('[Bugsee]'), expect.any(Error));
+  });
+
+  // "Once" means once per FAILING request, not once ever for the process: a
+  // deterministically broken walk should keep saying so on every capture
+  // pass, unlike `BugseeSecure`'s own one-time warning for an unrelated,
+  // expected-to-be-rare failure.
+  it('warns again on a second, separate failing request', () => {
+    const { instance } = anchorUnderNewRoot();
+    requests.registerAnchor(instance);
+    buildViewTree.mockImplementation(() => {
+      throw new Error('walk exploded');
+    });
+
+    emit({ requestId: 'dr-5a' });
+    emit({ requestId: 'dr-5b' });
+
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('a throwing replyDataRequest', () => {
+  // The payload is computed entirely before `replyDataRequest` is ever
+  // called, and it is called from exactly one place -- so a throwing
+  // `replyDataRequest` cannot be retried into throwing a second time (an
+  // earlier version of this function called it from inside each branch AND
+  // again from the `catch`, so a throw on the success path was retried with
+  // the SAME call, escaping if the retry also threw).
+  it('is called exactly once, even when it throws', () => {
+    const { instance } = anchorUnderNewRoot();
+    requests.registerAnchor(instance);
+    native.replyDataRequest.mockImplementationOnce(() => {
+      throw new Error('bridge is gone');
+    });
+
+    expect(() => emit({ requestId: 'dr-reply-throws' })).not.toThrow();
+
+    expect(native.replyDataRequest).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('deliver a view-hierarchy reply'),
+      expect.any(Error),
+    );
   });
 });
 
@@ -234,6 +336,22 @@ describe('registerAnchor / unregisterAnchor', () => {
     expect(native.setViewTreeEnabled).not.toHaveBeenCalled();
   });
 
+  // The exact sequence a review round flagged: a stale, redundant unregister
+  // for an anchor that is ALREADY gone must not disable capture while a
+  // DIFFERENT anchor is still mounted.
+  it('a stale double-unregister does not disable capture while another anchor is mounted', () => {
+    const a = {};
+    const b = {};
+    requests.registerAnchor(a);
+    requests.registerAnchor(b);
+    requests.unregisterAnchor(a);
+    native.setViewTreeEnabled.mockClear();
+
+    requests.unregisterAnchor(a);
+
+    expect(native.setViewTreeEnabled).not.toHaveBeenCalled();
+  });
+
   it('subscribes to onDataRequest once, no matter how many anchors register', () => {
     const a = {};
     const b = {};
@@ -248,6 +366,74 @@ describe('registerAnchor / unregisterAnchor', () => {
     requests.registerAnchor(a);
 
     expect(native.dataRequestSubscribeCallCount()).toBe(1);
+  });
+});
+
+describe('monotonicNow', () => {
+  const originalPerformance = (globalThis as { performance?: unknown }).performance;
+
+  afterEach(() => {
+    (globalThis as { performance?: unknown }).performance = originalPerformance;
+  });
+
+  // A fake clock, not the real one: `performance.now()`'s exact value is
+  // never itself the contract -- only "did it get used, and is the fallback
+  // robust to it misbehaving" is.
+  function fakeClock(now: () => number): void {
+    (globalThis as { performance?: { now: () => number } }).performance = { now };
+  }
+
+  it('uses performance.now() when it returns a finite number', () => {
+    fakeClock(() => 123.5);
+
+    expect(requests.monotonicNow()).toBe(123.5);
+  });
+
+  // The real gap a review round found: `walk.ts`'s `safeNow` coerces a
+  // non-finite `now()` result to 0, and if BOTH of a walk's two `now()` calls
+  // (its start time and every later budget check) coerced to that same 0, the
+  // 250 ms walk budget would never trip -- silently disabling the one bound
+  // keeping a pathological tree's walk inside the SDK's capture deadline.
+  // `monotonicNow` itself must not let a bad `performance.now()` reach
+  // `safeNow` at all.
+  it('falls back to Date.now() when performance.now() returns NaN', () => {
+    fakeClock(() => NaN);
+    const before = Date.now();
+
+    const result = requests.monotonicNow();
+
+    expect(Number.isFinite(result)).toBe(true);
+    expect(result).toBeGreaterThanOrEqual(before);
+  });
+
+  it('falls back to Date.now() when performance.now() returns a non-number', () => {
+    fakeClock(() => undefined as unknown as number);
+    const before = Date.now();
+
+    const result = requests.monotonicNow();
+
+    expect(Number.isFinite(result)).toBe(true);
+    expect(result).toBeGreaterThanOrEqual(before);
+  });
+
+  it('falls back to Date.now() when performance.now is not a function', () => {
+    (globalThis as { performance?: unknown }).performance = { now: 'not a function' };
+    const before = Date.now();
+
+    const result = requests.monotonicNow();
+
+    expect(Number.isFinite(result)).toBe(true);
+    expect(result).toBeGreaterThanOrEqual(before);
+  });
+
+  it('falls back to Date.now() when the performance global is missing', () => {
+    delete (globalThis as { performance?: unknown }).performance;
+    const before = Date.now();
+
+    const result = requests.monotonicNow();
+
+    expect(Number.isFinite(result)).toBe(true);
+    expect(result).toBeGreaterThanOrEqual(before);
   });
 });
 
@@ -335,7 +521,7 @@ describe('the real walk env', () => {
   }
 
   /** Builds `HostRoot -> WrapMarker -> [appHost, BugseeSecure -> secureHost, anchor]` and registers a real anchor instance for it, returning the parsed 'vh' reply payload. */
-  function runRealWalk(platform: 'ios' | 'android'): Node {
+  function runRealWalk(platform: 'ios' | 'android', origin: { x: number; y: number } = { x: 0, y: 0 }): Node {
     jest.unmock('../walk');
     jest.resetModules();
     ({ native } = require('../../__mocks__/native'));
@@ -366,11 +552,12 @@ describe('the real walk env', () => {
     const secureBoundary = makeFiber({ tag: FiberTag.FunctionComponent, type: BugseeSecure, child: secureHost });
     secureHost.return = secureBoundary;
 
-    // A second secure boundary, reached only through `elementType` (as a real
-    // `memo(BugseeSecure)`-like fiber might carry it) -- not something
-    // `BugseeSecure` itself does (it is deliberately a plain function, per its
-    // own doc comment), but `isSecureBoundary` checks both defensively, and
-    // this is what actually exercises that second half.
+    // A second secure boundary, reached only through `elementType` -- not a
+    // shape any real `<BugseeSecure>` fiber takes today (see
+    // `isSecureBoundary`'s own doc comment: it is free insurance against a
+    // Fast-Refresh-family/`lazy` resolution, not against `memo`/`forwardRef`),
+    // but `isSecureBoundary` checks `.elementType` defensively regardless, and
+    // this is what actually exercises that half of the `||`.
     const secureHostViaElementType = makeFiber({
       type: 'SecretView2',
       memoizedProps: { testID: 'also-nope' },
@@ -416,7 +603,7 @@ describe('the real walk env', () => {
     requests.markWrapComponent(WrapMarker);
     requests.registerAnchor({ __internalInstanceHandle: anchorInFiberTree });
 
-    native.emitDataRequest({ requestId: 'dr-real', type: 'vh', originX: 0, originY: 0 });
+    native.emitDataRequest({ requestId: 'dr-real', type: 'vh', originX: origin.x, originY: origin.y });
 
     const call = (native.replyDataRequest as jest.Mock).mock.calls[0] as [string, string | null];
     expect(call[0]).toBe('dr-real');
@@ -459,11 +646,13 @@ describe('the real walk env', () => {
     expect(secureViaElementTypeHost?.options.tag).toBeUndefined();
   });
 
-  it('scales bounds by PixelRatio on Android', () => {
-    const tree = runRealWalk('android');
+  it('scales bounds by PixelRatio on Android and adds the origin unscaled, in display px', () => {
+    const tree = runRealWalk('android', { x: 100, y: 200 });
     const appNode = flatten(tree).find((n) => n.class_name === 'RootView');
 
-    // rect was {x:1,y:2,width:10,height:20}; PixelRatio 3 on Android.
-    expect(appNode?.bounds).toEqual([3, 6, 30, 60]);
+    // rect was {x:1,y:2,width:10,height:20}; PixelRatio 3 on Android; then
+    // origin (100, 200) is added AFTER scaling, per androidBounds (walk.ts) --
+    // it is already in display px, not a point value that itself needs 3x.
+    expect(appNode?.bounds).toEqual([103, 206, 30, 60]);
   });
 });
