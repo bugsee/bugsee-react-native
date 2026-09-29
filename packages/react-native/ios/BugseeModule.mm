@@ -457,6 +457,64 @@ RCT_EXPORT_MODULE(Bugsee)
   [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
 }
 
+#pragma mark - Attributes and identity (stubbed here; the real bridge is Task 5.3)
+
+- (void)setAttributeString:(NSString *)name
+                      value:(NSString *)value
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject {
+  resolve(nil); // Task 5.3
+}
+
+- (void)setAttributeNumber:(NSString *)name
+                      value:(double)value
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject {
+  resolve(nil); // Task 5.3
+}
+
+- (void)setAttributeBoolean:(NSString *)name
+                       value:(BOOL)value
+                     resolve:(RCTPromiseResolveBlock)resolve
+                      reject:(RCTPromiseRejectBlock)reject {
+  resolve(nil); // Task 5.3
+}
+
+- (void)getAttribute:(NSString *)name
+             resolve:(RCTPromiseResolveBlock)resolve
+              reject:(RCTPromiseRejectBlock)reject {
+  resolve(@{}); // Task 5.3
+}
+
+- (void)getAllAttributes:(RCTPromiseResolveBlock)resolve
+                   reject:(RCTPromiseRejectBlock)reject {
+  resolve(@{}); // Task 5.3
+}
+
+- (void)clearAttribute:(NSString *)name
+                resolve:(RCTPromiseResolveBlock)resolve
+                 reject:(RCTPromiseRejectBlock)reject {
+  resolve(nil); // Task 5.3
+}
+
+- (void)clearAllAttributes:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject {
+  resolve(nil); // Task 5.3
+}
+
+- (void)setUserIdentifier:(NSString *)identifier {
+  // Task 5.3
+}
+
+- (void)getUserIdentifier:(RCTPromiseResolveBlock)resolve
+                    reject:(RCTPromiseRejectBlock)reject {
+  resolve(@{}); // Task 5.3
+}
+
+- (void)clearUserIdentifier {
+  // Task 5.3
+}
+
 /// Which phases JS wants delivered; the other completes natively at once.
 - (void)setReportHandlerPhases:(BOOL)before
                          after:(BOOL)after {

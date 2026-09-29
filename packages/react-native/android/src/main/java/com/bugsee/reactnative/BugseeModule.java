@@ -247,6 +247,60 @@ public class BugseeModule extends NativeBugseeSpec
         WrapperChannelHolder.shared().log(message, (int) level);
     }
 
+    // --- Attributes and identity ---------------------------------------
+    // Stubbed here: the JS API and its validation land in this task (5.1),
+    // the real Android bridge in Task 5.2.
+
+    @Override
+    public void setAttributeString(final String name, final String value, final Promise promise) {
+        promise.resolve(null); // Task 5.2
+    }
+
+    @Override
+    public void setAttributeNumber(final String name, final double value, final Promise promise) {
+        promise.resolve(null); // Task 5.2
+    }
+
+    @Override
+    public void setAttributeBoolean(final String name, final boolean value, final Promise promise) {
+        promise.resolve(null); // Task 5.2
+    }
+
+    @Override
+    public void getAttribute(final String name, final Promise promise) {
+        promise.resolve(Arguments.createMap()); // Task 5.2
+    }
+
+    @Override
+    public void getAllAttributes(final Promise promise) {
+        promise.resolve(Arguments.createMap()); // Task 5.2
+    }
+
+    @Override
+    public void clearAttribute(final String name, final Promise promise) {
+        promise.resolve(null); // Task 5.2
+    }
+
+    @Override
+    public void clearAllAttributes(final Promise promise) {
+        promise.resolve(null); // Task 5.2
+    }
+
+    @Override
+    public void setUserIdentifier(final String identifier) {
+        // Task 5.2
+    }
+
+    @Override
+    public void getUserIdentifier(final Promise promise) {
+        promise.resolve(Arguments.createMap()); // Task 5.2
+    }
+
+    @Override
+    public void clearUserIdentifier() {
+        // Task 5.2
+    }
+
     /**
      * Records a named event, with optional params.
      *
