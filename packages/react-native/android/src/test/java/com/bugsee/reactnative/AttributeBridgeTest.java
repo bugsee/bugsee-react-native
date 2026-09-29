@@ -97,6 +97,20 @@ public class AttributeBridgeTest {
         assertEquals("old", sdk.memory.get("n"));
     }
 
+    @Test
+    public void verifiedWhenTheSdkKeepsABooleanTrue() {
+        final FakeSdk sdk = new FakeSdk();
+        assertTrue(AttributeBridge.setAndVerify(sdk, "flag", Boolean.TRUE));
+        assertEquals(Boolean.TRUE, sdk.memory.get("flag"));
+    }
+
+    @Test
+    public void rejectedWhenTheSdkDropsABoolean() {
+        final FakeSdk sdk = new FakeSdk();
+        sdk.ignoreSet = true;
+        assertFalse(AttributeBridge.setAndVerify(sdk, "flag", Boolean.TRUE));
+    }
+
     // --- readable ------------------------------------------------------------
 
     @Test
@@ -136,6 +150,14 @@ public class AttributeBridgeTest {
     @Test
     public void readableMapsNullToEmpty() {
         assertTrue(AttributeBridge.readable(null).isEmpty());
+    }
+
+    @Test
+    public void readableKeepsABooleanAsIs() {
+        final Map<String, Serializable> persisted = new LinkedHashMap<>();
+        persisted.put("flag", Boolean.TRUE);
+        final Map<String, Object> result = AttributeBridge.readable(persisted);
+        assertEquals(Boolean.TRUE, result.get("flag"));
     }
 
     // --- readOne -------------------------------------------------------------
