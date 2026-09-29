@@ -22,6 +22,9 @@ const DEFAULTS: Record<string, unknown> = {
   getStatus: 0,
   getLaunchOptions: {},
   reportRead: EMPTY_REPORT_SNAPSHOT,
+  getAttribute: {},
+  getAllAttributes: {},
+  getUserIdentifier: {},
 };
 
 const lifecycleListeners = new Set<(event: { name: string; reportId?: string }) => void>();
@@ -112,6 +115,17 @@ export const native = {
   reportHandlerRequestSubscribeCallCount(): number {
     return reportHandlerRequestSubscribeCalls;
   },
+
+  setAttributeString: jest.fn<Promise<void>, [string, string]>(),
+  setAttributeNumber: jest.fn<Promise<void>, [string, number]>(),
+  setAttributeBoolean: jest.fn<Promise<void>, [string, boolean]>(),
+  getAttribute: jest.fn<Promise<unknown>, [string]>(),
+  getAllAttributes: jest.fn<Promise<unknown>, []>(),
+  clearAttribute: jest.fn<Promise<void>, [string]>(),
+  clearAllAttributes: jest.fn<Promise<void>, []>(),
+  setUserIdentifier: jest.fn<void, [string]>(),
+  getUserIdentifier: jest.fn<Promise<unknown>, []>(),
+  clearUserIdentifier: jest.fn<void, []>(),
 
   setReportHandlerPhases: jest.fn<void, [boolean, boolean]>(),
   completeReportHandler: jest.fn<void, [string]>(),
