@@ -956,17 +956,32 @@ Added by controller ruling. Commits `5ef0b60`..`ec4220e`. Both reviews are clean
 
 Added by controller ruling. Run it once a physical iPhone (the XS) is attached, together with the WOD_LX1 (`AMRJCP4718402860`). Every item is a real run on hardware with its evidence recorded. None may accept "either outcome".
 
-- [ ] **Harness: physical-iPhone path.** A `DeviceConsole` over `devicectl … --console`. Bundle pull with `devicectl device copy from --domain-type appDataContainer`. Clear by deleting that directory and asserting it's gone. `DEAD_ENDPOINT` retention (the phone's own loopback). Process death proved by the end of the console stream plus the recovered crash bundle, not the host's DiagnosticReports. Check the `threadOf()` prefix survives `devicectl` output. Build it on the shared `e2e/harness.ts` helpers.
-- [ ] **iOS:**
+- [x] **Harness: physical-iPhone path.** A `DeviceConsole` over `devicectl … --console`. Bundle pull with `devicectl device copy from --domain-type appDataContainer`. Clear by deleting that directory and asserting it's gone. `DEAD_ENDPOINT` retention (the phone's own loopback). Process death proved by the end of the console stream plus the recovered crash bundle, not the host's DiagnosticReports. Check the `threadOf()` prefix survives `devicectl` output. Build it on the shared `e2e/harness.ts` helpers.
+- [x] **iOS** (through Phase 5):
   - 3.4f case 6 (recovery), with `E2E_IOS_RECOVERY=1`;
   - 3.5d (the channel);
   - Task 4.4;
   - Task 5.5, including across a real process restart, and clearing the Keychain identity first and last;
-  - Task 6.9, plus any cases gated during Phase 6.
-- [ ] **Android on the WOD_LX1:**
+- [ ] **iOS, Phase 6:** Task 6.9, plus any cases gated during Phase 6 (not yet written when the pass above ran).
+- [x] **Android on the WOD_LX1:**
   - 3.4d case 6 (the native-crash recovery case; it flakes on the emulator);
   - the B1 secure-rectangle check with `edgeToEdgeEnabled=false`, run as an e2e assertion rather than the one-off manual numbers.
-- [ ] **Record** the device models and OS versions, the SDK banner or version, and the per-case evidence in the commit body.
+- [x] **Record** the device models and OS versions, the SDK banner or version, and the per-case evidence in the commit body.
+
+**As run (2026-09-29, through Phase 5).**
+- **Devices:**
+  - iPhone XS "KRSFT" (iPhone11,2), iOS 18.7.9 (22H355), Debug build, `Bugsee IOS SDK ver:7.0.0-beta3 build:0d9c9d0a-9`;
+  - WOD_LX1 (HONOR WOD-LX1), Android 14 / API 34, `Bugsee Android SDK 7.3.0-SNAPSHOT [234dcddfc]`.
+- **iPhone XS:** every iOS suite passes: `E2E_PLATFORM=ios E2E_IOS_RECOVERY=1 yarn e2e` gives 20 passed and 2 skipped (both Android-only). Case 3 of 5.5 is still `it.failing` for the SDK bug (`manifest.attrs {}`, no `email`); run as a plain `it` it fails on exactly that.
+- **WOD_LX1:**
+  - case 6 passes 3/3 on the debuggable release build;
+  - B1 is now asserted per build: `E2E_EDGE_TO_EDGE=false` with `assembleDebug -PedgeToEdgeEnabled=false`, with no source change;
+  - a mutant that drops the origin fails B1, 51 px off.
+- **Harness changes:**
+  - iOS scenarios travel as launch arguments. The iPhone's Debug app runs its embedded bundle without Local Network permission.
+  - An iPhone clear wipes the app's whole container, the only removal devicectl has, and asserts the SDK directories are gone.
+  - `launch.test.ts` runs iOS against `DEAD_ENDPOINT`. The placeholder token otherwise leaves the SDK's `BugseeKilledSdkKey` behind.
+- Report: `.superpowers/sdd/2026-09-16-implementation-plan/task-3.H-report.md`.
 
 ### Phase 3 review gate
 
