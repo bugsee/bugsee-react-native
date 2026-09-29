@@ -1,6 +1,7 @@
 /**
  * Task 4.3: log lines, events and traces in an Android retained bundle.
- * Task 4.4: the same four cases on the iOS simulator (see device.ts/bundles.ts).
+ * Task 4.4: the same four cases on the iOS simulator (see device.ts/bundles.ts),
+ * and on an iPhone (Task 3.H).
  *
  * Tasks 4.1 and 4.2 unit-tested `Bugsee.log`, `event` and `trace` against
  * mocks. What only a device shows is what the SDK then writes: that a line
@@ -15,9 +16,10 @@
  *
  * iOS preconditions, as for report-handler.test.ts (Task 3.4f) and
  * wrapper-channel.test.ts (Task 3.5d): the Debug app is installed on the
- * booted simulator (IOS_SIMULATOR_ID) and Metro is running. The simulator has
- * no airplane mode, so retention goes through the closed loopback endpoint
- * (bundles.ts, DEAD_ENDPOINT) instead.
+ * booted simulator (IOS_SIMULATOR_ID) with Metro running, or on the iPhone
+ * (IOS_DEVICE_ID, Task 3.H). There is no airplane mode to switch, so
+ * retention goes through the closed loopback endpoint (bundles.ts,
+ * DEAD_ENDPOINT) instead.
  *
  * Two iOS notes:
  * - Case 4: the pre-launch drop is the SDK's own launch gate
@@ -47,6 +49,7 @@ import {
   type Run,
   awaitBundles,
   clearBundles,
+  TARGET_NAME,
   describeDevice,
   must,
   report,
@@ -57,7 +60,7 @@ import {
   type DeviceLog,
   type LogLine,
   Logcat,
-  SimulatorConsole,
+  IosConsole,
   adb,
   resetScenario,
 } from './scenario';
@@ -107,7 +110,7 @@ function rawCapture(bundle: PulledBundle, type: string): string {
   return text;
 }
 
-describeDevice(`log, event and trace in a retained bundle on ${ON_IOS ? 'the iOS simulator' : 'an Android handset'}`, () => {
+describeDevice(`log, event and trace in a retained bundle on ${TARGET_NAME}`, () => {
   let log: DeviceLog;
   let run: Run;
   let nonce: string;
@@ -119,7 +122,7 @@ describeDevice(`log, event and trace in a retained bundle on ${ON_IOS ? 'the iOS
     if (ON_IOS) {
       // No network switch to throw: every iOS launch carries DEAD_ENDPOINT
       // (startIosRun), which is what retains its bundle.
-      log = SimulatorConsole.start();
+      log = IosConsole.start();
       useLog(log, '4.4');
     } else {
       log = await Logcat.start();

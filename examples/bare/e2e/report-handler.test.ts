@@ -1,7 +1,7 @@
 /**
  * Tasks 3.4d and 3.4f (and 4.5's clear case): the report handler on an Android handset
- * (`E2E_PLATFORM=android`) and on iOS (`E2E_PLATFORM=ios`, simulator only:
- * `E2E_IOS_TARGET=simulator`).
+ * (`E2E_PLATFORM=android`) and on iOS (`E2E_PLATFORM=ios`: an iPhone by
+ * default, the simulator with `E2E_IOS_TARGET=simulator`; Task 3.H).
  *
  * Unit tests pin the bridge's logic against fakes; what only a device can
  * show is that the SDK really calls it on the thread we think, that JS edits
@@ -22,9 +22,11 @@
  * build too. `E2E_LOGCAT_DUMP=<file>` saves the whole captured log.
  *
  * iOS preconditions: the Debug app is installed on the booted simulator
- * (IOS_SIMULATOR_ID) and Metro is running. Reports are retained by launching
- * against a closed loopback port (bundles.ts, DEAD_ENDPOINT), since the
- * simulator has no airplane mode. iOS prints no commit banner; the SDK's
+ * (IOS_SIMULATOR_ID) with Metro running, or on the iPhone (IOS_DEVICE_ID),
+ * which needs no Metro: the scenario travels as launch arguments and the
+ * Debug app falls back to its embedded bundle. Reports are retained by
+ * launching against a closed loopback port (bundles.ts, DEAD_ENDPOINT),
+ * since there is no airplane mode to switch. iOS prints no commit banner; the SDK's
  * `Bugsee IOS SDK ver:<v> build:<b>` line and every bundle's
  * `environment.sdk.version` are checked against the pin instead.
  *
@@ -47,13 +49,14 @@ import {
   fileNameOf,
   terminateIosApp,
 } from './bundles';
-import { ANDROID_PACKAGE, IOS_SIMULATOR_ID } from './device';
+import { ANDROID_PACKAGE, IOS_TARGET } from './device';
 import {
   ON_ANDROID,
   ON_IOS,
   type Run,
   awaitBundles,
   clearBundles,
+  TARGET_NAME,
   describeDevice,
   escape,
   must,
@@ -65,8 +68,10 @@ import {
   type DeviceLog,
   type LogLine,
   Logcat,
-  SimulatorConsole,
+  IosConsole,
   adb,
+  devicePidsOfApp,
+  deviceTerminationSignal,
   hostProcessAlive,
   pidOf,
   resetScenario,
@@ -79,7 +84,7 @@ const itAndroid = ON_ANDROID ? it : it.skip;
  * BGSCrashManager or PLCrashReporter symbols (the SDK compiles crash hooks
  * out under TARGET_OS_SIMULATOR), so a crash there is never recovered and the
  * case fails at its first recovery assertion (Task 3.4f report). It runs only
- * when asked for, `E2E_IOS_RECOVERY=1`, until an iPhone is attached.
+ * when asked for, `E2E_IOS_RECOVERY=1` -- on an iPhone (Task 3.H).
  */
 const itIosRecovery = ON_IOS && process.env.E2E_IOS_RECOVERY === '1' ? it : it.skip;
 
@@ -179,12 +184,12 @@ async function awaitHostCrashReport(
   }
 }
 
-describeDevice(`report handler on ${ON_IOS ? `the iOS simulator (${IOS_SIMULATOR_ID})` : 'an Android handset'}`, () => {
+describeDevice(`report handler on ${TARGET_NAME}`, () => {
   beforeAll(async () => {
     if (ON_IOS) {
       // No network switch to throw: every iOS launch carries DEAD_ENDPOINT
       // (startIosRun), which is what retains its reports.
-      log = SimulatorConsole.start();
+      log = IosConsole.start();
       useLog(log, '3.4f');
       return;
     }
@@ -620,17 +625,37 @@ describeDevice(`report handler on ${ON_IOS ? `the iOS simulator (${IOS_SIMULATOR
       "the uncaught NSException",
       crash.start,
     );
+    // The console stream ends only when the process does.
     const code = await Promise.race([
       crash.launch!.ended,
       new Promise<'still attached'>(resolve => setTimeout(() => resolve('still attached'), 20_000)),
     ]);
     expect(code).not.toBe('still attached');
-    expect(hostProcessAlive(pid)).toBe(false);
-    const died = await awaitHostCrashReport(pid);
     report('case 6 thrown', thrown.text.trim());
-    report('case 6 died', { pid, consoleExit: code, ...died });
-    expect(died.type).toBe('EXC_CRASH');
-    expect(died.signal).toBe('SIGABRT');
+    if (IOS_TARGET === 'simulator') {
+      // A simulator app is a host process, and macOS writes its crash report.
+      expect(hostProcessAlive(pid)).toBe(false);
+      const died = await awaitHostCrashReport(pid);
+      report('case 6 died', { pid, consoleExit: code, ...died });
+      expect(died.type).toBe('EXC_CRASH');
+      expect(died.signal).toBe('SIGABRT');
+    } else {
+      // An iPhone: devicectl's own last line names the signal the app died
+      // of, and the device's process list no longer has the pid. (The crash
+      // report that matters is the SDK's, recovered below -- not the host's.)
+      const signal = deviceTerminationSignal(crash.launch!.output);
+      const running = await devicePidsOfApp();
+      report('case 6 died', {
+        pid,
+        consoleExit: code,
+        signal,
+        running,
+        consoleEnd: crash.launch!.output.slice(-2).map(line => line.text.trim()),
+      });
+      expect(running).not.toContain(pid);
+      // SIGABRT: the uncaught NSException's abort().
+      expect(signal).toBe(6);
+    }
     const crashEnd = log.mark();
     report('case 6 dispatches in the crash run', log.all(/report handler/, crash.start, crashEnd).map(l => l.text.trim()));
 

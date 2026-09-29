@@ -1,6 +1,7 @@
 /**
  * Task 3.5b: the wrapper channel on Android hardware.
- * Task 3.5d: the same channel on iOS (simulator; see device.ts/bundles.ts).
+ * Task 3.5d: the same channel on iOS (simulator, and an iPhone for Task 3.H;
+ * see device.ts/bundles.ts).
  *
  * Task 3.5a built the channel seam and unit-tested it against fakes: what
  * only a device can show is that a line sent through it after `Launched`
@@ -16,9 +17,10 @@
  * 3.4d's retained-bundle cases used.
  *
  * iOS preconditions, as for report-handler.test.ts (Task 3.4f): the Debug app
- * is installed on the booted simulator (IOS_SIMULATOR_ID) and Metro is
- * running. The simulator has no airplane mode, so retention goes through the
- * closed loopback endpoint (bundles.ts, DEAD_ENDPOINT) instead.
+ * is installed on the booted simulator (IOS_SIMULATOR_ID) with Metro
+ * running, or on the iPhone (IOS_DEVICE_ID, Task 3.H). There is no airplane
+ * mode to switch, so retention goes through the closed loopback endpoint
+ * (bundles.ts, DEAD_ENDPOINT) instead.
  *
  * Markers, from scenarios/channel.ts (console.log, tag ReactNativeJS on
  * Android; mirrored to the simulator's console-pty stream on iOS):
@@ -37,6 +39,7 @@ import {
   type Run,
   awaitBundles,
   clearBundles,
+  TARGET_NAME,
   describeDevice,
   must,
   report,
@@ -47,7 +50,7 @@ import {
   type DeviceLog,
   type LogLine,
   Logcat,
-  SimulatorConsole,
+  IosConsole,
   adb,
   resetScenario,
 } from './scenario';
@@ -76,7 +79,7 @@ function messageOf(event: Record<string, unknown>): string {
   return typeof event.message === 'string' ? event.message : '';
 }
 
-describeDevice(`wrapper channel on ${ON_IOS ? 'the iOS simulator' : 'an Android handset'}`, () => {
+describeDevice(`wrapper channel on ${TARGET_NAME}`, () => {
   let run: Run;
   let nonce: string;
   let bundles: PulledBundle[];
@@ -89,7 +92,7 @@ describeDevice(`wrapper channel on ${ON_IOS ? 'the iOS simulator' : 'an Android 
     if (ON_IOS) {
       // No network switch to throw: every iOS launch carries DEAD_ENDPOINT
       // (startIosRun), which is what retains its bundle.
-      log = SimulatorConsole.start();
+      log = IosConsole.start();
       useLog(log, '3.5d');
     } else {
       log = await Logcat.start();

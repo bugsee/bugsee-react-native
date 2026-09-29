@@ -1,6 +1,6 @@
 /**
  * Runs one named scenario of the example app -- on the Android handset, or
- * on the iOS simulator -- and captures the app's log while it does.
+ * on iOS (the simulator or an iPhone) -- and captures the app's log while it does.
  *
  * How the app learns which scenario to run, with no native code:
  *
@@ -12,10 +12,16 @@
  *     baked in at build time, so a scenario that must run on a release build
  *     (a Java crash that a debug build's red box would swallow) needs a
  *     per-launch channel. The app prefers the URI when present. Android only:
- *     the iOS app registers no URL scheme, and on iOS nothing needs a release
- *     build (`testNativeCrash` there is native, so no red box can catch it),
- *     so iOS steers through the JSON alone -- and waits for Metro to serve
- *     the new file before launching (`awaitMetroServes`).
+ *     the iOS app registers no URL scheme.
+ *   - iOS: the launch arguments `-bugseeE2eScenario <name> -bugseeE2eNonce
+ *     <hex> -bugseeE2eEndpoint <url>` (`scenarioArgs`), which iOS puts in
+ *     NSUserDefaults' volatile argument domain and the app reads through
+ *     `Settings`. A physical iPhone's Debug app runs its embedded bundle --
+ *     JSON baked in at build time -- whenever it cannot reach Metro (a fresh
+ *     install has no Local Network permission), so the JSON alone cannot
+ *     steer it. Every iOS launch passes them, simulator and iPhone alike; the
+ *     simulator also still waits for Metro to serve the new JSON
+ *     (`awaitMetroServes`), since its app always loads from Metro.
  *
  * Every run carries a fresh nonce, and the app echoes it in its first marker,
  * so a stale bundle, a stale scenario file or a bundle left by an earlier run
@@ -23,7 +29,8 @@
  */
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -32,6 +39,7 @@ import {
   ANDROID_PACKAGE,
   ANDROID_SERIAL,
   IOS_BUNDLE_ID,
+  IOS_DEVICE_ID,
   IOS_SIMULATOR_ID,
   IOS_TARGET,
 } from './device';
@@ -65,6 +73,21 @@ export function resetScenario(): void {
 
 export function scenarioUri({ scenario, nonce }: Scenario): string {
   return `bugsee-e2e://scenario/${scenario}?nonce=${nonce}`;
+}
+
+/**
+ * The iOS per-launch channel: launch arguments App.tsx reads back through
+ * `Settings` (NSUserDefaults' argument domain). Volatile -- a later launch
+ * that is not given them falls back to the JSON.
+ */
+export function scenarioArgs({ scenario, nonce }: Scenario, extras: ScenarioExtras = {}): string[] {
+  return [
+    '-bugseeE2eScenario',
+    scenario,
+    '-bugseeE2eNonce',
+    nonce,
+    ...(extras.endpoint === undefined ? [] : ['-bugseeE2eEndpoint', extras.endpoint]),
+  ];
 }
 
 /** Runs adb against the handset under test, returning stdout. */
@@ -119,26 +142,33 @@ export interface LogLine {
  */
 export abstract class DeviceLog {
   readonly lines: LogLine[] = [];
-  private buffer = '';
+  /** Partial last lines, per stream: two attachments must not splice lines. */
+  private readonly buffers = new Map<unknown, string>();
   private waiters: Array<() => void> = [];
 
   /** The device-side time of a line, in epoch ms, or NaN if it carries none. */
   protected abstract stampOf(text: string): number;
 
-  /** Feeds raw output; complete lines are recorded and wake any waiter. */
-  protected feed(chunk: Buffer): void {
-    this.buffer += chunk.toString('utf8');
-    const parts = this.buffer.split('\n');
-    this.buffer = parts.pop() ?? '';
+  /**
+   * Feeds raw output from `source` (one stream); complete lines are recorded
+   * and wake any waiter. Returns the lines this chunk completed.
+   */
+  protected feed(chunk: Buffer, source: unknown = this): LogLine[] {
+    const parts = ((this.buffers.get(source) ?? '') + chunk.toString('utf8')).split('\n');
+    this.buffers.set(source, parts.pop() ?? '');
+    const added: LogLine[] = [];
     for (const raw of parts) {
       const text = raw.replace(/\r$/, '');
-      this.lines.push({ index: this.lines.length, deviceMs: this.stampOf(text), text });
+      const line = { index: this.lines.length, deviceMs: this.stampOf(text), text };
+      this.lines.push(line);
+      added.push(line);
     }
     const waiters = this.waiters;
     this.waiters = [];
     for (const wake of waiters) {
       wake();
     }
+    return added;
   }
 
   /** Where the log is now; pass to `waitFor`/`all` to look only after it. */
@@ -233,8 +263,8 @@ export class Logcat extends DeviceLog {
   }
 }
 
-/** One launch of the app on the simulator, attached to its console. */
-export interface SimulatorLaunch {
+/** One launch of the iOS app, attached to its console. */
+export interface IosLaunch {
   /** Log index this launch's output starts at. */
   readonly start: number;
   /**
@@ -244,32 +274,32 @@ export interface SimulatorLaunch {
   readonly ended: Promise<number | null>;
   /** Whether the stream has ended yet. */
   readonly hasEnded: () => boolean;
+  /**
+   * This attachment's own lines, in order. On an iPhone its last line is
+   * devicectl's `App terminated due to signal <n>.`: which process died, and
+   * of what, comes from here rather than from a neighbouring launch's stream.
+   */
+  readonly output: readonly LogLine[];
 }
 
 /**
- * The iOS simulator app's stdout/stderr, across every launch in a test file.
+ * The iOS app's stdout/stderr, across every launch in a test file -- on the
+ * simulator or on a physical iPhone (`E2E_IOS_TARGET`, device.ts).
  *
- * `simctl launch --console-pty` attaches to one process only, so each launch
- * spawns its own attachment and appends to the same line list; a crashed
- * launch's stream simply ends. `NSLog` lines (the SDK's and the bridge's,
- * `BugseeRN report handler ...`) carry the simulator's wall clock, to the
- * millisecond, which is the timing source; RN's mirrored `console.log` lines
- * (the `BUGSEE_E2E` markers) carry none.
- *
- * `--console-pty`, not `--console`: simctl only streams the app's stdout when
- * it allocates a pty (see device.ts).
+ * A console attachment follows one process only, so each launch spawns its
+ * own and appends to the same line list; a crashed launch's stream simply
+ * ends. `NSLog` lines (the SDK's and the bridge's, `BugseeRN report handler
+ * ...`) carry the device's wall clock, to the millisecond, and the
+ * `BareExample[<pid>:<tid>]` prefix -- the timing source and the thread
+ * witness, and both survive devicectl's console relay unchanged. RN's
+ * mirrored `console.log` lines (the `BUGSEE_E2E` markers) carry neither.
  */
-export class SimulatorConsole extends DeviceLog {
-  private readonly children = new Set<ChildProcess>();
+export abstract class IosConsole extends DeviceLog {
+  protected readonly children = new Set<ChildProcess>();
 
-  static start(): SimulatorConsole {
-    if (IOS_TARGET !== 'simulator') {
-      throw new Error(
-        'the iOS report-handler e2e drives the simulator only (retention and ' +
-          'bundle pulls are simulator-side): set E2E_IOS_TARGET=simulator',
-      );
-    }
-    return new SimulatorConsole();
+  /** The console for the configured target. */
+  static start(): IosConsole {
+    return IOS_TARGET === 'simulator' ? new SimulatorConsole() : new DeviceConsole();
   }
 
   /** `2026-09-28 20:36:59.505 BareExample[95747:11510203] ...`, local time. */
@@ -280,24 +310,24 @@ export class SimulatorConsole extends DeviceLog {
     return stamp ? new Date(`${stamp[1]}T${stamp[2]}`).getTime() : Number.NaN;
   }
 
+  /** The launcher: a fresh process, with `args` as the app's arguments. */
+  protected abstract spawnLaunch(args: readonly string[]): ChildProcess;
+
   /**
-   * Starts the app fresh on the scenario already written to the JSON:
-   * `--terminate-running-process`, as `force-stop` on Android, because
-   * launching a running app only resumes it.
+   * Starts the app fresh, terminating a running instance first (as
+   * `force-stop` on Android: launching a running app only resumes it), with
+   * `args` as its launch arguments (`scenarioArgs`).
    */
-  launch(): SimulatorLaunch {
+  launch(args: readonly string[] = []): IosLaunch {
     const start = this.mark();
-    const child = spawn('xcrun', [
-      'simctl',
-      'launch',
-      '--console-pty',
-      '--terminate-running-process',
-      IOS_SIMULATOR_ID,
-      IOS_BUNDLE_ID,
-    ]);
+    const child = this.spawnLaunch(args);
     this.children.add(child);
-    child.stdout?.on('data', (chunk: Buffer) => this.feed(chunk));
-    child.stderr?.on('data', (chunk: Buffer) => this.feed(chunk));
+    const output: LogLine[] = [];
+    const take = (chunk: Buffer) => {
+      output.push(...this.feed(chunk, child));
+    };
+    child.stdout?.on('data', take);
+    child.stderr?.on('data', take);
     let over = false;
     const ended = new Promise<number | null>(resolve => {
       child.on('close', code => {
@@ -311,7 +341,25 @@ export class SimulatorConsole extends DeviceLog {
         resolve(null);
       });
     });
-    return { start, ended, hasEnded: () => over };
+    return { start, ended, hasEnded: () => over, output };
+  }
+}
+
+/**
+ * `simctl launch --console-pty`, not `--console`: simctl only streams the
+ * app's stdout when it allocates a pty (see device.ts).
+ */
+export class SimulatorConsole extends IosConsole {
+  protected spawnLaunch(args: readonly string[]): ChildProcess {
+    return spawn('xcrun', [
+      'simctl',
+      'launch',
+      '--console-pty',
+      '--terminate-running-process',
+      IOS_SIMULATOR_ID,
+      IOS_BUNDLE_ID,
+      ...args,
+    ]);
   }
 
   stop(): void {
@@ -320,6 +368,95 @@ export class SimulatorConsole extends DeviceLog {
     }
     this.children.clear();
   }
+}
+
+/**
+ * A physical iPhone: `devicectl device process launch --console`, which
+ * connects the app's standard streams to its own and waits for the app to
+ * exit, then prints `App terminated due to signal <n>.` -- the process-death
+ * evidence on hardware, where there is no host process to probe. `--` ends
+ * devicectl's own options, so the app's `-bugseeE2e...` arguments reach it.
+ */
+export class DeviceConsole extends IosConsole {
+  protected spawnLaunch(args: readonly string[]): ChildProcess {
+    return spawn('xcrun', [
+      'devicectl',
+      'device',
+      'process',
+      'launch',
+      '--device',
+      IOS_DEVICE_ID,
+      '--console',
+      '--terminate-existing',
+      IOS_BUNDLE_ID,
+      '--',
+      ...args,
+    ]);
+  }
+
+  /**
+   * SIGTERM, not SIGKILL: devicectl forwards a catchable signal to the app,
+   * so stopping the console also stops the app rather than orphaning it.
+   */
+  stop(): void {
+    for (const child of this.children) {
+      child.kill('SIGTERM');
+    }
+    this.children.clear();
+  }
+}
+
+/** devicectl's own `App terminated due to signal <n>.` line, parsed. */
+export function deviceTerminationSignal(output: readonly LogLine[]): number | undefined {
+  for (let i = output.length - 1; i >= 0; i -= 1) {
+    const match = /^App terminated due to signal (\d+)\.?$/.exec(output[i]!.text.trim());
+    if (match !== null) {
+      return Number(match[1]);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Runs `devicectl device <args> --device <the iPhone>` and returns its JSON
+ * result (devicectl's only stable machine interface is `--json-output`).
+ * Always the configured iPhone, by id: never a device picked by default.
+ */
+export async function devicectl(...args: string[]): Promise<Record<string, unknown>> {
+  const dir = mkdtempSync(join(tmpdir(), 'bugsee-devicectl-'));
+  const out = join(dir, 'result.json');
+  try {
+    try {
+      await execFileAsync(
+        'xcrun',
+        ['devicectl', 'device', ...args, '--device', IOS_DEVICE_ID, '--quiet', '--json-output', out],
+        { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+      );
+    } catch (error) {
+      const e = error as { stdout?: string; stderr?: string; message?: string };
+      throw new Error(
+        `devicectl device ${args.join(' ')} failed:\n${e.stderr ?? ''}${e.stdout ?? ''}${e.message ?? ''}`,
+        { cause: error },
+      );
+    }
+    const parsed = JSON.parse(readFileSync(out, 'utf8')) as { result?: Record<string, unknown> };
+    return parsed.result ?? {};
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The iPhone's running BareExample processes' pids. */
+export async function devicePidsOfApp(): Promise<number[]> {
+  const result = await devicectl('info', 'processes');
+  const processes = (result.runningProcesses ?? []) as Array<{
+    executable?: string;
+    processIdentifier?: number;
+  }>;
+  return processes
+    .filter(p => /\/BareExample\.app\/BareExample$/.test(p.executable ?? ''))
+    .map(p => p.processIdentifier!)
+    .filter(pid => typeof pid === 'number');
 }
 
 /**
