@@ -1032,13 +1032,14 @@ These three phases run **in order: 4, then 5, then 6**. Each ends with its own r
 - **Ruling:** `event` and `trace` call the SDKs' public APIs.
 - **Ruling:** params must survive the bridge with their types and nesting intact. JS rejects any value outside the accepted domain before it crosses.
 - **Ruling:** device tests assert the lines, events and traces in retained bundles on both platforms.
+- **Ruling (after Task 4.4):** an object payload that can carry `null` crosses the bridge as **JSON text**, never as `UnsafeObject`. React Native's iOS `convertJSIObjectToNSDictionary` skips every member whose value converts to `nil`, and a JS `null` does unless `enableModuleArgumentNSNullConversionIOS` is on (default `false`). A library cannot depend on that app-level flag across its 0.81 floor. Android's `ReadableMap` keeps the `null`, so the same call meant different things on the two platforms. This hit event params (4.4 case 2) and, silently, Phase 3's report patch (`summary: null`, `description: null`, attribute `null`). See Task 4.5.
 
 ### Planner decisions (reviewable; change them here, not inside a task)
 
 - **`log()` is a facade over `forwardLog`, not `forwardLog` itself.** The public signature is 6.x's `log(text, level)`, a method on the default export like every other entry point. `forwardLog` stays internal: Phase 9 routes `console.*` through it, and that caller may need things the public method must not expose. The facade adds nothing but the name. A static test holds the "one route" rule: `index.ts` never calls `wrapperLog` directly.
 - **Consequence to document on `log()`:** a line sent through the channel is filtered by the app's log filter, unlike the native `Bugsee.log`, which bypasses it by default. That is §10.3's rule. A line sent before `launch()` is dropped, because the channel is inert until then (3.5b, 3.5d).
 - **Typed trace methods, one per value type** (`traceNumber`, `traceString`, `traceBoolean`), rather than one `UnsafeObject` wrapper. Codegen has no union parameter type. A typed boolean reaches iOS as a `CFBoolean` and Android as a `Boolean`, so it cannot arrive as a `0`/`1` number, which is the silent failure an untyped path allows.
-- **Event params cross as `UnsafeObject | null`, unconverted.** Both SDKs serialise nested maps, lists, strings, booleans, numbers and null (verified facts below). Both write an integral double as an integer, so no Long normalisation is needed on this path. Phase 5 needs it for attributes; events and traces do not.
+- ~~**Event params cross as `UnsafeObject | null`, unconverted.**~~ Superseded by the Task 4.5 ruling: params cross as `string | null`, JSON text parsed natively. Both SDKs serialise nested maps, lists, strings, booleans, numbers and null (verified facts below). Both write an integral number as an integer, and both parsers yield an integer type for an integral literal (Android `Integer`/`Long`, iOS an integer `NSNumber`).
 
 ### Verified facts these tasks rely on (2026-09-29)
 
@@ -1337,13 +1338,30 @@ Cases 1–4 of 4.3 apply unchanged. Two iOS notes:
 
 ---
 
+### Task 4.5 — Carry null-bearing objects across the bridge as JSON
+
+Added by controller ruling after Task 4.4 (see Rulings above). Task 4.4 case 2 failed on the simulator because `"nil": null` never reached the SDK; the same conversion made a report patch's `null`s (clear the summary or description, remove an attribute) silently do nothing on iOS, which `BGSRNReportOps`' unit tests could not see because they pass `NSNull` directly.
+
+**Fix: one transport for object payloads, on both platforms.**
+- **JS:** `src/bridge/json.ts` `encodeBridgeObject(value): string` JSON-stringifies an already-validated plain value (the event-params copy, the validated report patch).
+- **Spec:** `event(name: string, paramsJson: string | null): void` and `reportUpdate(handleId: string, patchJson: string): Promise<void>`. Every other argument is unchanged.
+- **Android:** `BridgeJson` (org.json → `LinkedHashMap`/`ArrayList`; `JSONObject.NULL` → `null`; an integral literal stays `Integer`/`Long`, anything else numeric becomes `Double`). `ReportOps.applyJson` parses, then applies with the existing all-or-nothing `apply(Map)`. Unparseable patch text → `E_REPORT_BAD_ARGUMENT`; unparseable event params → logged, event dropped.
+- **iOS:** `BGSRNJSONObject` (`NSJSONSerialization`, `NSNull` kept, integer `NSNumber` for an integral literal, `CFBoolean` for `true`/`false`) in `BugseeRNSupport`, and `+[BGSRNReportOps applyPatchJSON:toReport:error:]`. Same error mapping as Android.
+- **Checks:** the mock's `event`/`reportUpdate` take strings, with a `jsonOf()` matcher; `ios-spec-coverage` checks every Spec method's full selector; `check-rn-compat.sh` asserts the generated protocol takes `NSString` for both.
+
+**Device proof:** 4.4 case 2 passes on the simulator with `"nil": null`. A new report-handler case, `clear` (`rh-clear`), sets the summary, description and two attributes, then clears two fields and removes one attribute with `null`: the bundle has them cleared on both platforms. It fails on the pre-fix iOS bridge. 4.3 and the report-handler suite pass on the WOD_LX1.
+
+- [x] **Commits** — `feat(android): parse bridge object payloads from JSON, nulls kept`; `feat(ios): parse bridge object payloads from JSON, NSNull kept`; `fix(bridge): carry event params and report patches as JSON text`; `test(e2e): a null summary, description and attribute clear in the bundle`. Full report: `.superpowers/sdd/2026-09-16-implementation-plan/task-4.5-report.md`.
+
+---
+
 ### Phase 4 review gate
 
 Spawn a reviewer subagent. It must independently:
 - run `yarn test`, `yarn mutate:src`, the JVM tests, the Support XCTests and `check-rn-compat.sh 0.81`;
 - confirm by reading the code that no path other than `forwardLog` reaches `wrapperLog`;
 - confirm that no out-of-domain value can reach either native `event`/`trace` method without passing `src/data/validate.ts`;
-- **rerun** 4.3 and 4.4 rather than trust the reported output.
+- **rerun** 4.3, 4.4 and 4.5's `clear` case rather than trust the reported output.
 
 Address its findings, and re-review until the reviewer is satisfied.
 
@@ -1358,6 +1376,7 @@ Address its findings, and re-review until the reviewer is satisfied.
 ### Rulings (controller, 2026-09-29)
 
 - **Ruling:** Phase 5 starts after Phase 4's gate.
+- **Ruling (Task 4.5):** attribute maps, and any object payload with nullable members, cross the bridge as JSON text (`src/bridge/json.ts`, parsed by `BridgeJson` / `BGSRNJSONObject`), never as `UnsafeObject`: iOS drops `null` members of an object argument.
 - **Ruling:** Android takes `Serializable` and iOS takes `id`. JS defines the value domain the bridge accepts and rejects the rest before crossing. Every accepted type has a round-trip test.
 - **Ruling:** tests never rely on the SDK's internal log. Until Android 7.3.0 and the next iOS beta, `setUserIdentifier`/`setAttribute` values are written verbatim to Android's SDK-internal log (fixed in `bugsee-android#186`). Device tests therefore use **synthetic, non-sensitive values only**, and assert nothing, either way, about `log.internal`.
 
