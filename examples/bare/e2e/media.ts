@@ -108,7 +108,13 @@ export async function frameLumas(file: string): Promise<Array<{ t: number; luma:
     );
   }
   const frameCount = stdout.length / FRAME_LUMA_BYTES;
-  const ptsTimes = [...stderr.matchAll(/pts_time:(-?\d+(?:\.\d+)?)/g)].map(match => Number(match[1]));
+  // Anchored to a `showinfo` line specifically (`[Parsed_showinfo_N @ ...]`),
+  // not a bare search for `pts_time:` anywhere in stderr: `-v info` prints
+  // other lines too, and a `pts_time` occurrence there that was not really a
+  // decoded frame's timestamp must not silently join this pairing.
+  const ptsTimes = [...stderr.matchAll(/^\[Parsed_showinfo[^\]]*\][^\n]*\bpts_time:(-?\d+(?:\.\d+)?)/gm)].map(
+    match => Number(match[1]),
+  );
   if (ptsTimes.length !== frameCount) {
     throw new Error(
       `frameLumas: ${file}: ${frameCount} raw frame(s) on stdout but ${ptsTimes.length} ` +
@@ -215,6 +221,17 @@ function runsOf(frames: Array<{ t: number; luma: number }>): Run[] {
  * nor bright -- breaks a dark run into two, so a run only long enough when
  * counted across an `other` frame does not qualify; and a dark run with no
  * bright run before it, or no bright run after it, does not either.
+ *
+ * `darkSeconds` is the first dark sample's `t` to the last dark sample's
+ * `t` -- not the gap between the two bounding bright frames. That makes it a
+ * conservative lower bound on how long the screen was actually dark (the
+ * true transition happened somewhere between the preceding bright sample and
+ * the first dark one, and again between the last dark one and the following
+ * bright sample), so it never over-reports and never false-accepts a
+ * too-short blackout, but it can under-report the true duration by up to one
+ * inter-frame interval on each edge. At a low sampling rate this is not
+ * negligible: a nominal 1.6 s blackout sampled at 10 fps can measure exactly
+ * `1.5`, right at `BLACKOUT_MIN_DARK_S`'s boundary.
  */
 export function blackoutPattern(
   frames: Array<{ t: number; luma: number }>,
