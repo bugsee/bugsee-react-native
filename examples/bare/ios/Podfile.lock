@@ -1,6 +1,28 @@
 PODS:
   - boost (1.84.0):
     - ReactNativeDependencies
+  - BugseeE2ENative (0.0.0):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - BugseeReactNative (0.0.0):
     - hermes-engine
     - RCTRequired
@@ -1633,6 +1655,7 @@ PODS:
 
 DEPENDENCIES:
   - boost (from `build/rndeps-facades/boost`)
+  - BugseeE2ENative (from `../node_modules/bugsee-e2e-native`)
   - "BugseeReactNative (from `../node_modules/@bugsee/react-native`)"
   - DoubleConversion (from `build/rndeps-facades/DoubleConversion`)
   - fast_float (from `build/rndeps-facades/fast_float`)
@@ -1723,6 +1746,8 @@ DEPENDENCIES:
 EXTERNAL SOURCES:
   boost:
     :path: build/rndeps-facades/boost
+  BugseeE2ENative:
+    :path: "../node_modules/bugsee-e2e-native"
   BugseeReactNative:
     :path: "../node_modules/@bugsee/react-native"
   DoubleConversion:
@@ -1897,6 +1922,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   boost: 8502bfdc46e2804408af2e163049ece181009af4
+  BugseeE2ENative: b4cd280a78bae9185d1a391769ececb30b0eb846
   BugseeReactNative: 684066f42a96c3dcd61e50cc6bf38397738f679f
   DoubleConversion: 501a575c40c0b50c89685762dd3e415e6bb26fb0
   fast_float: 7c925d1cebf8328d4018d061f49377e9f887e3b4

@@ -3288,18 +3288,18 @@ export function fileExists(path: string): Promise<boolean>;
 1. `writeTempFile returns an absolute path that exists` — the path starts with `/` and `exists=true`.
 2. `an unknown crash kind is rejected in JS` — `bad-kind code=TypeError`, and the process is still alive 2 s later.
 
-- [ ] **Red**
+- [x] **Red**
   - `example-wiring.test.ts`:
     - `bugsee-e2e-native is a dependency of the bare example only` (no `packages/*/package.json` names it);
     - `no library source imports bugsee-e2e-native`.
   - Write the device test. Run it before wiring → FAIL at the first marker.
-- [ ] **Green**
+- [x] **Green**
   - `yarn install`.
   - The Android example `assembleDebug` links `libbugsee_e2e_native.so` (it is listed in the APK's `lib/arm64-v8a/`).
   - `pod install` picks up `BugseeE2ENative`, and the iOS example builds on the CocoaPods path.
   - Both cases pass on the WOD_LX1 and on the simulator.
-- [ ] **Mutate** — make `writeTempFile` resolve the bare file name. Case 1 must fail. Revert and record.
-- [ ] **Commit** — `test(example): bugsee-e2e-native, a native crash and temp files for the device tests`.
+- [x] **Mutate** — make `writeTempFile` resolve the bare file name. Case 1 must fail. Revert and record.
+- [x] **Commit** — `test(example): bugsee-e2e-native, a native crash and temp files for the device tests`.
 
 ---
 

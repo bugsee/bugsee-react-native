@@ -89,7 +89,31 @@ export function scenarioArgs({ scenario, nonce }: Scenario, extras: ScenarioExtr
     '-bugseeE2eNonce',
     nonce,
     ...(extras.endpoint === undefined ? [] : ['-bugseeE2eEndpoint', extras.endpoint]),
+    ...metroArgs(),
   ];
+}
+
+/**
+ * The port this checkout's Metro serves on. 8081, React Native's default,
+ * unless `E2E_METRO_PORT` says otherwise: two checkouts (git worktrees) on one
+ * machine cannot both hold 8081, and a run steered to the other checkout's
+ * Metro would run that checkout's JS.
+ *
+ * Android needs nothing more than the tunnel (`adb reverse tcp:8081
+ * tcp:<port>`: the app still asks for 8081 on the handset). The simulator app
+ * reaches the host's ports directly, so it is told the port instead, through
+ * React Native's own `RCT_jsLocation` default (`metroArgs`).
+ */
+export const METRO_PORT = Number(process.env.E2E_METRO_PORT ?? '8081');
+
+/**
+ * `-RCT_jsLocation localhost:<port>`, which `RCTBundleURLProvider` reads from
+ * NSUserDefaults (the launch arguments' volatile domain), when the port is
+ * not the default; nothing otherwise, so a default run launches exactly as
+ * before.
+ */
+export function metroArgs(): string[] {
+  return process.env.E2E_METRO_PORT === undefined ? [] : ['-RCT_jsLocation', `localhost:${METRO_PORT}`];
 }
 
 /** Runs adb against the handset under test, returning stdout. */
@@ -503,7 +527,7 @@ export async function launchScenario(scenario: Scenario): Promise<void> {
  * beat after the write. (Android steers through the launch URI instead.)
  */
 export async function awaitMetroServes(nonce: string, timeoutMs = 60_000): Promise<void> {
-  const url = 'http://localhost:8081/index.bundle?platform=ios&dev=true&minify=false';
+  const url = `http://localhost:${METRO_PORT}/index.bundle?platform=ios&dev=true&minify=false`;
   const deadline = Date.now() + timeoutMs;
   let last = 'no response';
   while (Date.now() < deadline) {

@@ -1,0 +1,44 @@
+// The example-only `bugsee-e2e-native` module (Task 7.6a). Autolinked into
+// examples/bare, which is the only package that depends on it; a consumer of
+// @bugsee/react-native never sees this build.
+//
+// `com.facebook.react` runs codegen for the TurboModule spec. The JNI library
+// that crashes the process is this module's own CMake target.
+plugins {
+    id 'com.android.library'
+    id 'com.facebook.react'
+}
+
+android {
+    namespace 'com.bugsee.e2enative'
+    compileSdk rootProject.ext.compileSdkVersion
+    ndkVersion rootProject.ext.ndkVersion
+
+    defaultConfig {
+        minSdk rootProject.ext.minSdkVersion
+
+        // The app's own ABI list (`-PreactNativeArchitectures=arm64-v8a`),
+        // when one is given, so the CMake step builds only what is packaged.
+        def architectures = project.findProperty('reactNativeArchitectures')
+        if (architectures) {
+            ndk {
+                abiFilters(*architectures.toString().split(',').collect { it.trim() })
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+        }
+    }
+}
+
+dependencies {
+    implementation 'com.facebook.react:react-android'
+}
