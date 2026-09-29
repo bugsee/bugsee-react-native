@@ -19,13 +19,15 @@
  * no airplane mode, so retention goes through the closed loopback endpoint
  * (bundles.ts, DEAD_ENDPOINT) instead.
  *
- * Two iOS notes (case 4): the pre-launch drop is the SDK's own launch gate
- * (`bugseeAvailableForUserDumps`) for `event` and `trace`, since both are
- * no-ops unless the SDK is Launched or Launching -- not the channel holder's
- * gate, which is what drops the pre-launch log line on both platforms (no
- * wrapper is registered before `launch()` calls `setWrapperInfo`). And iOS
- * writes `displayId: 0` on every user event and trace; this test does not
- * assert on `displayId`.
+ * Two iOS notes:
+ * - Case 4: the pre-launch drop is the SDK's own launch gate
+ *   (`bugseeAvailableForUserDumps`) for `event` and `trace`, since both are
+ *   no-ops unless the SDK is Launched or Launching -- not the channel
+ *   holder's gate, which is what drops the pre-launch log line on both
+ *   platforms (no wrapper is registered before `launch()` calls
+ *   `setWrapperInfo`).
+ * - Cases 2 and 3: iOS writes `displayId: 0` on every user event and trace;
+ *   this test does not assert on `displayId`.
  *
  * Markers, from scenarios/data.ts (console.log, tag ReactNativeJS on Android;
  * mirrored to the simulator's console-pty stream on iOS):
