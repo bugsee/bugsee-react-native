@@ -111,7 +111,12 @@ function copyObject(
   }
   ancestors.add(obj);
   try {
-    const result: Record<string, unknown> = {};
+    // No prototype, so every key is kept as an own key -- "__proto__"
+    // included. On a plain `{}` that assignment hits Object.prototype's
+    // setter instead of creating an own property, and the key silently
+    // vanishes from the copy (and from the JSON text it is later encoded
+    // into) rather than being rejected or kept.
+    const result: Record<string, unknown> = Object.create(null);
     for (const key of Object.keys(obj)) {
       const value = obj[key];
       // Omitted, as JSON.stringify does -- not an error. An array element
