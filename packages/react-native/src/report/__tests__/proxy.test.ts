@@ -764,6 +764,21 @@ describe('setSummary', () => {
     expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({ summary: null }));
   });
 
+  // A summary cut mid-emoji. As `\\ud83d` the text would fail iOS's
+  // NSJSONSerialization outright (E_REPORT_BAD_ARGUMENT there, success on
+  // Android); the lone half crosses as U+FFFD instead, as it did before the
+  // JSON transport.
+  it('setSummary of a string cut mid-emoji crosses with U+FFFD for the lone half', async () => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+    native.reportUpdate.mockResolvedValueOnce(undefined);
+    const cut = 'hi \u{1F600}'.slice(0, 4);
+    expect(cut).toBe('hi \uD83D');
+
+    await report.setSummary(cut);
+
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', '{"summary":"hi \uFFFD"}');
+  });
+
   it('setSummary(null) and setDescription(null) cross as JSON text carrying the null', async () => {
     const report = new BugseeReportProxy('h1', 'r1', 'bug');
     native.reportUpdate.mockResolvedValue(undefined);

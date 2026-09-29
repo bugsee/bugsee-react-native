@@ -31,6 +31,17 @@ describe('event', () => {
     );
   });
 
+  // A lone surrogate, key or value, crosses as U+FFFD: its `\\ud83d` escape
+  // would make iOS's parser reject the whole text and drop the event there.
+  it('event params cut mid-emoji cross with U+FFFD for the lone half', () => {
+    const cut = 'hi \u{1F600}'.slice(0, 4);
+    Bugsee.event('name', { [cut]: cut, whole: '\u{1F600}' });
+    expect(native.event).toHaveBeenCalledWith(
+      'name',
+      '{"hi \uFFFD":"hi \uFFFD","whole":"\u{1F600}"}',
+    );
+  });
+
   it('event without params sends null', () => {
     Bugsee.event('name');
     expect(native.event).toHaveBeenCalledWith('name', null);
