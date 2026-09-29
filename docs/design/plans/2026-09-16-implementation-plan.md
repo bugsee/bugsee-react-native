@@ -1045,7 +1045,7 @@ These three phases run **in order: 4, then 5, then 6**. Each ends with its own r
 **Rules for every native method added in these phases.**
 - On iOS, every SDK call runs on main through `BGSRNRunOnMain` (Global Constraints). A promise resolves from inside that block.
 - On Android, calls run on the native-modules thread. Every SDK method used here is documented thread-safe.
-- A void TurboModule method never lets an exception escape: nothing can reject it, so an exception would crash the host. It catches `RuntimeException` on Android (logging at `BugseeRN`); on iOS it guards with `respondsToSelector:` or `isKindOfClass:`, never with `@try`.
+- A void TurboModule method never lets an exception escape: nothing can reject it, so an exception would crash the host. It catches `RuntimeException` on Android (logging at `BugseeRN`); on iOS it guards with `respondsToSelector:` or `isKindOfClass:`, never with `@try`. A Support-package bridge may `@try` around a foreign callout it cannot pre-check (the SDK's reply block, an injected scheduler), as `BGSRNReportHandlerBridge`'s `RunQuietly` does; a void TurboModule method in `BugseeModule.mm` never does.
 - Every new spec method gets a stub or an implementation on both platforms **in the same commit**. `ios-spec-coverage.test.ts` and the `check-rn-compat.sh` java-signatures step stay green at every commit.
 - The JS mock (`src/__mocks__/native.ts`) gains a `jest.fn` for every new method, and `reset()` restores its default.
 
@@ -1864,7 +1864,7 @@ The reviewer must independently:
 - `data request <id> type=<type> origin=<x>,<y>`
 - `data request <id> completed by=<js|deadline|no-js|no-origin|unknown-type|detach|sink-threw|failed> bytes=<n|null> ms=<elapsed>`
 
-Here `<id>` is `dr-<counter>` and `ms` is measured from the moment `requestData` was entered. `failed` means the bridge itself threw after the request was registered (Task 6.5 M3); the SDK still gets exactly one `null`.
+Here `<id>` is `dr-<counter>` and `ms` is measured from the moment `requestData` was entered. `failed` means the bridge itself threw (reading the origin, or arming the deadline); the SDK still gets exactly one `null`.
 
 ### The `vh` payload (exact)
 
