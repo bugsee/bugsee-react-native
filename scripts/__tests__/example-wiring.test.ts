@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 
 const exampleDir = join(__dirname, '..', '..', 'examples', 'bare');
 const read = (...p: string[]) => readFileSync(join(exampleDir, ...p), 'utf8');
@@ -112,5 +112,101 @@ describe("CI's ios-e2e step", () => {
   it('runs launch.test.ts and nothing else', () => {
     const run = /\n\s*run:\s*(.+)/.exec(step)?.[1]?.trim();
     expect(run).toBe('yarn e2e launch.test.ts');
+  });
+});
+
+// Task 7.6a (R12): `bugsee-e2e-native` holds a JNI library whose only job is
+// to crash the process, plus temp-file helpers for the device tests. It is an
+// example-only workspace package. A consumer of @bugsee/react-native must
+// never autolink it, so no library package may depend on it, and no library
+// source (JS, Java, Objective-C, Gradle, podspec) may name it.
+describe('bugsee-e2e-native stays in the example', () => {
+  const repo = join(__dirname, '..', '..');
+  const packagesDir = join(repo, 'packages');
+  const E2E_NATIVE = /bugsee-e2e-native|com\.bugsee\.e2enative|BugseeE2E/;
+  const SKIP = new Set(['node_modules', 'build', '.gradle', '.cxx', 'Pods', 'Bugsee.xcframework']);
+
+  function filesUnder(dir: string): string[] {
+    const found: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP.has(entry.name)) continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        found.push(...filesUnder(path));
+      } else if (/\.(tsx?|jsx?|json|java|kt|mm?|h|swift|gradle|podspec|txt|cpp)$/.test(entry.name)) {
+        found.push(path);
+      }
+    }
+    return found;
+  }
+
+  type Manifest = {
+    private?: boolean;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+  };
+  const dependencyNames = (manifest: Manifest): string[] => [
+    ...Object.keys(manifest.dependencies ?? {}),
+    ...Object.keys(manifest.devDependencies ?? {}),
+    ...Object.keys(manifest.peerDependencies ?? {}),
+    ...Object.keys(manifest.optionalDependencies ?? {}),
+  ];
+
+  it('bugsee-e2e-native is a dependency of the bare example only', () => {
+    const bare = JSON.parse(read('package.json')) as Manifest;
+    expect(bare.dependencies?.['bugsee-e2e-native']).toBe('workspace:*');
+
+    const libraries = readdirSync(packagesDir).filter((name) =>
+      existsSync(join(packagesDir, name, 'package.json')),
+    );
+    expect(libraries).toContain('react-native');
+    for (const name of libraries) {
+      const manifest = JSON.parse(
+        readFileSync(join(packagesDir, name, 'package.json'), 'utf8'),
+      ) as Manifest;
+      expect({ name, deps: dependencyNames(manifest) }).toEqual({
+        name,
+        deps: expect.not.arrayContaining(['bugsee-e2e-native']),
+      });
+    }
+  });
+
+  it('bugsee-e2e-native is private, so it can never be published', () => {
+    const manifest = JSON.parse(
+      readFileSync(join(repo, 'examples', 'e2e-native', 'package.json'), 'utf8'),
+    ) as Manifest & { name?: string };
+    expect(manifest.name).toBe('bugsee-e2e-native');
+    expect(manifest.private).toBe(true);
+  });
+
+  // CI builds the example on SwiftPM too, and there React Native refuses an
+  // autolinked dependency with no Package.swift ("it ships no Swift Package
+  // Manager support"). A hand-written one, without the autolinker's
+  // generated-file marker, is what makes it "self-managed".
+  it('bugsee-e2e-native ships its own SwiftPM manifest', () => {
+    const manifest = readFileSync(
+      join(repo, 'examples', 'e2e-native', 'ios', 'Package.swift'),
+      'utf8',
+    );
+    expect(manifest).not.toMatch(/AUTO-GENERATED|AUTO-SCAFFOLDED/);
+    // toSwiftName('bugsee-e2e-native'): the product the autolinker asks for.
+    expect(manifest).toMatch(/\.library\(name: "BugseeE2eNative"/);
+  });
+
+  it('no library source imports bugsee-e2e-native', () => {
+    const sources = filesUnder(packagesDir);
+    // The scan must reach every native and JS tree the library ships.
+    expect(sources.some((path) => path.endsWith(join('src', 'index.ts')))).toBe(true);
+    expect(sources.some((path) => path.endsWith('BugseeModule.java'))).toBe(true);
+    expect(sources.some((path) => path.endsWith('BugseeModule.mm'))).toBe(true);
+    expect(sources.some((path) => path.endsWith('build.gradle'))).toBe(true);
+    expect(sources.some((path) => path.endsWith('.podspec'))).toBe(true);
+
+    const naming = sources
+      .filter((path) => E2E_NATIVE.test(readFileSync(path, 'utf8')))
+      .map((path) => relative(repo, path));
+    expect(naming).toEqual([]);
   });
 });

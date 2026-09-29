@@ -11,8 +11,8 @@
  * `launch`, the default, is the lifecycle walk launch.test.ts asserts; the
  * `rh-*` scenarios are the report-handler cases in scenarios/report-handler.ts;
  * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts, `secure`
- * is scenarios/secure.tsx, and `attributes`/`attributes-persist` are
- * scenarios/attributes.ts.
+ * is scenarios/secure.tsx, `attributes`/`attributes-persist` are
+ * scenarios/attributes.ts, and `e2e-native-smoke` is scenarios/native.ts.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -56,6 +56,7 @@ import {
   isAttributeScenario,
   runAttributeScenario,
 } from './scenarios/attributes';
+import { isNativeScenario, runNativeScenario } from './scenarios/native';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -300,6 +301,11 @@ export default function App() {
 
         if (isAttributeScenario(choice.scenario)) {
           runAttributeScenario(choice.scenario, choice.nonce);
+          return;
+        }
+
+        if (isNativeScenario(choice.scenario)) {
+          runNativeScenario(choice.scenario, choice.nonce);
           return;
         }
 

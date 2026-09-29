@@ -1,0 +1,26 @@
+{
+  "name": "bugsee-e2e-native",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Example-only native test helpers for the Bugsee React Native device tests (a real native crash, temp files). Never shipped to library consumers.",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "react-native": "0.87.1"
+  },
+  "codegenConfig": {
+    "name": "BugseeE2ENativeSpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.bugsee.e2enative"
+    },
+    "ios": {
+      "modulesProvider": {
+        "BugseeE2E": "BugseeE2EModule"
+      }
+    }
+  }
+}
