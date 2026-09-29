@@ -5,11 +5,20 @@ import {
   EXCEPTION_MAX_NAME_LENGTH,
   EXCEPTION_MAX_FIELD_LENGTH,
   EXCEPTION_MAX_FRAMES,
+  EXCEPTION_MAX_CAUSE_DEPTH,
+  EXCEPTION_MAX_TOTAL_STACK_LENGTH,
   ERROR_BOUNDARY_CAUSE_NAME,
   type ExceptionPayload,
 } from '../payload';
+import { STACK_MAX_INPUT_LENGTH } from '../stack';
 import { sha1Hex } from '../sha1';
-import { V8_NODE_SAMPLE, JSC_SAMPLE } from './fixtures/captured-stacks';
+import {
+  V8_NODE_SAMPLE,
+  JSC_SAMPLE,
+  JSC_NAME_PREFIX_COLLISION_SAMPLE,
+  COMPONENT_STACK_SAMPLE_HERMES,
+  COMPONENT_STACK_SAMPLE_JSC,
+} from './fixtures/captured-stacks';
 
 function noStack(error: Error): Error {
   (error as unknown as { stack: unknown }).stack = undefined;
@@ -922,6 +931,123 @@ describe('the "Name: message" header is stripped before parsing, not just skippe
   });
 });
 
+describe('the header strip does not consume a real frame\'s text (review N2)', () => {
+  it('a real JSC capture whose top frame name starts with the error name keeps its full member name', () => {
+    const error = new TypeError('boom');
+    error.stack = JSC_NAME_PREFIX_COLLISION_SAMPLE;
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(2);
+    expect(payload.frames[0]?.data.member).toBe('TypeErrorFactory');
+    expect(payload.frames[1]?.data.member).toBe('global code');
+  });
+
+  it('strips just message when name is empty (V8/Hermes write no name at all for one)', () => {
+    const error = new Error('failed talking to host.example.com:5432');
+    Object.defineProperty(error, 'name', { value: '' });
+    error.stack = ['failed talking to host.example.com:5432', '    at real (real.js:1:1)'].join(
+      '\n',
+    );
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(1);
+    expect(payload.frames[0]?.data.member).toBe('real');
+  });
+
+  it('an empty name never tries the malformed ": message" candidate ("${\'\'}: ${message}")', () => {
+    // If this candidate were ever tried, and the message itself ends in a
+    // port-like number, an unrelated stack that happens to contain that
+    // exact literal text elsewhere could misfire. It must simply never be
+    // constructed when name is ''.
+    const error = new Error('old host:5432');
+    Object.defineProperty(error, 'name', { value: '' });
+    error.stack = ': old host:5432\n    at real (real.js:1:1)';
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    // Not stripped (the real candidate, "old host:5432", is not a prefix
+    // of ": old host:5432"), but the leftover header line does not parse
+    // as a frame either (review N2's JSC-level guard): a bare match with
+    // no "@" whose file contains ": " is dropped, not kept as a spurious
+    // frame with a garbled "source".
+    expect(payload.frames).toHaveLength(1);
+    expect(payload.frames[0]?.data.member).toBe('real');
+  });
+
+  it('a stack read before the message changed (a stale header) does not misparse as a frame, and the signature stays message-independent', () => {
+    const stackWithStaleHeader = (oldMessage: string): string =>
+      [`Error: ${oldMessage}`, '    at real (real.js:1:1)'].join('\n');
+
+    const first = new Error('new host A:5432'); // .message changed after the stack was captured
+    first.stack = stackWithStaleHeader('old host:5432');
+
+    const second = new Error('new host B:5432');
+    second.stack = stackWithStaleHeader('old host:5432'); // same stale header both times
+
+    for (const error of [first, second]) {
+      const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+      // The stale "Error: old host:5432" header is not stripped (it does
+      // not match name+message), but it also does not become a frame: it
+      // has no "@", and its file ("Error: old host") contains ": '.
+      expect(payload.frames).toHaveLength(1);
+      expect(payload.frames[0]?.data.member).toBe('real');
+    }
+
+    const firstPayload = buildExceptionPayload({ error: first, platformOS: 'ios' });
+    const secondPayload = buildExceptionPayload({ error: second, platformOS: 'ios' });
+    expect(firstPayload.reason).not.toBe(secondPayload.reason);
+    expect(firstPayload.signature).toBe(secondPayload.signature);
+  });
+});
+
+describe("React 19's built-in component frames are not user frames (review N4)", () => {
+  it('the Hermes-shaped componentStack: View (<anonymous>) is not user; MyScreen is', () => {
+    const error = noStack(new Error('boom'));
+
+    const payload = buildExceptionPayload({
+      error,
+      platformOS: 'ios',
+      componentStack: COMPONENT_STACK_SAMPLE_HERMES,
+    });
+
+    const frames = payload.cause?.frames ?? [];
+    expect(frames).toHaveLength(3);
+    expect(frames[0]).toMatchObject({ data: { member: 'MyScreen' }, user: true });
+    expect(frames[1]).toMatchObject({ data: { member: 'View', source: '<anonymous>' }, user: false });
+    expect(frames[2]).toMatchObject({ data: { member: 'App' }, user: true });
+  });
+
+  it("the JSC-shaped componentStack: View@unknown:0:0 is not user (line and column are 0, not null); MyScreen is", () => {
+    const error = noStack(new Error('boom'));
+
+    const payload = buildExceptionPayload({
+      error,
+      platformOS: 'ios',
+      componentStack: COMPONENT_STACK_SAMPLE_JSC,
+    });
+
+    const frames = payload.cause?.frames ?? [];
+    expect(frames).toHaveLength(3);
+    expect(frames[0]).toMatchObject({ data: { member: 'MyScreen' }, user: true });
+    expect(frames[1]).toMatchObject({
+      data: { member: 'View', source: 'unknown', line: 0, column: 0 },
+      user: false,
+    });
+    expect(frames[2]).toMatchObject({ data: { member: 'App' }, user: true });
+  });
+
+  it('a real (non-sentinel) frame whose file happens to be named "unknown" is unaffected, since its line/column are not both 0', () => {
+    const error = new Error('m');
+    error.stack = 'Error: m\n    at real (unknown:1:2)';
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames[0]).toMatchObject({ data: { source: 'unknown', line: 1, column: 2 }, user: true });
+  });
+});
+
 describe('real captured stacks, end to end (review M2)', () => {
   it('a real V8 stack has its "Error: message" header stripped and all ten frames parsed', () => {
     const error = new Error('captured stack sample');
@@ -942,5 +1068,106 @@ describe('real captured stacks, end to end (review M2)', () => {
 
     expect(payload.frames).toHaveLength(5);
     expect(payload.frames[4]?.data.member).toBe('global code');
+  });
+});
+
+describe('a shared parse budget across the whole tree (review N1)', () => {
+  const TIME_BUDGET_MS = 100;
+
+  function assertFast(fn: () => void): number {
+    const start = performance.now();
+    fn();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(TIME_BUDGET_MS);
+    return elapsed;
+  }
+
+  // Each node's own stack is already capped at STACK_MAX_INPUT_LENGTH by
+  // parseStack; nothing capped the *sum* across an 11-node chain (root +
+  // EXCEPTION_MAX_CAUSE_DEPTH causes) plus componentStack, which could
+  // still reach 12x a single node's own worst case.
+  function chromeWorstCaseStack(): string {
+    const worstLine = `at ${' (/'.repeat(680)}\rx`; // review N1's own adversarial line
+    const lineCount = Math.ceil(STACK_MAX_INPUT_LENGTH / (worstLine.length + 1)) + 1;
+    return Array.from({ length: lineCount }, () => worstLine).join('\n');
+  }
+
+  it('an 11-node cause chain, each with a full worst-case stack, plus a full worst-case componentStack, stays fast', () => {
+    const errors = Array.from({ length: EXCEPTION_MAX_CAUSE_DEPTH + 1 }, (_, i) => {
+      const error = new Error(`node ${i}`);
+      error.name = `Node${i}`;
+      error.stack = chromeWorstCaseStack();
+      return error;
+    });
+    for (let i = 0; i < errors.length - 1; i += 1) {
+      (errors[i] as unknown as { cause: unknown }).cause = errors[i + 1];
+    }
+
+    let payload: ExceptionPayload | undefined;
+    const elapsed = assertFast(() => {
+      payload = buildExceptionPayload({
+        error: errors[0],
+        platformOS: 'ios',
+        componentStack: `in (at${' '.repeat(2040)}x`.repeat(400), // > EXCEPTION_MAX_TOTAL_STACK_LENGTH on its own
+      });
+    });
+    console.log(`11-node chain + componentStack, each at the cap: ${elapsed.toFixed(2)} ms`);
+
+    // The chain is intact -- the budget empties frames, never nodes.
+    let node: ExceptionPayload['cause'] | ExceptionPayload | undefined = payload;
+    let nodeCount = 0;
+    while (node) {
+      nodeCount += 1;
+      node = node.cause;
+    }
+    expect(nodeCount).toBe(EXCEPTION_MAX_CAUSE_DEPTH + 2); // the chain, plus the R10 boundary node
+
+    // The shared budget, not each node's own cap, is what kept this fast:
+    // well under (EXCEPTION_MAX_CAUSE_DEPTH + 1) full stacks' worth of frames.
+    let totalFrames = 0;
+    node = payload;
+    while (node) {
+      totalFrames += node.frames.length;
+      node = node.cause;
+    }
+    expect(totalFrames).toBeLessThan((EXCEPTION_MAX_CAUSE_DEPTH + 1) * EXCEPTION_MAX_FRAMES);
+  });
+
+  it('exports the shared budget as a documented constant', () => {
+    expect(EXCEPTION_MAX_TOTAL_STACK_LENGTH).toBe(128 * 1024);
+  });
+
+  it('a single stack past the shared budget on its own still yields frames up to the budget, not zero', () => {
+    const error = noStack(new Error('m'));
+    const lines = ['Error: m'];
+    for (let i = 0; i < 2000; i += 1) {
+      lines.push(`    at fn${i} (/a.js:${i}:1)`);
+    }
+    error.stack = lines.join('\n');
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames.length).toBeGreaterThan(0);
+    expect(payload.frames.length).toBeLessThanOrEqual(EXCEPTION_MAX_FRAMES);
+  });
+
+  it('a third node gets no frames once the first two nodes exhaust the shared budget', () => {
+    // Each individual call is separately capped at STACK_MAX_INPUT_LENGTH
+    // (64 KiB), so it takes two nodes to spend a 128 KiB shared budget.
+    const first = noStack(new Error('first'));
+    first.stack = 'x'.repeat(EXCEPTION_MAX_TOTAL_STACK_LENGTH); // no frames in it, but spends up to 64 KiB
+    const second = noStack(new Error('second'));
+    second.stack = 'y'.repeat(EXCEPTION_MAX_TOTAL_STACK_LENGTH); // spends the rest
+    const third = noStack(new Error('third'));
+    third.stack = '    at real (real.js:1:1)'; // would otherwise parse fine
+    (first as unknown as { cause: unknown }).cause = second;
+    (second as unknown as { cause: unknown }).cause = third;
+
+    const payload = buildExceptionPayload({ error: first, platformOS: 'ios' });
+
+    expect(payload.frames).toEqual([]);
+    expect(payload.cause?.frames).toEqual([]);
+    expect(payload.cause?.cause?.frames).toEqual([]);
+    expect(payload.cause?.cause?.reason).toBe('third'); // the node itself is still built
   });
 });
