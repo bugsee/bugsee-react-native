@@ -144,4 +144,8 @@ dependencies {
         implementation 'com.facebook.react:react-android'
     }
     testImplementation 'junit:junit:4.13.2'
+    // A real org.json for BridgeJsonTest. android.jar's copy is stubs, which
+    // with returnDefaultValues parse every input into nothing at all -- a
+    // test of the parser would pass or fail for reasons unrelated to it.
+    testImplementation 'org.json:json:20240303'
 }
