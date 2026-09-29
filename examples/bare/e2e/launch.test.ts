@@ -172,6 +172,7 @@ describe('example app on a real device', () => {
     }
 
     let result;
+    let bodyFailed = true;
     try {
       result = await launchAndWaitForSequence(
         platform,
@@ -179,12 +180,20 @@ describe('example app on a real device', () => {
         uri,
         iosArgs,
       );
+      bodyFailed = false;
     } finally {
       try {
         // The console attachment is gone; the app is not. Stop it, so
-        // nothing of this run outlives the test.
+        // nothing of this run outlives the test. A failing stop must not
+        // replace the run's own failure: reported, and rethrown only when
+        // the run itself succeeded.
         if (platform === 'ios') {
-          await terminateIosApp();
+          await terminateIosApp().catch((error: unknown) => {
+            console.error(`launch.test: stopping the iOS app failed: ${String(error)}`);
+            if (!bodyFailed) {
+              throw error;
+            }
+          });
         }
       } finally {
         resetScenario();
@@ -218,9 +227,11 @@ describe('example app on a real device', () => {
       }
     }
 
-    // The endpoint really was dead, and the SDK never held a stopped flag:
-    // either would mean this run could poison, or was poisoned by, another.
+    // The endpoint really was dead: the server never answered this run
+    // (`not found` is its rejection of the placeholder, the line that
+    // poisons), and the SDK held no stopped flag from an earlier run.
     if (platform === 'ios') {
+      expect(lines.filter(line => /Application with this AppToken was not found/.test(line))).toEqual([]);
       expect(lines.filter(line => IOS_STOPPED_FOR_TOKEN.test(line))).toEqual([]);
       expect(lines.some(line => /Session not initialized\. - Could not connect to the server/.test(line))).toBe(true);
     }
