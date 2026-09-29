@@ -1417,6 +1417,7 @@ Address its findings, and re-review until the reviewer is satisfied.
 
 **iOS `74af69ee8`:**
 - `+setAttribute:withValue:` archives the value with `NSKeyedArchiver`. It ignores the value when the archive exceeds `CUSTOM_ATTRIBUTE_SIZE_LIMIT` 1124 bytes, or the whole set exceeds 25700 bytes — **returning `YES` either way**.
+- **Corrected by controller ruling (2026-09-29, after Task 5.3):** the effective per-value limit for a plain ASCII string is about **838 characters**, not 1024 — `NSKeyedArchiver archivedDataWithRootObject:requiringSecureCoding:NO` costs `length + 286` bytes for a bare ASCII `NSString` on current iOS Foundation (measured identically on iOS 18.5 and iOS 26.5 simulators: 800 chars → 1086 bytes, 900 → 1186, 1024 → 1310), so an 800-character string fits under 1124 bytes and a 900-character one does not. Non-ASCII text costs more per character (`NSKeyedArchiver` widens to UTF-16), so it allows fewer characters still. Android's per-value limit stays 1024 UTF-16 units regardless of script, so a string in the 800–1024 range that Android accepts can be rejected on iOS with `E_ATTRIBUTE_REJECTED`.
 - Attributes are stored in `NSUserDefaults`.
 - `+setUserIdentifier:` clears on nil, empty or non-string, and stores in the **Keychain**, which on a physical device survives an app reinstall.
 
@@ -1490,7 +1491,7 @@ clearUserIdentifier(): void;
 - A native rejection with code `E_ATTRIBUTE_REJECTED` surfaces as `BugseeAttributeError` with that code.
 - A non-string or empty `name` is `E_ATTRIBUTE_BAD_ARGUMENT`.
 - Export `AttributeErrorCode`, `BugseeAttributeError`, `AttributeValue` and `AttributeReadValue` from `src/index.ts`.
-- **Document on `setAttribute`:** attributes persist across launches; Android stores fractional numbers as 32-bit floats (so `0.1` reads back as `0.10000000149011612`, as the report carries it); iOS limits a value by its archived size (about 1 KB), so a long string accepted on Android can be rejected on iOS.
+- **Document on `setAttribute`:** attributes persist across launches; Android stores fractional numbers as 32-bit floats (so `0.1` reads back as `0.10000000149011612`, as the report carries it); iOS limits a value by its archived size -- roughly **830 ASCII characters** (fewer for non-ASCII text) -- while Android allows 1024 UTF-16 units regardless of script, so a string accepted on Android can be rejected on iOS with `E_ATTRIBUTE_REJECTED`.
 
 **Stubs:** every promise method resolves `{}` or `undefined`, and the void methods are no-ops. Each stub is commented `Task 5.2` or `Task 5.3`.
 
@@ -1623,10 +1624,13 @@ FOUNDATION_EXPORT const NSInteger BGSRNAttributeArchiveLimit;   // 1124, mirrors
   - `testReadableTurnsAStringArrayIntoAnArray`;
   - `testReadableDropsUnknownTypes` (`NSDate`, `NSData`);
   - `testEmptyIdentifierReadsAsAbsent`;
-  - `testA900CharacterAsciiStringFitsTheArchiveLimit`;
+  - `testAn800CharacterAsciiStringFitsTheArchiveLimit`;
+  - `testA900CharacterAsciiStringExceedsTheArchiveLimit`;
   - `testA1024CharacterAsciiStringExceedsTheArchiveLimit`.
 
-  The last two pin, with `NSKeyedArchiver archivedDataWithRootObject:requiringSecureCoding:NO`, the fact Task 5.5 depends on. If either fails, stop and report; do not change 5.5's expectations inside this task. Run → FAIL.
+  The last three pin, with `NSKeyedArchiver archivedDataWithRootObject:requiringSecureCoding:NO`, the fact Task 5.5 depends on. If any fails, stop and report; do not change 5.5's expectations inside this task. Run → FAIL.
+
+  **Correction (controller ruling, 2026-09-29):** Task 5.3's first pass used `testA900CharacterAsciiStringFitsTheArchiveLimit` and found it FAILS on current iOS Foundation (measured 1186 bytes at 900 characters, over the 1124-byte limit) -- the crossover is nearer 838 characters. The test names and lengths above are the corrected ones; see the Phase 5 verified facts above and the Task 5.4/5.5 table below, both updated to match.
 - [ ] **Green** — the class and the module. The iOS example builds on both delivery paths.
 - [ ] **Mutate**
   - (1) Return `YES` from `setValue:…` without reading back. `testRejectedWhenTheSetterSaysYesButTheStoreDroppedIt` must fail.
@@ -1660,7 +1664,8 @@ FOUNDATION_EXPORT const NSInteger BGSRNAttributeArchiveLimit;   // 1124, mirrors
 | `e2e_tenth` | `0.1` | resolves / `0.10000000149011612` | resolves / `0.1` |
 | `e2e_true` | `true` | resolves / `true` (boolean) | resolves / `true` (boolean) |
 | `e2e_false` | `false` | resolves / `false` (boolean) | resolves / `false` (boolean) |
-| `e2e_mid` | `'m'.repeat(900)` | resolves / same | resolves / same |
+| `e2e_mid` | `'m'.repeat(800)` | resolves / same | resolves / same |
+| `e2e_900` | `'n'.repeat(900)` | resolves / same | rejects `E_ATTRIBUTE_REJECTED` / `undefined` |
 | `e2e_long` | `'x'.repeat(1024)` | resolves / same | rejects `E_ATTRIBUTE_REJECTED` / `undefined` |
 | `e2e_too_long` | `'x'.repeat(1025)` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
 | `e2e_huge` | `3.5e38` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
@@ -1691,10 +1696,10 @@ Use no real user data anywhere. The Android SDK logs these values to its interna
 
 The Task 5.4 cases apply unchanged, using the iOS column of the table.
 - **The precondition matters more here:** the Keychain survives app reinstalls on a physical device, and survives until the device is erased on a simulator.
-- The iOS `e2e_long` rejection is SDK behaviour, pinned by `testA1024CharacterAsciiStringExceedsTheArchiveLimit`.
+- The iOS `e2e_900` and `e2e_long` rejections are SDK behaviour, pinned by `testA900CharacterAsciiStringExceedsTheArchiveLimit` and `testA1024CharacterAsciiStringExceedsTheArchiveLimit` respectively (`testAn800CharacterAsciiStringFitsTheArchiveLimit` is the matching `e2e_mid` acceptance).
 
-- [ ] **Red/Green** — the five cases pass on the simulator.
-- [ ] **Mutate** — temporarily return `YES` from `BGSRNAttributes setValue:…` without reading back. The `e2e_long` row must fail. Revert and record.
+- [ ] **Red/Green** — all five cases pass on the simulator.
+- [ ] **Mutate** — temporarily return `YES` from `BGSRNAttributes setValue:…` without reading back. The `e2e_900` and `e2e_long` rows must fail. Revert and record.
 - [ ] **Commit** — `test(e2e): attributes and identity round-trip on iOS`.
 
 **Hardware pass: add to Task 3.H** — Task 5.5 on a physical iPhone, including case 5 across a real process restart. Clear the Keychain identity first and last.
