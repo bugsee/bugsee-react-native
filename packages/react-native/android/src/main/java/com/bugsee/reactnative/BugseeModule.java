@@ -55,9 +55,19 @@ public class BugseeModule extends NativeBugseeSpec
     /** Moves secure rectangles from React Native's viewport space to display pixels. */
     private final ReactRootOriginTracker originTracker;
 
+    /**
+     * What the SDK's secure-rectangle pull calls to refresh the origin. One
+     * instance, held, so invalidate() can remove exactly this one.
+     */
+    private final Runnable pullRefresher;
+
     public BugseeModule(final ReactApplicationContext context) {
         super(context);
         originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared());
+        // refreshSoon only posts to the UI thread, which is all the SDK's pull
+        // thread may do.
+        pullRefresher = originTracker::refreshSoon;
+        SecureRectanglePulls.shared().setRefresher(pullRefresher);
         // Attached here, not on first subscribe: the SDK may emit before any JS
         // has run, and a listener that only exists once JS asks for it would
         // miss the launch transitions that a caller most wants.
@@ -81,6 +91,7 @@ public class BugseeModule extends NativeBugseeSpec
         // next runtime cannot know them, so the reports must not wait out
         // their deadlines.
         ReportHandlerBridge.shared().detach(this);
+        SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
         super.invalidate();
     }

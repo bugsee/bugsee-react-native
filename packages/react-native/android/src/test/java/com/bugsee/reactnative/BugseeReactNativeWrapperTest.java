@@ -99,6 +99,21 @@ public class BugseeReactNativeWrapperTest {
         assertEquals(4, packed[5]);
     }
 
+    /** The SDK's pull goes through the path that refreshes the root's origin. */
+    @Test
+    public void thePullAsksForAnOriginRefresh() {
+        final int[] calls = new int[1];
+        final Runnable refresher = () -> calls[0]++;
+        SecureRectanglePulls.shared().setRefresher(refresher);
+        try {
+            wrapper(context()).getSecureRectangles(0);
+        } finally {
+            SecureRectanglePulls.shared().clearRefresher(refresher);
+        }
+
+        assertEquals(1, calls[0]);
+    }
+
     /** The empty set still has to be a well-formed buffer, not null. */
     @Test
     public void publishesAWellFormedBufferForADisplayWithNothingSecured() {
