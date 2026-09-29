@@ -877,6 +877,32 @@ describe('the "Name: message" header is stripped before parsing, not just skippe
     ]);
   });
 
+  it('really strips a bare-name header (an empty message), not just skips it because it never parses as a frame', () => {
+    // A bare header ("Error", say) never parses as a frame either way, so a
+    // test built on one cannot tell "stripped" from "never stripped". Here
+    // the *name itself* is frame-shaped, so an un-stripped header becomes an
+    // extra, wrong frame -- proving the strip actually ran.
+    const error = new Error('');
+    Object.defineProperty(error, 'name', { value: 'x:1:2' });
+    error.stack = 'x:1:2\n    at real (real.js:1:1)';
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(1);
+    expect(payload.frames[0]?.data.member).toBe('real');
+  });
+
+  it('strips a header ending in \\r\\n (a CRLF stack)', () => {
+    const error = new Error('failed');
+    error.stack = 'Error: failed\r\n    at real (real.js:1:1)';
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(1);
+    expect(payload.frames[0]?.data.member).toBe('real');
+    expect(payload.frames[0]?.traceRaw).toBe('    at real (real.js:1:1)');
+  });
+
   it('the signature does not change with a message that differs only in a frame-shaped token', () => {
     const stackFor = (message: string): string =>
       [`Error: ${message}`, '    at real (real.js:1:1)'].join('\n');

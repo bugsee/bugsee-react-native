@@ -428,6 +428,46 @@ describe('parseStack: bounded against a hostile stack (review C1)', () => {
     const frames = parseStack(`    at fn (${hugeFile}:1:2)`);
     expect(frames[0]?.raw.length).toBeLessThanOrEqual(STACK_MAX_LINE_LENGTH);
   });
+
+  // A JSC-shaped line ("name@file:line:col") has no optional trailing
+  // punctuation to obscure the cut, so trimming its very last character --
+  // exactly what happens one byte past a cap -- changes a two-digit column
+  // into its own first digit. That pins the boundary exactly, both caps.
+  function jscLine(totalLength: number): string {
+    const suffix = '@a.js:1:22';
+    return 'n'.repeat(totalLength - suffix.length) + suffix;
+  }
+
+  it('does not cut a single line that is exactly STACK_MAX_LINE_LENGTH long', () => {
+    const line = jscLine(STACK_MAX_LINE_LENGTH);
+    expect(line).toHaveLength(STACK_MAX_LINE_LENGTH);
+    expect(parseStack(line)[0]?.column).toBe(22);
+  });
+
+  it('cuts a single line one character past STACK_MAX_LINE_LENGTH, losing its final digit', () => {
+    const line = jscLine(STACK_MAX_LINE_LENGTH + 1);
+    expect(line).toHaveLength(STACK_MAX_LINE_LENGTH + 1);
+    expect(parseStack(line)[0]?.column).toBe(2);
+  });
+
+  function stackOfTotalLength(totalLength: number): string {
+    const suffix = '\na.js:1:22';
+    return 'x'.repeat(totalLength - suffix.length) + suffix;
+  }
+
+  it('does not cut the whole stack when it is exactly STACK_MAX_INPUT_LENGTH long', () => {
+    const stack = stackOfTotalLength(STACK_MAX_INPUT_LENGTH);
+    expect(stack).toHaveLength(STACK_MAX_INPUT_LENGTH);
+    const frames = parseStack(stack);
+    expect(frames[frames.length - 1]?.column).toBe(22);
+  });
+
+  it('cuts the whole stack one character past STACK_MAX_INPUT_LENGTH, losing its final digit', () => {
+    const stack = stackOfTotalLength(STACK_MAX_INPUT_LENGTH + 1);
+    expect(stack).toHaveLength(STACK_MAX_INPUT_LENGTH + 1);
+    const frames = parseStack(stack);
+    expect(frames[frames.length - 1]?.column).toBe(2);
+  });
 });
 
 describe('parseStack: a garbage-prefixed line is rejected, not matched starting later (review M1)', () => {
@@ -491,6 +531,48 @@ describe('parseStack: a V8/Hermes anonymous or relative-file frame (6.x parity, 
         methodName: 'foo',
         lineNumber: 1,
         column: 1234,
+      },
+    ]);
+  });
+
+  it('a parenthesised no-scheme frame with a line but no column', () => {
+    expect(parseStack('    at foo (index.android.bundle:1)')).toEqual([
+      {
+        raw: '    at foo (index.android.bundle:1)',
+        file: 'index.android.bundle',
+        methodName: 'foo',
+        lineNumber: 1,
+        column: null,
+      },
+    ]);
+  });
+
+  it('a bare anonymous frame with a multi-digit line and no column', () => {
+    expect(parseStack('    at /a/b.js:1234')).toEqual([
+      {
+        raw: '    at /a/b.js:1234',
+        file: '/a/b.js',
+        methodName: null,
+        lineNumber: 1234,
+        column: null,
+      },
+    ]);
+  });
+
+  it("a garbage-prefixed 'at' line falls through to JSC's broader match, not NODE_BARE_RE's own (unanchored) one", () => {
+    // NODE_BARE_RE's `^at ` requires the line to start there; "xat ..."
+    // fails it and falls through to JSC_RE, which has no "at" concept at
+    // all and keeps the "xat " prefix as part of the file. Without
+    // NODE_BARE_RE's own anchor, it would instead match starting at
+    // "at /a/b.js:1:2" (skipping the leading "x"), giving a clean
+    // "/a/b.js" -- a different, wrong file.
+    expect(parseStack('xat /a/b.js:1:2')).toEqual([
+      {
+        raw: 'xat /a/b.js:1:2',
+        file: 'xat /a/b.js',
+        methodName: null,
+        lineNumber: 1,
+        column: 2,
       },
     ]);
   });

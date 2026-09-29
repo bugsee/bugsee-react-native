@@ -160,20 +160,23 @@ function normalizeField(raw: string): string {
  * `message` may contain newlines; matching it as one literal prefix (rather
  * than only its first line) strips a multi-line message in one step,
  * including any later line that happens to look like a frame.
+ *
+ * Deliberately does not also strip the newline (`\n` or `\r\n`) left right
+ * after the header: `parseStack` already `trim()`s every line and skips a
+ * blank one, so whatever that leftover newline turns into -- an empty
+ * first "line", or a lone `\r` that trims to empty -- is silently absorbed
+ * there. Stripping it here too would be untestable dead weight, not extra
+ * safety.
  */
 function stripKnownHeader(stack: string, name: string, message: string): string {
+  // `name` is always non-empty here (the caller's `effectiveName`), so
+  // neither candidate is ever '' -- there is no third, "nothing to strip"
+  // case to guard against beyond `startsWith` itself returning false.
   const candidates = message.length > 0 ? [`${name}: ${message}`, name] : [name];
 
   for (const candidate of candidates) {
-    if (candidate.length > 0 && stack.startsWith(candidate)) {
-      const rest = stack.slice(candidate.length);
-      if (rest.startsWith('\r\n')) {
-        return rest.slice(2);
-      }
-      if (rest.startsWith('\n')) {
-        return rest.slice(1);
-      }
-      return rest;
+    if (stack.startsWith(candidate)) {
+      return stack.slice(candidate.length);
     }
   }
 
