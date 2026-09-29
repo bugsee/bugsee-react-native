@@ -14,6 +14,10 @@
  *   rh-crash    both phases mark, then a Java crash (`testNativeCrash`).
  *   rh-observe  the relaunch after rh-crash: both phases mark, and onAfter
  *               labels the report; the app itself does nothing else.
+ *   rh-clear    onBefore sets the summary, description and two attributes,
+ *               then clears the summary and description and removes one
+ *               attribute with `null` -- the edits iOS's object-argument
+ *               conversion used to drop (Task 4.5).
  */
 import Bugsee, {
   IssueSeverity,
@@ -27,6 +31,7 @@ export const REPORT_HANDLER_SCENARIOS = [
   'rh-throw',
   'rh-crash',
   'rh-observe',
+  'rh-clear',
 ] as const;
 
 export type ReportHandlerScenario = (typeof REPORT_HANDLER_SCENARIOS)[number];
@@ -114,6 +119,38 @@ function markingHandler(nonce: string): BugseeReportHandler {
   };
 }
 
+/**
+ * rh-clear. Sets first, so the clear has something to clear and the test
+ * can tell "cleared" from "never set"; reads back after each step, so a
+ * marker says what JS saw before the bundle says what the SDK wrote.
+ */
+function clearingHandler(nonce: string): BugseeReportHandler {
+  const gone = `gone-${nonce}`;
+  const kept = `kept-${nonce}`;
+  return {
+    async onBeforeReportCreated(report) {
+      mark(`before type=${report.type} id=${report.id} nonce=${nonce}`);
+      await report.setSummary(`set-${nonce}`);
+      await report.setDescription(`d-${nonce}`);
+      await report.setAttribute(gone, `g-${nonce}`);
+      await report.setAttribute(kept, `k-${nonce}`);
+      const set = await report.read();
+      mark(
+        `clear set summary=${String(set.summary)} description=${String(set.description)} ` +
+          `attrs=${JSON.stringify(set.attributes)} nonce=${nonce}`,
+      );
+      await report.setSummary(null);
+      await report.setDescription(null);
+      await report.setAttribute(gone, null);
+      const cleared = await report.read();
+      mark(
+        `clear cleared summary=${String(cleared.summary)} description=${String(cleared.description)} ` +
+          `attrs=${JSON.stringify(cleared.attributes)} nonce=${nonce}`,
+      );
+    },
+  };
+}
+
 function handlerFor(
   scenario: ReportHandlerScenario,
   nonce: string,
@@ -138,6 +175,8 @@ function handlerFor(
     case 'rh-crash':
     case 'rh-observe':
       return markingHandler(nonce);
+    case 'rh-clear':
+      return clearingHandler(nonce);
   }
 }
 
@@ -161,6 +200,12 @@ export function runReportHandlerScenario(
     case 'rh-throw':
       mark(`upload nonce=${nonce}`);
       Bugsee.upload(`upload-${nonce}`, '');
+      return;
+    case 'rh-clear':
+      // A description of its own, so clearing it is observable: the other
+      // scenarios upload with '' and could not tell cleared from empty.
+      mark(`upload nonce=${nonce}`);
+      Bugsee.upload(`upload-${nonce}`, `udesc-${nonce}`);
       return;
     case 'rh-crash':
       mark(`crashing nonce=${nonce}`);
