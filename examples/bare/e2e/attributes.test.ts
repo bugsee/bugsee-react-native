@@ -310,7 +310,12 @@ describeDevice(`attributes and identity round-trip on ${TARGET_NAME}`, () => {
 
   beforeAll(async () => {
     log = ON_IOS ? IosConsole.start() : await Logcat.start();
-    useLog(log, '5.5');
+    // This file also runs as 5.4 on an Android handset and as 3.H on an
+    // iPhone (iosTarget() === 'device'); only the iOS-simulator pass is
+    // actually 5.5 -- tag `report` lines with whichever task is really
+    // running, as data.test.ts/report-handler.test.ts do for their own
+    // Android/iOS splits.
+    useLog(log, ON_IOS ? (iosTarget() === 'device' ? '3.H' : '5.5') : '5.4');
     if (!ON_IOS) {
       // 9.3.2: offline before the app starts, so the report is retained.
       await airplane(true);
