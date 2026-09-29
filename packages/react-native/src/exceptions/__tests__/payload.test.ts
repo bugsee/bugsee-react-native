@@ -2,6 +2,9 @@ import {
   buildExceptionPayload,
   describeThrown,
   EXCEPTION_MAX_REASON_LENGTH,
+  EXCEPTION_MAX_NAME_LENGTH,
+  EXCEPTION_MAX_FIELD_LENGTH,
+  EXCEPTION_MAX_FRAMES,
   ERROR_BOUNDARY_CAUSE_NAME,
   type ExceptionPayload,
 } from '../payload';
@@ -758,5 +761,136 @@ describe('buildExceptionPayload', () => {
 
       expect(payload.platform_os).toBe('ios');
     });
+  });
+});
+
+describe('field length caps (review I1)', () => {
+  it('truncates a long name to EXCEPTION_MAX_NAME_LENGTH', () => {
+    const error = noStack(new Error('m'));
+    error.name = 'N'.repeat(EXCEPTION_MAX_NAME_LENGTH + 500);
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.name.length).toBe(EXCEPTION_MAX_NAME_LENGTH + 1);
+    expect(payload.name.endsWith('…')).toBe(true);
+  });
+
+  it('truncates a long file (source and traceRaw) to EXCEPTION_MAX_FIELD_LENGTH', () => {
+    const hugeFile = `/${'a'.repeat(EXCEPTION_MAX_FIELD_LENGTH + 500)}`;
+    const error = new Error('m');
+    error.stack = `Error: m\n    at fn (${hugeFile}:1:2)`;
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+    const frame = payload.frames[0];
+
+    expect(frame?.data.source.length).toBe(EXCEPTION_MAX_FIELD_LENGTH + 1);
+    expect(frame?.data.source.endsWith('…')).toBe(true);
+    expect(frame?.traceRaw.length).toBeLessThanOrEqual(EXCEPTION_MAX_FIELD_LENGTH + 1);
+  });
+
+  it('truncates a long member name to EXCEPTION_MAX_FIELD_LENGTH', () => {
+    const hugeMember = 'm'.repeat(EXCEPTION_MAX_FIELD_LENGTH + 500);
+    const error = new Error('m');
+    error.stack = `Error: m\n    at ${hugeMember} (/a.js:1:2)`;
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+    const frame = payload.frames[0];
+
+    expect(frame?.data.member.length).toBe(EXCEPTION_MAX_FIELD_LENGTH + 1);
+    expect(frame?.data.member.endsWith('…')).toBe(true);
+  });
+
+  it('bounds the total payload size for a hostile stack (the review measured 76.8 MB before this fix)', () => {
+    const hugeFile = 'x'.repeat(2000); // under STACK_MAX_LINE_LENGTH, over EXCEPTION_MAX_FIELD_LENGTH
+    const lines = ['Error: m'];
+    for (let i = 0; i < 300; i += 1) {
+      lines.push(`    at fn (${hugeFile}:1)`);
+    }
+    const error = new Error('m');
+    error.stack = lines.join('\n');
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames.length).toBeLessThanOrEqual(EXCEPTION_MAX_FRAMES);
+    expect(JSON.stringify(payload).length).toBeLessThan(2 * 1024 * 1024);
+  });
+});
+
+describe('the "Name: message" header is stripped before parsing, not just skipped (review I2)', () => {
+  it('a header shaped like "Error: connect ECONNREFUSED 10.0.0.1:5432" never becomes a frame', () => {
+    const error = new Error('connect ECONNREFUSED 10.0.0.1:5432');
+    error.stack = 'Error: connect ECONNREFUSED 10.0.0.1:5432';
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toEqual([]);
+  });
+
+  it('a Hermes-shaped header ending in "host:5432" never becomes a frame; the real frame after it still parses', () => {
+    const error = new Error('failed talking to host.example.com:5432');
+    error.stack = [
+      'Error: failed talking to host.example.com:5432',
+      '    at real (real.js:1:1)',
+    ].join('\n');
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(1);
+    expect(payload.frames[0]?.data.member).toBe('real');
+  });
+
+  it('a multi-line message with a frame-looking second line never becomes a frame', () => {
+    const message = 'line one\n  more detail at host.example.com:8443';
+    const error = new Error(message);
+    error.stack = [`Error: ${message}`, '    at real (real.js:1:1)'].join('\n');
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(1);
+    expect(payload.frames[0]?.data.member).toBe('real');
+  });
+
+  it('an empty message strips just the bare name header', () => {
+    const error = new Error('');
+    error.stack = ['Error', '    at real (real.js:1:1)'].join('\n');
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(1);
+    expect(payload.frames[0]?.data.member).toBe('real');
+  });
+
+  it('a JSC-shaped stack with no header is left untouched -- the strip is conditional', () => {
+    const error = new Error('m');
+    error.stack = 'global@app.bundle:1:2'; // JSC never prepends "Name: message"
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toEqual([
+      {
+        traceRaw: 'global@app.bundle:1:2',
+        trace: 'global () (app.bundle:1:2)',
+        data: { member: 'global', source: 'app.bundle', line: 1, column: 2 },
+        user: true,
+      },
+    ]);
+  });
+
+  it('the signature does not change with a message that differs only in a frame-shaped token', () => {
+    const stackFor = (message: string): string =>
+      [`Error: ${message}`, '    at real (real.js:1:1)'].join('\n');
+
+    const first = new Error('connect ECONNREFUSED 10.0.0.1:5432');
+    first.stack = stackFor('connect ECONNREFUSED 10.0.0.1:5432');
+
+    const second = new Error('connect ECONNREFUSED 10.0.0.2:5432');
+    second.stack = stackFor('connect ECONNREFUSED 10.0.0.2:5432');
+
+    const firstPayload = buildExceptionPayload({ error: first, platformOS: 'ios' });
+    const secondPayload = buildExceptionPayload({ error: second, platformOS: 'ios' });
+
+    expect(firstPayload.reason).not.toBe(secondPayload.reason);
+    expect(firstPayload.frames).toEqual(secondPayload.frames);
+    expect(firstPayload.signature).toBe(secondPayload.signature);
   });
 });
