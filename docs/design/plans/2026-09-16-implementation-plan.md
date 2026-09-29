@@ -1384,13 +1384,14 @@ Address its findings, and re-review until the reviewer is satisfied.
 - **Ruling:** Phase 5 starts after Phase 4's gate.
 - **Ruling (Task 4.5):** attribute maps, and any object payload with nullable members, cross the bridge as JSON text (`src/bridge/json.ts`, parsed by `BridgeJson` / `BGSRNJSONObject`), never as `UnsafeObject`: iOS drops `null` members of an object argument.
 - **Ruling:** Android takes `Serializable` and iOS takes `id`. JS defines the value domain the bridge accepts and rejects the rest before crossing. Every accepted type has a round-trip test.
+- **Ruling (controller, after the Phase 4 gate):** one numeric bound for every number that reaches a bundle — attributes, event params and trace values: finite and `|v| < 2^63` (`9223372036854775808`, exclusive), exported as `BUNDLE_NUMBER_LIMIT` from `src/data/validate.ts`. Android's JSON writer writes any integral value (every float `≥ 2^24` is integral) through `longValue()`, so `≥ 2^63` silently becomes `9223372036854775807`. `FLOAT32_MAX` is superseded: it is larger, so the old bound let the clamp through. Tasks 4.2's validator gains this bound in Task 5.1's first commit.
 - **Ruling:** tests never rely on the SDK's internal log. Until Android 7.3.0 and the next iOS beta, `setUserIdentifier`/`setAttribute` values are written verbatim to Android's SDK-internal log (fixed in `bugsee-android#186`). Device tests therefore use **synthetic, non-sensitive values only**, and assert nothing, either way, about `log.internal`.
 
 ### Planner decisions (reviewable)
 
 - **The domain is the intersection of both SDKs:** `string | number | boolean`.
   - Android also takes `Set<String>`; iOS takes any property-list object. Neither is common to both, so neither is accepted.
-  - Numbers must be finite with `|v| < 3.4028234663852886e38` (`FLOAT32_MAX`). Android stores a double as a 32-bit float and silently drops `≥ Float.MAX_VALUE`. A large negative becomes `-Infinity`, which its JSON writer emits as a *string*.
+  - Numbers must be finite with `|v| < 2^63` (`BUNDLE_NUMBER_LIMIT`, see the ruling above; ~~`FLOAT32_MAX`~~ superseded). Android also stores a fractional or large double as a 32-bit float, so a value above `2^24` may read back rounded — documented, like `0.1`.
   - Strings are limited to `≤ 1024` UTF-16 units, Android's per-value limit.
 - **`setAttribute` returns `Promise<void>` and verifies on the native side.** Neither SDK reports a dropped value truthfully:
   - Android's public `setAttribute` is `void`, and `BugseeAttributes.put`'s `false` is discarded.
@@ -1426,7 +1427,7 @@ Address its findings, and re-review until the reviewer is satisfied.
 | Name | Value |
 |---|---|
 | `ATTRIBUTE_STRING_MAX_LENGTH` | `1024` (UTF-16 units, inclusive) |
-| `ATTRIBUTE_NUMBER_LIMIT` | `3.4028234663852886e38` (exclusive, on `Math.abs`) |
+| `BUNDLE_NUMBER_LIMIT` | `9223372036854775808` = `2^63` (exclusive, on `Math.abs`; shared with event params and traces; supersedes `ATTRIBUTE_NUMBER_LIMIT`/`FLOAT32_MAX`) |
 | `MAX_SAFE_LONG` (Android) | `9007199254740991` |
 
 | Error code | Meaning |
@@ -1473,7 +1474,7 @@ export class BugseeAttributeError extends Error {
 export type AttributeValue = string | number | boolean;
 export type AttributeReadValue = string | number | boolean | string[]; // string[]: a Set<String> native code set on Android
 export const ATTRIBUTE_STRING_MAX_LENGTH = 1024;
-export const ATTRIBUTE_NUMBER_LIMIT = 3.4028234663852886e38;
+// the numeric bound is BUNDLE_NUMBER_LIMIT, imported from src/data/validate.ts
 // facade
 setAttribute(name: string, value: AttributeValue): Promise<void>;
 getAttribute(name: string): Promise<AttributeReadValue | undefined>;
@@ -1499,7 +1500,7 @@ clearUserIdentifier(): void;
     - `a number goes to setAttributeNumber`;
     - `a boolean goes to setAttributeBoolean`;
     - `rejects NaN, Infinity and -Infinity with E_ATTRIBUTE_BAD_ARGUMENT before crossing`;
-    - `rejects ±3.4028234663852886e38 and accepts ±3.4e38`;
+    - `rejects ±2^63 and accepts ±9223372036854774784` (the largest double below 2^63);
     - `accepts ±9007199254740991`;
     - `accepts a 1024-unit string and rejects 1025`;
     - `counts UTF-16 units, not code points` (512 emoji = 1024 units accepted; 513 rejected);
@@ -1519,7 +1520,7 @@ clearUserIdentifier(): void;
   - Run → FAIL.
 - [ ] **Green** — the modules, the mock and the stubs. `ios-spec-coverage`, `check-rn-compat.sh 0.81` and both example builds green.
 - [ ] **Mutate**
-  - (1) Make the number bound `<=` instead of `<`. `rejects ±3.4028234663852886e38` must fail.
+  - (1) Make the number bound `<=` instead of `<`. `rejects ±2^63` must fail.
   - (2) Forward `''` to `setUserIdentifier`. `setUserIdentifier('') clears instead` must fail.
   - (3) Measure strings with `[...value].length`. `counts UTF-16 units` must fail.
   - Revert and record.
@@ -1663,6 +1664,7 @@ FOUNDATION_EXPORT const NSInteger BGSRNAttributeArchiveLimit;   // 1124, mirrors
 | `e2e_long` | `'x'.repeat(1024)` | resolves / same | rejects `E_ATTRIBUTE_REJECTED` / `undefined` |
 | `e2e_too_long` | `'x'.repeat(1025)` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
 | `e2e_huge` | `3.5e38` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
+| `e2e_over_long` | `1e19` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
 
 **Scenario `attributes-persist`** (a fresh process, the next run): log `getAllAttributes()` and `getUserIdentifier()`; then `clearAllAttributes()` and `clearUserIdentifier()`; then log both again.
 
