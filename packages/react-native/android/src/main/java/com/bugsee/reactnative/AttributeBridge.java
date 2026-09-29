@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The custom-attribute rules, between the JS wire shape and the SDK's
@@ -37,7 +38,31 @@ final class AttributeBridge {
     /** The largest (and smallest, negated) integral double a {@code long} carries exactly. */
     static final long MAX_SAFE_LONG = 9_007_199_254_740_991L;
 
+    /**
+     * Class names {@link #readable} has already logged as unsupported, for
+     * the life of the process. A read can run many times over that life --
+     * once per {@code getAllAttributes} call -- so without this, mixed-in
+     * native code that keeps writing a type this bridge does not know about
+     * would re-log every such entry, on every read, forever.
+     */
+    private static final Set<String> LOGGED_UNSUPPORTED_TYPES = ConcurrentHashMap.newKeySet();
+
+    /** What {@link #readable} calls to report a dropped, unsupported-type entry. */
+    interface UnsupportedTypeLogger {
+        void log(@NonNull String attributeName, @NonNull String className);
+    }
+
+    private static final UnsupportedTypeLogger DEFAULT_UNSUPPORTED_TYPE_LOGGER =
+            (attributeName, className) -> Log.w(TAG, "attribute \"" + attributeName
+                    + "\" has an unsupported type " + className
+                    + "; dropped (logged once per type, per process)");
+
     private AttributeBridge() {
+    }
+
+    /** Test-only: clears the once-per-type guard {@link #readable} keeps for the process's life. */
+    static void resetLoggedUnsupportedTypesForTest() {
+        LOGGED_UNSUPPORTED_TYPES.clear();
     }
 
     /** What the module implements against; the production adapter calls {@code Bugsee.*}. */
@@ -101,12 +126,24 @@ final class AttributeBridge {
      * {@link Long} the SDK stored as given) widens with {@code doubleValue()},
      * which is exact for every value this bridge could have written through
      * {@link #numberValue}. A {@code Set<String>} becomes a {@link List} of its
-     * string elements. Anything else has no JS representation and is dropped,
-     * logged once here rather than silently, since it means the SDK is
-     * carrying a type this bridge does not know about.
+     * string elements. Anything else has no JS representation and is
+     * dropped, and its class name is reported through {@link
+     * UnsupportedTypeLogger} once per type, for the life of the process
+     * (see {@link #LOGGED_UNSUPPORTED_TYPES}) -- not once per read, since it
+     * means the SDK is carrying a type this bridge does not know about, and
+     * a read can happen many times.
      */
     @NonNull
     static Map<String, Object> readable(@Nullable final Map<String, Serializable> persisted) {
+        return readable(persisted, DEFAULT_UNSUPPORTED_TYPE_LOGGER);
+    }
+
+    /** {@link #readable(Map)}, with the unsupported-type logger injectable for tests. */
+    @NonNull
+    static Map<String, Object> readable(
+            @Nullable final Map<String, Serializable> persisted,
+            @NonNull final UnsupportedTypeLogger logger
+    ) {
         final Map<String, Object> result = new HashMap<>();
         if (persisted == null) {
             return result;
@@ -128,8 +165,10 @@ final class AttributeBridge {
                 }
                 result.put(entry.getKey(), list);
             } else if (value != null) {
-                Log.w(TAG, "attribute \"" + entry.getKey() + "\" has an unsupported type "
-                        + value.getClass().getName() + "; dropped");
+                final String className = value.getClass().getName();
+                if (LOGGED_UNSUPPORTED_TYPES.add(className)) {
+                    logger.log(entry.getKey(), className);
+                }
             }
         }
         return result;
