@@ -5,6 +5,15 @@ const workspaceRoot = path.resolve(__dirname, '..', '..');
 const library = path.resolve(workspaceRoot, 'packages', 'react-native');
 
 /**
+ * The app's own copies. The library's `react` and `react-native` imports must
+ * land here, never on another copy in the workspace: two Reacts break every
+ * hook (`<BugseeSecure>` is the library's first), and two React Natives mean
+ * the library talks to a renderer that is not the one on screen.
+ */
+const SINGLETONS = new Set(['react', 'react-native']);
+const appOrigin = path.resolve(__dirname, 'index.js');
+
+/**
  * Metro does not follow a workspace symlink out of the app directory on its
  * own. All three settings below are load-bearing, and they fail in sequence:
  * without `watchFolders` the library's sources are outside the project root
@@ -19,6 +28,24 @@ const library = path.resolve(workspaceRoot, 'packages', 'react-native');
 const config = {
   watchFolders: [library, path.resolve(workspaceRoot, 'node_modules')],
   resolver: {
+    // extraNodeModules below is only a FALLBACK: Metro tries the hierarchical
+    // node_modules lookup first. From the library's sources that lookup finds
+    // the workspace root's react (a root devDependency, for the library's
+    // tests) and the library's own react-native (its devDependency), and
+    // bundles them next to the app's. So these two are resolved as if the app
+    // had asked for them, deep imports included (react/jsx-runtime,
+    // react-native/Libraries/...).
+    resolveRequest: (context, moduleName, platform) => {
+      const packageName = moduleName.split('/')[0];
+      if (SINGLETONS.has(packageName)) {
+        return context.resolveRequest(
+          { ...context, originModulePath: appOrigin },
+          moduleName,
+          platform,
+        );
+      }
+      return context.resolveRequest(context, moduleName, platform);
+    },
     nodeModulesPaths: [
       path.resolve(__dirname, 'node_modules'),
       path.resolve(workspaceRoot, 'node_modules'),
