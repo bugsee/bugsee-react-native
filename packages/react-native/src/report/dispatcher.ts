@@ -84,5 +84,11 @@ function onReportHandlerRequest(event: ReportHandlerRequestEvent): void {
       clearTimeout(deadlineTimer);
       proxy.markDead();
       NativeBugsee.completeReportHandler(event.handleId);
+    })
+    .catch((error: unknown) => {
+      // The native call itself threw (a torn-down bridge, say). Native
+      // completes the handle at its deadline or on detach regardless; this
+      // only keeps the failure from becoming an unhandled rejection.
+      console.error('[Bugsee] could not complete the report handler', error);
     });
 }

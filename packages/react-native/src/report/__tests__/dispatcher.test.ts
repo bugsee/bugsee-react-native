@@ -196,6 +196,33 @@ describe('setReportHandler', () => {
     errorSpy.mockRestore();
   });
 
+  it('a throwing completeReportHandler is logged, never an unhandled rejection', async () => {
+    // Real timers, for the macrotask boundary: see the test above.
+    jest.useRealTimers();
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const unhandled = jest.fn();
+    process.on('unhandledRejection', unhandled);
+    const failure = new Error('bridge is gone');
+    native.completeReportHandler.mockImplementation(() => {
+      throw failure;
+    });
+
+    setReportHandler({ onAfterReportCreated: () => {} });
+    emit({ handleId: 'h10', phase: 'after' });
+    await flush();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    process.off('unhandledRejection', unhandled);
+    expect(unhandled).not.toHaveBeenCalled();
+    expect(native.completeReportHandler).toHaveBeenCalledWith('h10');
+    expect(native.completeReportHandler).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[Bugsee] could not complete the report handler',
+      failure,
+    );
+    errorSpy.mockRestore();
+  });
+
   it('setReportHandler(null) tells native no phase is wanted', () => {
     setReportHandler(null);
 
