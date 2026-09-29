@@ -2,8 +2,7 @@ import NativeBugsee from './NativeBugsee';
 import { PACKAGE_VERSION } from './version';
 import { collectWrapperFacts } from './wrapper/collect';
 import { wrapperIdentity } from './wrapper/identity';
-import { flattenSecureRectangles } from './secure/rectangles';
-import { secureRectangleScale } from './secure/unit';
+import { setOwnerRectangles } from './secure/registry';
 import type { SecureRectangle } from './secure/rectangles';
 import { Status } from './status';
 import { statusForEvent } from './wrapper/events';
@@ -96,7 +95,11 @@ class Bugsee {
 
   /**
    * Publishes the regions the SDK must not record on `display`, replacing
-   * whatever was published for it before. An empty list clears them.
+   * whatever this method published for it before. An empty list clears them.
+   *
+   * Regions held by a mounted `<BugseeSecure>` are kept apart and published
+   * alongside: clearing here never uncovers a component, and a component
+   * unmounting never clears these.
    *
    * Synchronous by design. The SDK PULLS these 2-3 times a second from its own
    * thread and never waits on JS, so there is nothing to await; a promise here
@@ -116,10 +119,7 @@ class Bugsee {
           `a fractional index reaches the native cast and silently addresses display 0`,
       );
     }
-    NativeBugsee.setSecureRectangles(
-      display,
-      flattenSecureRectangles(rectangles, secureRectangleScale()),
-    );
+    setOwnerRectangles(`manual:${display}`, display, rectangles);
   }
 
   /**
@@ -466,6 +466,8 @@ export {
 export default new Bugsee();
 
 export type { SecureRectangle } from './secure/rectangles';
+export { BugseeSecure } from './secure/BugseeSecure';
+export type { BugseeSecureProps } from './secure/BugseeSecure';
 
 export type { LifecycleEvent } from './wrapper/events';
 
