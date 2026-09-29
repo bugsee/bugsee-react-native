@@ -214,6 +214,51 @@ public class ReportOpsTest {
         assertEquals(Collections.singletonList("a.txt"), read.get("attachmentNames"));
     }
 
+    /**
+     * The patch as {@code reportUpdate} now receives it: JSON text, parsed by
+     * {@link BridgeJson}. A null summary and description clear them, and a null
+     * attribute removes it -- the three edits iOS's object conversion dropped.
+     */
+    @Test
+    public void aParsedPatchClearsAndRemoves() throws Exception {
+        state.summary = "old summary";
+        state.description = "old description";
+        state.attributes.put("gone", "value");
+        state.attributes.put("kept", "value");
+
+        ReportOps.apply(report, BridgeJson.parseObject(
+                "{\"summary\":null,\"description\":null,"
+                        + "\"attributes\":{\"gone\":null,\"count\":3,\"ratio\":0.5}}"));
+
+        assertNull(state.summary);
+        assertNull(state.description);
+        assertFalse(state.attributes.containsKey("gone"));
+        assertEquals("value", state.attributes.get("kept"));
+        // Integral stays an integer for the SDK's writer; a fraction stays a double.
+        assertEquals(3, state.attributes.get("count"));
+        assertEquals(0.5, state.attributes.get("ratio"));
+        assertTrue(state.mutations().contains("setSummary"));
+        assertTrue(state.mutations().contains("setDescription"));
+        assertTrue(state.mutations().contains("removeAttribute"));
+    }
+
+    /** Parsing does not bypass validation: a bad field still applies nothing. */
+    @Test
+    public void aParsedPatchIsStillAllOrNothing() throws Exception {
+        state.summary = "old summary";
+        assertRejected(BridgeJson.parseObject(
+                "{\"summary\":null,\"attributes\":{\"gone\":null},\"severity\":0}"));
+        assertEquals("old summary", state.summary);
+        assertEquals(Collections.emptyList(), state.mutations());
+    }
+
+    /** A JSON severity is an Integer now, not a Double; 1..5 still maps by value. */
+    @Test
+    public void aParsedSeverityIsAppliedByValue() throws Exception {
+        ReportOps.apply(report, BridgeJson.parseObject("{\"severity\":4}"));
+        assertEquals(IssueSeverity.Critical, state.severity);
+    }
+
     /** JS numbers are doubles; an integral one becomes a Long so the SDK stores 3, not 3.0. */
     @Test
     public void integralNumbersCrossAsLong() {
