@@ -2228,7 +2228,7 @@ final class DataRequestBridge {
 - `replyDataRequest(id, payload)` → `complete`.
 - `setViewTreeEnabled(b)` → the bridge.
 
-- [ ] **Red**
+- [x] **Red**
   - `DataRequestBridgeTest`:
     - `theTypeMatchesTheSdkConstant` (`DataRequestTypes.VIEW_HIERARCHY`);
     - `theDeadlineIsBelowTheSdkBudget` (`< DataRequestTypes.VIEW_HIERARCHY_TIMEOUT_MS`);
@@ -2250,13 +2250,13 @@ final class DataRequestBridge {
     - `currentOriginIsTheLastPublishedOrigin`;
     - `currentOriginIsNullBeforeAnyRootIsFound`.
   - Run → FAIL.
-- [ ] **Green** — as specified. The example builds.
-- [ ] **Mutate**
+- [x] **Green** — as specified. The example builds.
+- [x] **Mutate**
   - (1) Drop the `AtomicBoolean`. `completeDeliversThePayloadExactlyOnce` must fail.
   - (2) Set `DEADLINE_MS = 600`. `theDeadlineIsBelowTheSdkBudget` must fail.
   - (3) Emit even when disabled. `aDisabledViewTreeRepliesNullSynchronously` must fail.
   - Revert and record.
-- [ ] **Commit** — `feat(android): answer the vh data request from JS, within the budget`.
+- [x] **Commit** — `feat(android): answer the vh data request from JS, within the budget`.
 
 ---
 

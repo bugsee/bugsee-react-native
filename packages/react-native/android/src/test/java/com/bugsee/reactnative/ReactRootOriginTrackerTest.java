@@ -2,6 +2,7 @@ package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 import android.graphics.Point;
 
@@ -290,6 +291,42 @@ public class ReactRootOriginTrackerTest {
         tracker.refresh();
 
         assertEquals(1, finder.calls);
+    }
+
+    // Task 6.5: currentOrigin() is the vh data request's OriginSource. It
+    // must catch a root found only just now (it calls refresh() itself,
+    // rather than requiring a caller to have refreshed first) and hand back
+    // a copy, not the array it keeps internally.
+    @Test
+    public void currentOriginIsTheLastPublishedOrigin() {
+        final FakeRoot rootHandle = new FakeRoot();
+        rootHandle.location = new int[] { 100, 40 };
+        rootHandle.viewport.x = 10;
+        rootHandle.viewport.y = 20;
+        rootHandle.displayId = 7;
+        final QueueRootFinder finder = new QueueRootFinder();
+        finder.queue.add(rootHandle);
+        final ReactRootOriginTracker tracker =
+                new ReactRootOriginTracker(new FakeLifecycleSource(), finder, new SecureRectangleStore());
+
+        final int[] origin = tracker.currentOrigin();
+
+        // origin = locationOnScreen - viewport = (100 - 10, 40 - 20) = (90, 20).
+        assertArrayEquals(new int[] { 90, 20 }, origin);
+
+        // A copy: mutating what was handed back must not corrupt the
+        // tracker's own record of the last published origin.
+        origin[0] = -1;
+        assertArrayEquals(new int[] { 90, 20 }, tracker.currentOrigin());
+    }
+
+    @Test
+    public void currentOriginIsNullBeforeAnyRootIsFound() {
+        final QueueRootFinder finder = new QueueRootFinder();
+        final ReactRootOriginTracker tracker =
+                new ReactRootOriginTracker(new FakeLifecycleSource(), finder, new SecureRectangleStore());
+
+        assertNull(tracker.currentOrigin());
     }
 
     @Test

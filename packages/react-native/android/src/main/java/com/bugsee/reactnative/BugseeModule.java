@@ -61,6 +61,14 @@ public class BugseeModule extends NativeBugseeSpec
      */
     private final Runnable pullRefresher;
 
+    /**
+     * The one {@link DataRequestBridge.Sink} this module hands to the bridge,
+     * held so {@code invalidate()} can detach exactly this instance -- a
+     * fresh {@code this::emitRequest} reference at that call site would not
+     * be the same object the bridge was attached with.
+     */
+    private final DataRequestBridge.Sink dataRequestSink = this::emitRequest;
+
     public BugseeModule(final ReactApplicationContext context) {
         super(context);
         originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared());
@@ -73,6 +81,7 @@ public class BugseeModule extends NativeBugseeSpec
         // miss the launch transitions that a caller most wants.
         WrapperEventBus.shared().attach(this);
         ReportHandlerBridge.shared().attach(this);
+        DataRequestBridge.shared().attach(dataRequestSink, originTracker::currentOrigin);
     }
 
     /**
@@ -91,6 +100,9 @@ public class BugseeModule extends NativeBugseeSpec
         // next runtime cannot know them, so the reports must not wait out
         // their deadlines.
         ReportHandlerBridge.shared().detach(this);
+        // Same for any outstanding vh request, and disables the view tree:
+        // the next runtime's anchor has not mounted yet.
+        DataRequestBridge.shared().detach(dataRequestSink);
         SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
         super.invalidate();
@@ -225,20 +237,34 @@ public class BugseeModule extends NativeBugseeSpec
         Bugsee.captureViewHierarchy();
     }
 
-    // --- View-hierarchy data request (Task 6.4 JS side; bridged Task 6.5) --
-    // The spec declares onDataRequest/replyDataRequest/setViewTreeEnabled so
-    // JS (src/viewtree/requests.ts) can already build and reply to a 'vh'
-    // request end-to-end against the mock; nothing on this side emits or acts
-    // on them yet.
+    // --- View-hierarchy data request (design doc, Phase 6 / Task 6.5) ------
+    // DataRequestBridge owns the exactly-once, within-deadline contract with
+    // the SDK; this is only the translation to and from its Sink/emit shape,
+    // mirroring ReportHandlerBridge's onReportHandlerRequest below.
+
+    /**
+     * Builds the {@code onDataRequest} payload and emits it. {@code
+     * originX}/{@code originY} cross as doubles because codegen types the
+     * TS event's fields as {@code number} -- there is no separate integer
+     * wire type.
+     */
+    private void emitRequest(final String requestId, final String type, final int originX, final int originY) {
+        final WritableMap payload = Arguments.createMap();
+        payload.putString("requestId", requestId);
+        payload.putString("type", type);
+        payload.putDouble("originX", originX);
+        payload.putDouble("originY", originY);
+        emitOnDataRequest(payload);
+    }
 
     @Override
     public void setViewTreeEnabled(final boolean enabled) {
-        // Task 6.5.
+        DataRequestBridge.shared().setViewTreeEnabled(enabled);
     }
 
     @Override
     public void replyDataRequest(final String requestId, @Nullable final String payload) {
-        // Task 6.5.
+        DataRequestBridge.shared().complete(requestId, payload);
     }
 
     private static String string(
