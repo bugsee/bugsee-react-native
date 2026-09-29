@@ -1,7 +1,7 @@
 /**
  * Tasks 3.4d and 3.4f (and 4.5's clear case): the report handler on an Android handset
- * (`E2E_PLATFORM=android`) and on iOS (`E2E_PLATFORM=ios`: an iPhone by
- * default, the simulator with `E2E_IOS_TARGET=simulator`; Task 3.H).
+ * (`E2E_PLATFORM=android`) and on iOS (`E2E_PLATFORM=ios` with
+ * `E2E_IOS_TARGET=device` for the allowlisted iPhone, or `simulator`; Task 3.H).
  *
  * Unit tests pin the bridge's logic against fakes; what only a device can
  * show is that the SDK really calls it on the thread we think, that JS edits
@@ -49,7 +49,7 @@ import {
   fileNameOf,
   terminateIosApp,
 } from './bundles';
-import { ANDROID_PACKAGE, IOS_TARGET } from './device';
+import { ANDROID_PACKAGE, iosTarget } from './device';
 import {
   ON_ANDROID,
   ON_IOS,
@@ -632,7 +632,7 @@ describeDevice(`report handler on ${TARGET_NAME}`, () => {
     ]);
     expect(code).not.toBe('still attached');
     report('case 6 thrown', thrown.text.trim());
-    if (IOS_TARGET === 'simulator') {
+    if (iosTarget() === 'simulator') {
       // A simulator app is a host process, and macOS writes its crash report.
       expect(hostProcessAlive(pid)).toBe(false);
       const died = await awaitHostCrashReport(pid);
