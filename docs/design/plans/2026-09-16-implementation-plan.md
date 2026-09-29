@@ -462,6 +462,8 @@ reportAddFileAttachment(handleId: string, path: string, name: string, mimeType: 
 reportAddDataAttachment(handleId: string, base64: string, name: string, mimeType: string | null): Promise<void>;
 ```
 
+> **Superseded by Task 4.5 (JSON text).** The patch now crosses as `reportUpdate(handleId: string, patchJson: string)`: iOS's object-argument conversion dropped its `null` members.
+
 `reportRead` resolves `{ summary: string|null, description: string|null, severity: number /* 0..5; 0 = iOS unset */, labels: string[], attributes: {[k]: string|number|boolean}, screenshotDisplayIds: number[], attachmentNames: string[] }`.
 
 `reportUpdate` patch keys, all optional: `summary: string|null`, `description: string|null`, `severity: 1..5`, `labels: string[]` (**replaces** — Android `setLabels`, iOS `replaceLabels:`), `clearAttributes: true` (applied first), `attributes: {[k]: string|number|boolean|null}` (merge; `null` removes). Unknown keys are `E_REPORT_BAD_ARGUMENT`. Validation is all-or-nothing: nothing is applied unless every field is valid.
@@ -584,7 +586,7 @@ final class ReportOps {
 
 **`dispatch` order (each is a test):** `isTerminating` → run `sdkCompletion` synchronously, return, emit nothing. No sink attached, phase not registered, or deadline `< MIN_USEFUL_DEADLINE_MS` → complete immediately. Otherwise mint `"rh-" + counter`, store `{report, completion, done}`, arm the deadline, call the sink (a throwing sink completes the handle). `complete` is idempotent behind an `AtomicBoolean`, cancels the timer, removes the entry, and runs `sdkCompletion` inside `try/catch (Throwable)`. Every outcome logs one line at tag `BugseeRN`: `report handler <id> phase=<p> deadline=<ms>` on dispatch; `report handler <id> completed by=<js|deadline|terminating|no-handler|detach>` on completion — the device tests match these.
 
-**Module:** reads `optionSeconds` for `liveMs` from `Bugsee.getLaunchOptions()` key `com.bugsee.option.config.report-handler-callback-timeout` (wrapped; any failure → `null`). Converts `ReadableMap` patch → `Map` (integral numbers within ±2^53 → `Long`, others → `Double`; booleans; strings; null). `reportAddDataAttachment` decodes with `android.util.Base64.decode(s, Base64.NO_WRAP)`; `IllegalArgumentException` → `E_REPORT_BAD_ARGUMENT`. Unknown handle → `E_REPORT_HANDLE_DEAD`. Ops run on the calling (native-modules) thread; the SDK documents `Report` as usable from any thread and its collections are synchronized. Severity is written with an explicit 1–5 check then `IssueSeverity.fromIntValue(n)` — **never the one-argument form on unchecked input**, which silently maps garbage to `VeryLow`. The module attaches itself as the sink in its constructor and detaches in `invalidate()`, exactly like `WrapperEventBus`.
+**Module:** reads `optionSeconds` for `liveMs` from `Bugsee.getLaunchOptions()` key `com.bugsee.option.config.report-handler-callback-timeout` (wrapped; any failure → `null`). Converts `ReadableMap` patch → `Map` (integral numbers within ±2^53 → `Long`, others → `Double`; booleans; strings; null). *(Superseded by Task 4.5 (JSON text): the module takes `patchJson` and `ReportOps.applyJson` parses it with `BridgeJson`, whose integral literals are already `Integer`/`Long`; the converter and `wireNumber` are gone.)* `reportAddDataAttachment` decodes with `android.util.Base64.decode(s, Base64.NO_WRAP)`; `IllegalArgumentException` → `E_REPORT_BAD_ARGUMENT`. Unknown handle → `E_REPORT_HANDLE_DEAD`. Ops run on the calling (native-modules) thread; the SDK documents `Report` as usable from any thread and its collections are synchronized. Severity is written with an explicit 1–5 check then `IssueSeverity.fromIntValue(n)` — **never the one-argument form on unchecked input**, which silently maps garbage to `VeryLow`. The module attaches itself as the sink in its constructor and detaches in `invalidate()`, exactly like `WrapperEventBus`.
 
 - [x] **Red** — `ReportHandlerBridgeTest`: `terminatingCompletesSynchronouslyAndNeverReachesJs`; `noSinkCompletesImmediately`; `unregisteredPhaseCompletesImmediately`; `tooShortADeadlineCompletesWithoutEmitting`; `eachDeliveryGetsAFreshHandle` (two AFTER dispatches of one report); `completeRunsTheSdkCompletionExactlyOnce`; `deadlineCompletesAndKillsTheHandle` (manual scheduler); `completingBeforeTheDeadlineCancelsTheTimer`; `aThrowingSinkStillCompletes`; `aThrowingSdkCompletionDoesNotEscape`; `detachCompletesEverythingOutstandingAndClearsPhases`; `detachingAStaleSinkLeavesTheCurrentOne`. `ReportHandlerDeadlinesTest`: `liveIs25sUnderTheDefault30sCap`; `liveTracksALowerOption` (10 → 9000); `zeroOptionMeans25s`; `oneSecondOptionFallsBelowTheUsefulMinimum`; `recoveryIs2500`; `onlyTheSdkHandlerThreadIsLive` (`"BugseeReportHandlerThread"` → live; `"main"`, `"BugseeRN-x"` → 2500); `handlerThreadNameMatchesTheJavadoc`. `ReportOpsTest`: `readsSeverityByValueNotOrdinal` (`Critical` → 4); `appliesSeverityOneToFive`; `rejectsSeverityZeroAndSixAndLeavesTheReportAlone`; `patchIsAllOrNothing`; `labelsReplaceThroughSetLabels` (recorded calls: `setLabels` only, never `clearLabels` + `addLabels`); `nullAttributeRemoves`; `clearAttributesRunsBeforeAttributes`; `unknownPatchKeyIsRejected`; `typeCrossesAsItsString` (`IssueType.Crash` → `"crash"`); `screenshotIdsAreSortedAscending` (`[2,0,1]` → `[0,1,2]`); `aNullFromTheSdkIsARejectedAttachment`; `fileAttachmentPassesMoveThrough` (temp file). Run `./gradlew :bugsee-android-bridge:testDebugUnitTest` → FAIL.
 - [x] **Green** — the three classes; the wrapper's two callbacks become `ReportHandlerBridge.shared().dispatch(Phase.X, report, isTerminating, completionCallback)`; the module replaces its stubs and emits `onReportHandlerRequest`.
@@ -1033,6 +1035,8 @@ These three phases run **in order: 4, then 5, then 6**. Each ends with its own r
 - **Ruling:** params must survive the bridge with their types and nesting intact. JS rejects any value outside the accepted domain before it crosses.
 - **Ruling:** device tests assert the lines, events and traces in retained bundles on both platforms.
 - **Ruling (after Task 4.4):** an object payload that can carry `null` crosses the bridge as **JSON text**, never as `UnsafeObject`. React Native's iOS `convertJSIObjectToNSDictionary` skips every member whose value converts to `nil`, and a JS `null` does unless `enableModuleArgumentNSNullConversionIOS` is on (default `false`). A library cannot depend on that app-level flag across its 0.81 floor. Android's `ReadableMap` keeps the `null`, so the same call meant different things on the two platforms. This hit event params (4.4 case 2) and, silently, Phase 3's report patch (`summary: null`, `description: null`, attribute `null`). See Task 4.5.
+- **Ruling (Task 4.5, fix round 1):** `encodeBridgeObject` replaces every lone UTF-16 surrogate, in keys and values, with U+FFFD before encoding (`String.prototype.toWellFormed` where the engine has it, a manual fallback where it does not). `JSON.stringify` escapes a lone surrogate as `\ud800`, and iOS's `NSJSONSerialization` rejects the whole text for it; RN's own string conversion used to produce U+FFFD, and this keeps that.
+- **Follow-up, not fixed by Task 4.5:** launch options (`launch`/`relaunch`, `UnsafeObject`) have the same iOS null-drop exposure: a `null`-valued option never reaches the iOS SDK.
 
 ### Planner decisions (reviewable; change them here, not inside a task)
 
@@ -1168,6 +1172,8 @@ traceString(name: string, value: string): void;
 traceBoolean(name: string, value: boolean): void;
 ```
 
+> **Superseded by Task 4.5 (JSON text).** `event` is now `event(name: string, paramsJson: string | null): void`, the params JSON text from `encodeBridgeObject`.
+
 **Public JS API (exact):**
 
 ```ts
@@ -1192,14 +1198,14 @@ trace(name: string, value: TraceValue): void;      // dispatches on typeof value
 Export `EventParams`, `EventParamValue` and `TraceValue` as types from `src/index.ts`.
 
 **Android** (`BugseeModule.java`):
-- `event(String name, @Nullable ReadableMap params)` calls `Bugsee.event(name)` when `params == null`. Otherwise it calls `Bugsee.event(name, params.toHashMap())`.
+- `event(String name, @Nullable ReadableMap params)` calls `Bugsee.event(name)` when `params == null`. Otherwise it calls `Bugsee.event(name, params.toHashMap())`. *(Superseded by Task 4.5 (JSON text): `event(String name, @Nullable String paramsJson)`, parsed with `BridgeJson.parseObject`; unparseable text is logged and the event dropped.)*
 - `traceNumber(String name, double value)` calls `Bugsee.trace(name, value)` (a boxed `Double`).
 - `traceString` calls `Bugsee.trace(name, value)`.
 - `traceBoolean(String name, boolean value)` calls `Bugsee.trace(name, Boolean.valueOf(value))`.
 - Each is wrapped in `try { … } catch (RuntimeException e) { Log.e("BugseeRN", "<method> failed", e); }`.
 
 **iOS** (`BugseeModule.mm`), each inside `BGSRNRunOnMain`:
-- `event:params:` calls `[Bugsee event:name params:params]`, where `params` is `nil` when JS sent `null`.
+- `event:params:` calls `[Bugsee event:name params:params]`, where `params` is `nil` when JS sent `null`. *(Superseded by Task 4.5 (JSON text): `event:paramsJson:`, parsed with `BGSRNJSONObject`; unparseable text is logged and the event dropped.)*
 - `traceNumber:value:` calls `[Bugsee trace:name value:@(value)]`.
 - `traceString:value:` calls `[Bugsee trace:name value:value]`.
 - `traceBoolean:value:` calls `[Bugsee trace:name value:BGSRNBoolNumber(value)]`.
@@ -1330,9 +1336,9 @@ Cases 1–4 of 4.3 apply unchanged. Two iOS notes:
 - Case 4's pre-launch drop is the SDK's own gate (`bugseeAvailableForUserDumps`) for `event` and `trace`, and the channel holder's for `log` (no wrapper is registered before `launch()`). Say so in the test's header comment, as `scenarios/channel.ts` does.
 - iOS writes `displayId: 0` on every user event and trace. The test does not assert on `displayId`.
 
-- [ ] **Red/Green** — all four cases pass on the simulator.
-- [ ] **Mutate** — temporarily make iOS `traceBoolean` pass `@(value ? 1 : 0)` as an `int`. Case 3 must fail. Revert and record.
-- [ ] **Commit** — `test(e2e): log, event and trace in an iOS bundle`.
+- [x] **Red/Green** — all four cases pass on the simulator. (Case 2 failed until Task 4.5.)
+- [x] **Mutate** — temporarily make iOS `traceBoolean` pass `@(value ? 1 : 0)` as an `int`. Case 3 must fail. Revert and record.
+- [x] **Commit** — `test(e2e): log, event and trace in an iOS bundle`.
 
 **Hardware pass: add to Task 3.H** — Task 4.4 on a physical iPhone.
 
