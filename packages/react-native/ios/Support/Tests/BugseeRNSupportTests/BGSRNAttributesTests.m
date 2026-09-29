@@ -83,6 +83,25 @@
   XCTAssertEqual(CFGetTypeID((__bridge CFTypeRef)value), CFBooleanGetTypeID());
 }
 
+/// A plain number must verify and read back as an `NSNumber`, not silently
+/// take the `CFBoolean` path above: `isKindOfClass:NSNumber.class` is true
+/// for both, so this is the one place the two could be confused.
+- (void)testAPlainNumberVerifiesAndReadsBackAsNSNumberNotCFBoolean {
+  for (NSNumber *value in @[ @(42), @(1.5) ]) {
+    _store = [NSMutableDictionary dictionary];
+    const BOOL result = [BGSRNAttributes setValue:value
+                                            forKey:@"n"
+                                            setter:self.storeSetter
+                                            getter:self.storeGetter];
+    XCTAssertTrue(result);
+
+    NSDictionary<NSString *, id> *readable = [BGSRNAttributes readable:_store];
+    NSNumber *readBack = readable[@"n"];
+    XCTAssertEqualObjects(readBack, value);
+    XCTAssertNotEqual(CFGetTypeID((__bridge CFTypeRef)readBack), CFBooleanGetTypeID());
+  }
+}
+
 - (void)testReadableTurnsAStringArrayIntoAnArray {
   NSDictionary<NSString *, id> *readable = [BGSRNAttributes readable:@{ @"tags" : @[ @"a", @"b" ] }];
   XCTAssertEqualObjects(readable[@"tags"], (@[ @"a", @"b" ]));
