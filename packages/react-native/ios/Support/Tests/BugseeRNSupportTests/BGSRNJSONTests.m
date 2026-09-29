@@ -106,6 +106,55 @@ static BOOL IsFloatNumber(id value) {
   XCTAssertFalse(IsCFBoolean(map[@"zero"]));
 }
 
+/// An integer literal past `long long` range -- what `JSON.stringify` writes
+/// for 1e20 -- is not a plain NSNumber: `NSJSONSerialization` returns an
+/// `NSDecimalNumber`. Pinned so the report path below is known to see one.
+- (void)testAnIntegerPastLongLongRangeIsADecimalNumber {
+  id big = [self parse:@"{\"n\":100000000000000000000}"][@"n"];
+  XCTAssertTrue([big isKindOfClass:NSDecimalNumber.class], @"%@ (%s)", [big class], [big objCType]);
+  XCTAssertFalse(IsCFBoolean(big));
+  XCTAssertEqual([big doubleValue], 1e20);
+}
+
+/// ...and `BGSRNReportOps` handles it: `IsFiniteNumber` accepts it as an
+/// attribute value, `WireNumber` stores it as a double (it is past 2^53, so
+/// not an exact integer), and as a severity it is out of range, not a crash.
+- (void)testADecimalNumberAttributeIsStoredAsADouble {
+  BGSRNFakeReport *report = [BGSRNFakeReport new];
+  NSError *error = nil;
+  XCTAssertTrue([BGSRNReportOps applyPatchJSON:@"{\"attributes\":{\"big\":100000000000000000000}}"
+                                      toReport:report
+                                         error:&error],
+                @"%@", error);
+  id stored = report.fakeAttributes[@"big"];
+  XCTAssertFalse([stored isKindOfClass:NSDecimalNumber.class], @"%@", [stored class]);
+  XCTAssertTrue(IsFloatNumber(stored), @"%@ (%s)", [stored class], [stored objCType]);
+  XCTAssertEqual([stored doubleValue], 1e20);
+
+  error = nil;
+  XCTAssertFalse([BGSRNReportOps applyPatchJSON:@"{\"severity\":100000000000000000000}"
+                                       toReport:report
+                                          error:&error]);
+  XCTAssertEqual(error.code, BGSRNReportErrorBadArgument);
+}
+
+#pragma mark - Lone surrogates
+
+/// Why `encodeBridgeObject` replaces lone surrogates in JS: `JSON.stringify`
+/// escapes one as `\ud800`, and `NSJSONSerialization` rejects the WHOLE text
+/// for it. Unnormalised, a summary cut mid-emoji rejected on iOS alone.
+- (void)testNSJSONSerializationRejectsALoneSurrogateEscape {
+  [self assertBad:@"{\"s\":\"\\ud800\"}"];
+  [self assertBad:@"{\"s\":\"a\\udc00b\"}"];
+}
+
+/// What JS sends instead -- U+FFFD, raw or escaped -- and a valid escaped pair, parse.
+- (void)testTheReplacementCharacterAndAValidPairParse {
+  XCTAssertEqualObjects([self parse:@"{\"s\":\"a\uFFFD\"}"][@"s"], @"a\uFFFD");
+  XCTAssertEqualObjects([self parse:@"{\"s\":\"a\\ufffd\"}"][@"s"], @"a\uFFFD");
+  XCTAssertEqualObjects([self parse:@"{\"s\":\"\\ud83d\\ude00\"}"][@"s"], @"\U0001F600");
+}
+
 #pragma mark - Structure
 
 - (void)testNestedArraysAndObjectsBecomeArraysAndDictionaries {
