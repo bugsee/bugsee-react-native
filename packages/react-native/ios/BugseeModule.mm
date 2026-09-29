@@ -22,6 +22,7 @@
 #import <BugseeRNSupport/BGSRNReportOps.h>
 #import <BugseeRNSupport/BGSRNGuardedEmit.h>
 #import <BugseeRNSupport/BGSRNValues.h>
+#import <BugseeRNSupport/BGSRNJSON.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -34,6 +35,7 @@
 #import "BGSRNReportOps.h"
 #import "BGSRNGuardedEmit.h"
 #import "BGSRNValues.h"
+#import "BGSRNJSON.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -365,14 +367,31 @@ RCT_EXPORT_MODULE(Bugsee)
 
 /// Records a named event, with optional params.
 ///
-/// `params` is `nil` exactly when JS sent `null` (no params given) rather
-/// than `{}` -- the bundle's event entry has no `params` key at all when none
-/// were given (design doc, Phase 4 bundle facts). JS has already validated
-/// params against the accepted value domain and copied it
+/// `paramsJson` is the params as JSON text (`src/bridge/json.ts`), parsed by
+/// `BGSRNJSONObject`. Not an `NSDictionary` argument: React Native's
+/// conversion of one drops every member whose JS value is `null`, so
+/// `{ nil: null }` reached the SDK as `{}` here while Android kept it. Parsed
+/// text keeps it as `NSNull`. Text that does not parse drops the event,
+/// logged: a void method has no promise to reject.
+///
+/// `paramsJson` is `nil` exactly when JS sent `null` (no params given) rather
+/// than `'{}'` -- the bundle's event entry has no `params` key at all when
+/// none were given (design doc, Phase 4 bundle facts). JS has already
+/// validated params against the accepted value domain and copied it
 /// (`src/data/validate.ts`), so nothing here is re-checked. On main, like
 /// every other SDK entry point.
 - (void)event:(NSString *)name
-       params:(NSDictionary * _Nullable)params {
+   paramsJson:(NSString * _Nullable)paramsJson {
+  NSDictionary *params = nil;
+  if (paramsJson != nil) {
+    NSError *error = nil;
+    params = BGSRNJSONObject(paramsJson, &error);
+    if (params == nil) {
+      NSLog(@"BugseeRN event \"%@\" dropped: its params are not a JSON object: %@", name,
+            error.localizedDescription);
+      return;
+    }
+  }
   BGSRNRunOnMain(^{
     [Bugsee event:name params:params];
   });
@@ -458,8 +477,13 @@ RCT_EXPORT_MODULE(Bugsee)
   }
 }
 
+/// `patchJson` is JSON text (`src/bridge/json.ts`), not an `NSDictionary`:
+/// React Native's object-argument conversion drops a `null` member, which
+/// here means "clear the summary" or "remove this attribute" -- so those
+/// edits silently did nothing. Text that is not a JSON object rejects
+/// `E_REPORT_BAD_ARGUMENT`, like any malformed field.
 - (void)reportUpdate:(NSString *)handleId
-               patch:(NSDictionary *)patch
+           patchJson:(NSString *)patchJson
              resolve:(RCTPromiseResolveBlock)resolve
               reject:(RCTPromiseRejectBlock)reject {
   id<BGSReportContract> report = [BGSRNReportHandlerBridge.shared reportFor:handleId];
@@ -469,7 +493,7 @@ RCT_EXPORT_MODULE(Bugsee)
   }
   @try {
     NSError *error = nil;
-    if ([BGSRNReportOps applyPatch:patch toReport:report error:&error]) {
+    if ([BGSRNReportOps applyPatchJSON:patchJson toReport:report error:&error]) {
       resolve(nil);
     } else {
       reject(BGSRNReportErrorWireCode(error), error.localizedDescription, nil);

@@ -8,6 +8,8 @@
 jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
 
 import type { native as NativeMock } from '../../__mocks__/native';
+// Stateless, so a binding from before `resetModules` is as good as a fresh one.
+import { jsonOf } from '../../__mocks__/native';
 import type { setReportHandler as SetReportHandler } from '../dispatcher';
 import type { BugseeReport } from '../types';
 import { ReportErrorCode } from '../errors';
@@ -109,9 +111,9 @@ describe('setReportHandler', () => {
     emit({ handleId: 'h2b', phase: 'after' });
     await flush();
 
-    expect(native.reportUpdate).toHaveBeenCalledWith('h2b', {
+    expect(native.reportUpdate).toHaveBeenCalledWith('h2b', jsonOf({
       labels: ['from-this'],
-    });
+    }));
     expect(native.completeReportHandler).toHaveBeenCalledWith('h2b');
   });
 

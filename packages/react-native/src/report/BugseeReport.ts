@@ -1,4 +1,5 @@
 import NativeBugsee from '../NativeBugsee';
+import { encodeBridgeObject } from '../bridge/json';
 import type { IssueSeverity } from '../options/enums';
 import { BugseeReportError, ReportErrorCode } from './errors';
 import type {
@@ -254,8 +255,10 @@ export class BugseeReportProxy implements BugseeReport {
   async update(patch: ReportPatch): Promise<void> {
     this.ensureAlive();
     // Validated in full before anything crosses the bridge: a patch with one
-    // bad field must send nothing, not everything except that field.
-    const wire = validateReportPatch(patch);
+    // bad field must send nothing, not everything except that field. Then
+    // sent as JSON text, the only form in which a clearing `null` survives
+    // iOS's TurboModule argument conversion.
+    const wire = encodeBridgeObject(validateReportPatch(patch));
     await this.callNative(() => NativeBugsee.reportUpdate(this.handleId, wire));
   }
 }
