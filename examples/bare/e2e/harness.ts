@@ -20,14 +20,16 @@ import {
   pullAndroidBundles,
   pullIosBundles,
 } from './bundles';
+import { IOS_DEVICE_ID, IOS_SIMULATOR_ID, IOS_TARGET } from './device';
 import {
   type DeviceLog,
+  type IosConsole,
+  type IosLaunch,
   type LogLine,
   type Scenario,
-  type SimulatorConsole,
-  type SimulatorLaunch,
   awaitMetroServes,
   launchScenario,
+  scenarioArgs,
   writeScenario,
 } from './scenario';
 
@@ -35,6 +37,13 @@ export const PLATFORM = process.env.E2E_PLATFORM;
 export const ON_ANDROID = PLATFORM === 'android';
 export const ON_IOS = PLATFORM === 'ios';
 export const describeDevice = ON_ANDROID || ON_IOS ? describe : describe.skip;
+
+/** What a suite's title calls the device it runs on. */
+export const TARGET_NAME = ON_IOS
+  ? IOS_TARGET === 'simulator'
+    ? `the iOS simulator (${IOS_SIMULATOR_ID})`
+    : `an iPhone (${IOS_DEVICE_ID})`
+  : 'an Android handset';
 
 let current: DeviceLog | undefined;
 let reportTag = 'e2e';
@@ -81,7 +90,7 @@ export interface Run {
   /** Whether the JS bundle was built with __DEV__, as the app reports it. */
   readonly dev: boolean;
   /** iOS only: the launch's console attachment, which ends with the process. */
-  readonly launch?: SimulatorLaunch;
+  readonly launch?: IosLaunch;
 }
 
 /** The SDK's version line on iOS, from the `NSLog` it prints at launch. */
@@ -128,16 +137,33 @@ export async function startRun(name: string): Promise<Run> {
 }
 
 /**
+ * The SDK's local refusal to start: once the server has rejected a token, the
+ * iOS SDK stores it (`BugseeKilledSdkKey`, in the app's defaults) and refuses
+ * every later launch with that token, before any network attempt -- whatever
+ * the endpoint. The e2e's token is a placeholder the server rejects, so any
+ * launch that reaches the real endpoint leaves the app in this state until
+ * its container is wiped; every iOS launch the e2e makes therefore carries
+ * DEAD_ENDPOINT (this file, and launch.test.ts).
+ */
+export const IOS_STOPPED_FOR_TOKEN = /Bugsee was stopped for current application token/;
+
+/**
  * The iOS counterpart of `startRun`: the scenario carries the closed
- * loopback endpoint, since the simulator has no airplane mode, and the
+ * loopback endpoint, since there is no airplane mode to switch, and the
  * retention precondition is the SDK failing to reach it rather than the
- * device being offline.
+ * device being offline. The scenario and endpoint travel as launch arguments
+ * (`scenarioArgs`), which reach the app whether it runs Metro's bundle or
+ * its embedded one; the simulator, whose app always loads from Metro, also
+ * waits for Metro to serve the new JSON.
  */
 async function startIosRun(name: string): Promise<Run> {
-  const simulator = log() as SimulatorConsole;
-  const scenario = writeScenario(name, { endpoint: DEAD_ENDPOINT });
-  await awaitMetroServes(scenario.nonce);
-  const launch = simulator.launch();
+  const ios = log() as IosConsole;
+  const extras = { endpoint: DEAD_ENDPOINT };
+  const scenario = writeScenario(name, extras);
+  if (IOS_TARGET === 'simulator') {
+    await awaitMetroServes(scenario.nonce);
+  }
+  const launch = ios.launch(scenarioArgs(scenario, extras));
   const { start } = launch;
 
   const ran = must(
@@ -157,11 +183,23 @@ async function startIosRun(name: string): Promise<Run> {
   if (version !== readNativeVersions().ios.sdk) {
     throw new Error(`iOS SDK ${version} launched, but the pin is ${readNativeVersions().ios.sdk}`);
   }
-  must(
-    await log().waitFor(/Session not initialized\. - Could not connect to the server/, 15_000, start),
+  const unreachable = must(
+    await log().waitFor(
+      new RegExp(`Session not initialized\\. - Could not connect to the server|${IOS_STOPPED_FOR_TOKEN.source}`),
+      15_000,
+      start,
+    ),
     'the SDK failing to reach the dead endpoint',
     start,
   );
+  if (IOS_STOPPED_FOR_TOKEN.test(unreachable.text)) {
+    throw new Error(
+      'the iOS SDK refuses to start: it holds a stopped flag for this token (BugseeKilledSdkKey), ' +
+        'left by an earlier launch against the real endpoint. Wipe the app container ' +
+        '(reinstall the app) and run again.\n' +
+        `Log since the run started:\n${log().tail(start)}`,
+    );
+  }
   const launched = must(
     await log().waitFor(/BUGSEE_E2E status=2/, 20_000, ran.index),
     'Status.Launched with the endpoint dead',
