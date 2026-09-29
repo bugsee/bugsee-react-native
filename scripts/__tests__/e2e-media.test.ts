@@ -1,4 +1,11 @@
-import { LUMA_BRIGHT_MIN, LUMA_DARK_MAX, blackoutPattern, shadeOf } from '../../examples/bare/e2e/media';
+import {
+  LUMA_BRIGHT_MIN,
+  LUMA_DARK_MAX,
+  blackoutPattern,
+  letterbox,
+  shadeOf,
+  videoRegion,
+} from '../../examples/bare/e2e/media';
 
 /**
  * The pure half of the device e2e's media decoder: classifying a decoded
@@ -62,5 +69,93 @@ describe('blackoutPattern', () => {
   it("reports the dark run's length", () => {
     const result = blackoutPattern([bright(0), dark(1.0), dark(3.0), bright(3.5)]);
     expect(result).toEqual({ ok: true, darkSeconds: 2.0 });
+  });
+});
+
+describe('letterbox', () => {
+  it("fits the WOD_LX1's 720x1612 display into 640x640 with the SDK's 177 px side bars", () => {
+    const box = letterbox({ width: 720, height: 1612 }, { width: 640, height: 640 });
+    expect(box.scale).toBeCloseTo(640 / 1612, 12);
+    expect(box.padH).toBe(177);
+    expect(box.padV).toBe(0);
+  });
+
+  it('puts the bars above and below when the display is the wider one', () => {
+    expect(letterbox({ width: 1600, height: 800 }, { width: 400, height: 400 })).toEqual({
+      scale: 0.25,
+      padH: 0,
+      padV: 100,
+    });
+  });
+
+  it('has no bars when the aspect ratios match', () => {
+    expect(letterbox({ width: 1080, height: 2400 }, { width: 540, height: 1200 })).toEqual({
+      scale: 0.5,
+      padH: 0,
+      padV: 0,
+    });
+  });
+
+  it('refuses a zero or negative size', () => {
+    expect(() => letterbox({ width: 0, height: 10 }, { width: 10, height: 10 })).toThrow(/positive/);
+    expect(() => letterbox({ width: 10, height: 10 }, { width: 10, height: -1 })).toThrow(/positive/);
+    expect(() => letterbox({ width: 10, height: 0 }, { width: 10, height: 10 })).toThrow(/positive/);
+    expect(() => letterbox({ width: 10, height: 10 }, { width: 0, height: 10 })).toThrow(/positive/);
+  });
+});
+
+describe('videoRegion', () => {
+  const screen = { width: 800, height: 1600 };
+  const video = { width: 800, height: 400 }; // scale 0.25, bars of 300 left and right
+
+  it('scales, shifts past the bars and insets', () => {
+    // x: 300 + 100*0.25 + 2 = 327; right: 300 + 500*0.25 - 2 = 423
+    // y: 0 + 400*0.25 + 2 = 102; bottom: 0 + 800*0.25 - 2 = 198
+    expect(videoRegion({ left: 100, top: 400, right: 500, bottom: 800 }, screen, video, 2)).toEqual({
+      x: 327,
+      y: 102,
+      w: 96,
+      h: 96,
+    });
+  });
+
+  it('with no inset, is the rectangle itself', () => {
+    expect(videoRegion({ left: 0, top: 0, right: 800, bottom: 1600 }, screen, video, 0)).toEqual({
+      x: 300,
+      y: 0,
+      w: 200,
+      h: 400,
+    });
+  });
+
+  it('rounds inwards, never past the rectangle', () => {
+    const region = videoRegion({ left: 2, top: 2, right: 19, bottom: 19 }, screen, video, 0);
+    // x: 300.5 -> 301 (up); right: 304.75 -> 304 (down); y: 0.5 -> 1; bottom: 4.75 -> 4
+    expect(region).toEqual({ x: 301, y: 1, w: 3, h: 3 });
+  });
+
+  it('maps the WOD_LX1 secure component into the 640x640 video', () => {
+    const region = videoRegion(
+      { left: 120, top: 520, right: 480, bottom: 700 },
+      { width: 720, height: 1612 },
+      { width: 640, height: 640 },
+      3,
+    );
+    const scale = 640 / 1612;
+    expect(region).toEqual({
+      x: Math.ceil(177 + 120 * scale + 3),
+      y: Math.ceil(520 * scale + 3),
+      w: Math.floor(177 + 480 * scale - 3) - Math.ceil(177 + 120 * scale + 3),
+      h: Math.floor(700 * scale - 3) - Math.ceil(520 * scale + 3),
+    });
+    expect(region).toEqual({ x: 228, y: 210, w: 136, h: 64 });
+  });
+
+  it('refuses a rectangle the inset leaves empty', () => {
+    expect(() => videoRegion({ left: 0, top: 0, right: 16, bottom: 400 }, screen, video, 2)).toThrow(/nothing/);
+    expect(() => videoRegion({ left: 0, top: 0, right: 400, bottom: 16 }, screen, video, 2)).toThrow(/nothing/);
+    // Exactly empty: w = 0.
+    expect(() => videoRegion({ left: 0, top: 0, right: 16, bottom: 400 }, screen, video, 0)).not.toThrow();
+    expect(() => videoRegion({ left: 0, top: 0, right: 0, bottom: 400 }, screen, video, 0)).toThrow(/nothing/);
   });
 });

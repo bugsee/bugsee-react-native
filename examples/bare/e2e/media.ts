@@ -93,10 +93,30 @@ const FRAME_LUMA_BYTES = 32 * 32;
  * showinfo lines agree in the normal case.
  */
 export async function frameLumas(file: string): Promise<Array<{ t: number; luma: number }>> {
+  return croppedFrameLumas(file, 'crop=iw/2:ih/2');
+}
+
+/**
+ * As `frameLumas`, but for `region` (video pixels, e.g. from `videoRegion`)
+ * rather than the centre quarter: every frame's mean luma inside it, with
+ * its presentation timestamp. Throws if the region does not fit the frame
+ * (ffmpeg refuses the crop).
+ */
+export async function regionFrameLumas(
+  file: string,
+  region: { x: number; y: number; w: number; h: number },
+): Promise<Array<{ t: number; luma: number }>> {
+  if (!(region.w > 0 && region.h > 0 && region.x >= 0 && region.y >= 0)) {
+    throw new Error(`regionFrameLumas: ${file}: empty or negative region ${JSON.stringify(region)}`);
+  }
+  return croppedFrameLumas(file, `crop=${region.w}:${region.h}:${region.x}:${region.y}`);
+}
+
+async function croppedFrameLumas(file: string, crop: string): Promise<Array<{ t: number; luma: number }>> {
   const { stdout, stderr } = await runBinary('ffmpeg', [
     '-v', 'info',
     '-i', file,
-    '-vf', 'crop=iw/2:ih/2,scale=32:32,format=gray,showinfo',
+    '-vf', `${crop},scale=32:32,format=gray,showinfo`,
     '-fps_mode', 'passthrough',
     '-f', 'rawvideo',
     '-',
@@ -133,6 +153,64 @@ export async function frameLumas(file: string): Promise<Array<{ t: number; luma:
     frames.push({ t, luma: sum / FRAME_LUMA_BYTES });
   }
   return frames;
+}
+
+/** Where the display lands inside a letterboxed video frame. */
+export interface Letterbox {
+  /** Video pixels per display pixel. */
+  readonly scale: number;
+  /** The bars left and right (each), in video pixels. */
+  readonly padH: number;
+  /** The bars above and below (each), in video pixels. */
+  readonly padV: number;
+}
+
+/**
+ * How a `screen`-sized display is fitted into a `video`-sized frame: scaled
+ * uniformly to fit, and centred, with black bars on the two sides that are
+ * left over. Derived from the two sizes rather than assumed: the Android SDK
+ * encodes a 720x1612 display into 640x640 frames with 177 px bars left and
+ * right, which is this function's answer for those sizes (the bundle's
+ * `video.aux` records the same bars, and the device tests cross-check it).
+ */
+export function letterbox(
+  screen: { width: number; height: number },
+  video: { width: number; height: number },
+): Letterbox {
+  if (!(screen.width > 0 && screen.height > 0 && video.width > 0 && video.height > 0)) {
+    throw new Error(`letterbox: sizes must be positive, got screen ${JSON.stringify(screen)} video ${JSON.stringify(video)}`);
+  }
+  const scale = Math.min(video.width / screen.width, video.height / screen.height);
+  return {
+    scale,
+    padH: Math.round((video.width - screen.width * scale) / 2),
+    padV: Math.round((video.height - screen.height * scale) / 2),
+  };
+}
+
+/**
+ * A display-pixel rectangle (edges, e.g. uiautomator bounds) as a crop of a
+ * letterboxed video frame, shrunk by `inset` video pixels on every edge and
+ * rounded inwards, so the crop never reaches past the rectangle. The inset
+ * keeps the crop off the rectangle's edge, where h264's block transform and
+ * 4:2:0 chroma blend the two sides and the scaling rounds by up to a pixel.
+ * Throws when nothing is left after the inset.
+ */
+export function videoRegion(
+  rect: { left: number; top: number; right: number; bottom: number },
+  screen: { width: number; height: number },
+  video: { width: number; height: number },
+  inset: number,
+): { x: number; y: number; w: number; h: number } {
+  const { scale, padH, padV } = letterbox(screen, video);
+  const x = Math.ceil(padH + rect.left * scale + inset);
+  const y = Math.ceil(padV + rect.top * scale + inset);
+  const right = Math.floor(padH + rect.right * scale - inset);
+  const bottom = Math.floor(padV + rect.bottom * scale - inset);
+  if (right <= x || bottom <= y) {
+    throw new Error(`videoRegion: ${JSON.stringify(rect)} leaves nothing after a ${inset} px inset`);
+  }
+  return { x, y, w: right - x, h: bottom - y };
 }
 
 /** One decoded region sample's raw byte count: a 16x16 `format=gray` plane. */
