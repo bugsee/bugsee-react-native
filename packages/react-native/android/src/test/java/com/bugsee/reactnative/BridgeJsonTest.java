@@ -1,10 +1,12 @@
 package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import org.json.JSONException;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -160,5 +162,77 @@ public class BridgeJsonTest {
     @Test
     public void aNullStringIsBad() {
         assertBad(null);
+    }
+
+    /**
+     * Android's real libcore {@code JSONException} embeds the whole source
+     * text in its message (unlike the reference org.json these tests
+     * otherwise run against -- see the class doc), and that message reaches
+     * logcat ({@code BugseeModule.event}) and a promise rejection
+     * ({@code ReportOps.applyJson}) verbatim. Built by hand, shaped like a
+     * real libcore message, since the only way to get the reference
+     * implementation to embed the text this way is to fake it: this pins
+     * {@link BridgeJson#malformedJsonMessage} itself, which is what actually
+     * strips it, independent of which org.json parsed the text.
+     */
+    @Test
+    public void malformedJsonMessageNeverIncludesTheInputText() {
+        final String secret = "super-secret-value-should-not-leak";
+        final String libcoreStyleInput = "{\"a\":\"" + secret;
+        final JSONException libcoreStyle = new JSONException(
+                "Unterminated string at character 15 of " + libcoreStyleInput);
+
+        final String message = BridgeJson.malformedJsonMessage(
+                libcoreStyle, libcoreStyleInput.length());
+
+        assertFalse(message.contains(secret));
+        assertFalse(message.contains(libcoreStyleInput));
+        assertTrue(message.contains("15"));
+        assertTrue(message.contains(String.valueOf(libcoreStyleInput.length())));
+    }
+
+    /** No usable position in the exception's own message: still no input text, just the length. */
+    @Test
+    public void malformedJsonMessageFallsBackToJustTheLengthWhenNoPositionIsReported() {
+        final String secret = "another-secret-that-must-not-leak";
+        final JSONException noPosition = new JSONException(secret);
+
+        final String message = BridgeJson.malformedJsonMessage(noPosition, secret.length());
+
+        assertFalse(message.contains(secret));
+        assertTrue(message.contains(String.valueOf(secret.length())));
+    }
+
+    /**
+     * End-to-end regression: with the reference org.json actually parsing
+     * malformed text, the resulting {@link BridgeJson.BadJson} message still
+     * never contains the input -- it just cannot pin the specific libcore leak
+     * this class exists to close (see the two tests above for that).
+     */
+    @Test
+    public void endToEndMalformedJsonNeverIncludesTheInputText() {
+        final String secret = "super-secret-value-should-not-leak";
+        final String json = "{\"a\":\"" + secret; // unterminated string
+        try {
+            BridgeJson.parseObject(json);
+            fail("expected BadJson");
+        } catch (final BridgeJson.BadJson e) {
+            final String message = String.valueOf(e.getMessage());
+            assertFalse(message.contains(secret));
+            assertFalse(message.contains(json));
+            assertTrue(message.contains(String.valueOf(json.length())));
+        }
+    }
+
+    /** The trailing-text and non-object branches already avoid this; pinned so they stay that way. */
+    @Test
+    public void otherBadJsonMessagesAlsoNeverIncludeTheInputText() {
+        final String withMarker = "{\"a\":1}<trailing-secret-marker>";
+        try {
+            BridgeJson.parseObject(withMarker);
+            fail("expected BadJson");
+        } catch (final BridgeJson.BadJson e) {
+            assertFalse(String.valueOf(e.getMessage()).contains("trailing-secret-marker"));
+        }
     }
 }
