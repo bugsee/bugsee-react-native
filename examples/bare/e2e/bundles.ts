@@ -285,7 +285,10 @@ async function deviceEntries(subdirectory: string): Promise<string[] | undefined
     throw error;
   }
   const files = (result.files ?? []) as Array<{ name?: string; relativePath?: string }>;
-  return files.map(f => f.name ?? f.relativePath ?? '').filter(name => name !== '' && !name.includes('/'));
+  // A directory entry may carry a trailing `/`; a deeper path is not ours.
+  return files
+    .map(f => (f.name ?? f.relativePath ?? '').replace(/\/+$/, ''))
+    .filter(name => name !== '' && !name.includes('/'));
 }
 
 /**
@@ -339,8 +342,13 @@ export async function clearIosBundles(): Promise<void> {
   } finally {
     rmSync(empty, { recursive: true, force: true });
   }
+  // The wipe keeps the container's standard directories, so Library/Caches
+  // must still list: a listing that failed cannot count as "gone".
   const caches = await deviceEntries('Library/Caches');
-  const left = (caches ?? []).filter(name => [IOS_SDK_DATA, IOS_CRASH_QUEUE].some(path => path.endsWith(`/${name}`)));
+  if (caches === undefined) {
+    throw new Error('clearIosBundles: Library/Caches could not be listed after the wipe, so nothing is proven gone');
+  }
+  const left = caches.filter(name => [IOS_SDK_DATA, IOS_CRASH_QUEUE].some(path => path.endsWith(`/${name}`)));
   if (left.length > 0) {
     throw new Error(`clearIosBundles: still on the iPhone after the wipe: Library/Caches/{${left.join(',')}}`);
   }
