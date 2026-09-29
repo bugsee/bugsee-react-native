@@ -1,5 +1,6 @@
 /**
  * Task 4.3: log lines, events and traces in an Android retained bundle.
+ * Task 4.4: the same four cases on the iOS simulator (see device.ts/bundles.ts).
  *
  * Tasks 4.1 and 4.2 unit-tested `Bugsee.log`, `event` and `trace` against
  * mocks. What only a device shows is what the SDK then writes: that a line
@@ -8,11 +9,26 @@
  * a trace keeps its value's type (a boolean does not become `1`), and that
  * nothing sent before `launch()` reaches the bundle.
  *
- * Preconditions, as for wrapper-channel.test.ts: the debug build is installed
- * on the handset named in device.ts, and Metro is running with
+ * Android preconditions, as for wrapper-channel.test.ts: the debug build is
+ * installed on the handset named in device.ts, and Metro is running with
  * `adb reverse tcp:8081 tcp:8081`. Retention is airplane mode (bundles.ts).
  *
- * Markers, from scenarios/data.ts (console.log, tag ReactNativeJS):
+ * iOS preconditions, as for report-handler.test.ts (Task 3.4f) and
+ * wrapper-channel.test.ts (Task 3.5d): the Debug app is installed on the
+ * booted simulator (IOS_SIMULATOR_ID) and Metro is running. The simulator has
+ * no airplane mode, so retention goes through the closed loopback endpoint
+ * (bundles.ts, DEAD_ENDPOINT) instead.
+ *
+ * Two iOS notes (case 4): the pre-launch drop is the SDK's own launch gate
+ * (`bugseeAvailableForUserDumps`) for `event` and `trace`, since both are
+ * no-ops unless the SDK is Launched or Launching -- not the channel holder's
+ * gate, which is what drops the pre-launch log line on both platforms (no
+ * wrapper is registered before `launch()` calls `setWrapperInfo`). And iOS
+ * writes `displayId: 0` on every user event and trace; this test does not
+ * assert on `displayId`.
+ *
+ * Markers, from scenarios/data.ts (console.log, tag ReactNativeJS on Android;
+ * mirrored to the simulator's console-pty stream on iOS):
  *   BUGSEE_E2E data pre-sent nonce=<n>   the pre-launch log/event/trace ran
  *   BUGSEE_E2E data sent nonce=<n>       everything after Launched ran
  */
@@ -21,6 +37,7 @@ import {
   airplane,
   captureEvents,
   removePulledBundles,
+  terminateIosApp,
 } from './bundles';
 import { ANDROID_PACKAGE } from './device';
 import {
@@ -34,7 +51,14 @@ import {
   startRun,
   useLog,
 } from './harness';
-import { type LogLine, Logcat, adb, resetScenario } from './scenario';
+import {
+  type DeviceLog,
+  type LogLine,
+  Logcat,
+  SimulatorConsole,
+  adb,
+  resetScenario,
+} from './scenario';
 
 jest.setTimeout(5 * 60_000);
 
@@ -81,13 +105,8 @@ function rawCapture(bundle: PulledBundle, type: string): string {
   return text;
 }
 
-describeDevice('log, event and trace in a retained bundle', () => {
-  if (ON_IOS) {
-    it.todo('iOS is Task 4.4');
-    return;
-  }
-
-  let log: Logcat;
+describeDevice(`log, event and trace in a retained bundle on ${ON_IOS ? 'the iOS simulator' : 'an Android handset'}`, () => {
+  let log: DeviceLog;
   let run: Run;
   let nonce: string;
   let bundles: PulledBundle[];
@@ -95,10 +114,17 @@ describeDevice('log, event and trace in a retained bundle', () => {
   let preSent: LogLine | undefined;
 
   beforeAll(async () => {
-    log = await Logcat.start();
-    useLog(log, '4.3');
-    // 9.3.2: offline before the app starts, so the report is retained.
-    await airplane(true);
+    if (ON_IOS) {
+      // No network switch to throw: every iOS launch carries DEAD_ENDPOINT
+      // (startIosRun), which is what retains its bundle.
+      log = SimulatorConsole.start();
+      useLog(log, '4.4');
+    } else {
+      log = await Logcat.start();
+      useLog(log, '4.3');
+      // 9.3.2: offline before the app starts, so the report is retained.
+      await airplane(true);
+    }
     await clearBundles();
 
     run = await startRun('data');
@@ -131,11 +157,17 @@ describeDevice('log, event and trace in a retained bundle', () => {
     // Always, and in this order: stop the app, drop what it retained, then
     // bring the network back -- the handset is shared.
     try {
-      await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+      if (ON_IOS) {
+        await terminateIosApp();
+      } else {
+        await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+      }
       await clearBundles().catch(() => {});
     } finally {
       try {
-        await airplane(false);
+        if (!ON_IOS) {
+          await airplane(false);
+        }
       } finally {
         try {
           const { removed, kept } = removePulledBundles();
