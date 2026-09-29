@@ -43,6 +43,17 @@ export const EVENT_PARAMS_MAX_DEPTH = 16;
 export const BUNDLE_NUMBER_LIMIT = 2 ** 63;
 
 /**
+ * {@link BUNDLE_NUMBER_LIMIT} as the exact decimal integer string, for use in
+ * rejection messages. Printing the bound (or a rejected value near it) via
+ * `Number`'s own string conversion rounds: `String(BUNDLE_NUMBER_LIMIT)`
+ * reads `9223372036854776000`, not the true `9223372036854775808`, and a
+ * value like `1e19` prints as `10000000000000000000`. Derived with `BigInt`,
+ * which has no such rounding, rather than hard-coded, so it can never drift
+ * from {@link BUNDLE_NUMBER_LIMIT}.
+ */
+export const BUNDLE_NUMBER_LIMIT_DECIMAL = (2n ** 63n).toString();
+
+/**
  * Whether `value` satisfies the domain every bundle number must:
  * `typeof value === 'number'`, finite, and `|value| < BUNDLE_NUMBER_LIMIT`.
  * Takes `unknown`, like `Number.isFinite`'s own signature in this codebase's
@@ -104,12 +115,15 @@ function copyValue(
   const kind = typeof value;
   if (kind === 'string' || kind === 'boolean') return value;
   if (kind === 'number') {
+    // Never echo the rejected value: `String`/template-literal conversion of
+    // a number this size rounds -- see {@link BUNDLE_NUMBER_LIMIT_DECIMAL}.
+    // The path is still named.
     if (!Number.isFinite(value)) {
-      throw new RangeError(`${path} must be a finite number, got ${String(value)}`);
+      throw new RangeError(`${path} must be a finite number`);
     }
     if (!isWithinBundleNumberLimit(value)) {
       throw new RangeError(
-        `${path} must be smaller than 2^63 in magnitude, got ${String(value)}`,
+        `${path} must be smaller than 2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`,
       );
     }
     return value;
@@ -228,12 +242,13 @@ export function assertTraceValue(value: unknown): asserts value is TraceValue {
   const kind = typeof value;
   if (kind === 'string' || kind === 'boolean') return;
   if (kind === 'number') {
+    // Never echo the rejected value -- see {@link BUNDLE_NUMBER_LIMIT_DECIMAL}.
     if (!Number.isFinite(value)) {
-      throw new RangeError(`Bugsee.trace requires a finite number, got ${String(value)}`);
+      throw new RangeError(`Bugsee.trace requires a finite number`);
     }
     if (!isWithinBundleNumberLimit(value)) {
       throw new RangeError(
-        `Bugsee.trace requires a number smaller than 2^63 in magnitude, got ${String(value)}`,
+        `Bugsee.trace requires a number smaller than 2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`,
       );
     }
     return;

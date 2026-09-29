@@ -1,5 +1,6 @@
 import {
   BUNDLE_NUMBER_LIMIT,
+  BUNDLE_NUMBER_LIMIT_DECIMAL,
   EVENT_PARAMS_MAX_DEPTH,
   assertEventOrTraceName,
   assertTraceValue,
@@ -67,7 +68,9 @@ describe('copyEventParams', () => {
       expect(() => copyEventParams({ a: { b: [0, bad] } } as unknown as EventParams))
         .toThrow(RangeError);
       expect(() => copyEventParams({ a: { b: [0, bad] } } as unknown as EventParams))
-        .toThrow(`params.a.b[1] must be a finite number, got ${String(bad)}`);
+        .toThrow('params.a.b[1] must be a finite number');
+      expect(() => copyEventParams({ a: { b: [0, bad] } } as unknown as EventParams))
+        .not.toThrow(String(bad));
     }
   });
 
@@ -230,9 +233,21 @@ describe('copyEventParams', () => {
     expect(() => copyEventParams({ n: BUNDLE_NUMBER_LIMIT } as unknown as EventParams))
       .toThrow(RangeError);
     expect(() => copyEventParams({ n: BUNDLE_NUMBER_LIMIT } as unknown as EventParams))
-      .toThrow(`params.n must be smaller than 2^63 in magnitude, got ${BUNDLE_NUMBER_LIMIT}`);
+      .toThrow(`params.n must be smaller than 2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`);
     expect(() => copyEventParams({ n: -BUNDLE_NUMBER_LIMIT } as unknown as EventParams))
       .toThrow(RangeError);
+  });
+
+  // `BUNDLE_NUMBER_LIMIT` is a `number` -- printing it (or the rejected value)
+  // via `String`/template-literal conversion rounds: `String(BUNDLE_NUMBER_LIMIT)`
+  // reads `9223372036854776000`, not the true `9223372036854775808`.
+  it('does not echo the rejected number, at any precision, in the message', () => {
+    expect(() => copyEventParams({ n: 1e19 } as unknown as EventParams)).toThrow(RangeError);
+    expect(() => copyEventParams({ n: 1e19 } as unknown as EventParams)).not.toThrow('1e19');
+    expect(() => copyEventParams({ n: 1e19 } as unknown as EventParams))
+      .not.toThrow('10000000000000000000');
+    expect(() => copyEventParams({ n: BUNDLE_NUMBER_LIMIT } as unknown as EventParams))
+      .not.toThrow('9223372036854776000');
   });
 
   it('accepts the largest double below BUNDLE_NUMBER_LIMIT, both signs', () => {
@@ -325,12 +340,11 @@ describe('assertTraceValue', () => {
     expect(() => assertTraceValue({})).toThrow(TypeError);
   });
 
-  it('names the non-finite value in its message', () => {
-    expect(() => assertTraceValue(NaN)).toThrow('Bugsee.trace requires a finite number, got NaN');
-    expect(() => assertTraceValue(Infinity))
-      .toThrow('Bugsee.trace requires a finite number, got Infinity');
-    expect(() => assertTraceValue(-Infinity))
-      .toThrow('Bugsee.trace requires a finite number, got -Infinity');
+  it('names the problem for a non-finite value, without echoing it', () => {
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      expect(() => assertTraceValue(bad)).toThrow('Bugsee.trace requires a finite number');
+      expect(() => assertTraceValue(bad)).not.toThrow(String(bad));
+    }
   });
 
   it('names the actual type for a value outside the domain', () => {
@@ -345,9 +359,16 @@ describe('assertTraceValue', () => {
   it('rejects a number at or beyond BUNDLE_NUMBER_LIMIT (2^63), both signs', () => {
     expect(() => assertTraceValue(BUNDLE_NUMBER_LIMIT)).toThrow(RangeError);
     expect(() => assertTraceValue(BUNDLE_NUMBER_LIMIT)).toThrow(
-      `Bugsee.trace requires a number smaller than 2^63 in magnitude, got ${BUNDLE_NUMBER_LIMIT}`,
+      `Bugsee.trace requires a number smaller than 2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`,
     );
     expect(() => assertTraceValue(-BUNDLE_NUMBER_LIMIT)).toThrow(RangeError);
+  });
+
+  it('does not echo the rejected number, at any precision, in the message', () => {
+    expect(() => assertTraceValue(1e19)).toThrow(RangeError);
+    expect(() => assertTraceValue(1e19)).not.toThrow('1e19');
+    expect(() => assertTraceValue(1e19)).not.toThrow('10000000000000000000');
+    expect(() => assertTraceValue(BUNDLE_NUMBER_LIMIT)).not.toThrow('9223372036854776000');
   });
 
   it('accepts the largest double below BUNDLE_NUMBER_LIMIT, both signs', () => {
