@@ -81,6 +81,29 @@ export interface Spec extends TurboModule {
   upload(summary: string, description: string): void;
 
   /**
+   * Records a named event, with optional params.
+   *
+   * `params` is `null` when JS sent no params (Android: `Bugsee.event(name)`;
+   * iOS: `[Bugsee event:name params:nil]`) rather than `{}` -- the bundle's
+   * `events.user` entry omits `params` entirely when none were given (design
+   * doc, Phase 4 bundle facts), and a `{}` here would produce an empty object
+   * on the wire instead. JS has already validated `params` against the
+   * accepted value domain (`src/data/validate.ts`) and copied it, so nothing
+   * unchecked reaches this call.
+   */
+  event(name: string, params: UnsafeObject | null): void;
+  /** A numeric trace value, boxed on both platforms so it cannot arrive as a string. */
+  traceNumber(name: string, value: number): void;
+  /** A string trace value. */
+  traceString(name: string, value: string): void;
+  /**
+   * A boolean trace value, kept a boolean across the bridge -- typed
+   * separately from {@link traceNumber} so it cannot silently arrive as `0`
+   * or `1` (Planner decisions, Phase 4).
+   */
+  traceBoolean(name: string, value: boolean): void;
+
+  /**
    * One log line into the SDK's wrapper channel, attributed to the wrapper
    * (source `Custom`, no tag) rather than to the app's own `Bugsee.log`.
    *
