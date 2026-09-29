@@ -39,6 +39,10 @@
     "testPathIgnorePatterns": [
       "/node_modules/",
       "/examples/"
+    ],
+    "testMatch": [
+      "**/__tests__/**/*.test.[jt]s?(x)",
+      "**/?(*.)+(spec|test).[tj]s?(x)"
     ]
   },
   "engines": {

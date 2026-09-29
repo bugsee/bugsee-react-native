@@ -28,6 +28,76 @@ npm i --silent --no-audit --no-fund "react-native@~${RN}.0" "@react-native/codeg
 ACTUAL="$(node -p "require('react-native/package.json').version")"
 echo "    resolved ${ACTUAL}"
 
+echo "--- view-tree internals guard"
+# src/viewtree/fiber.ts (Task 6.3) is the only module that reads React /
+# React Native internals, and it depends on three things staying put. This
+# fails loudly, with a named reason, the day any of them move — instead of
+# the view-tree walk silently going blind on a device.
+RN_SRC="node_modules/react-native"
+
+# (1) getPublicInstanceFromInternalInstanceHandle is what turns the fiber's
+# internal instance handle into the public instance `measureInWindow` lives
+# on. It is defined in RendererImplementation.js and re-exported (`export *`)
+# by RendererProxy.js, so either file naming it satisfies fiber.ts's import
+# from RendererProxy.
+grep -q 'getPublicInstanceFromInternalInstanceHandle' \
+    "$RN_SRC/Libraries/ReactNative/RendererImplementation.js" \
+    "$RN_SRC/Libraries/ReactNative/RendererProxy.js" \
+  || { echo "FAIL: getPublicInstanceFromInternalInstanceHandle is not exported by RendererImplementation.js or RendererProxy.js"; exit 1; }
+echo "    getPublicInstanceFromInternalInstanceHandle is exported"
+
+# (2) __internalInstanceHandle is what fiberRootOf walks up from. Through
+# 0.81 it is assigned in its own file, ReactFabricHostComponent.js; 0.87
+# folded that file into ReactFabricPublicInstance.js. Either location
+# satisfies this — a fixed path would silently stop checking anything on
+# whichever version moved it.
+HOST_COMPONENT_FILE=""
+for candidate in \
+  "$RN_SRC/Libraries/ReactNative/ReactFabricPublicInstance/ReactFabricHostComponent.js" \
+  "$RN_SRC/Libraries/ReactNative/ReactFabricPublicInstance/ReactFabricPublicInstance.js"
+do
+  if [ -f "$candidate" ] && grep -q '__internalInstanceHandle' "$candidate"; then
+    HOST_COMPONENT_FILE="$candidate"
+    break
+  fi
+done
+[ -n "$HOST_COMPONENT_FILE" ] \
+  || { echo "FAIL: no __internalInstanceHandle assignment found in ReactFabricHostComponent.js or ReactFabricPublicInstance.js"; exit 1; }
+echo "    __internalInstanceHandle is assigned in $(basename "$HOST_COMPONENT_FILE")"
+
+ELEMENT_FILE="$RN_SRC/src/private/webapis/dom/nodes/ReactNativeElement.js"
+[ -f "$ELEMENT_FILE" ] && grep -q '__internalInstanceHandle' "$ELEMENT_FILE" \
+  || { echo "FAIL: no __internalInstanceHandle assignment found in ReactNativeElement.js"; exit 1; }
+echo "    __internalInstanceHandle is assigned in ReactNativeElement.js"
+
+# (3) measureHostFiber assumes measureInWindow's native callback runs
+# synchronously (it reads the result the same tick, never awaiting a
+# promise). Scoped to the measureInWindow branch specifically, not just
+# "somewhere in this file" — the neighbouring `measure` branch has its own,
+# unrelated callbackFunction.call(...).
+BINDING_CPP="$RN_SRC/ReactCommon/react/renderer/uimanager/UIManagerBinding.cpp"
+[ -f "$BINDING_CPP" ] \
+  || { echo "FAIL: UIManagerBinding.cpp not found — measureHostFiber's synchronous-callback assumption cannot be checked"; exit 1; }
+node -e '
+  const fs = require("fs");
+  const src = fs.readFileSync(process.argv[1], "utf8");
+  const marker = "\"measureInWindow\"";
+  const start = src.indexOf(marker);
+  if (start === -1) {
+    console.error("FAIL: no measureInWindow branch found in UIManagerBinding.cpp");
+    process.exit(1);
+  }
+  const nextBranch = src.indexOf("if (methodName ==", start + marker.length);
+  const branch = src.slice(start, nextBranch === -1 ? undefined : nextBranch);
+  if (!branch.includes("callbackFunction.call(")) {
+    console.error(
+      "FAIL: the measureInWindow branch of UIManagerBinding.cpp no longer calls its callback synchronously (callbackFunction.call(...))",
+    );
+    process.exit(1);
+  }
+' "$BINDING_CPP"
+echo "    measureInWindow calls its callback synchronously"
+
 # A package shaped like ours, carrying the real codegenConfig and the real spec.
 mkdir -p pkg/src
 # -R, not src/*.ts: the source tree has subdirectories (options/, wrapper/),
