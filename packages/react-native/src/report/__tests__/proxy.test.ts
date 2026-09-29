@@ -501,6 +501,31 @@ describe('read', () => {
     },
   );
 
+  // The read half of the "__proto__" round trip: setAttribute('__proto__')
+  // reaches native, so native can hand it back. Assigned into the result's
+  // plain `{}` it would hit Object.prototype's setter and vanish. The result
+  // stays an ordinary object (hasOwnProperty, toString) -- it is user-facing.
+  it('reads a "__proto__" attribute back as an own key of an ordinary object', async () => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+    const raw: Record<string, unknown> = { a: 1 };
+    Object.defineProperty(raw, '__proto__', {
+      value: 'x',
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    native.reportRead.mockResolvedValueOnce(snapshot({ attributes: raw }));
+
+    const attributes = await report.getAttributes();
+
+    expect(Object.keys(attributes)).toEqual(['a', '__proto__']);
+    // Exactly what a plain assignment would have made, for every key.
+    const plain = { enumerable: true, writable: true, configurable: true };
+    expect(Object.getOwnPropertyDescriptor(attributes, '__proto__')).toEqual({ value: 'x', ...plain });
+    expect(Object.getOwnPropertyDescriptor(attributes, 'a')).toEqual({ value: 1, ...plain });
+    expect(Object.getPrototypeOf(attributes)).toBe(Object.prototype);
+  });
+
   it('drops a non-primitive attribute value', async () => {
     const report = new BugseeReportProxy('h1', 'r1', 'bug');
     native.reportRead.mockResolvedValueOnce(
