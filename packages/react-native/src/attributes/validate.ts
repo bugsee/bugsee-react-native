@@ -10,7 +10,10 @@
  * must still be able to report a value an app (or an older wrapper) set that
  * way.
  */
-import { BUNDLE_NUMBER_LIMIT, isWithinBundleNumberLimit } from '../data/validate';
+import {
+  BUNDLE_NUMBER_LIMIT_DECIMAL,
+  isWithinBundleNumberLimit,
+} from '../data/validate';
 import { AttributeErrorCode, BugseeAttributeError } from './errors';
 
 /** One value `setAttribute` accepts. */
@@ -55,7 +58,7 @@ export function validateAttributeName(name: unknown): string {
 /**
  * Validates an attribute value against the accepted domain. Throws
  * `BugseeAttributeError` code `BadArgument` for anything outside it,
- * including a number failing {@link BUNDLE_NUMBER_LIMIT} (which also covers
+ * including a number failing {@link isWithinBundleNumberLimit} (which also covers
  * `NaN`/`Infinity`/`-Infinity`, all non-finite) or a string over
  * {@link ATTRIBUTE_STRING_MAX_LENGTH} UTF-16 units -- `.length` counts UTF-16
  * units natively, so no surrogate-aware counting is needed here.
@@ -75,9 +78,12 @@ export function validateAttributeValue(value: unknown): AttributeValue {
   }
   if (typeof value === 'number') {
     if (!isWithinBundleNumberLimit(value)) {
+      // Never echo the rejected value -- see
+      // {@link BUNDLE_NUMBER_LIMIT_DECIMAL} for why even the bound itself
+      // must not be printed via `Number`'s own string conversion.
       badArgument(
         `attribute value must be a finite number smaller than ` +
-          `${BUNDLE_NUMBER_LIMIT} (2^63) in magnitude, got ${String(value)}`,
+          `2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`,
       );
     }
     return value;
