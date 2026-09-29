@@ -1,4 +1,5 @@
 #import "BGSRNReportOps.h"
+#import "BGSRNJSON.h"
 
 #include <math.h>
 
@@ -215,6 +216,19 @@ static NSNumber *WireNumber(NSNumber *number) {
     }
   }];
   return YES;
+}
+
++ (BOOL)applyPatchJSON:(NSString *)json
+              toReport:(id<BGSReportContract>)report
+                 error:(NSError **)error {
+  NSError *parseError = nil;
+  NSDictionary *patch = BGSRNJSONObject(json, &parseError);
+  if (patch == nil) {
+    return Fail(error, BGSRNReportErrorBadArgument,
+                [NSString stringWithFormat:@"update() patch is not a JSON object: %@",
+                                           parseError.localizedDescription]);
+  }
+  return [self applyPatch:patch toReport:report error:error];
 }
 
 + (BOOL)addFileAtPath:(NSString *)path
