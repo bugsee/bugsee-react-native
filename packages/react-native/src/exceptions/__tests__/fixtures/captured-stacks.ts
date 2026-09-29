@@ -75,6 +75,29 @@ level1@sample.js:8:14
 global code@sample.js:13:9`;
 
 /**
+ * `jsc sample2.js` (same JSC as above), where `sample2.js` is:
+ *
+ * ```js
+ * function TypeErrorFactory() {
+ *   throw new TypeError("boom");
+ * }
+ * try {
+ *   TypeErrorFactory();
+ * } catch (e) {
+ *   print(e.stack);
+ * }
+ * ```
+ *
+ * Real captured output (review N2): the thrown error's `name` is
+ * `"TypeError"`, and the top frame's own function name, `TypeErrorFactory`,
+ * starts with it as plain text. `stripKnownHeader` must not strip `name` as
+ * a bare prefix here -- there is no header to strip at all (JSC never
+ * writes one) -- or this frame's member becomes the wrong `"Factory"`.
+ */
+export const JSC_NAME_PREFIX_COLLISION_SAMPLE = `TypeErrorFactory@sample2.js:2:22
+global code@sample2.js:5:19`;
+
+/**
  * Hand-written (see the file header): a Hermes **release** shape --
  * `Name: message` header, `address at index.android.bundle` frames, an
  * `InternalBytecode.js` frame and a `(native)` frame -- matching the
@@ -97,13 +120,35 @@ export const HERMES_DEBUG_SAMPLE = `TypeError: captured stack sample
     at anonymous (http://localhost:8081/index.bundle//&platform=android&dev=true&minify=false:1200:9)`;
 
 /**
- * Hand-written: a React componentStack shape (built-in host components plus
- * an owner-stack-style engine frame), matching the payload table's
- * `"in ComponentName (at File.js:10)"` form. Not engine-specific -- React
- * produces this string itself, on any of the three engines above -- so
- * there is nothing to "capture" per engine here.
+ * Not hand-written, and not "captured" by running anything -- built by hand
+ * from reading the actual algorithm in this machine's bundled React 19.2
+ * renderer, `node_modules/react-native/Libraries/Renderer/implementations/
+ * ReactFabric-dev.js`, `describeBuiltInComponentFrame` (lines 252-267) and
+ * `getStackByFiberInDevAndProd` (line 451, which walks the fiber tree
+ * calling it for a built-in host component -- `View`, `Text`, ... -- or
+ * `describeNativeComponentFrame` for a user one, concatenating the
+ * results). Round 1's `COMPONENT_STACK_SAMPLE` invented `"in View
+ * (<anonymous>)"`, a shape this renderer does not produce (review M2/N4).
+ *
+ * `describeBuiltInComponentFrame` picks its own format at runtime from a
+ * real `Error().stack` sample of the *current* engine: `"\n" + prefix +
+ * name + suffix`, where (its own source, verbatim) `prefix` is `"    at "`
+ * when the engine's own stacks contain `"\n    at"` (Hermes, V8) or `""`
+ * otherwise, and `suffix` is `" (<anonymous>)"` for the first case or
+ * `"@unknown:0:0"` for one whose stacks contain `"@"` (JSC) instead. A
+ * user component instead goes through `describeNativeComponentFrame`,
+ * which really throws from inside the component function and reads back
+ * its engine-native frame -- the same "at NAME (file:line:col)"/
+ * "NAME@file:line:col" shape as everywhere else here, with a real
+ * location. `user` is false for the two built-in sentinels
+ * (`"<anonymous>"` has no line/column at all; `"unknown:0:0"` is line 0,
+ * column 0 by construction, review N4) and true for `MyScreen`.
  */
-export const COMPONENT_STACK_SAMPLE = `    in View (<anonymous>)
-    in RCTView (<anonymous>)
-    in MyScreen (at App.js:42)
-    in App (at index.js:7)`;
+export const COMPONENT_STACK_SAMPLE_HERMES = `    at MyScreen (App.js:42:10)
+    at View (<anonymous>)
+    at App (index.js:7:5)`;
+
+/** The same tree, on JSC's own stack shape -- see `COMPONENT_STACK_SAMPLE_HERMES`. */
+export const COMPONENT_STACK_SAMPLE_JSC = `MyScreen@App.js:42:10
+View@unknown:0:0
+App@index.js:7:5`;
