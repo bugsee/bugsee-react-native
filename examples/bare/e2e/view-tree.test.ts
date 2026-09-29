@@ -25,8 +25,8 @@ import { join } from 'node:path';
 import { type PulledBundle, airplane, captureEvents, removePulledBundles } from './bundles';
 import { ANDROID_PACKAGE } from './device';
 import { ON_ANDROID, type Run, awaitBundles, clearBundles, must, report, startRun, useLog } from './harness';
-import { Logcat, adb, resetScenario } from './scenario';
-import { type Rect, boundsIn, bundleBySummary, uiDump } from './screen';
+import { type LogLine, Logcat, adb, resetScenario } from './scenario';
+import { type Rect, assertMedia, boundsIn, bundleBySummary, numberIn, uiDump } from './screen';
 
 const describeAndroid = ON_ANDROID ? describe : describe.skip;
 
@@ -67,6 +67,9 @@ describeAndroid('the vh data request on an Android handset', () => {
   let run: Run;
   let nonce: string;
   let openBounds: Rect;
+  let captured: LogLine;
+  let capturedT: number;
+  let uploadedT: number;
   let vh: PulledBundle;
   let trees: Array<Record<string, unknown>>;
   /** The log up to here: everything the bundle's requests produced. */
@@ -104,11 +107,20 @@ describeAndroid('the vh data request on an Android handset', () => {
       run.start,
     );
     report('rect marker', rect.text.trim());
+    captured = must(
+      log.all(new RegExp(`BUGSEE_E2E view-tree captured t=\\d+ nonce=${nonce}`), rect.index)[0],
+      'the captureViewHierarchy marker',
+      run.start,
+    );
+    capturedT = numberIn(captured, 't');
+    uploadedT = numberIn(uploaded, 't');
     openBounds = boundsIn((await uiDump()).xml, 'vh-open-probe');
     report('vh-open-probe on screen (uiautomator)', openBounds);
 
     const bundles = await awaitBundles(1);
     vh = bundleBySummary(bundles, `vh-${nonce}`);
+    const media = await assertMedia(vh);
+    report('media', { screenshots: media.screenshots.length, codecs: media.screenshotCodecs, video: media.videoCodec });
     upTo = log.mark();
     trees = captureEvents(vh, 'viewtree');
     report('viewtree entries', trees.map(t => ({ timestamp: t.timestamp, displayId: t.displayId, native: typeof t.native, managedBytes: typeof t.managed === 'string' ? t.managed.length : t.managed })));
@@ -173,6 +185,11 @@ describeAndroid('the vh data request on an Android handset', () => {
 
   it('the managed tree is in the report it was asked for', () => {
     expect(trees.length).toBeGreaterThanOrEqual(2);
+    // Which two: the explicit capture, and the snapshot taken at the upload.
+    const stamps = trees.map(tree => tree.timestamp as number);
+    report('viewtree timestamps vs markers', { stamps, capturedT, uploadedT });
+    expect(stamps.filter(t => Math.abs(t - capturedT) <= 1000)).toHaveLength(1);
+    expect(stamps.filter(t => t >= uploadedT).length).toBeGreaterThanOrEqual(1);
     for (const tree of trees) {
       expect(typeof tree.native).toBe('string');
       expect((tree.native as string).length).toBeGreaterThan(0);
@@ -194,7 +211,16 @@ describeAndroid('the vh data request on an Android handset', () => {
 
       const all = nodesOf(root);
       expect(all.filter(node => node.class_name === 'BugseeE2EViewTreeProbe' && node.options.kind === 'composite')).toHaveLength(1);
-      expect(all.filter(node => node.options.kind === 'host' && node.options.tag === `vh-open-${nonce}`)).toHaveLength(1);
+      const open = all.filter(node => node.options.kind === 'host' && node.options.tag === `vh-open-${nonce}`);
+      expect(open).toHaveLength(1);
+      // The positive controls for what the secure subtree must lack: outside
+      // it, nativeID does reach the tree...
+      expect(open[0]!.options.native_id).toBe(`vh-open-native-${nonce}`);
+      // ...and the walk does descend into the text's host, emitting the
+      // RCTText view while leaving its raw text out.
+      const openHosts = nodesOf(open[0]!).slice(1).filter(node => node.options.kind === 'host');
+      report('the vh-open subtree', open[0]);
+      expect(openHosts.map(node => node.class_name)).toContain('RCTText');
 
       const secure = all.filter(node => node.class_name === 'BugseeSecure' && node.options.kind === 'composite');
       // The probe's, and no other on this stage.
@@ -226,22 +252,35 @@ describeAndroid('the vh data request on an Android handset', () => {
       'vh-open-probe',
     ];
     for (const { raw, root } of managedTrees()) {
+      // Scanner self-check: what is allowed through is found.
+      expect(raw).toContain(`vh-open-${nonce}`);
+      expect(raw).toContain(`vh-open-native-${nonce}`);
       for (const text of forbidden) {
         expect({ text, found: raw.includes(text) }).toEqual({ text, found: false });
       }
       expect(nodesOf(root).filter(node => node.class_name === 'RCTRawText')).toEqual([]);
     }
 
-    // The text itself, anywhere in the report: every file, as UTF-8 and as
-    // UTF-16LE bytes.
-    const secret = `secret-text-${nonce}`;
+    // The text itself, anywhere in the report: every file, as UTF-8, UTF-16LE
+    // and UTF-16BE (Java's writeChars) bytes.
+    const needles = (text: string) => [
+      Buffer.from(text, 'utf8'),
+      Buffer.from(text, 'utf16le'),
+      Buffer.from(text, 'utf16le').swap16(),
+    ];
     const files = filesUnder(vh.dir);
-    const hits = files.filter(file => {
-      const bytes = readFileSync(file);
-      return bytes.includes(Buffer.from(secret, 'utf8')) || bytes.includes(Buffer.from(secret, 'utf16le'));
-    });
-    report('files scanned for the secret text', { count: files.length, hits });
+    const filesWith = (text: string) =>
+      files.filter(file => {
+        const bytes = readFileSync(file);
+        return needles(text).some(needle => bytes.includes(needle));
+      });
+    const hits = filesWith(`secret-text-${nonce}`);
+    // Scanner self-check: the same scan finds the open view's testID (in the
+    // viewtree capture), so an empty result is the scan's answer.
+    const control = filesWith(`vh-open-${nonce}`);
+    report('files scanned for the secret text', { count: files.length, hits, control });
     expect(files.length).toBeGreaterThan(3);
+    expect(control.length).toBeGreaterThanOrEqual(1);
     expect(hits).toEqual([]);
     const typed = files.filter(file => readFileSync(file).includes(Buffer.from(`typed-${nonce}`, 'utf8')));
     report('files carrying the TextInput value (informational)', typed);
