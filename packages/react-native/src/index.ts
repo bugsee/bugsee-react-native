@@ -296,11 +296,11 @@ class Bugsee {
    * Persists across launches. Android stores a fractional or large number as
    * a 32-bit float, so `setAttribute('k', 0.1)` can read back as
    * `0.10000000149011612` -- the value the report itself carries, not a
-   * rounding bug in this wrapper. iOS limits a string value by its archived
-   * size to roughly **830 ASCII characters** (fewer for non-ASCII text,
-   * which archives wider per character), while Android allows 1024 UTF-16
-   * units regardless of script: a string accepted on Android can be
-   * rejected here with `E_ATTRIBUTE_REJECTED` on iOS.
+   * rounding bug in this wrapper. iOS drops a value whose archived size
+   * exceeds about 1.1 KB. In practice a string of up to ~800 ASCII
+   * characters is safe on both platforms; Android accepts up to 1024 UTF-16
+   * units. A string longer than that can be rejected here with
+   * `E_ATTRIBUTE_REJECTED` on iOS while the same value is kept on Android.
    */
   async setAttribute(name: string, value: AttributeValue): Promise<void> {
     return this.runAttributeOp(async () => {
