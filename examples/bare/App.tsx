@@ -10,8 +10,9 @@
  * What it does after launching is picked by a scenario (e2e/scenario.ts):
  * `launch`, the default, is the lifecycle walk launch.test.ts asserts; the
  * `rh-*` scenarios are the report-handler cases in scenarios/report-handler.ts;
- * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts and `secure`
- * is scenarios/secure.tsx.
+ * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts, `secure`
+ * is scenarios/secure.tsx, and `attributes`/`attributes-persist` are
+ * scenarios/attributes.ts.
  */
 import { useEffect, useState } from 'react';
 import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
@@ -43,6 +44,10 @@ import {
   runDataScenario,
 } from './scenarios/data';
 import { SecureProbe, isSecureScenario } from './scenarios/secure';
+import {
+  isAttributeScenario,
+  runAttributeScenario,
+} from './scenarios/attributes';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -218,6 +223,11 @@ export default function App() {
 
         if (data !== undefined) {
           runDataScenario(choice.nonce);
+          return;
+        }
+
+        if (isAttributeScenario(choice.scenario)) {
+          runAttributeScenario(choice.scenario, choice.nonce);
           return;
         }
 
