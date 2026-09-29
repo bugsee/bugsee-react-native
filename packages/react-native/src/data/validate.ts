@@ -31,6 +31,31 @@ export type TraceValue = string | number | boolean;
  */
 export const EVENT_PARAMS_MAX_DEPTH = 16;
 
+/**
+ * The one numeric bound for every number that reaches a bundle -- event
+ * params, trace values, and (Phase 5) attributes: finite and smaller than
+ * `2^63` in magnitude. Exclusive of `2^63` itself: Android's JSON writer
+ * sends any integral value at or beyond `Long.MAX_VALUE` through
+ * `longValue()`, and every double `>= 2^63` silently becomes
+ * `9223372036854775807` there rather than round-tripping, so the bound must
+ * reject before that point, not at it. Shared with `src/attributes/validate.ts`.
+ */
+export const BUNDLE_NUMBER_LIMIT = 2 ** 63;
+
+/**
+ * Whether `value` satisfies the domain every bundle number must:
+ * `typeof value === 'number'`, finite, and `|value| < BUNDLE_NUMBER_LIMIT`.
+ * Takes `unknown`, like `Number.isFinite`'s own signature in this codebase's
+ * lib target, so a caller need not narrow first.
+ */
+export function isWithinBundleNumberLimit(value: unknown): boolean {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    Math.abs(value) < BUNDLE_NUMBER_LIMIT
+  );
+}
+
 /** A short, human-legible name for a rejected value's type. */
 function describeType(value: unknown): string {
   if (value === null) return 'null';
@@ -81,6 +106,11 @@ function copyValue(
   if (kind === 'number') {
     if (!Number.isFinite(value)) {
       throw new RangeError(`${path} must be a finite number, got ${String(value)}`);
+    }
+    if (!isWithinBundleNumberLimit(value)) {
+      throw new RangeError(
+        `${path} must be smaller than 2^63 in magnitude, got ${String(value)}`,
+      );
     }
     return value;
   }
@@ -200,6 +230,11 @@ export function assertTraceValue(value: unknown): asserts value is TraceValue {
   if (kind === 'number') {
     if (!Number.isFinite(value)) {
       throw new RangeError(`Bugsee.trace requires a finite number, got ${String(value)}`);
+    }
+    if (!isWithinBundleNumberLimit(value)) {
+      throw new RangeError(
+        `Bugsee.trace requires a number smaller than 2^63 in magnitude, got ${String(value)}`,
+      );
     }
     return;
   }
