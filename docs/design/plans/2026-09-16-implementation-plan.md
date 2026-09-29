@@ -2337,7 +2337,7 @@ export function blackoutPattern(frames: Array<{ t: number; luma: number }>):
   // ok iff: a bright frame, then a contiguous dark run of >= 1.5 s (by t), then a bright frame; 'other' breaks a run
 ```
 
-- [ ] **Red** — `e2e-media.test.ts` (pure functions only; no ffmpeg in `yarn test`):
+- [x] **Red** — `e2e-media.test.ts` (pure functions only; no ffmpeg in `yarn test`):
   - `shadeOf splits at 24 and 150`;
   - `blackoutPattern accepts bright, a dark run of at least 1.5 s, bright`;
   - `rejects a dark run shorter than 1.5 s`;
@@ -2346,9 +2346,9 @@ export function blackoutPattern(frames: Array<{ t: number; luma: number }>):
   - `an other frame breaks a dark run`;
   - `reports the dark run's length`.
   - Run → FAIL.
-- [ ] **Green** — as specified. By hand, run `probeCodec` and `frameLumas` once on any pulled Android bundle video and record the output in the commit.
-- [ ] **Mutate** — make `blackoutPattern` ignore the trailing bright requirement. `rejects a video that never recovers` must fail. Revert and record.
-- [ ] **Commit** — `test(e2e): decode bundle video and screenshots for pixel assertions`.
+- [x] **Green** — as specified. By hand, run `probeCodec` and `frameLumas` once on any pulled Android bundle video and record the output in the commit.
+- [x] **Mutate** — make `blackoutPattern` ignore the trailing bright requirement. `rejects a video that never recovers` must fail. Revert and record.
+- [x] **Commit** — `test(e2e): decode bundle video and screenshots for pixel assertions`.
 
 ---
 
