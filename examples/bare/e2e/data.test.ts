@@ -167,7 +167,7 @@ describeDevice(`log, event and trace in a retained bundle on ${TARGET_NAME}`, ()
       } else {
         await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
       }
-      await clearBundles().catch(() => {});
+      await clearBundles().catch((error: unknown) => report('cleanup clear failed', String(error)));
     } finally {
       try {
         if (!ON_IOS) {
