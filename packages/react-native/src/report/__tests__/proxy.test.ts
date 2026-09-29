@@ -1,6 +1,6 @@
 jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
 
-import { native } from '../../__mocks__/native';
+import { jsonOf, native } from '../../__mocks__/native';
 import { IssueSeverity } from '../../options/enums';
 import { BugseeReportProxy } from '../BugseeReport';
 import { BugseeReportError, ReportErrorCode } from '../errors';
@@ -143,9 +143,9 @@ describe('severity', () => {
 
     await report.setSeverity(IssueSeverity.VeryLow);
 
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', {
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({
       severity: IssueSeverity.VeryLow,
-    });
+    }));
   });
 });
 
@@ -157,7 +157,7 @@ describe('labels', () => {
     await report.setLabels(['a', 'b']);
 
     expect(native.reportUpdate).toHaveBeenCalledTimes(1);
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', { labels: ['a', 'b'] });
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({ labels: ['a', 'b'] }));
   });
 
   it('setLabels rejects a non-string label before crossing', async () => {
@@ -180,9 +180,20 @@ describe('attributes', () => {
 
     await report.setAttribute('foo', null);
 
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', {
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({
       attributes: { foo: null },
-    });
+    }));
+  });
+
+  // The literal text, not merely something that decodes equal: iOS's object
+  // conversion dropped a null member, so the null must be IN the string.
+  it('setAttribute(name, null) crosses as JSON text carrying the null', async () => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+    native.reportUpdate.mockResolvedValueOnce(undefined);
+
+    await report.setAttribute('foo', null);
+
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', '{"attributes":{"foo":null}}');
   });
 
   it.each([NaN, Infinity, {}])(
@@ -206,9 +217,9 @@ describe('attributes', () => {
 
     await report.setAttribute('name', 'value');
 
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', {
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({
       attributes: { name: 'value' },
-    });
+    }));
   });
 
   it('setAttribute rejects an empty name before crossing', async () => {
@@ -230,13 +241,13 @@ describe('attributes', () => {
     expect(native.reportUpdate).not.toHaveBeenCalled();
   });
 
-  /** The attributes object the last `reportUpdate` sent. */
+  /** The attributes object the last `reportUpdate` sent, decoded from its JSON text. */
   function sentAttributes(): object {
-    const [, patch] = native.reportUpdate.mock.calls.at(-1) as [
-      string,
-      { attributes: object },
-    ];
-    return patch.attributes;
+    const [, patchJson] = native.reportUpdate.mock.calls.at(-1) as [string, string];
+    expect(typeof patchJson).toBe('string');
+    // JSON.parse defines members as own data properties, so a "__proto__"
+    // member decodes as an ordinary key, exactly as native's parsers see it.
+    return (JSON.parse(patchJson) as { attributes: object }).attributes;
   }
 
   // "__proto__" is an ordinary attribute name to both SDKs. Assigned into a
@@ -612,9 +623,9 @@ describe('clearAttributes', () => {
 
     await report.clearAttributes();
 
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', {
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({
       clearAttributes: true,
-    });
+    }));
   });
 });
 
@@ -625,9 +636,9 @@ describe('setDescription', () => {
 
     await report.setDescription('a new description');
 
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', {
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({
       description: 'a new description',
-    });
+    }));
   });
 
   it('rejects a non-string, non-null description before crossing', async () => {
@@ -658,14 +669,14 @@ describe('update', () => {
     });
 
     expect(native.reportUpdate).toHaveBeenCalledTimes(1);
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', {
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({
       summary: 'new summary',
       description: null,
       severity: IssueSeverity.Blocker,
       labels: ['x', 'y'],
       clearAttributes: true,
       attributes: { a: 1, b: null },
-    });
+    }));
   });
 
   it('rejects an unknown key before crossing', async () => {
@@ -739,9 +750,9 @@ describe('setSummary', () => {
 
     await report.setSummary('a new summary');
 
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', {
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({
       summary: 'a new summary',
-    });
+    }));
   });
 
   it('sends null to clear the summary', async () => {
@@ -750,7 +761,20 @@ describe('setSummary', () => {
 
     await report.setSummary(null);
 
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', { summary: null });
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({ summary: null }));
+  });
+
+  it('setSummary(null) and setDescription(null) cross as JSON text carrying the null', async () => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+    native.reportUpdate.mockResolvedValue(undefined);
+
+    await report.setSummary(null);
+    await report.setDescription(null);
+
+    expect(native.reportUpdate.mock.calls).toEqual([
+      ['h1', '{"summary":null}'],
+      ['h1', '{"description":null}'],
+    ]);
   });
 
   it('rejects a non-string, non-null summary before crossing', async () => {
@@ -787,9 +811,9 @@ describe('setAttribute', () => {
 
     await report.setAttribute('flag', true);
 
-    expect(native.reportUpdate).toHaveBeenCalledWith('h1', {
+    expect(native.reportUpdate).toHaveBeenCalledWith('h1', jsonOf({
       attributes: { flag: true },
-    });
+    }));
   });
 });
 

@@ -121,6 +121,31 @@ describe('unimplemented', () => {
     )).toEqual(['launch(String, ReadableMap, Promise)']);
   });
 
+  // Task 4.5: object payloads with nullable members cross as JSON text, so
+  // the generated spec takes a String where it took a ReadableMap. A module
+  // left on the old type must read as not implementing the generated method,
+  // and one moved to `@Nullable final String` as implementing it.
+  it('tells a JSON-text parameter from the ReadableMap it replaced', () => {
+    const names = ['event', 'reportUpdate'];
+    const generated = `
+      public abstract void event(String name, @Nullable String paramsJson);
+      public abstract void reportUpdate(String handleId, String patchJson, Promise promise);`;
+    const moved = `
+      public void event(final String name, @Nullable final String paramsJson) { }
+      public void reportUpdate(final String handleId, final String patchJson, final Promise promise) { }`;
+    const stale = `
+      public void event(final String name, @Nullable final ReadableMap params) { }
+      public void reportUpdate(final String handleId, final ReadableMap patch, final Promise promise) { }`;
+    expect(unimplemented(
+      parseSignatures(generated, names),
+      parseSignatures(moved, names),
+    )).toEqual([]);
+    expect(unimplemented(
+      parseSignatures(generated, names),
+      parseSignatures(stale, names),
+    )).toEqual(['event(String, String)', 'reportUpdate(String, String, Promise)']);
+  });
+
   it('ignores a declaration whose parentheses never close', () => {
     expect(parseSignatures('public void stop(Promise p', NAMES)).toEqual([]);
   });

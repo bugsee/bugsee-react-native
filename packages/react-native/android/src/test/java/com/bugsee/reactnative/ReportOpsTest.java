@@ -252,6 +252,34 @@ public class ReportOpsTest {
         assertEquals(Collections.emptyList(), state.mutations());
     }
 
+    /**
+     * {@code reportUpdate}'s entry point: the JSON text itself. Text that is
+     * not a JSON object is the same BadArgument as a bad field -- the module
+     * maps both to E_REPORT_BAD_ARGUMENT -- and touches nothing.
+     */
+    @Test
+    public void applyJsonParsesThenApplies() throws Exception {
+        state.summary = "old summary";
+        ReportOps.applyJson(report, "{\"summary\":null,\"labels\":[\"a\"]}");
+        assertNull(state.summary);
+        assertEquals(Collections.singletonList("a"), state.labels);
+    }
+
+    @Test
+    public void applyJsonRejectsTextThatIsNotAJsonObjectAndAppliesNothing() {
+        state.summary = "old summary";
+        for (final String json : new String[] { "{\"summary\":", "[]", "", "null" }) {
+            try {
+                ReportOps.applyJson(report, json);
+                fail("expected BadArgument for " + json);
+            } catch (final ReportOps.BadArgument expected) {
+                assertTrue(expected.getMessage(), expected.getMessage().startsWith("update() patch is not a JSON object"));
+            }
+        }
+        assertEquals("old summary", state.summary);
+        assertEquals(Collections.emptyList(), state.mutations());
+    }
+
     /** A JSON severity is an Integer now, not a Double; 1..5 still maps by value. */
     @Test
     public void aParsedSeverityIsAppliedByValue() throws Exception {
@@ -259,12 +287,19 @@ public class ReportOpsTest {
         assertEquals(IssueSeverity.Critical, state.severity);
     }
 
-    /** JS numbers are doubles; an integral one becomes a Long so the SDK stores 3, not 3.0. */
+    /**
+     * The same four values the old {@code wireNumber} pinned, now through the
+     * JSON transport that replaced it: an integral number reaches the SDK as
+     * an integer (Integer, or Long past int range) so it stores 3, not 3.0;
+     * a fraction, or a number too large to be an exact integer, as a Double.
+     */
     @Test
-    public void integralNumbersCrossAsLong() {
-        assertEquals(3L, ReportOps.wireNumber(3.0));
-        assertEquals(-9_007_199_254_740_992L, ReportOps.wireNumber(-9_007_199_254_740_992.0));
-        assertEquals(2.5, ReportOps.wireNumber(2.5));
-        assertEquals(1e300, ReportOps.wireNumber(1e300));
+    public void integralNumbersCrossAsIntegers() throws Exception {
+        ReportOps.applyJson(report, "{\"attributes\":{\"three\":3,"
+                + "\"minSafe\":-9007199254740992,\"frac\":2.5,\"huge\":1e300}}");
+        assertEquals(Integer.valueOf(3), state.attributes.get("three"));
+        assertEquals(Long.valueOf(-9_007_199_254_740_992L), state.attributes.get("minSafe"));
+        assertEquals(Double.valueOf(2.5), state.attributes.get("frac"));
+        assertEquals(Double.valueOf(1e300), state.attributes.get("huge"));
     }
 }
