@@ -1384,7 +1384,8 @@ Address its findings, and re-review until the reviewer is satisfied.
 
 **iOS `74af69ee8`:**
 - `+setAttribute:withValue:` archives the value with `NSKeyedArchiver`. It ignores the value when the archive exceeds `CUSTOM_ATTRIBUTE_SIZE_LIMIT` 1124 bytes, or the whole set exceeds 25700 bytes — **returning `YES` either way**.
-- **Corrected by controller ruling (2026-09-29, after Task 5.3):** the effective per-value limit for a plain ASCII string is about **838 characters**, not 1024 — `NSKeyedArchiver archivedDataWithRootObject:requiringSecureCoding:NO` costs `length + 286` bytes for a bare ASCII `NSString` on current iOS Foundation (measured identically on iOS 18.5 and iOS 26.5 simulators: 800 chars → 1086 bytes, 900 → 1186, 1024 → 1310), so an 800-character string fits under 1124 bytes and a 900-character one does not. Non-ASCII text costs more per character (`NSKeyedArchiver` widens to UTF-16), so it allows fewer characters still. Android's per-value limit stays 1024 UTF-16 units regardless of script, so a string in the 800–1024 range that Android accepts can be rejected on iOS with `E_ATTRIBUTE_REJECTED`.
+- **Corrected by controller ruling (2026-09-29, after Task 5.3):** the archive math predicts an effective per-value limit for a plain ASCII string of about **838 characters**, not 1024 — `NSKeyedArchiver archivedDataWithRootObject:requiringSecureCoding:NO` costs `length + 286` bytes for a bare ASCII `NSString` on current iOS Foundation (measured identically on iOS 18.5 and iOS 26.5 simulators: 800 chars → 1086 bytes, 900 → 1186, 1024 → 1310), so an 800-character string fits under 1124 bytes and a 900-character one should not. Non-ASCII text costs more per character (`NSKeyedArchiver` widens to UTF-16), so it allows fewer characters still.
+- **Corrected again by controller ruling (2026-09-29, after Task 5.5):** observed on the published `7.0.0-beta3` binary: 800 characters is kept and 1024 is dropped, exactly as the archive math predicts at the ends — but a 900-character value was **kept** on device, contradicting the archive math's ~838-character crossover, even though the SDK source's own check (`BGSBugseeEnvironment setAttributeForKey:value:`) does ignore any value whose archive exceeds 1124 bytes, and the archive-math unit tests independently confirm 900 characters archives over that limit. The iOS SDK team has been asked why; the `e2e_900` row is removed from the table below rather than asserted either way, since it sits in this ambiguous zone. Android's per-value limit stays 1024 UTF-16 units regardless of script, so a string in the 800–1024 range that Android accepts can still be rejected on iOS with `E_ATTRIBUTE_REJECTED` — `e2e_long` (1024 characters) pins this; don't assume every string in that range behaves the same on iOS.
 - Attributes are stored in `NSUserDefaults`.
 - `+setUserIdentifier:` clears on nil, empty or non-string, and stores in the **Keychain**, which on a physical device survives an app reinstall.
 
@@ -1458,7 +1459,7 @@ clearUserIdentifier(): void;
 - A native rejection with code `E_ATTRIBUTE_REJECTED` surfaces as `BugseeAttributeError` with that code.
 - A non-string or empty `name` is `E_ATTRIBUTE_BAD_ARGUMENT`.
 - Export `AttributeErrorCode`, `BugseeAttributeError`, `AttributeValue` and `AttributeReadValue` from `src/index.ts`.
-- **Document on `setAttribute`:** attributes persist across launches; Android stores fractional numbers as 32-bit floats (so `0.1` reads back as `0.10000000149011612`, as the report carries it); iOS limits a value by its archived size -- roughly **830 ASCII characters** (fewer for non-ASCII text) -- while Android allows 1024 UTF-16 units regardless of script, so a string accepted on Android can be rejected on iOS with `E_ATTRIBUTE_REJECTED`.
+- **Document on `setAttribute`:** attributes persist across launches; Android stores fractional numbers as 32-bit floats (so `0.1` reads back as `0.10000000149011612`, as the report carries it); iOS drops a value whose archived size exceeds about 1.1 KB. In practice a string of up to ~800 ASCII characters is safe on both platforms; Android accepts up to 1024 UTF-16 units. Don't state an exact iOS cutoff (Task 5.5 found the SDK's own observed drop threshold does not match its archive math's predicted crossover).
 
 **Stubs:** every promise method resolves `{}` or `undefined`, and the void methods are no-ops. Each stub is commented `Task 5.2` or `Task 5.3`.
 
@@ -1632,11 +1633,12 @@ FOUNDATION_EXPORT const NSInteger BGSRNAttributeArchiveLimit;   // 1124, mirrors
 | `e2e_true` | `true` | resolves / `true` (boolean) | resolves / `true` (boolean) |
 | `e2e_false` | `false` | resolves / `false` (boolean) | resolves / `false` (boolean) |
 | `e2e_mid` | `'m'.repeat(800)` | resolves / same | resolves / same |
-| `e2e_900` | `'n'.repeat(900)` | resolves / same | rejects `E_ATTRIBUTE_REJECTED` / `undefined` |
 | `e2e_long` | `'x'.repeat(1024)` | resolves / same | rejects `E_ATTRIBUTE_REJECTED` / `undefined` |
 | `e2e_too_long` | `'x'.repeat(1025)` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
 | `e2e_huge` | `3.5e38` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
 | `e2e_over_long` | `1e19` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` | rejects `E_ATTRIBUTE_BAD_ARGUMENT` |
+
+**Correction (controller ruling, 2026-09-29, after Task 5.5):** the table no longer has a 900-character row. Task 5.5 found the published `7.0.0-beta3` binary *keeps* a 900-character ASCII string, contradicting both the archive math's ~838-character predicted crossover and the SDK source's own archive-size check (`BGSBugseeEnvironment setAttributeForKey:value:`, which does reject an archive over 1124 bytes, and a 900-character string's archive independently measures over that limit). That 800-1024 band is ambiguous on the real device; the iOS SDK team has been asked why. `e2e_mid` (800: both platforms keep it) and `e2e_long` (1024: Android keeps it, iOS rejects it) still pin the two ends the SDK source's math and the device agree on.
 
 **Scenario `attributes-persist`** (a fresh process, the next run): log `getAllAttributes()` and `getUserIdentifier()`; then `clearAllAttributes()` and `clearUserIdentifier()`; then log both again.
 
@@ -1646,6 +1648,7 @@ FOUNDATION_EXPORT const NSInteger BGSRNAttributeArchiveLimit;   // 1124, mirrors
 3. `the retained report carries the attributes and the identifier`
    - `manifest.json` `attrs` has every resolved row except `e2e_neg`, with the platform's read-back value and JSON type. On Android, `e2e_tenth` is the JSON number `0.10000000149011612`.
    - `request.json` `email` is `e2e-user-<n>`.
+   - **Correction (controller ruling, 2026-09-29, after Task 5.5):** confirmed an iOS SDK regression -- `BGSManifestCreator.userAttributes` is never assigned on nextgen, so a live `Bugsee.upload()` report's `manifest.attrs`/`request.json` `email` never carry the global attributes or identifier on iOS 7.0.0-beta3, even though `getAttribute`/`getAllAttributes`/`getUserIdentifier` all read them back correctly beforehand. Reported to the iOS SDK team; issue link pending. This case's `manifest.attrs`/`email` assertions run as `it.failing` on iOS only (a normal `it` on Android) until fixed -- see Task 5.5's report for the raw evidence.
 4. `an empty identifier clears it` — the get after `setUserIdentifier('')` is `undefined`.
 5. `attributes and identity survive a restart, and clearing them sticks`
    - The `attributes-persist` run's first log equals case 1's final `getAllAttributes()` and identifier.
@@ -1663,13 +1666,14 @@ Use no real user data anywhere. The Android SDK logs these values to its interna
 
 The Task 5.4 cases apply unchanged, using the iOS column of the table.
 - **The precondition matters more here:** the Keychain survives app reinstalls on a physical device, and survives until the device is erased on a simulator.
-- The iOS `e2e_900` and `e2e_long` rejections are SDK behaviour, pinned by `testA900CharacterAsciiStringExceedsTheArchiveLimit` and `testA1024CharacterAsciiStringExceedsTheArchiveLimit` respectively (`testAn800CharacterAsciiStringFitsTheArchiveLimit` is the matching `e2e_mid` acceptance).
+- The iOS `e2e_long` rejection is SDK behaviour, pinned by `testA1024CharacterAsciiStringExceedsTheArchiveLimit` (`testAn800CharacterAsciiStringFitsTheArchiveLimit` is the matching `e2e_mid` acceptance). These tests pin the archive math of the mirrored `BGSRNAttributeArchiveLimit` constant, not the SDK's observed on-device behaviour -- see the `e2e_900` correction above.
+- Case 3's `manifest.attrs`/`email` assertions are `it.failing` on iOS (see the case-3 correction above) -- confirm they are failing for the right reason (an empty `manifest.attrs`, no `email` key) before treating the suite as green.
 
-- [ ] **Red/Green** — all five cases pass on the simulator.
-- [ ] **Mutate** — temporarily return `YES` from `BGSRNAttributes setValue:…` without reading back. The `e2e_900` and `e2e_long` rows must fail. Revert and record.
+- [ ] **Red/Green** — all five cases pass on the simulator, including the iOS `it.failing` case (which passes because its assertions correctly fail).
+- [ ] **Mutate** — temporarily return `YES` from `BGSRNAttributes setValue:…` without reading back. The `e2e_long` row must fail (confirm from the raw `set:`/`get:` markers if an earlier row in the same loop already fails first). Revert and record.
 - [ ] **Commit** — `test(e2e): attributes and identity round-trip on iOS`.
 
-**Hardware pass: add to Task 3.H** — Task 5.5 on a physical iPhone, including case 5 across a real process restart. Clear the Keychain identity first and last.
+**Hardware pass: add to Task 3.H** — Task 5.5 on a physical iPhone, including case 5 across a real process restart. Clear the Keychain identity first and last. Re-check case 3's `manifest.attrs`/`email` (the `it.failing` case) on hardware and again after the next iOS beta; remove `.failing` once `BGSManifestCreator.userAttributes` is fixed upstream.
 
 ---
 

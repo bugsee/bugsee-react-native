@@ -46,7 +46,6 @@ export function attributeRows(nonce: string): Array<[string, AttributeValue]> {
     ['e2e_true', true],
     ['e2e_false', false],
     ['e2e_mid', 'm'.repeat(800)],
-    ['e2e_900', 'n'.repeat(900)],
     ['e2e_long', 'x'.repeat(1024)],
     ['e2e_too_long', 'x'.repeat(1025)],
     ['e2e_huge', 3.5e38],
