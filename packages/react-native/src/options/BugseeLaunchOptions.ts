@@ -150,6 +150,7 @@ export abstract class BugseeLaunchOptions {
   set maxDataSize(value: number | undefined) {
     this.$set('com.bugsee.option.config.max-data-size', value);
   }
+
   /**
    * Sets any option by its real `com.bugsee.option.*` key, surfaced or not.
    * `undefined` deletes, exactly as a first-class accessor does.
