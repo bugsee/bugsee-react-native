@@ -258,6 +258,10 @@ final class ReportOps {
                 throw new BadArgument("attribute \"" + entry.getKey()
                         + "\" must be a string, boolean, finite number or null");
             }
+            // Parity with the JS proxy, which rejects it before crossing.
+            if (((String) entry.getKey()).isEmpty()) {
+                throw new BadArgument("attribute name must be a non-empty string");
+            }
             result.put((String) entry.getKey(), attribute);
         }
         return result;
