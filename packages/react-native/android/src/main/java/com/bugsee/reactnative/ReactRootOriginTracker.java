@@ -51,12 +51,12 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     private RootHandle root;
 
     /**
-     * The layout-listener registration for {@link #root}, if any. Saved at
-     * registration time and released through this same token later -- a
-     * root that is no longer attached to its window hands back a different,
-     * "floating" observer from a fresh lookup, and releasing through that
-     * one instead would silently target the wrong observer, leaking the
-     * registration on the original.
+     * The layout-listener registration for {@link #root}, if any, released
+     * through this same token later. Which observer it is removed from is
+     * the token's business (see {@link ViewTreeObserverToken}), not a fresh
+     * lookup on the root: a root no longer attached to its window hands back
+     * a different, "floating" observer, and removing from that one would
+     * silently leak the real registration.
      */
     @Nullable
     private LayoutListenerToken layoutToken;
@@ -174,24 +174,11 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     /** Package-visible for the same reason as {@link #refresh()}. */
     @UiThread
     void detach() {
-        final RootHandle previousRoot = root;
         root = null;
         final LayoutListenerToken token = layoutToken;
         layoutToken = null;
-        if (token == null) {
-            return;
-        }
-        if (previousRoot != null) {
-            // The root, not the token, releases it: a listener registered
-            // while the root was not yet attached to a window went onto a
-            // "floating" ViewTreeObserver, which Android kills once the
-            // real registration is merged into the window's observer on
-            // attach -- the token's own observer then reports itself dead,
-            // and only the root (which still holds the view) can find the
-            // observer that is actually live now to remove it from instead.
-            previousRoot.releaseGlobalLayoutListener(token);
-        } else {
-            token.remove();
+        if (token != null) {
+            token.release();
         }
     }
 
@@ -242,17 +229,10 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         OriginSnapshot resolveOrigin();
 
         /**
-         * Registers a layout callback and returns a token bound to the exact
-         * observer live right now.
+         * Registers a layout callback and returns the token that removes it
+         * again, from whichever observer holds it by then.
          */
         LayoutListenerToken addOnGlobalLayoutListener(Runnable onLayout);
-
-        /**
-         * Releases {@code token}, falling back to this root's own,
-         * currently-live listener registration if the token's own observer
-         * no longer reports itself alive (see {@link ViewTreeObserverToken}).
-         */
-        void releaseGlobalLayoutListener(LayoutListenerToken token);
     }
 
     /** A root's location, viewport offset and display id, read together. */
@@ -268,11 +248,31 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         }
     }
 
-    /** A layout-listener registration, releasable from the exact observer it was made on. */
+    /** A layout-listener registration. UI thread only. */
     interface LayoutListenerToken {
-        boolean isAlive();
+        /** Removes the registration. Idempotent: only the first call does anything. */
+        void release();
+    }
 
-        void remove();
+    /**
+     * The idempotency every production {@link LayoutListenerToken} shares:
+     * {@link #releaseNow()} runs on the first {@link #release()} only.
+     * Package-visible so a JVM test can check the guard itself.
+     */
+    abstract static class ReleaseOnceToken implements LayoutListenerToken {
+        /** UI thread only, like every other call on a token. */
+        private boolean released;
+
+        @Override
+        public final void release() {
+            if (released) {
+                return;
+            }
+            released = true;
+            releaseNow();
+        }
+
+        abstract void releaseNow();
     }
 
     private static final class ActivityRootFinder implements RootFinder {
@@ -319,16 +319,6 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     private static final class ViewRootHandle implements RootHandle {
         private final WeakReference<View> view;
 
-        /**
-         * The listener currently registered through {@link
-         * #addOnGlobalLayoutListener}, if any -- kept here (not only inside
-         * the token handed back) so {@link #releaseGlobalLayoutListener} can
-         * remove it from whatever observer this root considers current now,
-         * not only the one it was originally registered on.
-         */
-        @Nullable
-        private ViewTreeObserver.OnGlobalLayoutListener registeredListener;
-
         ViewRootHandle(final View view) {
             this.view = new WeakReference<>(view);
         }
@@ -365,29 +355,69 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             if (v == null) {
                 return NoOpToken.INSTANCE;
             }
-            final ViewTreeObserver observer = v.getViewTreeObserver();
-            final ViewTreeObserver.OnGlobalLayoutListener listener = onLayout::run;
-            observer.addOnGlobalLayoutListener(listener);
-            registeredListener = listener;
-            return new ViewTreeObserverToken(observer, listener);
+            return new ViewTreeObserverToken(v, onLayout);
+        }
+    }
+
+    /**
+     * A layout listener on a real {@link View}, and the one place that knows
+     * which {@link ViewTreeObserver} it has to be removed from.
+     *
+     * <p>That is not simply "the observer it was added to". A listener added
+     * before the view is attached goes onto a "floating" observer; on attach,
+     * Android merges it into the window's observer and kills the floating
+     * one. And a detached view's {@code getViewTreeObserver()} hands back a
+     * floating observer again, not the window's that still holds the
+     * listener. So the observer reference is re-homed from inside the
+     * listener: only a window's observer ever dispatches a global layout
+     * ({@code ViewRootImpl} calls it on {@code mAttachInfo.mTreeObserver}),
+     * and while the view is attached, that is exactly what its
+     * {@code getViewTreeObserver()} returns. Once it is detached, the last
+     * re-homed reference stands -- which is what lets a root replaced inside
+     * a live window still be removed from that window's observer.
+     *
+     * <p>The view and the observer are held weakly: a live observer
+     * transitively pins the view, and so the activity, and this token can
+     * outlive both
+     * {@link #dispose()} (which posts detach() to the UI thread) and a host
+     * reload.
+     */
+    private static final class ViewTreeObserverToken extends ReleaseOnceToken {
+        private final WeakReference<View> view;
+        private final ViewTreeObserver.OnGlobalLayoutListener listener;
+        /** UI thread only: re-homed by {@link #listener}, read by release. */
+        private WeakReference<ViewTreeObserver> observer;
+
+        ViewTreeObserverToken(@NonNull final View v, @NonNull final Runnable onLayout) {
+            this.view = new WeakReference<>(v);
+            this.listener = () -> {
+                // Before onLayout: that may detach(), and so release this.
+                final View current = view.get();
+                if (current != null && current.isAttachedToWindow()) {
+                    observer = new WeakReference<>(current.getViewTreeObserver());
+                }
+                onLayout.run();
+            };
+            final ViewTreeObserver o = v.getViewTreeObserver();
+            this.observer = new WeakReference<>(o);
+            o.addOnGlobalLayoutListener(listener);
         }
 
+        /**
+         * From the saved observer if it is alive; otherwise -- it was the
+         * floating one, killed by the merge on attach before any layout could
+         * re-home it -- from the view's current observer, if that is alive.
+         * A dead observer throws on any call but {@code isAlive()}.
+         */
         @Override
-        public void releaseGlobalLayoutListener(final LayoutListenerToken token) {
-            if (token.isAlive()) {
-                token.remove();
+        void releaseNow() {
+            final ViewTreeObserver saved = observer.get();
+            if (saved != null && saved.isAlive()) {
+                saved.removeOnGlobalLayoutListener(listener);
                 return;
             }
-            // The observer the token was registered on is dead: normal once
-            // a listener is registered before the view is attached to a
-            // window (onHostResume can fire before the decor view is
-            // attached) and the view attaches afterwards -- Android merges
-            // that registration into the window's ViewTreeObserver and kills
-            // the "floating" one it was made on. What is still live, if
-            // anything, is this view's CURRENT observer.
-            final View v = view();
-            final ViewTreeObserver.OnGlobalLayoutListener listener = registeredListener;
-            if (v == null || listener == null) {
+            final View v = view.get();
+            if (v == null) {
                 return;
             }
             final ViewTreeObserver current = v.getViewTreeObserver();
@@ -397,50 +427,11 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         }
     }
 
-    /**
-     * Holds the {@link ViewTreeObserver} it registered on weakly: a live
-     * observer transitively pins the view, and so the activity, and this
-     * token can outlive both dispose() (which posts detach() to the UI
-     * thread) and a host reload. If it has been collected there is nothing
-     * left to remove the listener from through this token specifically --
-     * {@link ViewRootHandle#releaseGlobalLayoutListener} is what falls back
-     * to the view's current observer in that case.
-     */
-    private static final class ViewTreeObserverToken implements LayoutListenerToken {
-        private final WeakReference<ViewTreeObserver> observer;
-        private final ViewTreeObserver.OnGlobalLayoutListener listener;
-
-        ViewTreeObserverToken(final ViewTreeObserver observer,
-                final ViewTreeObserver.OnGlobalLayoutListener listener) {
-            this.observer = new WeakReference<>(observer);
-            this.listener = listener;
-        }
-
-        @Override
-        public boolean isAlive() {
-            final ViewTreeObserver o = observer.get();
-            return o != null && o.isAlive();
-        }
-
-        @Override
-        public void remove() {
-            final ViewTreeObserver o = observer.get();
-            if (o != null) {
-                o.removeOnGlobalLayoutListener(listener);
-            }
-        }
-    }
-
     private enum NoOpToken implements LayoutListenerToken {
         INSTANCE;
 
         @Override
-        public boolean isAlive() {
-            return false;
-        }
-
-        @Override
-        public void remove() {
+        public void release() {
         }
     }
 }
