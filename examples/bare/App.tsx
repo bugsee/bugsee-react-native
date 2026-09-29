@@ -15,7 +15,14 @@
  * scenarios/attributes.ts.
  */
 import { useEffect, useState } from 'react';
-import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
+import {
+  Linking,
+  Platform,
+  Settings,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import Bugsee, {
   BugseeLaunchOptions,
   Status,
@@ -84,11 +91,12 @@ function appToken(): string {
 interface ScenarioChoice {
   scenario: string;
   nonce: string;
-  source: 'uri' | 'json';
+  source: 'uri' | 'args' | 'json';
   /**
-   * An endpoint to launch against instead of the credentials' one. The iOS
-   * simulator has no airplane mode, so the e2e retains a report there by
-   * pointing the SDK at a closed loopback port (see e2e/bundles.ts).
+   * An endpoint to launch against instead of the credentials' one. iOS has
+   * no airplane mode the e2e can switch (none at all on the simulator), so
+   * the e2e retains a report there by pointing the SDK at a closed loopback
+   * port (see e2e/bundles.ts).
    */
   endpoint?: string;
 }
@@ -96,15 +104,49 @@ interface ScenarioChoice {
 const SCENARIO_URI = /^bugsee-e2e:\/\/scenario\/([\w-]+)\?nonce=([0-9a-f]+)$/;
 
 /**
+ * iOS's per-launch channel: the launch arguments `-bugseeE2eScenario <name>
+ * -bugseeE2eNonce <hex> [-bugseeE2eEndpoint <url>]`, which iOS puts in
+ * NSUserDefaults' volatile argument domain and `Settings` reads back. The
+ * iOS counterpart of the Android URI, and needed for the same reason: on a
+ * physical iPhone the Debug app runs its embedded bundle whenever it cannot
+ * reach Metro (no Local Network permission, another network), and that
+ * bundle's JSON was baked in at build time. Never persisted, so it cannot
+ * steer a later launch that was not given it.
+ */
+function launchArguments(): ScenarioChoice | undefined {
+  if (Platform.OS !== 'ios') {
+    return undefined;
+  }
+  const scenario: unknown = Settings.get('bugseeE2eScenario');
+  const nonce: unknown = Settings.get('bugseeE2eNonce');
+  const endpoint: unknown = Settings.get('bugseeE2eEndpoint');
+  if (typeof scenario !== 'string' || typeof nonce !== 'string') {
+    return undefined;
+  }
+  return {
+    scenario,
+    nonce,
+    source: 'args',
+    endpoint: typeof endpoint === 'string' ? endpoint : undefined,
+  };
+}
+
+/**
  * The launch intent's `bugsee-e2e://scenario/<name>?nonce=<hex>` when there is
- * one, else e2e-scenario.json. The URI exists for release builds, which bake
- * the JSON in at build time and so cannot be steered per launch through it.
+ * one (Android), else the launch arguments (iOS), else e2e-scenario.json. The
+ * per-launch channels exist for builds that bake the JSON in at build time --
+ * an Android release build, an iPhone Debug build away from Metro -- and so
+ * cannot be steered per launch through it.
  */
 async function chooseScenario(): Promise<ScenarioChoice> {
   const uri = await Linking.getInitialURL().catch(() => null);
   const match = uri === null ? null : SCENARIO_URI.exec(uri);
   if (match !== null) {
     return { scenario: match[1]!, nonce: match[2]!, source: 'uri' };
+  }
+  const args = launchArguments();
+  if (args !== undefined) {
+    return args;
   }
   // Widened: with the file present, TS types it from whatever it holds now,
   // and the default has no nonce.
