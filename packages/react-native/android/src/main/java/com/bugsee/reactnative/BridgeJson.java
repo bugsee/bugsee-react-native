@@ -9,15 +9,16 @@ import org.json.JSONObject;
 import org.json.JSONTokener;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Parses the JSON text an object payload crosses the bridge as
  * ({@code encodeBridgeObject} in {@code src/bridge/json.ts}) into plain Java:
- * a {@code Map<String, Object>} of {@code null}, {@code Boolean},
+ * a {@code HashMap<String, Object>} (a {@code LinkedHashMap}, so key order
+ * survives; {@code HashMap} because that is what {@code Bugsee.event} takes) of {@code null}, {@code Boolean},
  * {@code String}, {@code Integer}/{@code Long}/{@code Double}, nested maps and
  * {@code List}s.
  *
@@ -55,7 +56,7 @@ final class BridgeJson {
      *     syntax error, another kind of value, or trailing text after it.
      */
     @NonNull
-    static Map<String, Object> parseObject(@Nullable final String json) throws BadJson {
+    static HashMap<String, Object> parseObject(@Nullable final String json) throws BadJson {
         if (json == null) {
             throw new BadJson("expected a JSON object, got null");
         }
@@ -78,8 +79,8 @@ final class BridgeJson {
     }
 
     @NonNull
-    private static Map<String, Object> toMap(@NonNull final JSONObject object) {
-        final Map<String, Object> result = new LinkedHashMap<>();
+    private static HashMap<String, Object> toMap(@NonNull final JSONObject object) {
+        final HashMap<String, Object> result = new LinkedHashMap<>();
         final Iterator<String> keys = object.keys();
         while (keys.hasNext()) {
             final String key = keys.next();

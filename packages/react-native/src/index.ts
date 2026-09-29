@@ -18,6 +18,7 @@ import {
   copyEventParams,
 } from './data/validate';
 import type { EventParams, TraceValue } from './data/validate';
+import { encodeBridgeObject } from './bridge/json';
 
 export { Status } from './status';
 
@@ -197,8 +198,10 @@ class Bugsee {
    * `params` is validated against the accepted value domain
    * (`src/data/validate.ts`) and copied before it crosses -- a value outside
    * that domain throws synchronously, in JS, rather than reaching native in
-   * some guessed-at shape. Omitting `params` sends `null` natively, not `{}`:
-   * the bundle's event entry has no `params` key at all when none were given.
+   * some guessed-at shape. It crosses as JSON text (`src/bridge/json.ts`), so
+   * a `null` member arrives as `null` on both platforms. Omitting `params`
+   * sends `null` natively, not `'{}'`: the bundle's event entry has no
+   * `params` key at all when none were given.
    */
   event(name: string, params?: EventParams): void {
     assertEventOrTraceName('event', name);
@@ -206,7 +209,7 @@ class Bugsee {
       NativeBugsee.event(name, null);
       return;
     }
-    NativeBugsee.event(name, copyEventParams(params));
+    NativeBugsee.event(name, encodeBridgeObject(copyEventParams(params)));
   }
 
   /**

@@ -66,6 +66,29 @@ grep -q '@protocol NativeBugseeSpec' "$SPEC_H" \
   || { echo "FAIL: NativeBugseeSpec protocol not generated"; exit 1; }
 echo "    NativeBugseeSpec protocol generated"
 
+# Object payloads with nullable members cross as JSON text, not UnsafeObject
+# (src/bridge/json.ts): RN's iOS conversion of an object argument drops every
+# null member unless an app-level flag is on, so a `null` meant "clear" on
+# Android and nothing on iOS. Assert this version generates the two such
+# methods with NSString parameters, under the selectors BugseeModule.mm
+# implements (ios-spec-coverage.test.ts pins the module side). Whitespace is
+# collapsed first: codegen aligns multi-line selectors on their colons.
+node -e '
+  const header = require("fs").readFileSync(process.argv[1], "utf8").replace(/\s+/g, " ");
+  const wanted = [
+    "- (void)event:(NSString *)name paramsJson:(NSString * _Nullable)paramsJson;",
+    "- (void)reportUpdate:(NSString *)handleId patchJson:(NSString *)patchJson " +
+      "resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject;",
+  ];
+  for (const declaration of wanted) {
+    if (!header.includes(declaration)) {
+      console.error("FAIL: the generated protocol does not declare " + declaration);
+      process.exit(1);
+    }
+  }
+' "$SPEC_H"
+echo "    event and reportUpdate take their object payloads as JSON text (NSString)"
+
 echo "--- Android codegen"
 # Deliberately NOT generate-codegen-artifacts.js: the app-level executor
 # hardcodes com.facebook.fbreact.specs and ignores javaPackageName, so probing
