@@ -1000,6 +1000,33 @@ describe('the header strip does not consume a real frame\'s text (review N2)', (
     expect(firstPayload.reason).not.toBe(secondPayload.reason);
     expect(firstPayload.signature).toBe(secondPayload.signature);
   });
+
+  it('never strips when the candidate is not actually a prefix, even when its length coincidentally lands on a newline', () => {
+    const error = new Error('');
+    Object.defineProperty(error, 'name', { value: 'Foo' });
+    // "Foo" (the only candidate, since message is '') is not a prefix of
+    // this stack at all, but it happens to be 3 characters long, and
+    // position 3 here is a newline -- exactly what the boundary check
+    // looks for. It must still not be treated as a match.
+    error.stack = '1:2\n    at real (real.js:1:1)';
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    // Unstripped, "1:2" is itself a valid (if spurious) JSC-shaped frame
+    // (file "1", line 2) alongside the real one.
+    expect(payload.frames).toHaveLength(2);
+    expect(payload.frames[1]?.data.member).toBe('real');
+  });
+
+  it('a bare \\r (not \\r\\n) after the header is left for parseStack to absorb, same as \\n', () => {
+    const error = new Error('failed');
+    error.stack = 'Error: failed\r    at real (real.js:1:1)';
+
+    const payload = buildExceptionPayload({ error, platformOS: 'ios' });
+
+    expect(payload.frames).toHaveLength(1);
+    expect(payload.frames[0]?.data.member).toBe('real');
+  });
 });
 
 describe("React 19's built-in component frames are not user frames (review N4)", () => {
@@ -1045,6 +1072,44 @@ describe("React 19's built-in component frames are not user frames (review N4)",
     const payload = buildExceptionPayload({ error, platformOS: 'ios' });
 
     expect(payload.frames[0]).toMatchObject({ data: { source: 'unknown', line: 1, column: 2 }, user: true });
+  });
+
+  it('the sentinel check requires all three of file/line/column together, not any two', () => {
+    // file "unknown" but only line 0 (column 5): not the sentinel.
+    expect(
+      buildExceptionPayload({
+        error: (() => {
+          const e = new Error('m');
+          e.stack = 'Error: m\n    at c (unknown:0:5)';
+          return e;
+        })(),
+        platformOS: 'ios',
+      }).frames[0],
+    ).toMatchObject({ user: true });
+
+    // file "unknown" but only column 0 (line 7): not the sentinel.
+    expect(
+      buildExceptionPayload({
+        error: (() => {
+          const e = new Error('m');
+          e.stack = 'Error: m\n    at c (unknown:7:0)';
+          return e;
+        })(),
+        platformOS: 'ios',
+      }).frames[0],
+    ).toMatchObject({ user: true });
+
+    // line 0 and column 0, but file is not "unknown": not the sentinel.
+    expect(
+      buildExceptionPayload({
+        error: (() => {
+          const e = new Error('m');
+          e.stack = 'Error: m\n    at c (real.js:0:0)';
+          return e;
+        })(),
+        platformOS: 'ios',
+      }).frames[0],
+    ).toMatchObject({ user: true });
   });
 });
 
@@ -1169,5 +1234,26 @@ describe('a shared parse budget across the whole tree (review N1)', () => {
     expect(payload.cause?.frames).toEqual([]);
     expect(payload.cause?.cause?.frames).toEqual([]);
     expect(payload.cause?.cause?.reason).toBe('third'); // the node itself is still built
+  });
+
+  it("a node's own stack is cut to what remains of the shared budget, not just to STACK_MAX_INPUT_LENGTH", () => {
+    // Two fillers bring the remaining budget under STACK_MAX_INPUT_LENGTH
+    // (64 KiB) itself, so the *shared budget* -- not parseStack's own
+    // per-call cap -- is what must do the cutting from here.
+    const first = noStack(new Error('first'));
+    first.stack = 'x'.repeat(50000); // spends 50,000 of 131,072; 81,072 left
+    const second = noStack(new Error('second'));
+    second.stack = 'y'.repeat(50000); // spends another 50,000; 31,072 left
+    const third = noStack(new Error('third'));
+    // A real frame sits at position 40,000 -- past what remains of the
+    // shared budget (31,072), but comfortably under STACK_MAX_INPUT_LENGTH
+    // (65,536) on its own.
+    third.stack = `${'z'.repeat(40000)}\n    at real (real.js:1:1)`;
+    (first as unknown as { cause: unknown }).cause = second;
+    (second as unknown as { cause: unknown }).cause = third;
+
+    const payload = buildExceptionPayload({ error: first, platformOS: 'ios' });
+
+    expect(payload.cause?.cause?.frames).toEqual([]);
   });
 });
