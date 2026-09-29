@@ -23,6 +23,7 @@
 #import <BugseeRNSupport/BGSRNGuardedEmit.h>
 #import <BugseeRNSupport/BGSRNValues.h>
 #import <BugseeRNSupport/BGSRNJSON.h>
+#import <BugseeRNSupport/BGSRNAttributes.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -36,6 +37,7 @@
 #import "BGSRNGuardedEmit.h"
 #import "BGSRNValues.h"
 #import "BGSRNJSON.h"
+#import "BGSRNAttributes.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -175,6 +177,40 @@ static void BGSRNSettleAttachment(NSString *handleId,
     return;
   }
   reject(code, error.localizedDescription, nil);
+}
+
+static NSString *const kAttributeRejectedCode = @"E_ATTRIBUTE_REJECTED";
+
+/// Sets `value` for `name` through `BGSRNAttributes`, which verifies with a
+/// read-back rather than trusting the SDK's own return: `+setAttribute:
+/// withValue:` returns `YES` even when it silently drops a value over its
+/// archived-size limit (design doc, Phase 5 verified facts). The one path
+/// `setAttributeString/-Number/-Boolean` share; on main, like every other SDK
+/// entry point.
+///
+/// The rejection message names the attribute only -- never `value`, which may
+/// be sensitive.
+static void BGSRNSetAttribute(NSString *name,
+                              id value,
+                              RCTPromiseResolveBlock resolve,
+                              RCTPromiseRejectBlock reject) {
+  BGSRNRunOnMain(^{
+    const BOOL kept = [BGSRNAttributes setValue:value
+                                          forKey:name
+                                          setter:^BOOL(NSString *key, id v) {
+                                            return [Bugsee setAttribute:key withValue:v];
+                                          }
+                                          getter:^id(NSString *key) {
+                                            return [Bugsee getAttribute:key];
+                                          }];
+    if (kept) {
+      resolve(nil);
+    } else {
+      reject(kAttributeRejectedCode,
+             [NSString stringWithFormat:@"attribute \"%@\" was not kept by the SDK", name],
+             nil);
+    }
+  });
 }
 
 @implementation BugseeModule
@@ -440,62 +476,93 @@ RCT_EXPORT_MODULE(Bugsee)
   [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
 }
 
-#pragma mark - Attributes and identity (stubbed here; the real bridge is Task 5.3)
+#pragma mark - Attributes and identity
 
 - (void)setAttributeString:(NSString *)name
                       value:(NSString *)value
                     resolve:(RCTPromiseResolveBlock)resolve
                      reject:(RCTPromiseRejectBlock)reject {
-  resolve(nil); // Task 5.3
+  BGSRNSetAttribute(name, value, resolve, reject);
 }
 
+/// `@(value)`: iOS stores a double exactly, so unlike Android's `AttributeBridge
+/// .numberValue`, no integral conversion is needed to avoid a rounding trip.
 - (void)setAttributeNumber:(NSString *)name
                       value:(double)value
                     resolve:(RCTPromiseResolveBlock)resolve
                      reject:(RCTPromiseRejectBlock)reject {
-  resolve(nil); // Task 5.3
+  BGSRNSetAttribute(name, @(value), resolve, reject);
 }
 
+/// Through `BGSRNBoolNumber`, the CFBoolean singleton -- see `traceBoolean:
+/// value:` above for why a plain `@(value)` boxing is not good enough here
+/// either.
 - (void)setAttributeBoolean:(NSString *)name
                        value:(BOOL)value
                      resolve:(RCTPromiseResolveBlock)resolve
                       reject:(RCTPromiseRejectBlock)reject {
-  resolve(nil); // Task 5.3
+  BGSRNSetAttribute(name, BGSRNBoolNumber(value), resolve, reject);
 }
 
+/// Reads through `+getAllAttributes`, filtered by `BGSRNAttributes readable:`,
+/// rather than `+getAttribute:` -- the one persisted source `getAllAttributes`
+/// below also reads, so a single attribute and the whole set never disagree
+/// about what survived filtering (mirrors Android's `AttributeBridge.readOne`,
+/// which reads the persisted copy for the same reason).
 - (void)getAttribute:(NSString *)name
              resolve:(RCTPromiseResolveBlock)resolve
               reject:(RCTPromiseRejectBlock)reject {
-  resolve(@{}); // Task 5.3
+  BGSRNRunOnMain(^{
+    id value = [BGSRNAttributes readable:[Bugsee getAllAttributes]][name];
+    resolve(value != nil ? @{ @"value" : value } : @{});
+  });
 }
 
 - (void)getAllAttributes:(RCTPromiseResolveBlock)resolve
                    reject:(RCTPromiseRejectBlock)reject {
-  resolve(@{}); // Task 5.3
+  BGSRNRunOnMain(^{
+    resolve([BGSRNAttributes readable:[Bugsee getAllAttributes]]);
+  });
 }
 
 - (void)clearAttribute:(NSString *)name
                 resolve:(RCTPromiseResolveBlock)resolve
                  reject:(RCTPromiseRejectBlock)reject {
-  resolve(nil); // Task 5.3
+  BGSRNRunOnMain(^{
+    [Bugsee clearAttribute:name];
+    resolve(nil);
+  });
 }
 
 - (void)clearAllAttributes:(RCTPromiseResolveBlock)resolve
                      reject:(RCTPromiseRejectBlock)reject {
-  resolve(nil); // Task 5.3
+  BGSRNRunOnMain(^{
+    [Bugsee clearAllAttributes];
+    resolve(nil);
+  });
 }
 
 - (void)setUserIdentifier:(NSString *)identifier {
-  // Task 5.3
+  BGSRNRunOnMain(^{
+    [Bugsee setUserIdentifier:identifier];
+  });
 }
 
+/// `nil`/`@""` both read as absent (`BGSRNAttributes identifier:`) -- iOS's
+/// own getter already never returns `@""`, but this keeps the rule explicit
+/// and in parity with Android.
 - (void)getUserIdentifier:(RCTPromiseResolveBlock)resolve
                     reject:(RCTPromiseRejectBlock)reject {
-  resolve(@{}); // Task 5.3
+  BGSRNRunOnMain(^{
+    NSString *identifier = [BGSRNAttributes identifier:[Bugsee getUserIdentifier]];
+    resolve(identifier != nil ? @{ @"value" : identifier } : @{});
+  });
 }
 
 - (void)clearUserIdentifier {
-  // Task 5.3
+  BGSRNRunOnMain(^{
+    [Bugsee clearUserIdentifier];
+  });
 }
 
 /// Which phases JS wants delivered; the other completes natively at once.
