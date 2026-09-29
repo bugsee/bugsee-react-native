@@ -1681,7 +1681,7 @@ FOUNDATION_EXPORT const NSInteger BGSRNAttributeArchiveLimit;   // 1124, mirrors
 3. `the retained report carries the attributes and the identifier`
    - `manifest.json` `attrs` has every resolved row except `e2e_neg`, with the platform's read-back value and JSON type. On Android, `e2e_tenth` is the JSON number `0.10000000149011612`.
    - `request.json` `email` is `e2e-user-<n>`.
-   - **Correction (controller ruling, 2026-09-29, after Task 5.5):** confirmed an iOS SDK regression -- `BGSManifestCreator.userAttributes` is never assigned on nextgen, so a live `Bugsee.upload()` report's `manifest.attrs`/`request.json` `email` never carry the global attributes or identifier on iOS 7.0.0-beta3, even though `getAttribute`/`getAllAttributes`/`getUserIdentifier` all read them back correctly beforehand. Reported to the iOS SDK team; issue link pending. This case's `manifest.attrs`/`email` assertions run as `it.failing` on iOS only (a normal `it` on Android) until fixed -- see Task 5.5's report for the raw evidence.
+   - **Correction (controller ruling, 2026-09-29, after Task 5.5):** confirmed an iOS SDK regression, fixed upstream in https://github.com/bugsee/bugsee-cocoa/pull/164 (base `nextgen`; no separate issue). Root cause: nextgen lacked Android's `initializeReport`, so global attributes and the identifier were never copied into a new report (`BGSManifestCreator.userAttributes` is legacy and unused on this path). So a live `Bugsee.upload()` report's `manifest.attrs`/`request.json` `email` never carry the global attributes or identifier on iOS 7.0.0-beta3, even though `getAttribute`/`getAllAttributes`/`getUserIdentifier` all read them back correctly beforehand. This case's `manifest.attrs`/`email` assertions run as `it.failing` on iOS only (a normal `it` on Android) until fixed. A bundle's existence and identity (`request.summary === \`attrs-<n>\``) are asserted separately, in a plain `it` that is never `.failing`, so a harness regression cannot be swallowed as the known SDK bug -- see Task 5.5's report for the raw evidence.
 4. `an empty identifier clears it` — the get after `setUserIdentifier('')` is `undefined`.
 5. `attributes and identity survive a restart, and clearing them sticks`
    - The `attributes-persist` run's first log equals case 1's final `getAllAttributes()` and identifier.
@@ -1706,7 +1706,7 @@ The Task 5.4 cases apply unchanged, using the iOS column of the table.
 - [ ] **Mutate** — temporarily return `YES` from `BGSRNAttributes setValue:…` without reading back. The `e2e_long` row must fail (confirm from the raw `set:`/`get:` markers if an earlier row in the same loop already fails first). Revert and record.
 - [ ] **Commit** — `test(e2e): attributes and identity round-trip on iOS`.
 
-**Hardware pass: add to Task 3.H** — Task 5.5 on a physical iPhone, including case 5 across a real process restart. Clear the Keychain identity first and last. Re-check case 3's `manifest.attrs`/`email` (the `it.failing` case) on hardware and again after the next iOS beta; remove `.failing` once `BGSManifestCreator.userAttributes` is fixed upstream.
+**Hardware pass: add to Task 3.H** — Task 5.5 on a physical iPhone, including case 5 across a real process restart. Clear the Keychain identity first and last. Re-check case 3's `manifest.attrs`/`email` (the `it.failing` case) on hardware and again after the next iOS beta; remove `.failing` once the RN pin moves to an iOS beta containing https://github.com/bugsee/bugsee-cocoa/pull/164.
 
 ---
 
