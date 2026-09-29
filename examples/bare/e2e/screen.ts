@@ -16,7 +16,7 @@
  * video -- is `assertMedia`. A report that fails it fails its test.
  */
 import type { PulledBundle } from './bundles';
-import { imageSize, probeCodec, regionLuma } from './media';
+import { imageSize, probeCodec, regionLuma, shadeOf } from './media';
 import { adb, type LogLine } from './scenario';
 
 /** Edges, in display pixels. */
@@ -38,21 +38,31 @@ export interface Region {
 const DUMP = '/data/local/tmp/bugsee-e2e-privacy-ui.xml';
 
 /**
- * The UI dump, retried: `uiautomator dump` waits for the UI to go idle, and
- * the stage's moving square can keep it from getting there on the first try.
+ * The UI dump, once, and the device clock when it finished (epoch ms, the
+ * clock logcat stamps lines with). `uiautomator dump` waits for the UI to go
+ * idle, which the stage's moving square never allows, so the scenarios stop
+ * the square for the dump. No retry: a failed attempt takes about 12 s on
+ * the WOD_LX1, longer than the scenario holds still, so a second attempt
+ * could only read a screen that has moved on.
  */
-export async function uiDump(): Promise<string> {
-  let last = '';
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const out = await adb('shell', 'uiautomator', 'dump', DUMP).catch((error: unknown) => String(error));
-    if (/UI hier[a-z]* dumped to/.test(out)) {
-      const xml = await adb('exec-out', 'cat', DUMP);
-      await adb('shell', 'rm', '-f', DUMP);
-      return xml;
-    }
-    last = out;
+export async function uiDump(): Promise<{ xml: string; endMs: number }> {
+  const out = await adb('shell', 'uiautomator', 'dump', DUMP).catch((error: unknown) => String(error));
+  const endMs = await deviceNow();
+  if (!/UI hier[a-z]* dumped to/.test(out)) {
+    throw new Error(`uiautomator dump failed: ${out.trim()}`);
   }
-  throw new Error(`uiautomator dump failed three times; last output: ${last}`);
+  const xml = await adb('exec-out', 'cat', DUMP);
+  await adb('shell', 'rm', '-f', DUMP);
+  return { xml, endMs };
+}
+
+/** The device's clock, epoch ms. */
+export async function deviceNow(): Promise<number> {
+  const out = (await adb('shell', 'date', '+%s%3N')).trim();
+  if (!/^\d{13}$/.test(out)) {
+    throw new Error(`could not read the device clock: ${JSON.stringify(out)}`);
+  }
+  return Number(out);
 }
 
 /** The bounds of the node whose content-desc is `label`, from a UI dump. */
@@ -196,6 +206,23 @@ export function servedOf(line: LogLine): { count: number; rects: Rect[] } {
     rects.push({ left, top, right, bottom });
   }
   return { count, rects };
+}
+
+/**
+ * The indices of `frames` (as `frameLumas` returns them, centre quarter)
+ * between the SDK's edge frames: every Android bundle video opens with one
+ * all-black frame and closes with one or two, blacked out or not. Those are
+ * the leading and trailing dark runs; everything between is recording.
+ */
+export function interiorFrames(frames: ReadonlyArray<{ t: number; luma: number }>): { from: number; to: number } {
+  let from = 0;
+  while (from < frames.length && shadeOf(frames[from]!.luma) === 'dark') from += 1;
+  let to = frames.length;
+  while (to > from && shadeOf(frames[to - 1]!.luma) === 'dark') to -= 1;
+  if (to <= from) {
+    throw new Error('no interior frames: the whole video is dark');
+  }
+  return { from, to };
 }
 
 /** `key=<number>` from a marker line. */

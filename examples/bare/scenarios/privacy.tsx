@@ -34,7 +34,7 @@
  * moving again before the next change on screen, and for 1.5 s before the
  * next upload.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -68,6 +68,7 @@ export const HOLD_MS = 8_000;
 
 /** The accessibility labels the tests find the probes by (uiautomator). */
 export const SECURE_COMPONENT_LABEL = 'bugsee-secure-component';
+export const SECURE_WITNESS_LABEL = 'bugsee-secure-witness';
 export const VH_OPEN_LABEL = 'vh-open-probe';
 
 function mark(message: string): void {
@@ -213,12 +214,25 @@ const SECURE_RECT = { position: 'absolute', top: 260, left: 60, width: 180, heig
  * secure-component: a white `<BugseeSecure>` on white content three screens
  * tall. A transparent twin at the same rectangle is what gets measured, since
  * `<BugseeSecure>` takes no ref.
+ *
+ * The witness is a black square fixed near the bottom-left corner, outside
+ * the ScrollView, rendered by the same `mounted` flag as the component: it
+ * appears and disappears in the same commit. A video frame that shows it is
+ * therefore a frame the component is on screen in, which is how the test
+ * picks "every frame after the component mounts" without mapping clocks.
  */
 function SecureComponentProbe({ nonce, setMoving }: ProbeProps) {
   const scroll = useRef<ScrollView>(null);
   const twin = useRef<View>(null);
   const [mounted, setMounted] = useState(true);
   const height = Dimensions.get('window').height;
+
+  // After <BugseeSecure>'s own layout effect (children commit first), so
+  // `t` is no earlier than its first published rectangle and no later than
+  // its first paint.
+  useLayoutEffect(() => {
+    mark(`secure-component mounted t=${Date.now()} nonce=${nonce}`);
+  }, [nonce]);
 
   useEffect(() => {
     const logRect = async (phase: string) => {
@@ -261,16 +275,26 @@ function SecureComponentProbe({ nonce, setMoving }: ProbeProps) {
   }, [nonce, setMoving]);
 
   return (
-    <ScrollView ref={scroll} style={StyleSheet.absoluteFill} contentContainerStyle={{ height: 3 * height }}>
+    <>
+      <ScrollView ref={scroll} style={StyleSheet.absoluteFill} contentContainerStyle={{ height: 3 * height }}>
+        {mounted && (
+          <BugseeSecure
+            accessible
+            accessibilityLabel={SECURE_COMPONENT_LABEL}
+            style={{ ...SECURE_RECT, backgroundColor: '#FFFFFF' }}
+          />
+        )}
+        <View ref={twin} collapsable={false} pointerEvents="none" style={SECURE_RECT} />
+      </ScrollView>
       {mounted && (
-        <BugseeSecure
+        <View
           accessible
-          accessibilityLabel={SECURE_COMPONENT_LABEL}
-          style={{ ...SECURE_RECT, backgroundColor: '#FFFFFF' }}
+          accessibilityLabel={SECURE_WITNESS_LABEL}
+          pointerEvents="none"
+          style={[styles.witness, { top: height - 160 }]}
         />
       )}
-      <View ref={twin} collapsable={false} pointerEvents="none" style={SECURE_RECT} />
-    </ScrollView>
+    </>
   );
 }
 
@@ -362,4 +386,5 @@ export function PrivacyStage({
 const styles = StyleSheet.create({
   stage: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#FFFFFF' },
   square: { position: 'absolute', left: 0, width: SQUARE, height: SQUARE, backgroundColor: '#000000' },
+  witness: { position: 'absolute', left: 20, width: 80, height: 80, backgroundColor: '#000000' },
 });

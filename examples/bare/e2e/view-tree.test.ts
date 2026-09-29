@@ -104,7 +104,7 @@ describeAndroid('the vh data request on an Android handset', () => {
       run.start,
     );
     report('rect marker', rect.text.trim());
-    openBounds = boundsIn(await uiDump(), 'vh-open-probe');
+    openBounds = boundsIn((await uiDump()).xml, 'vh-open-probe');
     report('vh-open-probe on screen (uiautomator)', openBounds);
 
     const bundles = await awaitBundles(1);
