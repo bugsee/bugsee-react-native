@@ -21,6 +21,9 @@ const SHARED: [string, string, unknown][] = [
   ['detectAndReportHang', 'com.bugsee.option.detect.hang', true],
   ['wifiOnlyUpload', 'com.bugsee.option.config.wifi-only-upload', true],
   ['duration', 'com.bugsee.option.config.duration', 90],
+  // iOS-only until Android 7.3.0 registered the same key, in the same unit
+  // (megabytes) -- only the defaults differ (iOS 50, Android 150).
+  ['maxDataSize', 'com.bugsee.option.config.max-data-size', 100],
 ];
 
 const IOS: [string, string, unknown][] = [
@@ -28,7 +31,6 @@ const IOS: [string, string, unknown][] = [
   ['captureMachExceptions', 'com.bugsee.option.capture.mach-exceptions', true],
   ['captureDiskSpace', 'com.bugsee.option.capture.disk-space', true],
   ['detectAndReportKill', 'com.bugsee.option.detect.kill', true],
-  ['maxDataSize', 'com.bugsee.option.config.max-data-size', 5_000_000],
 ];
 
 const ANDROID: [string, string, unknown][] = [
@@ -44,6 +46,14 @@ const ANDROID: [string, string, unknown][] = [
     'com.bugsee.option.reporting.triggers.notification-bar',
     true,
   ],
+  // Added in Android 7.3.0.
+  [
+    'detectAndReportExitLowMemoryBackgroundAsError',
+    'com.bugsee.option.detect.exit.bg_low_memory_as_error',
+    true,
+  ],
+  ['maxPendingReports', 'com.bugsee.option.config.max-pending-reports', 12],
+  ['maxPendingReportAge', 'com.bugsee.option.config.max-pending-report-age', 7],
 ];
 
 type Bag = Record<string, unknown>;

@@ -4,6 +4,7 @@ import rawManifest from '../../packages/react-native/src/options/android-options
 import type { OptionsManifest } from '../option-keys';
 import enumFixture from '../../packages/react-native/src/options/option-enums.json';
 import { readNativeVersions } from '../native-versions';
+import { ANDROID_ONLY_KEYS, SHARED_KEYS } from '../../packages/react-native/src/options/keys';
 
 /**
  * The option-manifest parity gate (plan Task 2.7).
@@ -122,6 +123,11 @@ describe('every key the wrapper writes is one the SDK registers', () => {
     'com.bugsee.option.detect.exit.low_memory',
     'com.bugsee.option.reporting.triggers.notification-bar',
     'com.bugsee.option.$$ENDPOINT',
+    // Added in Android 7.3.0.
+    'com.bugsee.option.config.max-data-size',
+    'com.bugsee.option.config.max-pending-reports',
+    'com.bugsee.option.config.max-pending-report-age',
+    'com.bugsee.option.detect.exit.bg_low_memory_as_error',
   ];
 
   it.each(ANDROID_ACCESSOR_KEYS)('%s is registered', (key) => {
@@ -131,15 +137,52 @@ describe('every key the wrapper writes is one the SDK registers', () => {
   it('agrees on the type of a key the wrapper types as a number', () => {
     expect(byKey.get('com.bugsee.option.config.duration')?.type).toBe('int');
     expect(byKey.get('com.bugsee.option.capture.video.mode')?.type).toBe('enum');
+    expect(byKey.get('com.bugsee.option.config.max-data-size')?.type).toBe('int');
+    expect(byKey.get('com.bugsee.option.config.max-pending-reports')?.type).toBe('int');
+    expect(byKey.get('com.bugsee.option.config.max-pending-report-age')?.type).toBe('int');
   });
 
   it('agrees on the type of a key the wrapper types as a boolean', () => {
     expect(byKey.get('com.bugsee.option.capture.logs')?.type).toBe('boolean');
+    expect(byKey.get('com.bugsee.option.detect.exit.bg_low_memory_as_error')?.type).toBe('boolean');
   });
 
   // $$ENDPOINT is an internal option; the manifest says so, and that is why
   // it is not in the declared key fixture.
   it('marks the endpoint override hidden', () => {
     expect(byKey.get('com.bugsee.option.$$ENDPOINT')?.hidden).toBe(true);
+  });
+});
+
+// Task 3.P4: the key fixture (option-keys.json) and the manifest are read
+// from different Android files -- the Options interface and
+// OptionsDescriptors -- so a key one of them misses is dropped silently: the
+// platform guard then treats a registered option as one Android never agreed
+// to. Both must describe the same Android surface.
+describe('the key fixture and the manifest agree on Android', () => {
+  const fixture = new Set([...SHARED_KEYS, ...ANDROID_ONLY_KEYS]);
+
+  it('every public option the SDK registers is in the key fixture', () => {
+    const missing = manifest.options
+      .filter((o) => !o.hidden && !fixture.has(o.key))
+      .map((o) => o.key);
+    expect(missing).toEqual([]);
+  });
+
+  it('every Android key in the fixture is registered', () => {
+    expect([...fixture].filter((key) => !byKey.has(key))).toEqual([]);
+  });
+
+  // The hidden ones are internals, registered by literal rather than
+  // declared, which is why the fixture cannot see them. Named, so a new one
+  // is looked at rather than waved through.
+  it('the only options outside the fixture are the known hidden internals', () => {
+    expect(
+      manifest.options.filter((o) => !fixture.has(o.key)).map((o) => [o.key, o.hidden]),
+    ).toEqual([
+      ['com.bugsee.option.$$DEBUG', true],
+      ['com.bugsee.option.$$ENDPOINT', true],
+      ['com.bugsee.option.$$WRAPPER', true],
+    ]);
   });
 });

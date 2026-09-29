@@ -44,11 +44,4 @@ export class IOSLaunchOptions extends BugseeLaunchOptions {
   set detectAndReportKill(value: boolean | undefined) {
     this.$set('com.bugsee.option.detect.kill', value);
   }
-
-  get maxDataSize(): number | undefined {
-    return this.$get('com.bugsee.option.config.max-data-size');
-  }
-  set maxDataSize(value: number | undefined) {
-    this.$set('com.bugsee.option.config.max-data-size', value);
-  }
 }
