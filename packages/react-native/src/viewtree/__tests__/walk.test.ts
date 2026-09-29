@@ -7,7 +7,7 @@
  * naming-sensitive fixtures (ForwardRef/Memo/SimpleMemo) against real fibers.
  */
 import { FiberTag } from '../fiber';
-import type { WindowRect } from '../fiber';
+import type { FiberLike, WindowRect } from '../fiber';
 import type { ManagedNode, WalkEnv } from '../walk';
 import { VH_MAX_DEPTH, VH_MAX_NODES, VH_TAG_MAX_LENGTH, buildViewTree } from '../walk';
 import {
@@ -89,6 +89,22 @@ describe('buildViewTree', () => {
 
     expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Unknown');
     expect(toStringCalled).toBe(false);
+  });
+
+  it('a throwing .type getter on a host fiber falls back to Unknown instead of losing the node (safeHostClassName)', () => {
+    const fiber = buildFiberTree(host('DoesNotMatter', RECT));
+    Object.defineProperty(fiber, 'type', {
+      get(): never {
+        throw new Error('boom');
+      },
+    });
+
+    const tree = buildViewTree([{ current: fiber }], makeEnv());
+    const node = tree?.subitems?.[0]?.subitems?.[0];
+    expect(node?.class_name).toBe('Unknown');
+    // Still measured and emitted (real bounds, not dropped) — the throw is
+    // isolated to naming, same as `safeCompositeClassName` for composites.
+    expect(node?.bounds).toEqual([0, 0, 10, 10]);
   });
 
   it("a composite's class_name is displayName, then name, then Anonymous", () => {
@@ -181,6 +197,86 @@ describe('buildViewTree', () => {
 
     const names = tree?.subitems?.[0]?.subitems?.map((n) => n.class_name);
     expect(names).toEqual(['OuterFR', 'OuterMemo', 'OuterSimple']);
+  });
+
+  // N3 (fix round 2): `memo(forwardRef(fn))` is a Memo fiber whose `.type.type`
+  // is the ForwardRef *wrapper object* `{ render, displayName? }`, not `fn`
+  // itself — a case none of the tests above exercise (they only ever pass a
+  // plain function as the Memo's inner type). Each of the four levels a name
+  // could come from is tested individually, in priority order, so any one of
+  // them winning over another is caught precisely.
+  describe('memo(forwardRef(fn)): the Memo fiber unwraps one further level (N3)', () => {
+    it('names from the innermost render function when neither wrapper has a displayName', () => {
+      function InnermostRender(): null {
+        return null;
+      }
+      const tree = buildViewTree(
+        [fiberRoot(memoFiber({ render: InnermostRender }, [host('View', RECT)]))],
+        makeEnv(),
+      );
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('InnermostRender');
+    });
+
+    it("the ForwardRef wrapper's own displayName wins over the render function's name (outer Memo wrapper has none)", () => {
+      function InnermostRender(): null {
+        return null;
+      }
+      const tree = buildViewTree(
+        [fiberRoot(memoFiber({ render: InnermostRender, displayName: 'MiddleFR' }, [host('View', RECT)]))],
+        makeEnv(),
+      );
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('MiddleFR');
+    });
+
+    it("the outer Memo wrapper's displayName wins over the ForwardRef wrapper's own displayName — not `??` degrading to `&&`", () => {
+      function InnermostRender(): null {
+        return null;
+      }
+      const tree = buildViewTree(
+        [
+          fiberRoot(
+            memoFiber({ render: InnermostRender, displayName: 'MiddleFR' }, [host('View', RECT)], 'OuterMemo'),
+          ),
+        ],
+        makeEnv(),
+      );
+      // `displayNameOf(fiber.type) ?? displayNameOf(inner) ?? nameOf(render)`:
+      // the outer's non-null result must short-circuit the rest outright, not
+      // merely be treated as "truthy" and used to select between the other
+      // two (which `&&` in place of `??` would do, and would still land on
+      // 'MiddleFR' here since 'OuterMemo' is truthy).
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('OuterMemo');
+    });
+
+    it('an outer displayName wins even when the inner value is not object-shaped at all (falls through to the plain preferOuterName path)', () => {
+      const tree = buildViewTree(
+        [fiberRoot(memoFiber(null, [host('View', RECT)], 'OuterOnly'))],
+        makeEnv(),
+      );
+      // `inner` (`null`) is not `{ render }`-shaped, so this takes the plain
+      // `preferOuterName(fiber.type, inner)` path, not the ForwardRef-unwrap
+      // one — proves the `typeof inner === 'object' && inner !== null` guard
+      // actually gates entry into that branch, rather than the branch being
+      // reached (and only surviving by also landing on 'Anonymous') for a
+      // `null` inner too.
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('OuterOnly');
+    });
+
+    it("an outer displayName wins even when the inner value is a primitive (typeof !== 'object'), not just null — the `typeof inner === 'object'` guard itself is load-bearing", () => {
+      // Distinct from the `null` case above: `typeof null === 'object'` is
+      // already true on its own (a JS quirk), so that test alone cannot
+      // discriminate a mutant that forces the `typeof inner === 'object'`
+      // clause specifically to `true`. A string does: `typeof` a string is
+      // `'string'`, never `'object'`, so only the *correct* short-circuit
+      // (never entering the `'render' in inner` branch, where `in` on a
+      // primitive throws) reaches `preferOuterName`'s outer-displayName
+      // check at all.
+      const tree = buildViewTree(
+        [fiberRoot(memoFiber('not-an-object-or-function', [host('View', RECT)], 'OuterWinsOverPrimitive'))],
+        makeEnv(),
+      );
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('OuterWinsOverPrimitive');
+    });
   });
 
   it('an empty wrapper displayName falls through to the inner name, the same as no displayName at all', () => {
@@ -376,9 +472,16 @@ describe('buildViewTree', () => {
     expect(names).toEqual(['InnerShown']);
   });
 
-  it('a throwing env.isSecureBoundary is treated as "not secure", not as "secure"', () => {
+  it('a throwing env.isSecureBoundary fails CLOSED — treated as "secure", not as "not secure" (N2)', () => {
+    // The opposite failure direction from every other guarded `env` call:
+    // this one withholds data on failure (privacy over completeness)
+    // instead of degrading to a smaller-but-still-shown payload. See
+    // `safeIsSecureBoundary`'s doc comment in walk.ts. A real `testID` is
+    // given here specifically so this test can prove it is actually
+    // withheld, not merely that `secure` reads `true` on a node with
+    // nothing to withhold in the first place.
     const tree = buildViewTree(
-      [fiberRoot(host('View', RECT))],
+      [fiberRoot(host('View', RECT, [], { testID: 'would-leak' }))],
       makeEnv({
         isSecureBoundary: () => {
           throw new Error('boom');
@@ -386,7 +489,10 @@ describe('buildViewTree', () => {
       }),
     );
 
-    expect(tree?.subitems?.[0]?.subitems?.[0]?.options.secure).toBeUndefined();
+    const node = tree?.subitems?.[0]?.subitems?.[0];
+    expect(node?.options.secure).toBe(true);
+    expect(node?.options.tag).toBeUndefined();
+    expect(node?.options.native_id).toBeUndefined();
   });
 
   it('a throwing env.isWrapper is treated as "not the wrapper", not as "is the wrapper" (the fiber is still emitted)', () => {
@@ -410,6 +516,41 @@ describe('buildViewTree', () => {
 
     expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('View');
     expect(tree?.truncated).toBeUndefined();
+  });
+
+  it('a throwing env.now() is treated as 0, the same as a non-finite reading, not as a crash', () => {
+    const tree = buildViewTree(
+      [fiberRoot(host('View', RECT))],
+      makeEnv({
+        now: () => {
+          throw new Error('boom');
+        },
+      }),
+    );
+
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('View');
+    expect(tree?.truncated).toBeUndefined();
+  });
+
+  it('env.now() throwing on its first call only still lets the time budget trip on a later, valid reading', () => {
+    // Mirrors "a clock that is corrupted only on its first call..." above,
+    // but via a genuine throw (exercising `safeNow`'s `catch`) rather than a
+    // non-finite return value (its `Number.isFinite` ternary) — a `catch`
+    // that swallowed the error without falling back to `0` would leave
+    // `ctx.startedAt` as `undefined`, making every later `now() - startedAt`
+    // a `NaN`, which is never `> budget`, so the walk would never stop.
+    let calls = 0;
+    const now = (): number => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error('boom');
+      }
+      return 100_000;
+    };
+
+    const tree = buildViewTree([fiberRoot(fragment([host('A', RECT), host('B', RECT)]))], makeEnv({ now }));
+
+    expect(tree).toBeNull();
   });
 
   it('everything under BugseeSecure is secure and carries no tag or native_id', () => {
@@ -1203,10 +1344,15 @@ describe('buildViewTree', () => {
     expect(tree?.truncated).toBeUndefined();
   });
 
-  it('a null root entry does not throw (isObject(null) is false, not true)', () => {
+  it('a null root entry does not throw (isObject(null) is false, not true), and is silently skipped, not treated as truncated', () => {
     // `null` specifically, not `{ current: null }`: `typeof null === 'object'`
     // is a JS quirk `isObject` must not be fooled by, or this root would be
-    // treated as an object and `(null).current` would throw.
+    // treated as an object and `(null).current` would throw — caught by
+    // `buildViewTree`'s own `try` (so `.not.toThrow()` alone would not catch
+    // a broken `isObject`), but wrongly marking the whole tree `truncated`
+    // for a root that was never legitimately there in the first place. The
+    // `truncated` assertion below is what actually discriminates that from
+    // "correctly skipped before ever entering the `try`".
     expect(() =>
       buildViewTree([null as unknown as { current: never }, fiberRoot(host('Shown', RECT))], makeEnv()),
     ).not.toThrow();
@@ -1217,6 +1363,126 @@ describe('buildViewTree', () => {
     );
     expect(tree?.subitems).toHaveLength(1);
     expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Shown');
+    expect(tree?.truncated).toBeUndefined();
+  });
+
+  // N5/I6(a) (fix round 2): `root.current` is read inside `buildViewTree`'s
+  // own `try`, not before it — a throwing getter, or `root` itself being a
+  // revoked Proxy, used to escape uncaught.
+  it('a throwing root.current getter does not throw out of buildViewTree, and marks the root truncated via a second, healthy root', () => {
+    const throwingRoot: { current: never } = {
+      get current(): never {
+        throw new Error('boom');
+      },
+    };
+
+    expect(() => buildViewTree([throwingRoot, fiberRoot(host('Shown', RECT))], makeEnv())).not.toThrow();
+
+    const tree = buildViewTree([throwingRoot, fiberRoot(host('Shown', RECT))], makeEnv());
+    expect(tree?.subitems).toHaveLength(1);
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Shown');
+    expect(tree?.truncated).toBe(true);
+  });
+
+  it('a revoked Proxy as a root entry does not throw out of buildViewTree', () => {
+    const { proxy, revoke } = Proxy.revocable<{ current: never }>({ current: undefined as never }, {});
+    revoke();
+
+    expect(() => buildViewTree([proxy, fiberRoot(host('Shown', RECT))], makeEnv())).not.toThrow();
+
+    const tree = buildViewTree([proxy, fiberRoot(host('Shown', RECT))], makeEnv());
+    expect(tree?.subitems).toHaveLength(1);
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('Shown');
+    expect(tree?.truncated).toBe(true);
+  });
+
+  // N5/I6(b): the per-fiber `try` inside `runWalk` is narrow — a throw deep
+  // in one fiber's own read (here, `displayName`) drops only that fiber's
+  // contribution (or, for a class-name computation specifically, falls back
+  // to 'Anonymous' rather than dropping even that much — see
+  // `safeCompositeClassName`), never the rest of the tree around it.
+  it('a throwing displayName getter, several levels deep in a tree, falls back to Anonymous — the rest of the tree (siblings, ancestor, other roots) is still emitted', () => {
+    const throwingType: { displayName: unknown } = {
+      get displayName(): unknown {
+        throw new Error('boom');
+      },
+    };
+    const broken: FiberSpec = { tag: FiberTag.FunctionComponent, type: throwingType, children: [host('DeepHost', RECT)] };
+
+    const tree = buildViewTree(
+      [
+        fiberRoot(
+          host('Outer', RECT, [
+            fn(function BeforeSibling() {
+              return null;
+            }, [host('BeforeHost', RECT)]),
+            broken,
+            fn(function AfterSibling() {
+              return null;
+            }, [host('AfterHost', RECT)]),
+          ]),
+        ),
+        fiberRoot(host('OtherRoot', RECT)),
+      ],
+      makeEnv(),
+    );
+
+    const outerHost = tree?.subitems?.[0]?.subitems?.[0];
+    const compositeNames = outerHost?.subitems?.map((n) => n.class_name);
+    // The broken composite is still there — named 'Anonymous', not dropped —
+    // flanked by both of its untouched siblings.
+    expect(compositeNames).toEqual(['BeforeSibling', 'Anonymous', 'AfterSibling']);
+    // Its own child host, unaffected by the throw in its ancestor's naming,
+    // still made it into the tree.
+    const brokenComposite = outerHost?.subitems?.[1];
+    expect(brokenComposite?.subitems?.[0]?.class_name).toBe('DeepHost');
+    // The second, unrelated root is also untouched.
+    expect(tree?.subitems?.[1]?.subitems?.[0]?.class_name).toBe('OtherRoot');
+  });
+
+  it("a throwing .child getter (not just a naming getter) drops only that one fiber's own node, and marks its host ancestor truncated — siblings and other roots are untouched", () => {
+    const root = buildFiberTree(
+      host('Outer', RECT, [
+        fn(function Before() {
+          return null;
+        }, [host('BeforeHost', RECT)]),
+        fn(function Broken() {
+          return null;
+        }, [host('DeepHost', RECT)]),
+        fn(function After() {
+          return null;
+        }, [host('AfterHost', RECT)]),
+      ]),
+    );
+
+    // Redefined after building, not built throwing from the start: the
+    // sibling chain (`Before` -> `Broken` -> `After`) is read and pushed
+    // onto the walk's stack *before* `Broken`'s own `.child` is ever
+    // touched, so making only `.child` throw (not `.sibling` or `.tag`)
+    // isolates exactly the read this test means to probe.
+    const before = root.child as FiberLike;
+    const broken = before.sibling as FiberLike;
+    Object.defineProperty(broken, 'child', {
+      get(): never {
+        throw new Error('boom');
+      },
+    });
+
+    const tree = buildViewTree([{ current: root }, fiberRoot(host('OtherRoot', RECT))], makeEnv());
+    const outerHost = tree?.subitems?.[0]?.subitems?.[0];
+    const names = outerHost?.subitems?.map((n) => n.class_name);
+
+    // `Broken` contributes no node at all (unlike a naming-only failure,
+    // reading `.child` throws before any node for it could be built) — but
+    // `Before` and `After`, its siblings, are unaffected.
+    expect(names).toEqual(['Before', 'After']);
+    // The cut bubbles to `Outer`, the nearest ancestor that IS emitted (I1),
+    // and from there to the root — but the second, unrelated root still
+    // comes through untouched.
+    expect(outerHost?.truncated).toBe(true);
+    expect(tree?.subitems?.[1]?.subitems?.[0]?.class_name).toBe('OtherRoot');
+    expect(tree?.subitems?.[1]?.truncated).toBeUndefined();
+    expect(tree?.truncated).toBe(true);
   });
 
   it("a class component's class_name is its name", () => {
