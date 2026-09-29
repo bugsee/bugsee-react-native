@@ -23,3 +23,18 @@ dependencyResolutionManagement {
 rootProject.name = 'bugsee-react-native'
 include ':bugsee-android-bridge'
 project(':bugsee-android-bridge').projectDir = file('packages/react-native/android')
+
+// The module directory is ALSO built by the example app
+// (examples/bare/android, via autolinking as :bugsee_react-native), and both
+// builds default to writing into packages/react-native/android/build/. Run
+// one after the other without a clean in between and each sees the other's
+// stale classes, generated codegen and test results -- previously misread as
+// a real test failure. Redirecting only this standalone build's output
+// leaves the example's build (and its own default build/ directory) alone.
+// `layout.buildDirectory`, not the deprecated `buildDir` setter, because that
+// is what a lazy Provider-based redirect requires post-AGP-8.
+gradle.beforeProject { project ->
+    if (project.path == ':bugsee-android-bridge') {
+        project.layout.buildDirectory.set(new File(settingsDir, 'build/android-bridge'))
+    }
+}
