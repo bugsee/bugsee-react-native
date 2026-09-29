@@ -395,6 +395,12 @@ describeDevice(`report handler on ${ON_IOS ? `the iOS simulator (${IOS_SIMULATOR
   // sets each value first (and the upload carries its own summary and
   // description), so a bundle without them proves they were cleared, not
   // that they were never there.
+  //
+  // Each platform writes a cleared field its own way, pinned per platform:
+  // iOS writes `""` for both, Android `null`. A removed attribute is absent
+  // from manifest `attrs` on both. Also: an attribute value cut mid-emoji
+  // (a lone surrogate) crosses as U+FFFD on both -- its JSON escape would
+  // otherwise make iOS reject the whole patch.
   it('clear: a null summary, description and attribute take effect in the bundle', async () => {
     await clearBundles();
     const run = await startRun('rh-clear');
@@ -411,6 +417,15 @@ describeDevice(`report handler on ${ON_IOS ? `the iOS simulator (${IOS_SIMULATOR
     expect(set.text).toContain(`summary=set-${nonce} description=d-${nonce} `);
     expect(set.text).toContain(`"gone-${nonce}":"g-${nonce}"`);
     expect(set.text).toContain(`"kept-${nonce}":"k-${nonce}"`);
+    report(
+      'case 7 engine',
+      must(
+        log.all(new RegExp(`BUGSEE_E2E rh clear engine toWellFormed=\\S+ nonce=${nonce}`), run.start)[0],
+        'the engine probe',
+        run.start,
+      ).text.trim(),
+    );
+    expect(set.text).toContain(`"cut-${nonce}":"c-${nonce}-\uFFFD"`);
     const cleared = must(
       log.all(new RegExp(`BUGSEE_E2E rh clear cleared .*nonce=${nonce}`), run.start)[0],
       'the handler clearing them',
@@ -427,12 +442,14 @@ describeDevice(`report handler on ${ON_IOS ? `the iOS simulator (${IOS_SIMULATOR
     report('case 7 request.json', pick(bundle.request));
     report('case 7 manifest attrs', bundle.manifest.attrs);
     expect(bundle.request.type).toBe('bug');
-    // Absent, null or empty -- cleared, whichever way the SDK writes "none";
-    // never the value the handler set nor the one upload() passed.
-    expect([undefined, null, '']).toContain(bundle.request.summary);
-    expect([undefined, null, '']).toContain(bundle.request.description);
-    expect(bundle.manifest.attrs).not.toHaveProperty([`gone-${nonce}`]);
+    // Cleared, as each SDK writes "none": iOS "", Android null. Never the
+    // value the handler set nor the one upload() passed.
+    expect(bundle.request.summary).toBe(ON_IOS ? '' : null);
+    expect(bundle.request.description).toBe(ON_IOS ? '' : null);
+    // Removed: absent from attrs on both platforms, not present as null.
+    expect(Object.keys(bundle.manifest.attrs)).not.toContain(`gone-${nonce}`);
     expect(bundle.manifest.attrs[`kept-${nonce}`]).toBe(`k-${nonce}`);
+    expect(bundle.manifest.attrs[`cut-${nonce}`]).toBe(`c-${nonce}-\uFFFD`);
   });
 
   itAndroid('terminating: an uncaught Java exception never reaches JS; onAfter does, next launch', async () => {
