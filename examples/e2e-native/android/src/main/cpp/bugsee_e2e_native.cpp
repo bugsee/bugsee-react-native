@@ -14,8 +14,9 @@ Java_com_bugsee_e2enative_BugseeE2EModule_nativeCrash(JNIEnv *, jclass, jint kin
       *(volatile int *) nullptr = 0x42;
       break;
     case 1:
-      // SIGABRT.
+      // SIGABRT. abort() does not return; the break is for the next reader.
       abort();
+      break;
     default:
       break;
   }
