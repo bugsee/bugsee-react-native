@@ -166,6 +166,31 @@ describe('buildViewTree', () => {
     expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('InnerSimpleMemo');
   });
 
+  // N6: `compositeClassName`'s SimpleMemo branch calls
+  // `preferOuterName(fiber.elementType, fiber.type)`, i.e.
+  // `displayNameOf(fiber.elementType) ?? nameOf(fiber.type)`. React never
+  // actually builds a SimpleMemo fiber with `elementType: null` (the memo
+  // wrapper always survives there) -- but `displayNameOf`'s own
+  // `value !== null` guard must still hold at this call site: without it,
+  // `typeof null === 'object'` is true, so `displayNameOf` would read
+  // `.displayName` off `null` and throw, and `safeCompositeClassName`'s
+  // catch would report 'Anonymous' instead of `fiber.type`'s real name.
+  it('SimpleMemo still names from fiber.type when elementType is null, a shape React never builds', () => {
+    function NamedInner(): null {
+      return null;
+    }
+    const spec: FiberSpec = {
+      tag: FiberTag.SimpleMemo,
+      type: NamedInner,
+      elementType: null,
+      children: [host('View', RECT)],
+    };
+
+    const tree = buildViewTree([fiberRoot(spec)], makeEnv());
+
+    expect(tree?.subitems?.[0]?.subitems?.[0]?.class_name).toBe('NamedInner');
+  });
+
   it("ForwardRef, Memo and SimpleMemo prefer the wrapper's own displayName over the inner name", () => {
     function InnerFR(): null {
       return null;
