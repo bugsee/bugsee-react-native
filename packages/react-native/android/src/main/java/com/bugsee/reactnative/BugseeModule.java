@@ -49,6 +49,8 @@ public class BugseeModule extends NativeBugseeSpec
     private static final String E_REPORT_HANDLE_DEAD = "E_REPORT_HANDLE_DEAD";
     private static final String E_REPORT_ATTACHMENT_REJECTED = "E_REPORT_ATTACHMENT_REJECTED";
     private static final String E_REPORT_BAD_ARGUMENT = "E_REPORT_BAD_ARGUMENT";
+    // The stable code of src/attributes/errors.ts's AttributeErrorCode.Rejected.
+    private static final String E_ATTRIBUTE_REJECTED = "E_ATTRIBUTE_REJECTED";
 
     /** Moves secure rectangles from React Native's viewport space to display pixels. */
     private final ReactRootOriginTracker originTracker;
@@ -248,57 +250,157 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     // --- Attributes and identity ---------------------------------------
-    // Stubbed here: the JS API and its validation land in this task (5.1),
-    // the real Android bridge in Task 5.2.
+    // Everything that decides a value's shape lives in AttributeBridge, which
+    // is plain Java and unit-tested; this is only the translation to and from
+    // the bridge's Promise/WritableMap shapes, and the SDK adapter.
+
+    /** The one {@link AttributeBridge.Sdk} adapter; the class itself has no state. */
+    private static final AttributeBridge.Sdk ATTRIBUTE_SDK = new AttributeBridge.Sdk() {
+        @Override
+        public void set(final String name, final Serializable value) {
+            Bugsee.setAttribute(name, value);
+        }
+
+        @Override
+        public Object getInMemory(final String name) {
+            return Bugsee.getAttribute(name);
+        }
+
+        @Override
+        public Map<String, Serializable> getPersisted() {
+            return Bugsee.getAllAttributes();
+        }
+    };
 
     @Override
     public void setAttributeString(final String name, final String value, final Promise promise) {
-        promise.resolve(null); // Task 5.2
+        setAttribute(name, value, promise);
     }
 
     @Override
     public void setAttributeNumber(final String name, final double value, final Promise promise) {
-        promise.resolve(null); // Task 5.2
+        setAttribute(name, AttributeBridge.numberValue(value), promise);
     }
 
     @Override
     public void setAttributeBoolean(final String name, final boolean value, final Promise promise) {
-        promise.resolve(null); // Task 5.2
+        setAttribute(name, value, promise);
+    }
+
+    /**
+     * {@code setAttribute*}'s shared body: verify, then resolve or reject.
+     * Neither SDK's own {@code setAttribute} reports a dropped value
+     * truthfully, so {@link AttributeBridge#setAndVerify}'s read-back is the
+     * only honest signal (design doc, Phase 5).
+     */
+    private static void setAttribute(final String name, final Serializable value, final Promise promise) {
+        try {
+            if (AttributeBridge.setAndVerify(ATTRIBUTE_SDK, name, value)) {
+                promise.resolve(null);
+            } else {
+                promise.reject(E_ATTRIBUTE_REJECTED,
+                        "attribute \"" + name + "\" was not kept by the SDK");
+            }
+        } catch (final RuntimeException e) {
+            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+        }
     }
 
     @Override
     public void getAttribute(final String name, final Promise promise) {
-        promise.resolve(Arguments.createMap()); // Task 5.2
+        try {
+            promise.resolve(attributeValueMap(AttributeBridge.readOne(ATTRIBUTE_SDK, name)));
+        } catch (final RuntimeException e) {
+            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+        }
     }
 
     @Override
     public void getAllAttributes(final Promise promise) {
-        promise.resolve(Arguments.createMap()); // Task 5.2
+        try {
+            final Map<String, Object> readable = AttributeBridge.readable(Bugsee.getAllAttributes());
+            final WritableMap result = Arguments.createMap();
+            for (final Map.Entry<String, Object> entry : readable.entrySet()) {
+                putAttributeValue(result, entry.getKey(), entry.getValue());
+            }
+            promise.resolve(result);
+        } catch (final RuntimeException e) {
+            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+        }
     }
 
     @Override
     public void clearAttribute(final String name, final Promise promise) {
-        promise.resolve(null); // Task 5.2
+        try {
+            Bugsee.clearAttribute(name);
+            promise.resolve(null);
+        } catch (final RuntimeException e) {
+            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+        }
     }
 
     @Override
     public void clearAllAttributes(final Promise promise) {
-        promise.resolve(null); // Task 5.2
+        try {
+            Bugsee.clearAllAttributes();
+            promise.resolve(null);
+        } catch (final RuntimeException e) {
+            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+        }
     }
 
     @Override
     public void setUserIdentifier(final String identifier) {
-        // Task 5.2
+        Bugsee.setUserIdentifier(identifier);
     }
 
     @Override
     public void getUserIdentifier(final Promise promise) {
-        promise.resolve(Arguments.createMap()); // Task 5.2
+        try {
+            final String id = AttributeBridge.identifier(Bugsee.getUserIdentifier());
+            final WritableMap result = Arguments.createMap();
+            if (id != null) {
+                result.putString("value", id);
+            }
+            promise.resolve(result);
+        } catch (final RuntimeException e) {
+            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+        }
     }
 
     @Override
     public void clearUserIdentifier() {
-        // Task 5.2
+        Bugsee.clearUserIdentifier();
+    }
+
+    /** {@code { value }}, typed by {@code value}'s runtime type, or empty when absent. */
+    private static WritableMap attributeValueMap(@Nullable final Object value) {
+        final WritableMap result = Arguments.createMap();
+        putAttributeValue(result, "value", value);
+        return result;
+    }
+
+    /**
+     * Writes one attribute value into {@code target}, typed as
+     * {@link AttributeBridge#readable} produced it: {@code String}, {@code
+     * Boolean}, {@code Number} (always a {@code Double} -- see {@link
+     * AttributeBridge#readable}) or a {@code List<String>}. Absent ({@code
+     * null}) writes nothing, leaving the key out entirely.
+     */
+    private static void putAttributeValue(
+            @NonNull final WritableMap target,
+            @NonNull final String key,
+            @Nullable final Object value
+    ) {
+        if (value instanceof String) {
+            target.putString(key, (String) value);
+        } else if (value instanceof Boolean) {
+            target.putBoolean(key, (Boolean) value);
+        } else if (value instanceof Number) {
+            target.putDouble(key, ((Number) value).doubleValue());
+        } else if (value instanceof List) {
+            target.putArray(key, toWritableArray((List<?>) value));
+        }
     }
 
     /**
