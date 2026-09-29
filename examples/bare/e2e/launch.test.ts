@@ -144,20 +144,23 @@ describe('example app on a real device', () => {
     // report-handler run can leave it on one of its own. A fresh nonce, so
     // the run can prove which one it got.
     //
-    // iOS launches against the closed loopback endpoint (bundles.ts), as
-    // every other iOS suite does. The e2e token is a placeholder; the real
-    // server rejects it, and the iOS SDK then stores a stopped flag for the
-    // token (`BugseeKilledSdkKey`) that refuses every later launch -- this
-    // suite used to leave the app in that state for every suite after it.
-    // What this test asserts (Launched, the options, relaunch settling) does
-    // not need the server: the SDK reaches Launched offline.
-    const extras = platform === 'ios' ? { endpoint: DEAD_ENDPOINT } : {};
+    // Both platforms launch against the closed loopback endpoint
+    // (bundles.ts). The e2e token is a placeholder; the real server rejects
+    // it, and the iOS SDK then stores a stopped flag for the token
+    // (`BugseeKilledSdkKey`) that refuses every later launch -- this suite
+    // used to leave the app in that state for every suite after it, and on
+    // Android it contacted the real server on every run. What this test
+    // asserts (Launched, the options, relaunch settling) does not need the
+    // server: the SDK reaches Launched offline. (The app's own rule forces
+    // the same endpoint for a placeholder token, endpoint.ts; passing it
+    // here too keeps the test's intent independent of that rule.)
+    const extras = { endpoint: DEAD_ENDPOINT };
     const scenario = writeScenario('launch', extras);
     let uri: string | undefined;
     let iosArgs: string[] = [];
     if (platform === 'android') {
       // The launch intent carries it: read at once, debug or release.
-      uri = scenarioUri(scenario);
+      uri = scenarioUri(scenario, extras);
     } else {
       // The launch arguments carry it, and the endpoint (scenario.ts). The
       // simulator's app loads from Metro, which rebuilds a beat after the
@@ -220,6 +223,17 @@ describe('example app on a real device', () => {
     if (platform === 'ios') {
       expect(lines.filter(line => IOS_STOPPED_FOR_TOKEN.test(line))).toEqual([]);
       expect(lines.some(line => /Session not initialized\. - Could not connect to the server/.test(line))).toBe(true);
+    }
+
+    // The SDK's own report of the endpoint it launched with: the dead one,
+    // so this run cannot have sent the placeholder token to the real server.
+    // Android reports it (`com.bugsee.option.$$ENDPOINT`); where a platform
+    // reports none, the scenario marker above is the evidence.
+    const reported = lines.filter(line => /BUGSEE_E2E effective endpoint /.test(line));
+    console.log(`${platform}: ${reported.map(line => line.trim()).join(' | ') || '(no effective endpoint line)'}`);
+    if (platform === 'android') {
+      expect(reported).toHaveLength(1);
+      expect(reported[0]).toMatch(/"com\.bugsee\.option\.\$\$ENDPOINT":"https:\/\/127\.0\.0\.1:9[/"]/);
     }
 
     const launched = steps.find(step => step.name === 'Status.Launched')!;
