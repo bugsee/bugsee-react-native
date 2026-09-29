@@ -85,6 +85,23 @@
   XCTAssertEqualObjects(_report.mutations, @[]);
 }
 
+/// Parity with the JS proxy, which rejects it before crossing: an empty
+/// attribute name is a bad argument like any other malformed field, and fails
+/// the whole patch -- the valid name next to it included.
+- (void)testRejectsAnEmptyAttributeNameAndAppliesNothing {
+  NSDictionary *patch = @{
+    @"summary" : @"new summary",
+    @"attributes" : @{ @"ok" : @"v", @"" : @"x" },
+  };
+  [self assertRejected:patch];
+  NSError *error = nil;
+  [BGSRNReportOps applyPatch:patch toReport:_report error:&error];
+  XCTAssertEqualObjects(error.localizedDescription, @"attribute name must be a non-empty string");
+  XCTAssertNil(_report.fakeSummary);
+  XCTAssertEqual(_report.fakeAttributes.count, 0u);
+  XCTAssertEqualObjects(_report.mutations, @[]);
+}
+
 /// One call, not `clearLabels` + `addLabels:`: between the two, the SDK (or a
 /// concurrent reader) would see a report with no labels at all.
 - (void)testLabelsReplaceThroughReplaceLabels {
