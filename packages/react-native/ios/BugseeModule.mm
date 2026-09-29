@@ -6,6 +6,7 @@
 // with "use of '@import' when C++ modules are disabled", and then with a
 // cascade of undeclared identifiers that hides the real cause.
 #import <Bugsee/Bugsee.h>
+#import <UIKit/UIKit.h>
 
 // CocoaPods compiles BugseeRNSupport's sources straight into this pod, so its
 // headers arrive flat; under SPM it is a separate target and they arrive under
@@ -24,6 +25,7 @@
 #import <BugseeRNSupport/BGSRNValues.h>
 #import <BugseeRNSupport/BGSRNJSON.h>
 #import <BugseeRNSupport/BGSRNAttributes.h>
+#import <BugseeRNSupport/BGSRNDataRequestBridge.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -38,6 +40,7 @@
 #import "BGSRNValues.h"
 #import "BGSRNJSON.h"
 #import "BGSRNAttributes.h"
+#import "BGSRNDataRequestBridge.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -83,10 +86,23 @@
   return [BGSRNSecureRectangles.shared snapshotForDisplay:display];
 }
 
+/// Through the data request bridge, for the same reason lifecycle events go
+/// through the bus: this wrapper outlives every JS runtime.
+///
+/// The SDK asks on MAIN and does not wait there (SDK 0d9c9d0a3,
+/// `BGSCaptureDataProviderViewHierarchy.m`): the callback is asynchronous and
+/// accepted on any thread. The bridge answers exactly once -- synchronously
+/// with nil when JS cannot answer, otherwise with JS's reply (on the module's
+/// method queue) or nil at its deadline (on its own queue). Nothing here may
+/// hop to or wait on main.
 - (void)requestDataWithType:(NSString *)dataType
                    callback:(id<BGSDataRequestResultCallback>)callback {
-  // Always answer: the SDK waits on this mid-capture.
-  [callback onResult:nil];
+  [BGSRNDataRequestBridge.shared requestType:dataType
+                                       reply:^(NSString *d) {
+                                         if ([callback respondsToSelector:@selector(onResult:)]) {
+                                           [callback onResult:d];
+                                         }
+                                       }];
 }
 
 /// Through the report handler bridge, for the same reason lifecycle events go
@@ -140,6 +156,30 @@ static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper) {
       BGSRNWrapperChannelHolder.shared.channel = nil;
     }
   });
+}
+
+/// The on-screen origin, in points, of the key window of the foreground-active
+/// window scene: where the React root's window-relative measurements start,
+/// so JS adds it to put the view tree in the native tree's (screen) space.
+/// nil without one, or off main -- the SDK asks on main, and UIKit must not be
+/// read anywhere else.
+static NSValue *_Nullable BGSRNKeyWindowOrigin(void) {
+  if (!NSThread.isMainThread) {
+    return nil;
+  }
+  for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+    if (scene.activationState != UISceneActivationStateForegroundActive ||
+        ![scene isKindOfClass:UIWindowScene.class]) {
+      continue;
+    }
+    UIWindow *window = ((UIWindowScene *)scene).keyWindow;
+    if (window == nil || window.screen == nil) {
+      continue;
+    }
+    return [NSValue valueWithCGPoint:[window convertPoint:CGPointZero
+                                        toCoordinateSpace:window.screen.coordinateSpace]];
+  }
+  return nil;
 }
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
@@ -268,6 +308,21 @@ RCT_EXPORT_MODULE(Bugsee)
       [strongSelf emitOnReportHandlerRequest:request];
     }, @"onReportHandlerRequest");
   }];
+  // And for the SDK's `vh` data request: the same guarded emit, so NO makes
+  // the bridge answer the SDK nil at once (`by=sink-threw`).
+  [BGSRNDataRequestBridge.shared attach:self
+      block:^BOOL(NSDictionary *request) {
+        __strong __typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf == nil) {
+          return NO;
+        }
+        return BGSRNGuardedEmit(^{
+          [strongSelf emitOnDataRequest:request];
+        }, @"onDataRequest");
+      }
+      origin:^NSValue *_Nullable {
+        return BGSRNKeyWindowOrigin();
+      }];
 }
 
 /// Identity-checked inside the bus: a reload can construct and attach the NEW
@@ -281,6 +336,9 @@ RCT_EXPORT_MODULE(Bugsee)
   // runtime cannot know them, so the reports must not wait out their
   // deadlines.
   [BGSRNReportHandlerBridge.shared detach:self];
+  // And answers nil to every data request this module's JS was given, and
+  // disables the view tree until the next runtime mounts its anchor.
+  [BGSRNDataRequestBridge.shared detach:self];
 }
 
 /// The SDK touches UIKit during start-up, so it must not be constructed on a
@@ -343,18 +401,22 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
-#pragma mark - View-hierarchy data request (Task 6.4 JS side; bridged Task 6.6)
-// The spec declares onDataRequest/replyDataRequest/setViewTreeEnabled so JS
-// (src/viewtree/requests.ts) can already build and reply to a 'vh' request
-// end-to-end against the mock; nothing on this side emits or acts on them yet.
+#pragma mark - View-hierarchy data request (design doc Phase 6, Task 6.6)
 
+/// JS mounted its first `Bugsee.wrap` anchor (YES) or unmounted its last (NO).
+/// Until YES, the bridge answers the SDK nil without asking JS.
 - (void)setViewTreeEnabled:(BOOL)enabled {
-  // Task 6.6.
+  BGSRNDataRequestBridge.shared.viewTreeEnabled = enabled;
 }
 
+/// JS's one synchronous answer to `onDataRequest`: the view tree as JSON
+/// text, or `nil`. A late, repeated or unknown id is dropped by the bridge.
+/// Runs on the module's method queue and never hops to main: the SDK is not
+/// waiting on main, and a hop would only spend the deadline queueing behind
+/// UI work.
 - (void)replyDataRequest:(NSString *)requestId
                   payload:(NSString * _Nullable)payload {
-  // Task 6.6.
+  [BGSRNDataRequestBridge.shared complete:requestId payload:payload];
 }
 
 - (void)setWrapperInfo:(NSDictionary *)identity {
