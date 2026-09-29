@@ -26,8 +26,8 @@
  *          this build -- while the served rectangle is on the probe.
  *   true   the origin is (0, 0): nothing to convert.
  *
- * Without it the covering check below still runs, on whatever was built.
- * When every edge of the probe falls on a whole display pixel (density x dp
+ * It is required: a run that does not say which build it tested proves
+ * nothing about either setting, so the test fails without it. When every edge of the probe falls on a whole display pixel (density x dp
  * integral, as on the WOD_LX1 at density 2), outward rounding has nothing to
  * add, so the served rectangle must equal the probe exactly.
  *
@@ -216,8 +216,10 @@ describeAndroid('secure rectangles on an Android handset', () => {
       expect(bounds.left - raw.left).toBe(origin.x);
     } else if (EDGE_TO_EDGE === 'true') {
       expect(origin).toEqual({ x: 0, y: 0 });
-    } else if (EDGE_TO_EDGE !== undefined) {
-      throw new Error(`E2E_EDGE_TO_EDGE must be "true" or "false", got ${JSON.stringify(EDGE_TO_EDGE)}`);
+    } else {
+      throw new Error(
+        `E2E_EDGE_TO_EDGE must state how the installed build was made, "true" or "false"; got ${JSON.stringify(EDGE_TO_EDGE)}`,
+      );
     }
 
     // Covers the probe entirely...
@@ -234,12 +236,15 @@ describeAndroid('secure rectangles on an Android handset', () => {
     // Whole display pixels on every edge: outward rounding adds nothing,
     // so the served rectangle is the probe's, exactly.
     const dp = /x=(-?[\d.]+) y=(-?[\d.]+) w=([\d.]+) h=([\d.]+)/.exec(published.text);
-    if (dp !== null) {
-      const [x, y, w, h] = dp.slice(1, 5).map(Number) as [number, number, number, number];
-      const edges = [x, y, x + w, y + h].map(v => v * scale);
-      if (edges.every(v => Math.abs(v - Math.round(v)) < 1e-6)) {
-        expect(served).toEqual(bounds);
-      }
+    if (dp === null) {
+      throw new Error(`could not read the probe's dp rectangle from: ${published.text}`);
+    }
+    const [x, y, w, h] = dp.slice(1, 5).map(Number) as [number, number, number, number];
+    const edges = [x, y, x + w, y + h].map(v => v * scale);
+    const wholePixels = edges.every(v => Math.abs(v - Math.round(v)) < 1e-6);
+    console.log(`[B1] whole-pixel edges ${JSON.stringify(edges)}: exact-equality check ${wholePixels ? 'ran' : 'skipped'}`);
+    if (wholePixels) {
+      expect(served).toEqual(bounds);
     }
   });
 });
