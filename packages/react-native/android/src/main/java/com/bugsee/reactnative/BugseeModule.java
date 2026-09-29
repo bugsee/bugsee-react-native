@@ -225,6 +225,22 @@ public class BugseeModule extends NativeBugseeSpec
         Bugsee.captureViewHierarchy();
     }
 
+    // --- View-hierarchy data request (Task 6.4 JS side; bridged Task 6.5) --
+    // The spec declares onDataRequest/replyDataRequest/setViewTreeEnabled so
+    // JS (src/viewtree/requests.ts) can already build and reply to a 'vh'
+    // request end-to-end against the mock; nothing on this side emits or acts
+    // on them yet.
+
+    @Override
+    public void setViewTreeEnabled(final boolean enabled) {
+        // Task 6.5.
+    }
+
+    @Override
+    public void replyDataRequest(final String requestId, @Nullable final String payload) {
+        // Task 6.5.
+    }
+
     private static String string(
             @NonNull final ReadableMap map,
             @NonNull final String key,

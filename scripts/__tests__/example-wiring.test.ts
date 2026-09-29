@@ -84,6 +84,17 @@ describe('the example wires the embed assertion to a path it can resolve', () =>
 // deadline asserted to within a second) that a shared runner cannot promise,
 // and they retain bundles, which hold credentials on iOS beta3 -- CI has no
 // policy for that. A bare `yarn e2e` would pick them all up silently.
+// Task 6.4: without Bugsee.wrap, the SDK's 'vh' view-hierarchy request always
+// answers with nothing -- there is no registered anchor for the walk to start
+// from. The example is the one place a regression here would otherwise go
+// unnoticed, since nothing else renders the real app's root.
+describe('the example registers Bugsee.wrap(App)', () => {
+  it('wraps App with Bugsee.wrap before registering it', () => {
+    const code = codeOf(read('index.js'));
+    expect(code).toMatch(/AppRegistry\.registerComponent\(\s*appName\s*,\s*\(\)\s*=>\s*Bugsee\.wrap\(App\)\s*\)/);
+  });
+});
+
 describe("CI's ios-e2e step", () => {
   const workflow = readFileSync(
     join(__dirname, '..', '..', '.github', 'workflows', 'ci.yml'),
