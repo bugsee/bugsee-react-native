@@ -49,6 +49,18 @@ const reportHandlerRequestListeners = new Set<
  */
 let reportHandlerRequestSubscribeCalls = 0;
 
+interface DataRequestEvent {
+  requestId: string;
+  type: string;
+  originX: number;
+  originY: number;
+}
+
+const dataRequestListeners = new Set<(event: DataRequestEvent) => void>();
+
+/** Counted separately from the Set's size, for the same reason as `reportHandlerRequestSubscribeCalls`: the dispatcher always passes the same function reference, so the Set alone cannot tell "subscribed once" from "subscribed four times, deduped". */
+let dataRequestSubscribeCalls = 0;
+
 export const native = {
   setWrapperInfo: jest.fn<void, [Record<string, unknown>]>(),
   setSecureRectangles: jest.fn<void, [number, number[]]>(),
@@ -56,6 +68,40 @@ export const native = {
   endBlackout: jest.fn<void, []>(),
   isBlackout: jest.fn<Promise<boolean>, []>(),
   captureViewHierarchy: jest.fn<void, []>(),
+
+  /**
+   * The codegen EventEmitter for the SDK's data requests -- a SUBSCRIBE
+   * function returning an unsubscribe handle, exactly like `onLifecycleEvent`
+   * and `onReportHandlerRequest` above. Tests drive it with
+   * `emitDataRequest`, standing in for native.
+   */
+  onDataRequest(listener: (event: DataRequestEvent) => void) {
+    dataRequestSubscribeCalls += 1;
+    dataRequestListeners.add(listener);
+    return {
+      remove: () => {
+        dataRequestListeners.delete(listener);
+      },
+    };
+  },
+
+  /** Stands in for the native emit. */
+  emitDataRequest(event: DataRequestEvent): void {
+    for (const listener of [...dataRequestListeners]) listener(event);
+  },
+
+  /** How many subscribers are attached. */
+  dataRequestListenerCount(): number {
+    return dataRequestListeners.size;
+  },
+
+  /** How many times `onDataRequest` was actually called, deduping aside -- proves "subscribes once" even across many registered anchors. */
+  dataRequestSubscribeCallCount(): number {
+    return dataRequestSubscribeCalls;
+  },
+
+  replyDataRequest: jest.fn<void, [string, string | null]>(),
+  setViewTreeEnabled: jest.fn<void, [boolean]>(),
 
   /**
    * The codegen EventEmitter, which is a SUBSCRIBE function returning an
@@ -153,6 +199,8 @@ export const native = {
     lifecycleListeners.clear();
     reportHandlerRequestListeners.clear();
     reportHandlerRequestSubscribeCalls = 0;
+    dataRequestListeners.clear();
+    dataRequestSubscribeCalls = 0;
     for (const [name, value] of Object.entries(this)) {
       if (typeof value === 'function' && 'mockReset' in value) {
         const fn = value as jest.Mock;

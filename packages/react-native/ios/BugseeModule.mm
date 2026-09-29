@@ -343,6 +343,20 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
+#pragma mark - View-hierarchy data request (Task 6.4 JS side; bridged Task 6.6)
+// The spec declares onDataRequest/replyDataRequest/setViewTreeEnabled so JS
+// (src/viewtree/requests.ts) can already build and reply to a 'vh' request
+// end-to-end against the mock; nothing on this side emits or acts on them yet.
+
+- (void)setViewTreeEnabled:(BOOL)enabled {
+  // Task 6.6.
+}
+
+- (void)replyDataRequest:(NSString *)requestId
+                  payload:(NSString * _Nullable)payload {
+  // Task 6.6.
+}
+
 - (void)setWrapperInfo:(NSDictionary *)identity {
   // The SDK holds the wrapper for the process's lifetime and reads it while
   // composing a report's environment, so this must be registered before

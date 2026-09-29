@@ -2143,7 +2143,7 @@ export function unregisterAnchor(instance: unknown): void; // 1 -> 0: setViewTre
 - The wrappers keep answering `null`, and nothing emits `onDataRequest` yet.
 - `event-emitter-wiring.test.ts` stays green; the spec now declares two emitters.
 
-- [ ] **Red**
+- [x] **Red**
   - `requests.test.ts` (native mock, `buildViewTree` spied):
     - `a vh request replies the tree as JSON`;
     - `a non-vh type replies null`;
@@ -2161,12 +2161,12 @@ export function unregisterAnchor(instance: unknown): void; // 1 -> 0: setViewTre
     - `displayName names the wrapped root`.
   - `example-wiring.test.ts`: `the example registers Bugsee.wrap(App)`.
   - Run → FAIL.
-- [ ] **Green** — the modules, the mock (`onDataRequest` subscribe, `emitDataRequest(event)`, and `jest.fn`s for `replyDataRequest` and `setViewTreeEnabled`), the stubs and the example. All gates green.
-- [ ] **Mutate**
+- [x] **Green** — the modules, the mock (`onDataRequest` subscribe, `emitDataRequest(event)`, and `jest.fn`s for `replyDataRequest` and `setViewTreeEnabled`), the stubs and the example. All gates green.
+- [x] **Mutate**
   - (1) Skip the reply when the walk throws. `every request is replied to exactly once` must fail.
   - (2) Never call `setViewTreeEnabled(false)`. `the last disables it` must fail.
   - Revert and record.
-- [ ] **Commit** — `feat(viewtree): Bugsee.wrap and the vh request in JS, bridge stubbed`.
+- [x] **Commit** — `feat(viewtree): Bugsee.wrap and the vh request in JS, bridge stubbed`.
 
 ---
 
