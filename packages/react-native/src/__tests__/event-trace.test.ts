@@ -52,6 +52,13 @@ describe('event', () => {
     expect(native.event).toHaveBeenCalledWith('name', '{}');
   });
 
+  // A change from 6.x, which accepted `null` there as "no params" -- pinned
+  // and documented on the JSDoc so a caller migrating from 6.x notices.
+  it('event(name, null) throws TypeError rather than being treated as "no params"', () => {
+    expect(() => Bugsee.event('name', null as unknown as undefined)).toThrow(TypeError);
+    expect(native.event).not.toHaveBeenCalled();
+  });
+
   it('event validates before crossing', () => {
     expect(() => Bugsee.event('name', { bad: NaN })).toThrow(RangeError);
     expect(() => Bugsee.event('name', { bad: (() => {}) as unknown as null }))
