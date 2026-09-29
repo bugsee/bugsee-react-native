@@ -7,6 +7,7 @@ import android.util.Log;
 
 import com.bugsee.library.contracts.internal.DataRequestTypes;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
@@ -25,9 +26,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * whichever of JS, the deadline, or a detach gets there first, guarded by one
  * {@link AtomicBoolean} per outstanding request. The deadline ({@link
  * #DEADLINE_MS}) is kept comfortably under the SDK's own budget ({@link
- * DataRequestTypes#VIEW_HIERARCHY_TIMEOUT_MS}), so a reply that arrives late
- * from JS still lands inside the SDK's window -- and is dropped safely by the
- * SDK itself if it does not.
+ * DataRequestTypes#VIEW_HIERARCHY_TIMEOUT_MS}): a JS reply that lands after
+ * this bridge's own deadline has already fired finds its entry gone and is
+ * dropped (by {@link #complete} returning {@code false}), but the bridge's
+ * own {@code null} reply reaches the SDK comfortably before the SDK's own
+ * timeout would otherwise fire -- every outcome is logged either way (the
+ * plan's Phase 6 "Log lines").
  *
  * <p>Like {@link ReportHandlerBridge}, this outlives any one React instance:
  * the wrapper that calls in is registered at process start, while the module
@@ -77,11 +81,21 @@ final class DataRequestBridge {
         long nowMs();
     }
 
+    /**
+     * Where the one-line outcome of every request goes. Logcat in production,
+     * where the device tests match these lines (the plan's Phase 6 "Log
+     * lines"); injectable so the JVM tests can pin the exact formats too.
+     */
+    interface OutcomeLog {
+        void line(String message);
+    }
+
     private static final class Entry {
         final String id;
         final Reply reply;
         /** The sink this request was emitted to; its detach completes it. */
         final Sink owner;
+        /** Taken on entry to {@link #request}, before any check. */
         final long startMs;
         /** The exactly-once guard. Whoever flips it runs the reply. */
         final AtomicBoolean done = new AtomicBoolean();
@@ -96,7 +110,7 @@ final class DataRequestBridge {
     }
 
     private static final DataRequestBridge SHARED =
-            new DataRequestBridge(new DaemonScheduler(), System::currentTimeMillis);
+            new DataRequestBridge(new DaemonScheduler(), () -> System.nanoTime() / 1_000_000L);
 
     @NonNull
     static DataRequestBridge shared() {
@@ -105,6 +119,7 @@ final class DataRequestBridge {
 
     private final Scheduler scheduler;
     private final Clock clock;
+    private final OutcomeLog outcomes;
     private final AtomicReference<Sink> sink = new AtomicReference<>();
     @Nullable
     private volatile OriginSource origin;
@@ -113,8 +128,17 @@ final class DataRequestBridge {
     private volatile boolean viewTreeEnabled;
 
     DataRequestBridge(@NonNull final Scheduler scheduler, @NonNull final Clock clock) {
+        this(scheduler, clock, message -> Log.i(TAG, message));
+    }
+
+    DataRequestBridge(
+            @NonNull final Scheduler scheduler,
+            @NonNull final Clock clock,
+            @NonNull final OutcomeLog outcomes
+    ) {
         this.scheduler = scheduler;
         this.clock = clock;
+        this.outcomes = outcomes;
     }
 
     void setViewTreeEnabled(final boolean enabled) {
@@ -123,13 +147,15 @@ final class DataRequestBridge {
 
     /**
      * Attaches the module of a new JS runtime, which has not enabled the view
-     * tree yet -- that only happens once its own anchor mounts. Until then, a
-     * request must not be emitted to a runtime that never asked for one.
+     * tree yet -- that only happens once its own anchor mounts. The flag and
+     * the origin are cleared BEFORE the sink is published: a {@link #request}
+     * that reads the new sink must never see the previous runtime's leftover
+     * state.
      */
     void attach(@NonNull final Sink newSink, @NonNull final OriginSource newOrigin) {
-        sink.set(newSink);
-        origin = newOrigin;
         viewTreeEnabled = false;
+        origin = newOrigin;
+        sink.set(newSink);
     }
 
     /**
@@ -153,56 +179,100 @@ final class DataRequestBridge {
     }
 
     /**
+     * The number of requests currently outstanding (minted, not yet
+     * completed). Package-private, for tests: every terminal path must leave
+     * this at zero.
+     */
+    int outstanding() {
+        return entries.size();
+    }
+
+    /**
      * Requests data of {@code type}, never throwing. See the class doc for
      * the ordering: an unknown type, no live sink (or a disabled view tree),
      * and no known origin all reply {@code null} synchronously; only then is
      * a request actually minted and emitted.
      */
     void request(@NonNull final String type, @NonNull final Reply reply) {
+        // Taken as the first statement: the plan's "ms" is measured from the
+        // moment requestData was entered, not from whenever a request happens
+        // to be minted.
+        final long start = clock.nowMs();
+        final String id = "dr-" + counter.incrementAndGet();
+        Entry entry = null;
         try {
             if (!VIEW_HIERARCHY.equals(type)) {
-                resolveUnminted(reply, "unknown-type");
+                resolveUnminted(id, start, reply, "unknown-type");
                 return;
             }
             final Sink target = sink.get();
             if (target == null || !viewTreeEnabled) {
-                resolveUnminted(reply, "no-js");
+                resolveUnminted(id, start, reply, "no-js");
                 return;
             }
             final OriginSource originSource = origin;
             final int[] currentOrigin = originSource == null ? null : originSource.currentOrigin();
             if (currentOrigin == null) {
-                resolveUnminted(reply, "no-origin");
+                resolveUnminted(id, start, reply, "no-origin");
                 return;
             }
 
-            final Entry entry = new Entry("dr-" + counter.incrementAndGet(), reply, target, clock.nowMs());
+            entry = new Entry(id, reply, target, start);
             entries.put(entry.id, entry);
-            final Cancellable timer = scheduler.schedule(() -> finish(entry, null, "deadline"), DEADLINE_MS);
-            entry.timer = timer;
-            if (entry.done.get()) {
+            final Entry armed = entry;
+            final Cancellable timer = scheduler.schedule(() -> finish(armed, null, "deadline"), DEADLINE_MS);
+            armed.timer = timer;
+            if (armed.done.get()) {
                 // Finished between put and here; don't leave the timer armed.
                 cancelQuietly(timer);
             }
+            // The real race: a detach() ran after the sink was read above but
+            // before the entry was in the table, so its sweep could not see
+            // this one. Whichever side comes second must still catch it --
+            // otherwise it emits to a dead runtime and waits out the whole
+            // deadline for nothing.
+            if (sink.get() != target) {
+                finish(armed, null, "detach");
+                return;
+            }
+            outcomes.line("data request " + id + " type=" + type
+                    + " origin=" + currentOrigin[0] + "," + currentOrigin[1]);
             try {
-                target.onDataRequest(entry.id, type, currentOrigin[0], currentOrigin[1]);
+                target.onDataRequest(id, type, currentOrigin[0], currentOrigin[1]);
             } catch (final Throwable e) {
                 // A dead bridge throws from the emit, on the SDK's thread. JS
                 // will never answer, so answer for it now.
-                Log.w(TAG, "data request " + entry.id + " could not reach JS", e);
-                finish(entry, null, "sink-threw");
+                Log.w(TAG, "data request " + id + " could not reach JS", e);
+                finish(armed, null, "sink-threw");
             }
         } catch (final Throwable e) {
             // Never throws: this runs on the SDK's own thread mid-capture,
             // where an exception would either crash the host or stall the
-            // pass until the SDK's own timeout.
+            // pass until the SDK's own timeout. If a request was already
+            // minted (entries.put succeeded but something after it threw --
+            // e.g. the scheduler rejecting the task), it must still be
+            // completed through finish(): replying directly here and leaving
+            // the entry behind would both leak it and let a later detach()
+            // reply to the SDK a second time.
             Log.w(TAG, "data request failed unexpectedly", e);
-            runQuietly(reply, null);
+            if (entry != null) {
+                finish(entry, null, "failed");
+            } else {
+                resolveUnminted(id, start, reply, "failed");
+            }
         }
     }
 
-    /** @return true only for the call that delivered the payload. */
-    boolean complete(@NonNull final String requestId, @Nullable final String payload) {
+    /**
+     * @return true only for the call that delivered the payload. {@code
+     * null} is treated as an unknown id rather than throwing: {@code
+     * replyDataRequest} is a void TurboModule method, and JS always echoes
+     * the id it was given, so this only guards against misuse.
+     */
+    boolean complete(@Nullable final String requestId, @Nullable final String payload) {
+        if (requestId == null) {
+            return false;
+        }
         final Entry entry = entries.get(requestId);
         return entry != null && finish(entry, payload, "js");
     }
@@ -217,15 +287,41 @@ final class DataRequestBridge {
             cancelQuietly(timer);
         }
         runQuietly(entry.reply, payload);
-        Log.i(TAG, "data request " + entry.id + " completed by=" + by
-                + " elapsed=" + (clock.nowMs() - entry.startMs) + "ms");
+        logCompleted(entry.id, by, payload, entry.startMs);
         return true;
     }
 
     /** No request was minted; the line still names the outcome for correlation. */
-    private static void resolveUnminted(@NonNull final Reply reply, @NonNull final String by) {
+    private void resolveUnminted(
+            @NonNull final String id,
+            final long startMs,
+            @NonNull final Reply reply,
+            @NonNull final String by
+    ) {
         runQuietly(reply, null);
-        Log.i(TAG, "data request - completed by=" + by);
+        logCompleted(id, by, null, startMs);
+    }
+
+    /**
+     * {@code data request <id> completed by=<…> bytes=<n|null> ms=<elapsed>},
+     * verbatim from the plan's Phase 6 "Log lines". {@code bytes} is the
+     * UTF-8 byte count of the payload, not its UTF-16 character length --
+     * iOS's {@code BGSRNDataRequestBridge} (Task 6.6) must use the same
+     * definition so the two platforms' bundles read the same way.
+     */
+    private void logCompleted(
+            @NonNull final String id,
+            @NonNull final String by,
+            @Nullable final String payload,
+            final long startMs
+    ) {
+        outcomes.line("data request " + id + " completed by=" + by
+                + " bytes=" + bytesOf(payload) + " ms=" + (clock.nowMs() - startMs));
+    }
+
+    @NonNull
+    private static String bytesOf(@Nullable final String payload) {
+        return payload == null ? "null" : String.valueOf(payload.getBytes(StandardCharsets.UTF_8).length);
     }
 
     /** Whatever JS's reply implementation does, it must not escape onto the SDK's thread. */
