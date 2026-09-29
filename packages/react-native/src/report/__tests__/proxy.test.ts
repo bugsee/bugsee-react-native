@@ -210,6 +210,66 @@ describe('attributes', () => {
       attributes: { name: 'value' },
     });
   });
+
+  it('setAttribute rejects an empty name before crossing', async () => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+
+    await expect(report.setAttribute('', 'value')).rejects.toMatchObject({
+      code: ReportErrorCode.BadArgument,
+      message: 'attribute name must be a non-empty string',
+    });
+    expect(native.reportUpdate).not.toHaveBeenCalled();
+  });
+
+  it('an empty name fails the whole attributes patch, valid names included', async () => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+
+    await expect(
+      report.update({ attributes: { ok: 1, '': 2 } }),
+    ).rejects.toMatchObject({ code: ReportErrorCode.BadArgument });
+    expect(native.reportUpdate).not.toHaveBeenCalled();
+  });
+
+  /** The attributes object the last `reportUpdate` sent. */
+  function sentAttributes(): object {
+    const [, patch] = native.reportUpdate.mock.calls.at(-1) as [
+      string,
+      { attributes: object },
+    ];
+    return patch.attributes;
+  }
+
+  // "__proto__" is an ordinary attribute name to both SDKs. Assigned into a
+  // plain `{}`, it would hit Object.prototype's __proto__ setter instead: a
+  // string or number is silently ignored, and null swaps the object's
+  // prototype -- either way the attribute never reaches native.
+  it.each([
+    ['a string', 'v'],
+    ['a number', 3],
+    ['null (a removal)', null],
+  ])('setAttribute("__proto__", %s) sends it as an ordinary key', async (_label, value) => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+    native.reportUpdate.mockResolvedValueOnce(undefined);
+
+    await report.setAttribute('__proto__', value);
+
+    const attributes = sentAttributes();
+    expect(Object.keys(attributes)).toEqual(['__proto__']);
+    expect(Object.getOwnPropertyDescriptor(attributes, '__proto__')?.value).toBe(value);
+  });
+
+  it('keeps "__proto__" alongside the other keys of a parsed patch', async () => {
+    const report = new BugseeReportProxy('h1', 'r1', 'bug');
+    native.reportUpdate.mockResolvedValueOnce(undefined);
+
+    await report.update({
+      attributes: JSON.parse('{"a": 1, "__proto__": "x", "b": null}'),
+    });
+
+    const attributes = sentAttributes();
+    expect(Object.keys(attributes)).toEqual(['a', '__proto__', 'b']);
+    expect(Object.getOwnPropertyDescriptor(attributes, '__proto__')?.value).toBe('x');
+  });
 });
 
 describe('update', () => {

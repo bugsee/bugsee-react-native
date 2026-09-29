@@ -75,10 +75,18 @@ export function validateAttributes(
   ) {
     badArgument('attributes must be a plain object');
   }
-  const result: Record<string, string | number | boolean | null> = {};
+  // No prototype, so every name is an ordinary key -- "__proto__" included.
+  // In a plain `{}` it would hit Object.prototype's setter instead and never
+  // reach native: silently for a string or number, and by swapping this
+  // object's prototype for null. Both SDKs store it like any other name.
+  const result: Record<string, string | number | boolean | null> =
+    Object.create(null);
   for (const [key, value] of Object.entries(
     attributes as Record<string, unknown>,
   )) {
+    if (key.length === 0) {
+      badArgument('attribute name must be a non-empty string');
+    }
     if (!isValidAttributeValue(value)) {
       badArgument(
         `attribute "${key}" must be a string, boolean, finite number or null, got ${typeof value}`,
