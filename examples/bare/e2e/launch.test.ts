@@ -12,12 +12,21 @@
  * installed on the device named in `device.ts`, and — for a debug build —
  * Metro is running. Both are the job of the runner, not of the assertion.
  */
+import { DEAD_ENDPOINT, terminateIosApp } from './bundles';
 import {
+  IOS_TARGET,
   launchAndWaitForSequence,
   platformUnderTest,
   type Step,
 } from './device';
-import { awaitMetroServes, resetScenario, scenarioUri, writeScenario } from './scenario';
+import { IOS_STOPPED_FOR_TOKEN, escape } from './harness';
+import {
+  awaitMetroServes,
+  resetScenario,
+  scenarioArgs,
+  scenarioUri,
+  writeScenario,
+} from './scenario';
 import { checkAndroidBanner } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
 
@@ -110,10 +119,13 @@ const ANDROID_SDK_BUILD_STEP: Step = {
  * scenario an earlier suite left behind -- the bundle Metro had not yet
  * rebuilt -- and pass for this one.
  */
-function scenarioStep(nonce: string): Step {
+function scenarioStep(nonce: string, endpoint?: string): Step {
   return {
     name: 'this run\'s scenario',
-    pattern: new RegExp(`BUGSEE_E2E scenario=launch nonce=${nonce} `),
+    pattern: new RegExp(
+      `BUGSEE_E2E scenario=launch nonce=${nonce} ` +
+        (endpoint === undefined ? '' : `.* endpoint=${escape(endpoint)}\r?$`),
+    ),
     timeoutMs: 120_000,
   };
 }
@@ -131,22 +143,49 @@ describe('example app on a real device', () => {
     // The app runs whatever e2e-scenario.json names; an interrupted
     // report-handler run can leave it on one of its own. A fresh nonce, so
     // the run can prove which one it got.
-    const scenario = writeScenario('launch');
+    //
+    // iOS launches against the closed loopback endpoint (bundles.ts), as
+    // every other iOS suite does. The e2e token is a placeholder; the real
+    // server rejects it, and the iOS SDK then stores a stopped flag for the
+    // token (`BugseeKilledSdkKey`) that refuses every later launch -- this
+    // suite used to leave the app in that state for every suite after it.
+    // What this test asserts (Launched, the options, relaunch settling) does
+    // not need the server: the SDK reaches Launched offline.
+    const extras = platform === 'ios' ? { endpoint: DEAD_ENDPOINT } : {};
+    const scenario = writeScenario('launch', extras);
     let uri: string | undefined;
+    let iosArgs: string[] = [];
     if (platform === 'android') {
       // The launch intent carries it: read at once, debug or release.
       uri = scenarioUri(scenario);
     } else {
-      // iOS reads only the JSON, through Metro, which rebuilds a beat after
-      // the write: launching before it has would run the previous scenario.
-      await awaitMetroServes(scenario.nonce);
+      // The launch arguments carry it, and the endpoint (scenario.ts). The
+      // simulator's app loads from Metro, which rebuilds a beat after the
+      // JSON write: wait for it, so the bundle is this source's.
+      iosArgs = scenarioArgs(scenario, extras);
+      if (IOS_TARGET === 'simulator') {
+        await awaitMetroServes(scenario.nonce);
+      }
     }
 
     let result;
     try {
-      result = await launchAndWaitForSequence(platform, [scenarioStep(scenario.nonce), ...STEPS], uri);
+      result = await launchAndWaitForSequence(
+        platform,
+        [scenarioStep(scenario.nonce, extras.endpoint), ...STEPS],
+        uri,
+        iosArgs,
+      );
     } finally {
-      resetScenario();
+      try {
+        // The console attachment is gone; the app is not. Stop it, so
+        // nothing of this run outlives the test.
+        if (platform === 'ios') {
+          await terminateIosApp();
+        }
+      } finally {
+        resetScenario();
+      }
     }
     const { steps, lines } = result;
 
@@ -174,6 +213,13 @@ describe('example app on a real device', () => {
       if (!bannerCheck.ok) {
         throw new Error(`android: SDK build banner does not match the pin.\n  ${bannerCheck.reason}`);
       }
+    }
+
+    // The endpoint really was dead, and the SDK never held a stopped flag:
+    // either would mean this run could poison, or was poisoned by, another.
+    if (platform === 'ios') {
+      expect(lines.filter(line => IOS_STOPPED_FOR_TOKEN.test(line))).toEqual([]);
+      expect(lines.some(line => /Session not initialized\. - Could not connect to the server/.test(line))).toBe(true);
     }
 
     const launched = steps.find(step => step.name === 'Status.Launched')!;
