@@ -64,6 +64,15 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     private LayoutListenerToken layoutToken;
 
     /**
+     * A copy of the {@code {x, y}} last passed to {@link
+     * SecureRectangleStore#setOrigin}, for {@link #currentOrigin()} (Task
+     * 6.5's {@code vh} data request). UI thread only, like everything else
+     * that is not explicitly annotated otherwise.
+     */
+    @Nullable
+    private int[] lastOrigin;
+
+    /**
      * Set once {@link #dispose()} is called, synchronously, so a
      * {@link #refreshSoon()} already queued on the UI thread -- or one
      * raced in just after -- still finds it set when it runs. Without this,
@@ -161,6 +170,7 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             final int[] origin =
                     SecureRectangleStore.displayOrigin(snapshot.onScreen, snapshot.viewport.x, snapshot.viewport.y);
             store.setOrigin(snapshot.displayId, origin[0], origin[1]);
+            lastOrigin = origin;
             if (Log.isLoggable(TAG, Log.DEBUG)) {
                 Log.d(TAG, "secure origin display=" + snapshot.displayId
                         + " onScreen=" + snapshot.onScreen[0] + "," + snapshot.onScreen[1]
@@ -171,6 +181,24 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         } catch (Throwable t) {
             Log.w(TAG, "secure rectangles: could not read the React root's display origin", t);
         }
+    }
+
+    /**
+     * The React root's current display origin, for {@link DataRequestBridge}
+     * (Task 6.5): the {@code vh} data request is answered on the same thread
+     * the SDK asks on -- the main thread, per the spec -- so a synchronous
+     * re-read here is safe and catches a window that moved without a layout
+     * pass (Ruling I1), the same way a secure-rectangle pull does.
+     *
+     * <p>{@code null} before any root has ever been found -- an app that never
+     * calls {@code Bugsee.wrap} answers every {@code vh} request natively,
+     * which the spec allows.
+     */
+    @UiThread
+    @Nullable
+    int[] currentOrigin() {
+        refresh();
+        return lastOrigin == null ? null : lastOrigin.clone();
     }
 
     /** Package-visible for the same reason as {@link #refresh()}. */

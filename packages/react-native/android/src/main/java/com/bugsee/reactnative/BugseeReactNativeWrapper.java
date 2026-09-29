@@ -93,16 +93,6 @@ final class BugseeReactNativeWrapper implements BugseeWrapper {
         return context;
     }
 
-    /**
-     * The SDK asks a wrapper for data it cannot see itself — today only
-     * {@code "vh"}, the JS view hierarchy, which the capture builder requests
-     * while composing a frame.
-     *
-     * <p>Nothing is supplied yet: the React Native view hierarchy arrives with
-     * the capture work in a later phase. The contract says an unsupported type
-     * answers with null, and answering is the important half — a provider that
-     * never calls back leaves the SDK waiting mid-capture.
-     */
     @Override
     public void onLifecycleEvent(@NonNull final String eventType, @Nullable final Object data) {
         // Through the bus rather than straight to the bridge: this wrapper is
@@ -186,11 +176,25 @@ final class BugseeReactNativeWrapper implements BugseeWrapper {
                 ReportHandlerBridge.Phase.AFTER, report, isTerminating, completionCallback);
     }
 
+    /**
+     * The SDK asks a wrapper for data it cannot see itself — today only
+     * {@code "vh"}, the JS view hierarchy, which the capture builder requests
+     * while composing a frame.
+     *
+     * <p>Through the process-wide {@link DataRequestBridge} rather than held
+     * here, for the same reason as the lifecycle events and the report
+     * handler: this wrapper instance is replaced mid-session, while the
+     * bridge and the module it emits to have their own, different lifetimes.
+     * The bridge owns answering the callback exactly once — an unsupported
+     * type, a JS side with nothing to contribute, or a request that JS never
+     * gets to all answer with {@code null} — because a provider that never
+     * calls back leaves the SDK waiting mid-capture.
+     */
     @Override
     public void requestData(
             @NonNull final String dataType,
             @NonNull final DataRequestResultCallback callback
     ) {
-        callback.onResult(null);
+        DataRequestBridge.shared().request(dataType, callback::onResult);
     }
 }
