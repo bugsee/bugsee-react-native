@@ -33,9 +33,6 @@ final class ReportOps {
         }
     }
 
-    /** JS numbers are doubles; beyond 2^53 a double is no longer an exact integer. */
-    private static final double MAX_SAFE_INTEGER = 9_007_199_254_740_992.0;
-
     private ReportOps() {
     }
 
@@ -168,6 +165,23 @@ final class ReportOps {
         }
     }
 
+    /**
+     * {@link #apply} on the JSON text {@code reportUpdate} receives, parsed by
+     * {@link BridgeJson} -- the transport that keeps a clearing {@code null}
+     * on both platforms. Text that is not a JSON object is a
+     * {@link BadArgument} like any malformed field, and applies nothing.
+     */
+    static void applyJson(@NonNull final Report report, @Nullable final String json)
+            throws BadArgument {
+        final Map<String, Object> patch;
+        try {
+            patch = BridgeJson.parseObject(json);
+        } catch (final BridgeJson.BadJson e) {
+            throw new BadArgument("update() patch is not a JSON object: " + e.getMessage());
+        }
+        apply(report, patch);
+    }
+
     /** @return false when the SDK declined the file (it returned null). */
     static boolean addFile(
             @NonNull final Report report,
@@ -187,19 +201,6 @@ final class ReportOps {
             @Nullable final String mimeType
     ) {
         return report.addAttachment(data, name, mimeType) != null;
-    }
-
-    /**
-     * A JS number as the value the SDK should store: a {@code Long} when it is
-     * an exact integer (so an attribute of 3 is stored as 3, not 3.0), a
-     * {@code Double} otherwise.
-     */
-    @NonNull
-    static Object wireNumber(final double value) {
-        if (value == Math.rint(value) && Math.abs(value) <= MAX_SAFE_INTEGER) {
-            return (long) value;
-        }
-        return value;
     }
 
     @Nullable

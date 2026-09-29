@@ -250,6 +250,12 @@ public class BugseeModule extends NativeBugseeSpec
     /**
      * Records a named event, with optional params.
      *
+     * {@code paramsJson} is the params as JSON text ({@code src/bridge/json.ts}),
+     * parsed by {@link BridgeJson} -- the one transport for object payloads,
+     * because iOS's object-argument conversion drops null members and this
+     * one must mean the same thing on both platforms. Text that does not parse
+     * drops the event, logged: a void method has no promise to reject.
+     *
      * {@code null} params calls the SDK's one-argument overload rather than
      * passing an empty map: the bundle's event entry has no {@code params}
      * key at all when none were given (design doc, Phase 4 bundle facts), and
@@ -260,13 +266,16 @@ public class BugseeModule extends NativeBugseeSpec
      * an escaping exception crashes the host app.
      */
     @Override
-    public void event(final String name, @Nullable final ReadableMap params) {
+    public void event(final String name, @Nullable final String paramsJson) {
         try {
-            if (params == null) {
+            if (paramsJson == null) {
                 Bugsee.event(name);
             } else {
-                Bugsee.event(name, params.toHashMap());
+                Bugsee.event(name, BridgeJson.parseObject(paramsJson));
             }
+        } catch (final BridgeJson.BadJson e) {
+            Log.e(TAG, "event \"" + name + "\" dropped: its params are not a JSON object: "
+                    + e.getMessage());
         } catch (RuntimeException e) {
             Log.e(TAG, "event failed", e);
         }
@@ -354,14 +363,16 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     @Override
-    public void reportUpdate(final String handleId, final ReadableMap patch, final Promise promise) {
+    public void reportUpdate(final String handleId, final String patchJson, final Promise promise) {
         final Report report = ReportHandlerBridge.shared().reportFor(handleId);
         if (report == null) {
             rejectHandleDead(promise);
             return;
         }
         try {
-            ReportOps.apply(report, toJavaMap(patch));
+            // JSON text, not a ReadableMap: the transport iOS needs to keep a
+            // clearing null, used here too so both platforms parse one form.
+            ReportOps.applyJson(report, patchJson);
             promise.resolve(null);
         } catch (final ReportOps.BadArgument e) {
             promise.reject(E_REPORT_BAD_ARGUMENT, e.getMessage());
@@ -442,77 +453,6 @@ public class BugseeModule extends NativeBugseeSpec
                 E_REPORT_HANDLE_DEAD,
                 "This BugseeReport handle is no longer valid: its handler has "
                         + "already settled, or its deadline has passed.");
-    }
-
-    /**
-     * A JS patch as plain Java, the shape {@link ReportOps#apply} validates.
-     * Numbers go through {@link ReportOps#wireNumber}, so an integral one is a
-     * {@code Long} rather than a {@code Double}.
-     */
-    private static Map<String, Object> toJavaMap(@Nullable final ReadableMap map) {
-        final Map<String, Object> result = new HashMap<>();
-        if (map == null) {
-            return result;
-        }
-        final ReadableMapKeySetIterator keys = map.keySetIterator();
-        while (keys.hasNextKey()) {
-            final String key = keys.nextKey();
-            switch (map.getType(key)) {
-                case Null:
-                    result.put(key, null);
-                    break;
-                case Boolean:
-                    result.put(key, map.getBoolean(key));
-                    break;
-                case Number:
-                    result.put(key, ReportOps.wireNumber(map.getDouble(key)));
-                    break;
-                case String:
-                    result.put(key, map.getString(key));
-                    break;
-                case Map:
-                    result.put(key, toJavaMap(map.getMap(key)));
-                    break;
-                case Array:
-                    result.put(key, toJavaList(map.getArray(key)));
-                    break;
-                default:
-                    break;
-            }
-        }
-        return result;
-    }
-
-    private static List<Object> toJavaList(@Nullable final ReadableArray array) {
-        final List<Object> result = new ArrayList<>();
-        if (array == null) {
-            return result;
-        }
-        for (int i = 0; i < array.size(); i++) {
-            switch (array.getType(i)) {
-                case Null:
-                    result.add(null);
-                    break;
-                case Boolean:
-                    result.add(array.getBoolean(i));
-                    break;
-                case Number:
-                    result.add(ReportOps.wireNumber(array.getDouble(i)));
-                    break;
-                case String:
-                    result.add(array.getString(i));
-                    break;
-                case Map:
-                    result.add(toJavaMap(array.getMap(i)));
-                    break;
-                case Array:
-                    result.add(toJavaList(array.getArray(i)));
-                    break;
-                default:
-                    break;
-            }
-        }
-        return result;
     }
 
     /** {@link ReportOps#read}'s snapshot as a bridge map. */

@@ -83,15 +83,21 @@ export interface Spec extends TurboModule {
   /**
    * Records a named event, with optional params.
    *
-   * `params` is `null` when JS sent no params (Android: `Bugsee.event(name)`;
-   * iOS: `[Bugsee event:name params:nil]`) rather than `{}` -- the bundle's
+   * `paramsJson` is the params as JSON text (`src/bridge/json.ts`), not an
+   * `UnsafeObject`: iOS's TurboModule object conversion drops every `null`
+   * member, so `{ nil: null }` reached the SDK as `{}` there and as
+   * `{ nil: null }` on Android. Both natives parse the text, which keeps it.
+   * Text that does not parse as a JSON object drops the event, logged.
+   *
+   * `null` when JS sent no params (Android: `Bugsee.event(name)`; iOS:
+   * `[Bugsee event:name params:nil]`) rather than `'{}'` -- the bundle's
    * `events.user` entry omits `params` entirely when none were given (design
    * doc, Phase 4 bundle facts), and a `{}` here would produce an empty object
    * on the wire instead. JS has already validated `params` against the
    * accepted value domain (`src/data/validate.ts`) and copied it, so nothing
    * unchecked reaches this call.
    */
-  event(name: string, params: UnsafeObject | null): void;
+  event(name: string, paramsJson: string | null): void;
   /** A numeric trace value, boxed on both platforms so it cannot arrive as a string. */
   traceNumber(name: string, value: number): void;
   /** A string trace value. */
@@ -156,8 +162,14 @@ export interface Spec extends TurboModule {
    * Applies a validated patch to the report behind `handleId`. All-or-nothing
    * on both sides of the bridge: JS validates before crossing, and native
    * applies nothing unless every field in the patch is valid.
+   *
+   * `patchJson` is the patch as JSON text (`src/bridge/json.ts`): a `null`
+   * summary, description or attribute means clear or remove, and iOS's
+   * TurboModule object conversion dropped exactly those members, so on iOS
+   * they silently did nothing. Text that does not parse as a JSON object
+   * rejects with `E_REPORT_BAD_ARGUMENT`.
    */
-  reportUpdate(handleId: string, patch: UnsafeObject): Promise<void>;
+  reportUpdate(handleId: string, patchJson: string): Promise<void>;
   reportAddFileAttachment(
     handleId: string,
     path: string,

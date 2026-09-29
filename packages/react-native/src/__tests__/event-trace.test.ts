@@ -3,7 +3,7 @@
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 jest.mock('../NativeBugsee', () => require('../__mocks__/native').nativeMock);
 
-import { native } from '../__mocks__/native';
+import { jsonOf, native } from '../__mocks__/native';
 import Bugsee from '../index';
 
 beforeEach(() => native.reset());
@@ -13,9 +13,22 @@ describe('event', () => {
     const params = { a: 1, nested: { b: [1, 'two'] } };
     Bugsee.event('name', params);
     expect(native.event).toHaveBeenCalledTimes(1);
-    expect(native.event).toHaveBeenCalledWith('name', { a: 1, nested: { b: [1, 'two'] } });
-    // A copy, not the same reference.
+    expect(native.event).toHaveBeenCalledWith('name', jsonOf({ a: 1, nested: { b: [1, 'two'] } }));
+    // A copy, not the same reference -- and, since it crosses as JSON text,
+    // not an object at all.
     expect(native.event.mock.calls[0]?.[1]).not.toBe(params);
+    expect(typeof native.event.mock.calls[0]?.[1]).toBe('string');
+  });
+
+  // iOS's TurboModule conversion of an object argument dropped a null member;
+  // as text it is carried like any other value. An undefined one is omitted,
+  // as the copy omits it.
+  it('event params cross as JSON text carrying their nulls', () => {
+    Bugsee.event('name', { nil: null, nested: { gone: null, list: [null] }, skipped: undefined });
+    expect(native.event).toHaveBeenCalledWith(
+      'name',
+      '{"nil":null,"nested":{"gone":null,"list":[null]}}',
+    );
   });
 
   it('event without params sends null', () => {
@@ -25,7 +38,7 @@ describe('event', () => {
 
   it('event with {} sends {}', () => {
     Bugsee.event('name', {});
-    expect(native.event).toHaveBeenCalledWith('name', {});
+    expect(native.event).toHaveBeenCalledWith('name', '{}');
   });
 
   it('event validates before crossing', () => {
