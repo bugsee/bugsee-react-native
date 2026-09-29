@@ -207,6 +207,20 @@ describe('copyEventParams', () => {
     expect(copyEventParams(params as unknown as EventParams)).toEqual({ a: 1 });
   });
 
+  // A plain `{}` copy loses this key: `result['__proto__'] = value` hits
+  // Object.prototype's accessor instead of creating an own property, and the
+  // key silently vanishes both from the copy and from its JSON encoding.
+  it('keeps an own "__proto__" key, including in its JSON encoding', () => {
+    const params = JSON.parse('{"__proto__":{"x":1},"s":"a"}') as EventParams;
+    const copy = copyEventParams(params) as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(copy, '__proto__')).toBe(true);
+    expect(copy.__proto__).toEqual({ x: 1 });
+    expect(copy.s).toBe('a');
+    const encoded = JSON.stringify(copy);
+    expect(encoded).toContain('"__proto__":{"x":1}');
+    expect(encoded).toContain('"s":"a"');
+  });
+
   it('returns a copy: mutating the input afterwards does not change it', () => {
     const params: Record<string, unknown> = { nested: { a: 1 }, list: [1, 2] };
     const copy = copyEventParams(params as unknown as EventParams);
