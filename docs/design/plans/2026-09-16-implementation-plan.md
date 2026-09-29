@@ -972,7 +972,7 @@ Added by controller ruling. Run it once a physical iPhone (the XS) is attached, 
 - **Devices:**
   - iPhone XS "KRSFT" (iPhone11,2), iOS 18.7.9 (22H355), Debug build, `Bugsee IOS SDK ver:7.0.0-beta3 build:0d9c9d0a-9`;
   - WOD_LX1 (HONOR WOD-LX1), Android 14 / API 34, `Bugsee Android SDK 7.3.0-SNAPSHOT [234dcddfc]`.
-- **iPhone XS:** every iOS suite passes: `E2E_PLATFORM=ios E2E_IOS_RECOVERY=1 yarn e2e` gives 20 passed and 2 skipped (both Android-only). Case 3 of 5.5 is still `it.failing` for the SDK bug (`manifest.attrs {}`, no `email`); run as a plain `it` it fails on exactly that.
+- **iPhone XS:** every iOS suite passes: `E2E_PLATFORM=ios E2E_IOS_TARGET=device E2E_IOS_RECOVERY=1 yarn e2e` gives 20 passed and 2 skipped (both Android-only). Case 3 of 5.5 is still `it.failing` for the SDK bug. Run as a plain `it`, it fails at its first assertion: `manifest.attrs` is `{}` against the 10 expected keys. The later `email` assertion is not reached.
 - **WOD_LX1:**
   - case 6 passes 3/3 on the debuggable release build;
   - B1 is now asserted per build: `E2E_EDGE_TO_EDGE=false` with `assembleDebug -PedgeToEdgeEnabled=false`, with no source change;
@@ -981,7 +981,22 @@ Added by controller ruling. Run it once a physical iPhone (the XS) is attached, 
   - iOS scenarios travel as launch arguments. The iPhone's Debug app runs its embedded bundle without Local Network permission.
   - An iPhone clear wipes the app's whole container, the only removal devicectl has, and asserts the SDK directories are gone.
   - `launch.test.ts` runs iOS against `DEAD_ENDPOINT`. The placeholder token otherwise leaves the SDK's `BugseeKilledSdkKey` behind.
-- Report: `.superpowers/sdd/2026-09-16-implementation-plan/task-3.H-report.md`.
+- **Harness safety (review round):**
+  - The iPhone comes only from an allowlist in `e2e/device.ts` (the XS alone). Its model and UDID are checked with `devicectl list devices` before any other command, and `E2E_IOS_TARGET` must be stated as exactly `simulator` or `device`.
+  - A placeholder token always launches against the dead loopback endpoint (`examples/bare/endpoint.ts`), on both platforms and whatever path launched the app.
+- The full per-case evidence is in the body of commit `a8153be` (docs(plan): Task 3.H hardware pass, as run through Phase 5).
+
+**Open from this pass:**
+- **iOS crash recovery: onAfter edits reach the recovered crash bundle in only 1 of 5 runs on the XS.**
+  - JS logged `labels-set` and completed `by=js` each time, but `request.labels` was `[]` in 4 runs.
+  - Root cause, per the review: beta3's `handleRecoveredReportingRequest` runs the bounded dispatch (`invokeBoundedReportHandlers`). That dispatch waits only for the handler calls to *return*, not for their completion, and then persists the request at once.
+  - Our bridge returns microseconds after emitting to JS, so JS's edits usually lose the race with bundling. The late-completion persist block does nothing once bundling has started.
+  - Our ordering is verified correct: the patch is applied synchronously before `reportUpdate` resolves, and completion runs only after the handler resolves.
+  - Android's live recovery path landed its labels 3 of 3 times.
+  - Tracked as an iOS SDK issue: the bounded path says handlers "may work asynchronously" but honours only work that beats bundling.
+  - No iOS labels assertion yet, not even as `it.failing`: at 1 in 5 it would flake. A wrapper-side mitigation (block the SDK's worker until JS completes, on the off-main path only) is possible but needs a deadlock review.
+- **iOS `launch()` resolves about 8 s late on the XS when a retained bundle is still pending and the endpoint is dead.** It came in at 8.1–8.5 s, against 0.03–0.5 s after a wipe. That is close to `launch.test.ts`'s 10 s budget. Normal suite order clears on exit, but an interrupted suite could leave the next `launch.test.ts` near that edge.
+- **Fixed in the review round:** Android `launch.test.ts` used to contact the real endpoint with the placeholder token on every run. It now launches against the dead endpoint, and the app's placeholder rule covers every other path. On the WOD_LX1 the SDK itself reports `com.bugsee.option.$$ENDPOINT` = `https://127.0.0.1:9`.
 
 ### Phase 3 review gate
 
