@@ -12,7 +12,9 @@
  * `rh-*` scenarios are the report-handler cases in scenarios/report-handler.ts;
  * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts, `secure`
  * is scenarios/secure.tsx, `attributes`/`attributes-persist` are
- * scenarios/attributes.ts, and `e2e-native-smoke` is scenarios/native.ts.
+ * scenarios/attributes.ts, `e2e-native-smoke` is scenarios/native.ts, and
+ * `blackout`, `blackout-prelaunch`, `secure-component` and `view-tree` are
+ * scenarios/privacy.tsx.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -57,6 +59,13 @@ import {
   runAttributeScenario,
 } from './scenarios/attributes';
 import { isNativeScenario, runNativeScenario } from './scenarios/native';
+import {
+  PrivacyStage,
+  type PrivacyScenario,
+  isPrivacyScenario,
+  preLaunchPrivacyProbe,
+  runPrivacyScenario,
+} from './scenarios/privacy';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -184,6 +193,13 @@ export default function App() {
   const [error, setError] = useState<string | undefined>();
   /** Set by the `secure` scenario once Launched: mounts the probe. */
   const [secureNonce, setSecureNonce] = useState<string | undefined>();
+  /**
+   * Set as soon as a privacy scenario is chosen: its white stage covers the
+   * screen from before launch, and its probes mount once Launched.
+   */
+  const [privacy, setPrivacy] = useState<
+    { scenario: PrivacyScenario; nonce: string; launched: boolean } | undefined
+  >();
 
   useEffect(() => {
     let cancelled = false;
@@ -251,6 +267,12 @@ export default function App() {
         ? choice.scenario
         : undefined;
       const data = isDataScenario(choice.scenario) ? choice.scenario : undefined;
+      const privacyScenario = isPrivacyScenario(choice.scenario)
+        ? choice.scenario
+        : undefined;
+      if (privacyScenario !== undefined && !cancelled) {
+        setPrivacy({ scenario: privacyScenario, nonce: choice.nonce, launched: false });
+      }
       // Before launch(): a report the SDK recovers at launch is only offered
       // to a handler that is already registered.
       if (reportHandler !== undefined) {
@@ -265,6 +287,11 @@ export default function App() {
       // event and trace sent here must not reach the bundle.
       if (data !== undefined) {
         preLaunchDataProbe(choice.nonce);
+      }
+      // Before launch(): blackout-prelaunch's startBlackout(), and the
+      // blackout lifecycle subscription.
+      if (privacyScenario !== undefined) {
+        preLaunchPrivacyProbe(privacyScenario, choice.nonce);
       }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
@@ -306,6 +333,14 @@ export default function App() {
 
         if (isNativeScenario(choice.scenario)) {
           runNativeScenario(choice.scenario, choice.nonce);
+          return;
+        }
+
+        if (privacyScenario !== undefined) {
+          if (!cancelled) {
+            setPrivacy({ scenario: privacyScenario, nonce: choice.nonce, launched: true });
+          }
+          runPrivacyScenario(privacyScenario, choice.nonce);
           return;
         }
 
@@ -403,6 +438,13 @@ export default function App() {
         {error !== undefined && <Text style={styles.error}>{error}</Text>}
       </View>
       {secureNonce !== undefined && <SecureProbe nonce={secureNonce} />}
+      {privacy !== undefined && (
+        <PrivacyStage
+          scenario={privacy.scenario}
+          nonce={privacy.nonce}
+          launched={privacy.launched}
+        />
+      )}
     </View>
   );
 }
