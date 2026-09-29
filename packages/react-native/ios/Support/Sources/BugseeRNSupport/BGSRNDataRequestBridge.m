@@ -65,6 +65,24 @@ static NSString *BytesOf(NSString *_Nullable payload) {
                                     (unsigned long)[payload lengthOfBytesUsingEncoding:NSUTF8StringEncoding]];
 }
 
+/// The shortest decimal text that parses back to exactly `value` (`%g` keeps
+/// only 6 significant digits), so the `type=` line's origin can be used to
+/// recompute bounds. `+ 0.0` turns a -0 into 0.
+static NSString *FormatCoordinate(CGFloat value) {
+  const double v = (double)value + 0.0;
+  char buffer[64];
+  // Fixed notation, fewest decimals first: points never need an exponent,
+  // and `%g` would print 40 as `4e+01` at low precision.
+  for (int decimals = 0; decimals <= 20; decimals++) {
+    snprintf(buffer, sizeof buffer, "%.*f", decimals, v);
+    if (strtod(buffer, NULL) == v) {
+      return @(buffer);
+    }
+  }
+  snprintf(buffer, sizeof buffer, "%.17g", v);
+  return @(buffer);
+}
+
 /// A point, if `value` is an `NSValue` holding a finite `CGPoint`. The block
 /// is the module's, but a bad origin would put every node in the wrong place,
 /// and there is no better answer than none.
@@ -126,8 +144,14 @@ static id _Nullable CallOrigin(BGSRNDataRequestOriginBlock _Nullable block, BOOL
     // answer. A cancelled block that has not started never runs; one that has
     // already started still reaches the request's guard, which is what makes
     // cancelling safe to race.
-    dispatch_queue_t queue = dispatch_queue_create("com.bugsee.reactnative.data-request-deadline",
-                                                   DISPATCH_QUEUE_SERIAL);
+    //
+    // USER_INITIATED, the QoS of the SDK's own 500 ms timer
+    // (BGSCaptureDataProviderViewHierarchy.m:342-343): with only 50 ms between
+    // the two, a lower-QoS queue could fire after the SDK's timer under load,
+    // costing a counted timeout instead of our answer.
+    dispatch_queue_attr_t attributes =
+        dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
+    dispatch_queue_t queue = dispatch_queue_create("com.bugsee.reactnative.data-request-deadline", attributes);
     shared = [[BGSRNDataRequestBridge alloc]
         initWithScheduler:^id(dispatch_block_t task, int64_t delayMs) {
           dispatch_block_t block = dispatch_block_create(0, task);
@@ -297,12 +321,15 @@ static id _Nullable CallOrigin(BGSRNDataRequestOriginBlock _Nullable block, BOOL
   }
   os_unfair_lock_unlock(&_lock);
   if (alreadyDone) {
-    // Finished between minting and here; don't leave the timer armed.
+    // A detach finished it between registering and here. Don't leave the
+    // timer armed, and stop: its `completed` line is already out, so a
+    // `type=` line now would read backwards, and its sink is gone.
     [self cancelQuietly:timer];
+    return;
   }
 
-  _log([NSString stringWithFormat:@"BugseeRN data request %@ type=%@ origin=%g,%g", requestId, type,
-                                  (double)origin.x, (double)origin.y]);
+  _log([NSString stringWithFormat:@"BugseeRN data request %@ type=%@ origin=%@,%@", requestId, type,
+                                  FormatCoordinate(origin.x), FormatCoordinate(origin.y)]);
   // Branch on the result, never @try: the sink catches inside Objective-C++
   // (BGSRNGuardedEmit), and nothing may unwind through this ARC file, which
   // is not built exception-safe.
