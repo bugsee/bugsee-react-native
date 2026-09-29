@@ -112,8 +112,10 @@ const SCENARIO_URI =
  * iOS counterpart of the Android URI, and needed for the same reason: on a
  * physical iPhone the Debug app runs its embedded bundle whenever it cannot
  * reach Metro (no Local Network permission, another network), and that
- * bundle's JSON was baked in at build time. Never persisted, so it cannot
- * steer a later launch that was not given it.
+ * bundle's JSON was baked in at build time. `Settings` reads the merged
+ * defaults; the e2e only ever populates these keys through the volatile
+ * argument domain, and nothing writes them, so a later launch that is not
+ * given them does not see them. Validated as the URI's fields are.
  */
 function launchArguments(): ScenarioChoice | undefined {
   if (Platform.OS !== 'ios') {
@@ -122,14 +124,22 @@ function launchArguments(): ScenarioChoice | undefined {
   const scenario: unknown = Settings.get('bugseeE2eScenario');
   const nonce: unknown = Settings.get('bugseeE2eNonce');
   const endpoint: unknown = Settings.get('bugseeE2eEndpoint');
-  if (typeof scenario !== 'string' || typeof nonce !== 'string') {
+  if (
+    typeof scenario !== 'string' ||
+    typeof nonce !== 'string' ||
+    !/^[\w-]+$/.test(scenario) ||
+    !/^[0-9a-f]+$/.test(nonce)
+  ) {
     return undefined;
   }
   return {
     scenario,
     nonce,
     source: 'args',
-    endpoint: typeof endpoint === 'string' ? endpoint : undefined,
+    endpoint:
+      typeof endpoint === 'string' && /^https?:\/\/\S+$/.test(endpoint)
+        ? endpoint
+        : undefined,
   };
 }
 
