@@ -72,8 +72,9 @@ export function resetScenario(): void {
   writeFileSync(SCENARIO_FILE, `${JSON.stringify({ scenario: 'launch' })}\n`);
 }
 
-export function scenarioUri({ scenario, nonce }: Scenario): string {
-  return `bugsee-e2e://scenario/${scenario}?nonce=${nonce}`;
+export function scenarioUri({ scenario, nonce }: Scenario, extras: ScenarioExtras = {}): string {
+  const endpoint = extras.endpoint === undefined ? '' : `&endpoint=${encodeURIComponent(extras.endpoint)}`;
+  return `bugsee-e2e://scenario/${scenario}?nonce=${nonce}${endpoint}`;
 }
 
 /**
