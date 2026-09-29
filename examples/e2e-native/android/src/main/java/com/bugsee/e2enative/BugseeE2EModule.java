@@ -13,7 +13,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.regex.Pattern;
 
 /**
  * The Android half of the example-only `BugseeE2E` TurboModule (Task 7.6a).
@@ -27,9 +26,6 @@ public class BugseeE2EModule extends NativeBugseeE2ESpec {
     public static final String NAME = "BugseeE2E";
 
     private static final String TAG = "BugseeE2E";
-
-    /** The JS rule, again: a plain name cannot leave the cache directory. */
-    private static final Pattern FILE_NAME = Pattern.compile("^[\\w.-]{1,64}$");
 
     static {
         System.loadLibrary("bugsee_e2e_native");
@@ -63,8 +59,7 @@ public class BugseeE2EModule extends NativeBugseeE2ESpec {
 
     @Override
     public void writeTempFile(final String name, final String contents, final Promise promise) {
-        if (name == null || !FILE_NAME.matcher(name).matches() || name.matches("^\\.+$")
-                || contents == null) {
+        if (!TempFileNames.isPlain(name) || contents == null) {
             promise.reject("E_BAD_ARGUMENT", "writeTempFile: invalid name or contents");
             return;
         }
