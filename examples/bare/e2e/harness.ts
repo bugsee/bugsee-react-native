@@ -20,7 +20,7 @@ import {
   pullAndroidBundles,
   pullIosBundles,
 } from './bundles';
-import { IOS_DEVICE_ID, IOS_SIMULATOR_ID, IOS_TARGET } from './device';
+import { IOS_SIMULATOR_ID, iosDeviceId, iosTarget, verifyIosDevice } from './device';
 import {
   type DeviceLog,
   type IosConsole,
@@ -40,9 +40,9 @@ export const describeDevice = ON_ANDROID || ON_IOS ? describe : describe.skip;
 
 /** What a suite's title calls the device it runs on. */
 export const TARGET_NAME = ON_IOS
-  ? IOS_TARGET === 'simulator'
+  ? iosTarget() === 'simulator'
     ? `the iOS simulator (${IOS_SIMULATOR_ID})`
-    : `an iPhone (${IOS_DEVICE_ID})`
+    : `an iPhone (${iosDeviceId()})`
   : 'an Android handset';
 
 let current: DeviceLog | undefined;
@@ -160,8 +160,11 @@ async function startIosRun(name: string): Promise<Run> {
   const ios = log() as IosConsole;
   const extras = { endpoint: DEAD_ENDPOINT };
   const scenario = writeScenario(name, extras);
-  if (IOS_TARGET === 'simulator') {
+  if (iosTarget() === 'simulator') {
     await awaitMetroServes(scenario.nonce);
+  } else {
+    // The allowlisted iPhone, identity-checked, before its first launch.
+    await verifyIosDevice();
   }
   const launch = ios.launch(scenarioArgs(scenario, extras));
   const { start } = launch;

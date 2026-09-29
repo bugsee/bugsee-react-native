@@ -14,7 +14,7 @@
  */
 import { DEAD_ENDPOINT, terminateIosApp } from './bundles';
 import {
-  IOS_TARGET,
+  iosTarget,
   launchAndWaitForSequence,
   platformUnderTest,
   type Step,
@@ -163,7 +163,7 @@ describe('example app on a real device', () => {
       // simulator's app loads from Metro, which rebuilds a beat after the
       // JSON write: wait for it, so the bundle is this source's.
       iosArgs = scenarioArgs(scenario, extras);
-      if (IOS_TARGET === 'simulator') {
+      if (iosTarget() === 'simulator') {
         await awaitMetroServes(scenario.nonce);
       }
     }

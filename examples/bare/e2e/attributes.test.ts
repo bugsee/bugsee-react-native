@@ -89,7 +89,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { type PulledBundle, airplane, removePulledBundles, terminateIosApp } from './bundles';
-import { ANDROID_PACKAGE, IOS_SIMULATOR_ID, IOS_TARGET } from './device';
+import { ANDROID_PACKAGE, IOS_SIMULATOR_ID, iosTarget } from './device';
 import {
   ON_IOS,
   type Run,
@@ -363,7 +363,7 @@ describeDevice(`attributes and identity round-trip on ${TARGET_NAME}`, () => {
           report('cleanup run', cleanup === undefined ? '(none)' : Object.fromEntries(cleanup.marks));
         }
         if (!leftClean) {
-          if (ON_IOS && IOS_TARGET !== 'simulator') {
+          if (ON_IOS && iosTarget() === 'device') {
             // An iPhone has no last resort: its Keychain survives the
             // container wipe and an uninstall, and nothing outside the app
             // can erase one app's items. Say so loudly rather than leave

@@ -52,8 +52,14 @@ Two things the app build has to do that autolinking cannot:
 ```sh
 export IOS_DEVELOPMENT_TEAM=…   # your Apple Developer team id
 yarn device:ios     # credentials, pod install, build, embed assertion, install
-E2E_PLATFORM=ios yarn e2e
+E2E_PLATFORM=ios E2E_IOS_TARGET=device yarn e2e
 ```
+
+`E2E_IOS_TARGET` must be stated, `device` or `simulator`: anything else fails
+the run. The iPhone comes only from the allowlist in `e2e/device.ts`
+(`IOS_DEVICE_ID` may pick among its entries, nothing else), and its model
+and UDID are checked with `devicectl list devices` before the first command,
+because the harness wipes the app's data container on it.
 
 The embed assertion is not optional decoration. A build that links Bugsee
 without embedding it succeeds and then dyld-crashes on the device;
