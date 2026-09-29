@@ -360,6 +360,16 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     }
 
     /**
+     * Whether {@link ViewTreeObserverToken}'s listener should replace its
+     * saved observer with the view's current one: only a cleared or dead
+     * saved observer, and only while the view is attached. Pure, so a JVM
+     * test can check the decision itself.
+     */
+    static boolean shouldRehome(final boolean savedAlive, final boolean viewAttached) {
+        return !savedAlive && viewAttached;
+    }
+
+    /**
      * A layout listener on a real {@link View}, and the one place that knows
      * which {@link ViewTreeObserver} it has to be removed from.
      *
@@ -369,12 +379,16 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
      * one. And a detached view's {@code getViewTreeObserver()} hands back a
      * floating observer again, not the window's that still holds the
      * listener. So the observer reference is re-homed from inside the
-     * listener: only a window's observer ever dispatches a global layout
-     * ({@code ViewRootImpl} calls it on {@code mAttachInfo.mTreeObserver}),
-     * and while the view is attached, that is exactly what its
-     * {@code getViewTreeObserver()} returns. Once it is detached, the last
-     * re-homed reference stands -- which is what lets a root replaced inside
-     * a live window still be removed from that window's observer.
+     * listener, when {@link #shouldRehome} says so: only once the saved
+     * observer is gone or dead (a live one is always the observer holding
+     * the listener, even if the view has since moved to another window), and
+     * only while the view is attached -- only a window's observer ever
+     * dispatches a global layout ({@code ViewRootImpl} calls it on
+     * {@code mAttachInfo.mTreeObserver}), and while the view is attached,
+     * that is exactly what its {@code getViewTreeObserver()} returns.
+     * Otherwise the saved reference stands -- which is what lets a root
+     * replaced inside a live window still be removed from that window's
+     * observer.
      *
      * <p>The view and the observer are held weakly: a live observer
      * transitively pins the view, and so the activity, and this token can
@@ -392,8 +406,10 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             this.view = new WeakReference<>(v);
             this.listener = () -> {
                 // Before onLayout: that may detach(), and so release this.
+                final ViewTreeObserver saved = observer.get();
                 final View current = view.get();
-                if (current != null && current.isAttachedToWindow()) {
+                if (current != null
+                        && shouldRehome(saved != null && saved.isAlive(), current.isAttachedToWindow())) {
                     observer = new WeakReference<>(current.getViewTreeObserver());
                 }
                 onLayout.run();
