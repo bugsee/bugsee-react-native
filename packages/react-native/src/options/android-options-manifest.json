@@ -1,9 +1,9 @@
 {
   "manifestVersion": 1,
   "sdk": "android",
-  "sdkVersion": "7.3.0-SNAPSHOT",
+  "sdkVersion": "7.3.0",
   "buildConfiguration": "release",
-  "generatedAt": "2026-09-28T11:16:26Z",
+  "generatedAt": "2026-09-29T15:25:45Z",
   "options": [
     {
       "key": "com.bugsee.option.config.duration",
@@ -72,6 +72,13 @@
       "key": "com.bugsee.option.detect.exit.low_memory",
       "type": "boolean",
       "default": true,
+      "module": "bugsee-android",
+      "hidden": false
+    },
+    {
+      "key": "com.bugsee.option.detect.exit.bg_low_memory_as_error",
+      "type": "boolean",
+      "default": false,
       "module": "bugsee-android",
       "hidden": false
     },
