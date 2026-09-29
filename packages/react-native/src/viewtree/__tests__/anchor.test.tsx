@@ -4,8 +4,8 @@
  * here means `wrap`'s own rendering or lifecycle wiring is wrong, never that
  * `requests.ts` misbehaved (that module has its own tests).
  */
-import { act, createElement } from 'react';
-import type { ReactElement } from 'react';
+import { StrictMode, act, createElement, forwardRef, memo } from 'react';
+import type { ComponentType, ReactElement } from 'react';
 import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 
@@ -138,6 +138,19 @@ describe('wrap', () => {
     expect(Wrapped.displayName).toBe('BugseeRoot(Anonymous)');
   });
 
+  // Not a real caller (the TS signature requires a `ComponentType<P>`), but
+  // `nameOf`'s own guard exists specifically so a non-object, non-function
+  // value -- `null` included, despite `typeof null === 'object'` -- degrades
+  // to `'Anonymous'` rather than crashing on a `.displayName` read off it.
+  it('does not throw and falls back to Anonymous for a nullish root', () => {
+    let Wrapped!: ReturnType<typeof wrap<RootProps>>;
+    expect(() => {
+      Wrapped = wrap(null as unknown as typeof Root);
+    }).not.toThrow();
+
+    expect(Wrapped.displayName).toBe('BugseeRoot(Anonymous)');
+  });
+
   it('tags the returned component as a wrap() root', () => {
     const Wrapped = wrap(Root);
 
@@ -165,5 +178,63 @@ describe('wrap', () => {
 
   it("VH_ANCHOR_NATIVE_ID has the SDK's expected literal value", () => {
     expect(VH_ANCHOR_NATIVE_ID).toBe('__bugsee_view_tree_anchor');
+  });
+
+  // `React.memo(...)` returns a plain object (a `MemoExoticComponent`), not a
+  // function -- it has no `.name` of its own. A review round found that an
+  // earlier `nameOf` (`displayName ?? name ?? 'Anonymous'`-shaped, gated by a
+  // `typeof … === 'string'` check) would throw reading `.length` off that
+  // missing `.name` under one specific mutation, and more importantly never
+  // produced anything better than `'Anonymous'` for a memoized root even
+  // un-mutated. `wrap` must not throw for it, and should name it usefully.
+  it('does not throw for a memoized root, and names it after the wrapped component', () => {
+    function MemoInner(): ReactElement {
+      return createElement('root-marker');
+    }
+    const Memoized = memo(MemoInner) as unknown as ComponentType<RootProps>;
+
+    let Wrapped!: ComponentType<RootProps>;
+    expect(() => {
+      Wrapped = wrap(Memoized);
+    }).not.toThrow();
+    expect(Wrapped.displayName).toBe('BugseeRoot(MemoInner)');
+
+    expect(() => render(<Wrapped label="x" />)).not.toThrow();
+  });
+
+  // `React.forwardRef(...)` is likewise a plain object, carrying the render
+  // function on `.render` rather than `.type` -- `nameOf` must unwrap that
+  // too, the same way `walk.ts`'s own composite naming does.
+  it('does not throw for a forwardRef root, and names it after the render function', () => {
+    function renderInner(): ReactElement {
+      return createElement('root-marker');
+    }
+    const Forwarded = forwardRef(renderInner) as unknown as ComponentType<RootProps>;
+
+    let Wrapped!: ComponentType<RootProps>;
+    expect(() => {
+      Wrapped = wrap(Forwarded);
+    }).not.toThrow();
+    expect(Wrapped.displayName).toBe('BugseeRoot(renderInner)');
+
+    expect(() => render(<Wrapped label="x" />)).not.toThrow();
+  });
+
+  // Dev-only `<StrictMode>` double-invokes a layout effect's mount to surface
+  // missing cleanup: register -> unregister -> register. `wrap`'s own cleanup
+  // (`unregisterAnchor`) is exactly what makes that safe -- balanced, and
+  // ending registered, rather than leaking a registration or ending
+  // unregistered.
+  it('stays balanced under StrictMode, ending registered', () => {
+    const instance = { marker: 'anchor-instance' };
+    const Wrapped = wrap(Root);
+
+    render(createElement(StrictMode, null, createElement(Wrapped, { label: 'x' })), () => instance);
+
+    expect(registerAnchor).toHaveBeenCalledTimes(2);
+    expect(unregisterAnchor).toHaveBeenCalledTimes(1);
+    const registerCalls = (registerAnchor as jest.Mock).mock.invocationCallOrder;
+    const unregisterCalls = (unregisterAnchor as jest.Mock).mock.invocationCallOrder;
+    expect(Math.max(...registerCalls)).toBeGreaterThan(Math.max(...unregisterCalls));
   });
 });
