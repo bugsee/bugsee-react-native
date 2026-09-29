@@ -52,6 +52,10 @@ let reportHandlerRequestSubscribeCalls = 0;
 export const native = {
   setWrapperInfo: jest.fn<void, [Record<string, unknown>]>(),
   setSecureRectangles: jest.fn<void, [number, number[]]>(),
+  startBlackout: jest.fn<void, []>(),
+  endBlackout: jest.fn<void, []>(),
+  isBlackout: jest.fn<Promise<boolean>, []>(),
+  captureViewHierarchy: jest.fn<void, []>(),
 
   /**
    * The codegen EventEmitter, which is a SUBSCRIBE function returning an

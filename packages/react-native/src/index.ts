@@ -123,6 +123,37 @@ class Bugsee {
   }
 
   /**
+   * Suppresses everything that describes the screen: the video (black
+   * frames), the report screenshot (black), touch/gesture recording and the
+   * view hierarchy. Logs, network events, custom events and traces keep
+   * recording throughout (design doc §4.1).
+   *
+   * Android ignores this before `launch()` resolves -- a logged no-op, not an
+   * error -- while iOS honours it regardless of launch state. Call this after
+   * `launch()` resolves when blackout must hold on both platforms.
+   *
+   * {@link isBlackout} verifies whether it actually took effect.
+   */
+  startBlackout(): void {
+    NativeBugsee.startBlackout();
+  }
+
+  /** Resumes everything {@link startBlackout} suppressed. */
+  endBlackout(): void {
+    NativeBugsee.endBlackout();
+  }
+
+  /** The current blackout state, as {@link startBlackout} / {@link endBlackout} left it. */
+  async isBlackout(): Promise<boolean> {
+    return NativeBugsee.isBlackout();
+  }
+
+  /** Captures the view hierarchy immediately, outside a normal snapshot pass. */
+  captureViewHierarchy(): void {
+    NativeBugsee.captureViewHierarchy();
+  }
+
+  /**
    * Subscribes to the SDK's lifecycle events.
    *
    * Events arrive OFF the main thread on both platforms and are delivered to
