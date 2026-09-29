@@ -1677,6 +1677,16 @@ The Task 5.4 cases apply unchanged, using the iOS column of the table.
 
 ---
 
+### Task 5.T — Phase 5 pre-merge fixes from the gate (done)
+
+Added by controller ruling: the Phase 5 gate passed, marking three items "fix before merge". Commits `52e5a0c`..`ca33c5f`. `src/attributes/validate.ts` and `src/data/validate.ts`'s number-rejection messages no longer echo the rejected value — a magnitude near `2^63` rounds under `String`/template-literal conversion (`1e19` printed as `10000000000000000000`, and `2^63` itself as `9223372036854776000`), so every such message now names the path and prints the bound as `BUNDLE_NUMBER_LIMIT_DECIMAL`, a new `BigInt`-derived exact decimal string, instead. Android's `AttributeBridgeTest` gained `Boolean` coverage for `setAndVerify` and `readable` (previously untested, though already correct — confirmed by mutation: deleting `readable`'s `|| value instanceof Boolean` now fails a test), and iOS's `BGSRNAttributesTests` gained a plain-number case proving `@(42)`/`@(1.5)` verify and read back as `NSNumber`, not silently taking the `CFBoolean` identity path. `NativeBugsee.ts`'s stale claim that Android's `getAttribute` reads the in-memory copy is corrected to the persisted copy (`AttributeBridge.readOne`), matching the code and the Phase 5 ruling.
+
+- [x] No number-rejection message in `src/attributes/` or `src/data/validate.ts`'s event/trace paths echoes the rejected value; the pinned-message tests are updated and a `1e19` case pins the no-echo rule.
+- [x] Android `AttributeBridgeTest` and iOS `BGSRNAttributesTests` cover the `Boolean`/plain-number gaps the gate found.
+- [x] `NativeBugsee.ts`'s `getAttribute` doc names the persisted copy, not the in-memory one.
+
+---
+
 ### Phase 5 review gate
 
 The reviewer must independently:
