@@ -64,10 +64,28 @@ function log(): DeviceLog {
   return current;
 }
 
-/** Fails with the captured log, so a miss can be read rather than guessed. */
+/**
+ * What the device's log daemon says it threw away: `chatty` collapsing
+ * (`expire <n> lines`), a per-process quota (EMUI's `LOGS OVER PROC QUOTA`)
+ * or a reader that fell behind (`lines were dropped`). Seen once on the
+ * WOD_LX1 (Task 6.8): a marker that was plainly written never arrived, with
+ * `log.tag.BugseeRN` at DEBUG adding about nine lines a second.
+ */
+export const LOG_DROPS = /\bchatty\b|expire \d+ lines?|LOGS OVER PROC QUOTA|lines? (were|was) dropped/i;
+
+/**
+ * Fails with the captured log, so a miss can be read rather than guessed --
+ * and says whether the log itself dropped lines, since a line the device
+ * never delivered reads exactly like one the app never wrote.
+ */
 export function must(line: LogLine | undefined, what: string, from = 0): LogLine {
   if (line === undefined) {
-    throw new Error(`never saw ${what}.\nLog since the run started:\n${log().tail(from)}`);
+    const drops = log().all(LOG_DROPS, from).map(dropped => dropped.text.trim());
+    const dropNote =
+      drops.length === 0
+        ? 'The device log reported no dropped lines.'
+        : `The device log reported dropping lines (${drops.length}):\n${drops.slice(-20).join('\n')}`;
+    throw new Error(`never saw ${what}.\n${dropNote}\nLog since the run started:\n${log().tail(from)}`);
   }
   return line;
 }
