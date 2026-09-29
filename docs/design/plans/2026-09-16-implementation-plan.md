@@ -2500,23 +2500,1492 @@ Record, for the controller, the three items this phase leaves open:
 
 ---
 
+## Phases 7–8 — shared ground
+
+Phase 7 starts after Phase 6's review gate: its root reporter lives in `Bugsee.wrap` (Task 6.4), and its view-tree skip list (Task 6.3's `isWrapper`) gains one component. Phase 8 starts after Phase 7's gate and uses Task 7.6a's example helper module. Each phase ends with its own gate.
+
+**Everything in "Phases 4–6 — shared ground" applies unchanged**: the rule against creating external resources, the paths, the commands, the rules for every native method, the device rules and the meaning of "Hardware pass: add to Task 3.H". What follows only adds to it.
+
+**Paths added.**
+- `e2eNative/…` = `examples/e2e-native/…`, the example-only native module of Task 7.6a (workspace package `bugsee-e2e-native`).
+
+**Commands added.**
+- Android release build for the gated cases: `(cd examples/bare/android && ./gradlew :app:assembleRelease -PbugseeE2eDebuggable=true -PbugseeE2eMinify=true -PreactNativeArchitectures=arm64-v8a)`, then `adb -s AMRJCP4718402860 install -r examples/bare/android/app/build/outputs/apk/release/app-release.apk`. `bugseeE2eMinify` is added by Task 7.1c.
+- iOS Release build on the iPhone: `IOS_CONFIGURATION=Release yarn workspace bugsee-example-bare device:ios` (the variable is added by Task 7.5b; `Debug` stays the default).
+- Gated cases run only behind `E2E_RELEASE=1` (a release build is installed) or `E2E_IOS_OPERATOR=1` (a person taps the iPhone when the test says so). Each joins the Task 3.H list.
+
+**Rules added for every native method in these phases.**
+- A promise-returning native method settles exactly once on every path, including an SDK callback that never comes (Task 7.1d documents where the iOS SDK does not call back).
+- No message, JS or native, echoes a caller's value (Task 5.T's rule, extended). A validation message names the field and the rule; a native log line about an exception or a report prints the handle, a byte count or a code, never the content.
+- The exception payload is built in JS only (`src/exceptions/payload.ts`). Both natives forward it verbatim: they never parse, log, truncate or re-encode it.
+
+**Devices, added.**
+- An iOS case that needs the SDK's crash reporter (`logException`, `logUnhandledException`, any crash recovery) runs only with `E2E_IOS_TARGET=device`. On the simulator the same file asserts the simulator's documented behaviour instead (Phase 7 verified facts: the simulator slice compiles those entry points out).
+- A case that is `it.failing` for a known SDK bug is preceded, in the same run, by a plain `it` that proves the bundle is this run's (its nonce is in the payload or the summary). A harness regression then fails loudly instead of passing as the known bug.
+
+---
+
 ## Phase 7 — Exceptions
 
-**Ships:** `logException`, `logUnhandledException`, `ErrorBoundary`, and the debug-ID payload.
+**Ships:**
+- `logException(error, options?)` and `logUnhandledException(error)`;
+- the global handlers: `ErrorUtils` and unhandled promise rejections;
+- `<ErrorBoundary>`, and a root reporter inside `Bugsee.wrap` for render errors no boundary catches;
+- the debug-ID payload (`debug_ids` map plus per-frame `debug_id`);
+- an example-only native module with a real, JS-triggerable native crash, and its device test.
 
-- [ ] **7.1** Stack parsing and the payload, preserving the `ReactNativeWebException` name — the backend routes on that exact string and Android 7.x has no structured foreign-frame API to replace it.
-- [ ] **7.2** Global handlers: `ErrorUtils.setGlobalHandler` and unhandled rejection tracking.
-- [ ] **7.3** `debug_ids` read from `globalThis._bugseeDebugIds`. The worker accepts a crash-level list or a filename→id map plus per-frame ids; send the map.
-- [ ] **7.4** `ErrorBoundary`.
-- [ ] **7.5** Device test: throw in JS, confirm the report arrives with a JS stack.
-- [ ] **7.6 (to-do)** Android's `testCrash()` (used by Phase 1's `testNativeCrash` and Task 3.4d's `rh-crash` scenario) throws a Java `RuntimeException`, not a native (NDK/signal) crash — it exercises the JVM uncaught-exception path, not the crashpad-backed native-crash path the NDK dependency (Task 3.P1) exists for. Task 3.4d worked around this from *outside* the app (`adb shell run-as … kill -11 <pid>`) to get Crashpad to exec at all, just to count its `.so`. Add a real, JS-triggerable native trigger — e.g. a small JNI call that segfaults or aborts on purpose — so the native-crash reporting path gets first-class device coverage instead of only a Java exception standing in for it and an external `kill -11` filling the gap.
-- [ ] Review gate.
+### Planner rulings (the design wins over the outline; reviewable, change them here)
+
+- **R1. The payload's message key is `reason`.** Design §9.1 says "message" in prose. The worker (`crash/managed/reactnative.py` `_process_new_format`) reads `reason`, and 6.x sent `reason`.
+- **R2. `signature` is kept, as design §9.1 lists it, and it is load-bearing.**
+  - Android 7.3.0 parses `signature` out of a JSON reason (`ExceptionSignature.extractFromReason`) into the client signature and into `crash.json` `additional_signature`. iOS writes `additional_signature` the same way (`sdk/reporting/bundle/crash.md`).
+  - Without it, every React Native exception on Android shares one client signature: the class name plus the bridge's own Java frames.
+  - It is SHA-1 over the chain's names and frame traces (6.x's algorithm), without 6.x's `build_id` suffix (R3).
+- **R3. `build_id` is not sent.** When it is absent, the worker computes `_construct_build_id` = SHA-1 of `<app version>-release-<platform>`. That is the formula 6.x used in a release build. 7.x symbolicates by debug ID (R5, Phase 13), which the worker tries first.
+- **R4. Exception options are exactly `domain`, `labels` and `includeVideo`, flat** (design §9.1: "the wrapper passes all three").
+  - 6.x's `mergingRules.skipFrames` is not carried. It indexes the *native* stack, which for a JS exception is the bridge's own frames, and the worker computes a React Native signature from the JS frames without it.
+  - `includeVideo` is passed through, although neither 7.x SDK acts on it (verified facts).
+  - Android 7.3.0 ignores `labels` (verified facts; "To raise").
+- **R5. `debug_ids` is a filename → id map, plus a per-frame `debug_id`** (design §9.2, outline 7.3).
+  - `globalThis._bugseeDebugIds` is keyed by the registering script's `Error().stack`, not by filename (`bugsee-cli` `src/inject/mod.rs`).
+  - The filename is that stack's **top frame**, parsed by the same parser and normalised by the same function as a crash frame's file, as `@bugsee/core` `debug-id.ts` does.
+- **R6. A global-handler error with `isFatal === true` goes to `logUnhandledException`; anything else goes to `logException`.**
+  - 6.x reported every global-handler error as unhandled.
+  - On iOS, 7.x `logUnhandledException` stores an *overriding* crash report: it surfaces at the next launch, and a later call replaces it. That is wrong for an error the app survives.
+  - Unhandled promise rejections stay handled, as in 6.x.
+- **R7. JS capture obeys `com.bugsee.option.detect.crash`** (design §10, the `componentState` pattern).
+  - The global handlers, the rejection tracker and the root reporter report only when the options given to `launch()`/`relaunch()` do not set it to `false`. The SDK default is `true`.
+  - An explicit `logException`/`logUnhandledException` call always forwards.
+- **R8. Render errors that no boundary catches are caught by a root reporter inside `Bugsee.wrap`.**
+  - On RN 0.81+ they never pass through `ErrorUtils`. React calls `onUncaughtError` → `ExceptionsManager.handleException(error, true)` directly (`src/private/renderer/errorhandling/ErrorHandlers.js`, verified on 0.87.1), so Task 7.2's hook cannot see them.
+  - The Phase 6 decision named `wrap` as the one integration point for "Phase 7's boundary".
+  - The reporter reports, waits (bounded), then rethrows, so RN's fatal path is unchanged.
+  - Recorded side effect: React first hands the caught error to RN's `onCaughtError`, a soft, non-fatal error, before the rethrow's fatal one.
+- **R9. A thrown non-`Error` value is never serialised.**
+  - 6.x `JSON.stringify`-ed it into the reason, and a thrown response object carries whatever it carries.
+  - A string becomes the reason. An object with a string `message` gives that message, plus its `name` if that is a string. Anything else becomes `Non-Error thrown: <typeof>`.
+  - The builder reads no property of an error except `name`, `message`, `stack` and `cause`. The only exception is `errors`, read on an `AggregateError` at the entry point. A `Proxy` test pins this.
+- **R10. `<ErrorBoundary>` never mutates the caught error.**
+  - 6.x overwrote `error.cause` with the component stack.
+  - Here the component stack becomes the innermost cause node, named `ErrorBoundary Error` (6.x's name). The error's own `cause` chain is kept above it.
+- **R11. There is no Metro symbolication in dev** (6.x called `symbolicateStackTrace`, which is async). The payload is built synchronously, so the fatal path can hand it to native before RN's own handler runs. The backend symbolicates.
+- **R12. Outline 7.6's native trigger lives in an example-only module, `bugsee-e2e-native` (Task 7.6a), not in the library.**
+  - Shipping a JNI library inside every consumer's app for a test hook is not worth it.
+  - `Bugsee.testNativeCrash()` keeps calling the SDKs' own `testCrash`, and its doc now says what that is: a Java `RuntimeException` on Android, an `NSException` on iOS.
+  - The same module writes the temp files a file attachment needs (Phase 8), which Task 3.4d could not stage.
+- **R13. On Android, a fatal JS error produces two crash reports: ours and RN's own `JavascriptException`.** Android has no counterpart to iOS's overriding report. Phase 7 does not suppress the second one, because that would change the app's crash path. Task 7.5a pins the exact set of bundles. This is an open question for the user, and a "To raise".
+- **R14. `AggregateError`** (6.x parity, capped):
+  - handled: one report per inner error, for the first 10;
+  - unhandled: the aggregate as one report. One incident is one crash, and iOS keeps only one overriding report anyway.
+
+### Verified facts (2026-09-29)
+
+**Android `v7.3.0` (`beb390dc0`):**
+- API: `Bugsee.logException(Throwable)`, `logException(Throwable, Map<String, Object>)` and `logUnhandledException(@NonNull Throwable, Map<String, Object>)`.
+- `logException` drops the call unless the SDK is running or starting (`Log.w`). `logUnhandledException` drops it the same way (it has a guard added for wrappers).
+- `crash.json` `exception.name` is `throwable.getClass().getName()`, and `reason` is `getMessage()` (`ExceptionSerializer`).
+  - R8 therefore renaming the class breaks routing. The package ships a keep rule (Task 7.1c).
+- Only `domain` and `skipFrames` are read from the options map (`ExceptionSerializer:187`, `ExceptionSignature:83,230`). `labels` and `includeVideo` are documented in the javadoc but read nowhere.
+- `logUnhandledException` writes the crash report **synchronously** and does not terminate the process. In 7.3.0 it **also** files an error report: `logExceptionInternal` falls through from the crash branch.
+  - The fix is `e1d56ed65`, on branch `fix/unhandled-error-single-report`, which is neither merged nor released.
+- `testCrash()` throws `new RuntimeException("Test crash")`.
+- The NDK artifact has no public native-crash trigger.
+
+**iOS `7.0.0-beta3` (`0d9c9d0a3`), `Bugsee.h:367,380–381`:**
+- API: `+logException:reason:options:completion:` and `+logUnhandledException:reason:completion:`.
+- Both bodies sit inside `#if !TARGET_OS_SIMULATOR && !TARGET_OS_MACCATALYST`. **On the simulator they do nothing and never call `completion`.**
+- Unless the SDK is `Launched`, `logException` calls `completion` at once and logs nothing.
+- A handled exception becomes a live error report: `reportHandledCrashReport:asError:YES labels:loggingOptions.labels`.
+- An unhandled exception goes to `BGSCrashManager logUnhandedException:` → PLCrashReporter `createAndStoreOverridingCrashReportWithException:` (custom data `{"ExceptionFromWrapper":true}`), and `completion` runs at once.
+  - The report surfaces as a recovered crash at the next launch.
+  - With the crash manager off (a debugger attached), it falls back to `logException…asHandled:NO`, a live report.
+- `[BugseeExceptionLoggingOptions new].includeVideo` is `NO`. The value is recorded in `crash.json` `exceptionLoggingOptions` (`getDictInfo`) and acted on nowhere.
+- The domain is written as `exceptionLoggingOptions.exceptionDomain`, and never as `exception.domain` (`crash.md`).
+- `+testCrash` throws an `NSException`.
+
+**Worker (`84013cf`):**
+- Routing is a substring test, `'ReactNativeWebException' in name` (`crash/managed/__init__.py:38`, `crash/processors/__init__.py:33`).
+- `_try_get_serialized_exception` strips a `^.*ReactNativeWebException:\s*` prefix from `reason`, then parses JSON.
+- It reads `name`, `reason`, `frames[]` (`trace`, `traceRaw`, `data`, `debug_id`), `cause`, `platform_os` (default `ios`), `build_id` (with the R3 fallback) and `debug_ids`.
+- `_collect_debug_ids` accepts `debug_ids` as a list **or** a map (it takes the values), plus each frame's `debug_id`.
+- The signature is recomputed server-side from name, reason and the top user frame. The client's `signature` is not read there (R2 says where it is read).
+
+**`bugsee-cli` (`506e414`):** the injected stub runs `globalThis._bugseeDebugIds[(new Error).stack] = "<uuid>"`, wrapped in `try`/`catch`, and appends `//# debugId=<uuid>`. The paired map gets `debug_id` and `debugId`.
+
+**React Native 0.87.1** (the same files exist in 0.81; `check-rn-compat.sh` pins them, Task 7.2):
+- `Libraries/Core/setUpErrorHandling.js` installs `ErrorUtils.setGlobalHandler(handleError)` unless `global.RN$useAlwaysAvailableJSErrorHandling === true`.
+- On Hermes, `Libraries/Core/polyfillPromise.js` enables `HermesInternal.enablePromiseRejectionTracker(promiseRejectionTrackingOptions)` **only in `__DEV__`**. A release build tracks no rejections at all unless a library enables it.
+- `src/private/renderer/errorhandling/ErrorHandlers.js`: `onUncaughtError` → `ExceptionsManager.handleException(error, true)` and `onCaughtError` → `handleException(error, false)`. Neither passes through `ErrorUtils`.
+- In a release build, a fatal error reaches native `reportFatalException`. Android then throws `com.facebook.react.common.JavascriptException`; iOS raises `RCTFatalException`.
+
+**6.x wrapper (`cross/react-native`, read-only):**
+- Android sends `new ReactNativeWebException(json)`, a private nested `Throwable`. Handled goes to `logException(ex, opts)`, unhandled to `onUncaughtException(currentThread, ex)`.
+- iOS sends `logException:@"ReactNativeWebException" reason:json …`.
+- The JSON is `{name, reason, frames, cause?, signature, build_id, platform_os}`, and each frame is `{traceRaw, trace, data: {member, source, line, column}, user?}`.
+
+### Constants
+
+| Name | Value | Where | Why |
+|---|---|---|---|
+| `REACT_NATIVE_EXCEPTION_NAME` | `'ReactNativeWebException'` | iOS `BGSRNReactNativeExceptionName`; Android simple class name | The backend routes on this exact substring. |
+| `EXCEPTION_MAX_FRAMES` | `256` | `src/exceptions/payload.ts` | Per node. Bounds the payload; far above any real JS stack. |
+| `EXCEPTION_MAX_CAUSE_DEPTH` | `10` | payload | Android's own nesting cap. |
+| `EXCEPTION_MAX_REASON_LENGTH` | `8192` UTF-16 units | payload | Truncated with `…` (U+2026). Never splits a surrogate pair. |
+| `EXCEPTION_MAX_AGGREGATE` | `10` | `src/exceptions/report.ts` | R14. |
+| `EXCEPTION_DOMAIN_MAX_LENGTH` | `256` | `src/exceptions/options.ts` | A domain is a grouping tag, not text. |
+| `DEBUG_IDS_MAX` | `64` | `src/exceptions/debugIds.ts` | Map entries sent. One bundle is typical. |
+| `UNHANDLED_REPORT_WAIT_MS` | `1500` | report | The most the fatal path waits for native before RN's handler runs. Android writes synchronously; iOS stores the PLCR report synchronously. |
+| `ERROR_BOUNDARY_CAUSE_NAME` | `'ErrorBoundary Error'` | payload | R10, 6.x's name. |
+
+**Log lines** (Android `Log.i("BugseeRN", …)`, iOS `NSLog(@"BugseeRN …")`); the device tests match these:
+- `exception handled sent bytes=<n>`
+- `exception unhandled sent bytes=<n>`
+- `exception unhandled completed`
+
+### The payload (exact)
+
+The reason is one JSON object. Keys appear in this order, and absent keys are omitted, never `null`.
+
+| key | type | where | meaning |
+|---|---|---|---|
+| `name` | string | every node | The error's `name` if it is a non-empty string; else `'Error'`. |
+| `reason` | string | every node | `message`, trimmed and truncated (constants), or R9's description. |
+| `frames` | frame[] | every node | Parsed from `stack`, top first; the header line is dropped. `[]` when there is no stack. |
+| `cause` | node | when present | `error.cause` (any value, R9), to depth 10, stopping at a repeat (`WeakSet`). Then the R10 component-stack node, if any. |
+| `signature` | string | root | `sha1Hex(<name><each frame's trace>…)` down the whole chain, lowercase, 40 hex characters. |
+| `platform_os` | `'android'` \| `'ios'` | root | `Platform.OS`. |
+| `debug_ids` | `{[file]: id}` | root, when non-empty | The R5 map, at most 64 entries. |
+
+A frame has these keys, in order:
+- `traceRaw`: the stack line as the engine wrote it;
+- `trace`: `<member> () (<source>[:line][:column])`, 6.x's form;
+- `data`: `{member, source, line, column}`. `member` defaults to `'<unknown>'`; `line` and `column` are `null` when unknown;
+- `user`: present when the frame has a file. It is `true` iff the frame has a line and a column, and its file contains none of `node_modules`, `native code` or `(native)`;
+- `debug_id`: present when the frame's file is in the map.
+
+`source` is the frame's file with these removed, in order:
+1. a leading `file://`;
+2. a leading `address at `;
+3. `^.*/[^/]+\.app/` (an iOS app bundle path);
+4. `^/var/mobile/Containers/Data/Application/[^/]+/`;
+5. `^/data/(data|user/\d+)/[^/]+/` (the Android app data directory, where CodePush keeps bundles).
+
+The **file key** used by R5's join is the same string with steps 1–2 only, so it matches between the registration stack and the crash stack even where step 3–5 would not.
+
+```json
+{"name":"TypeError","reason":"E2E handled 3f9a","frames":[
+  {"traceRaw":"    at bugseeE2EThrowSite (address at index.android.bundle:1:20417)",
+   "trace":"bugseeE2EThrowSite () (index.android.bundle:1:20417)",
+   "data":{"member":"bugseeE2EThrowSite","source":"index.android.bundle","line":1,"column":20417},
+   "user":true,"debug_id":"8a1c2f4e-0d3b-5e6f-9a7b-1c2d3e4f5a6b"}],
+ "cause":{"name":"RangeError","reason":"inner 3f9a","frames":[]},
+ "signature":"0b4a…40 hex…","platform_os":"android",
+ "debug_ids":{"index.android.bundle":"8a1c2f4e-0d3b-5e6f-9a7b-1c2d3e4f5a6b"}}
+```
+
+**What Phase 13 must produce to match (13.1, 13.5).**
+- The `bugsee-cli` stub is present in the JavaScript the device executes. For Hermes, that is the JavaScript `hermesc` compiles, so the stub is in the bytecode.
+- The source map uploaded for that bundle is the **composed** map (after `compose-source-maps.js`), and it carries the same UUID as `debug_id`.
+- The registration's top frame and the crash frames are in one bundle file, so their file keys are equal. Phase 13 has nothing to add at runtime.
+- Task 13.5's end-to-end test asserts that a release build's `payload.debug_ids` value equals the uploaded map's `debug_id`, and that the dashboard frame symbolicates.
+
+### Execution order and parallel streams
+
+| Stream | Tasks, in order | Notes |
+|---|---|---|
+| A (JS) | 7.1a → 7.1b → 7.3 → 7.2 → 7.4 | 7.1b fixes the spec. 7.3, 7.2 and 7.4 touch only `src/exceptions/**`, `src/index.ts`, `src/viewtree/**` and the scripts guard. |
+| B (Android) | after 7.1b: 7.1c | `android/**`, `examples/bare/android/app/build.gradle` |
+| C (iOS) | after 7.1b: 7.1d | `ios/**` |
+| D (example) | 7.6a from the start, then 7.6b | `examples/e2e-native/**` and the example wiring. 7.6b needs the WOD_LX1. |
+| Devices | 7.5a after 7.1c, 7.2, 7.3, 7.4 and 7.6b; then 7.5b after 7.1d and 7.5a | The WOD_LX1 serialises 7.6b and 7.5a. 7.5b reuses 7.5a's files. |
+
+At most three streams run at once, with priority A, then B, then C, then D. Stream D (7.6a) starts beside 7.1a. When 7.1b lands, B starts at once; C starts when D's current task finishes, if three are already running.
+
+---
+
+### Task 7.1a — Stack parsing, SHA-1 and the payload builder (pure JS)
+
+**Depends on:** nothing in Phase 7. Stream A.
+
+**Files:**
+- Create: `src/exceptions/stack.ts`, `src/exceptions/sha1.ts`, `src/exceptions/payload.ts`
+- Create tests: `src/exceptions/__tests__/stack.test.ts`, `sha1.test.ts`, `payload.test.ts`
+
+**Interfaces (exact):**
+
+```ts
+// src/exceptions/stack.ts -- adapted from 6.x's stack-trace-parse.ts (stacktrace-parser, MIT);
+// the MIT notice is carried over verbatim in the file header
+export interface ParsedFrame { raw: string; file: string | null; methodName: string | null;
+  lineNumber: number | null; column: number | null; }
+export function parseStack(stack: string): ParsedFrame[];          // Chrome/V8, Hermes, JSC and "in X (at f:l)" lines; others skipped
+export function fileKey(file: string): string;                     // steps 1-2 of "The payload (exact)"
+export function cleanSource(file: string | null): string;          // steps 1-5; '' for null
+
+// src/exceptions/sha1.ts
+export function sha1Hex(text: string): string;                     // UTF-8 bytes of `text`, lowercase hex
+
+// src/exceptions/payload.ts
+export const EXCEPTION_MAX_FRAMES = 256, EXCEPTION_MAX_CAUSE_DEPTH = 10,
+  EXCEPTION_MAX_REASON_LENGTH = 8192, ERROR_BOUNDARY_CAUSE_NAME = 'ErrorBoundary Error';
+export interface ExceptionFrame { traceRaw: string; trace: string;
+  data: { member: string; source: string; line: number | null; column: number | null };
+  user?: boolean; debug_id?: string; }
+export interface ExceptionNode { name: string; reason: string; frames: ExceptionFrame[]; cause?: ExceptionNode; }
+export interface ExceptionPayload extends ExceptionNode { signature: string; platform_os: 'android' | 'ios';
+  debug_ids?: Record<string, string>; }
+export interface PayloadInput {
+  error: unknown;
+  platformOS: 'android' | 'ios';
+  componentStack?: string;                        // R10
+  fallbackStack?: string;                         // a stack captured by the caller, used only for a non-Error (Task 7.1b)
+  debugIds?: ReadonlyMap<string, string>;         // file key -> id; filled by Task 7.3, empty until then
+}
+export function buildExceptionPayload(input: PayloadInput): ExceptionPayload;
+export function describeThrown(value: unknown): { name: string; reason: string };   // R9
+```
+
+`buildExceptionPayload` never throws. A getter that throws while the builder reads `name`, `message`, `stack` or `cause` is caught and treated as absent.
+
+- [ ] **Red**
+  - `stack.test.ts`:
+    - `parses a Hermes release frame (address at)`;
+    - `parses a Hermes frame from a Metro URL`;
+    - `parses a native frame with no location`;
+    - `parses a JSC frame (name@file:line:col)`;
+    - `parses a V8 frame (at name (file:line:col))`;
+    - `parses a component-stack line (in X (at file:line))`;
+    - `skips the "Name: message" header and blank lines`;
+    - `fileKey strips file:// and "address at " only`;
+    - `cleanSource strips an iOS .app prefix, the iOS data container and the Android data directory`.
+  - `sha1.test.ts`:
+    - `hashes the empty string` (`da39a3ee5e6b4b0d3255bfef95601890afd80709`);
+    - `hashes "abc"` (`a9993e364706816aba3e25717850c26c9cd0d89d`);
+    - `hashes a two-block input` (`abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq` → `84983e441c3bd26ebaae4aa1f95129e5e54670f1`);
+    - `hashes UTF-8, not UTF-16` (`é` → `bf15be717ac1b080b4f1c456692825891ff5073d`; `😀` → `9c533688a979a858cbd6a43c9f91aba624651f18`).
+  - `payload.test.ts`:
+    - `keys serialise in the documented order` (compare `JSON.stringify` with a literal, as the `vh` payload test does);
+    - `name is the error's own name, and a subclass's custom name is kept`;
+    - `an empty or non-string name becomes "Error"`;
+    - `reason is the message, trimmed`;
+    - `a reason over 8192 units is truncated with an ellipsis, never splitting a surrogate pair`;
+    - `frames come from the stack, top first`;
+    - `a frame's trace is "member () (source:line:column)" and its data carries member, source, line and column`;
+    - `a node_modules or native frame is not user`;
+    - `frames beyond 256 are dropped`;
+    - `the cause chain nests, and stops at depth 10 and at a repeat`;
+    - `a cause that is not an Error is described, never serialised`;
+    - `no property other than name, message, stack and cause is read` (the error is a `Proxy` recording reads);
+    - `a thrown string is the reason and has no frames`;
+    - `a thrown object gives its string message and name and nothing else` (`Proxy`; `{ password: 'pw', message: 'm' }` → reason `m`, and no `pw` in `JSON.stringify(payload)`);
+    - `a thrown number, null or undefined is "Non-Error thrown: <typeof>"`;
+    - `a non-Error uses fallbackStack for its frames`;
+    - `an Error ignores fallbackStack`;
+    - `a component stack becomes the innermost cause, named "ErrorBoundary Error"`;
+    - `the component stack is appended below the error's own cause, which is not changed`;
+    - `the signature is sha1 of the chain's names and traces`;
+    - `the signature does not change with the reason`;
+    - `platform_os is the one given`;
+    - `a throwing getter is treated as absent`.
+  - Run → FAIL.
+- [ ] **Green**
+  - The three modules.
+  - Every `payload.test.ts` Proxy test passes.
+  - `yarn test` and `yarn mutate:src` (≥ 95%) are green.
+- [ ] **Mutate**
+  - (1) Serialise a non-Error object with `JSON.stringify`. `a thrown object gives its string message…` must fail.
+  - (2) Drop the cycle guard. `…stops at depth 10 and at a repeat` must fail, or time out.
+  - (3) Hash UTF-16 code units. `hashes UTF-8, not UTF-16` must fail.
+  - (4) Include the reason in the signature. `the signature does not change with the reason` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(exceptions): a privacy-safe JS exception payload, with its signature`.
+
+---
+
+### Task 7.1b — `logException` and `logUnhandledException`: facade, options, spec and stubs
+
+**Depends on:** 7.1a. Stream A. Fixes the spec that Streams B and C implement.
+
+**Files:**
+- Create: `src/exceptions/options.ts`, `src/exceptions/report.ts`, `src/exceptions/__tests__/options.test.ts`, `src/exceptions/__tests__/report.test.ts`
+- Modify: `src/NativeBugsee.ts`, `src/index.ts`, `src/__mocks__/native.ts`
+- Modify (stubs only): `android/BugseeModule.java`, `ios/BugseeModule.mm` (both import branches if a header is added)
+
+**TurboModule additions (exact):**
+
+```ts
+/** A handled JS exception. `payloadJson` is the Task 7.1a payload; `optionsJson` is `{domain?, labels?, includeVideo?}` or null. */
+logException(payloadJson: string, optionsJson: string | null): void;
+/** An unhandled JS exception. Resolves once the SDK has the report; never rejects. */
+logUnhandledException(payloadJson: string): Promise<void>;
+```
+
+**Public JS API (exact):**
+
+```ts
+// src/exceptions/options.ts
+export interface ExceptionOptions {
+  /** Groups the issue on the dashboard. Non-empty, at most 256 characters. */
+  domain?: string;
+  /** Issue labels. Android 7.3.0 ignores them (to raise); iOS applies them. */
+  labels?: readonly string[];
+  /** Recorded in the report's exception options on iOS; neither 7.x SDK acts on it yet. */
+  includeVideo?: boolean;
+}
+export const EXCEPTION_DOMAIN_MAX_LENGTH = 256;
+/** TypeError or RangeError naming the field and never its value; null for undefined or {}. */
+export function encodeExceptionOptions(options: ExceptionOptions | undefined): string | null;
+
+// src/exceptions/report.ts
+export const UNHANDLED_REPORT_WAIT_MS = 1500;
+export const EXCEPTION_MAX_AGGREGATE = 10;
+/** true the first time an object is seen (WeakSet); always true for a primitive. */
+export function markReported(error: unknown): boolean;
+export function reportHandled(error: unknown, options?: ExceptionOptions,
+  extras?: { componentStack?: string; fallbackStack?: string }): void;      // never throws; R14 splits an AggregateError
+export function reportUnhandled(error: unknown,
+  extras?: { componentStack?: string; fallbackStack?: string }): Promise<void>;
+  // resolves when native resolves or after UNHANDLED_REPORT_WAIT_MS, whichever is first; never rejects
+
+// src/index.ts, on class Bugsee
+/** Reports `error` as a handled error. Before launch() the SDKs drop it. */
+logException(error: unknown, options?: ExceptionOptions): void;
+/** Reports `error` as a crash; resolves once the SDK has it (at most 1.5 s). iOS surfaces it at the next launch. */
+logUnhandledException(error: unknown): Promise<void>;
+```
+
+**Behaviour:**
+- `logException` validates `options` first. A bad option throws synchronously, and nothing crosses.
+- If `error` is not an `Error`, the facade passes `fallbackStack = new Error().stack` with its **first frame dropped**, so the frames start at the caller.
+- Both facade methods call `markReported(error)`. An object reported once is never reported again, by any route: a facade call, a global handler, a boundary or the root reporter. Explicit calls also skip a repeat.
+- `reportHandled`/`reportUnhandled` build the payload with `platformOS = Platform.OS`, encode it with `JSON.stringify`, and call native.
+  - The payload is encoded with `encodeBridgeObject` (Task 4.5), like every other object payload, so a lone surrogate in a message crosses as U+FFFD.
+- `testNativeCrash`'s JSDoc becomes: "the SDK's own test crash: a Java `RuntimeException` on Android, an `NSException` on iOS. For a real native (signal) crash, see the example's `bugsee-e2e-native`." (R12)
+- Export `ExceptionOptions` from `src/index.ts`.
+
+**Stubs:** Android and iOS `logException` are no-ops, and `logUnhandledException` resolves at once. Each is commented `Task 7.1c` or `Task 7.1d`.
+
+- [ ] **Red**
+  - `options.test.ts`:
+    - `undefined and {} encode to null`;
+    - `domain, labels and includeVideo encode in that order`;
+    - `rejects an empty domain, a domain over 256 characters and a non-string domain`;
+    - `rejects labels that are not an array of strings`;
+    - `rejects a non-boolean includeVideo`;
+    - `rejects an unknown key, naming it` (`mergingRules`, `skipFrames`);
+    - `no message contains the rejected value`.
+  - `report.test.ts` (native mock):
+    - `a handled error crosses as its payload and options`;
+    - `an unhandled error crosses to logUnhandledException`;
+    - `an object is reported once, whichever route sees it first`;
+    - `a primitive is reported every time`;
+    - `a handled AggregateError is split, first 10 only`;
+    - `an unhandled AggregateError is one report`;
+    - `reportUnhandled resolves when native resolves`;
+    - `reportUnhandled resolves after 1500 ms when native never does` (fake timers);
+    - `reportUnhandled resolves, and warns once, when native rejects or throws`;
+    - `reportHandled never throws, even when native throws`;
+    - `a payload with a lone surrogate crosses well-formed`.
+  - `src/__tests__/exceptions-facade.test.ts`:
+    - `logException validates options before crossing`;
+    - `a non-Error logged from a named function has that function as its first frame`;
+    - `logUnhandledException returns reportUnhandled's promise`;
+    - `ExceptionOptions is exported`.
+  - Run → FAIL.
+- [ ] **Green**
+  - The modules, the facade, the mock (`logException` and `logUnhandledException` `jest.fn`s; `logUnhandledException` resolves by default) and the stubs.
+  - `ios-spec-coverage`, `check-rn-compat.sh 0.81` and both example builds are green.
+- [ ] **Mutate**
+  - (1) Drop `markReported` from `reportHandled`. `an object is reported once…` must fail.
+  - (2) Race against a 5000 ms timer instead. `…after 1500 ms when native never does` must fail.
+  - (3) Keep the facade's first frame. `a non-Error logged from a named function…` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(exceptions): logException and logUnhandledException, bridge stubbed`.
+
+---
+
+### Task 7.1c — Exceptions: Android bridge, and the keep rule
+
+**Depends on:** 7.1b. Stream B, in parallel with 7.1d and with Stream A's 7.3.
+
+**Files:**
+- Create: `android/ReactNativeWebException.java`, `android/ExceptionBridge.java`, `androidTest/ExceptionBridgeTest.java`
+- Create: `packages/react-native/android/consumer-rules.pro`
+- Modify: `packages/react-native/android/build.gradle` (`defaultConfig { consumerProguardFiles 'consumer-rules.pro' }`), `android/BugseeModule.java` (replace the 7.1b stubs)
+- Modify: `examples/bare/android/app/build.gradle` (`def enableProguardInReleaseBuilds = findProperty('bugseeE2eMinify') == 'true'`, with a comment naming Task 7.5a)
+- Create: `scripts/__tests__/android-keep-rules.test.ts`
+
+**Interfaces (plain Java, JVM-testable):**
+
+```java
+/** The backend routes React Native JS exceptions on this class name (worker: 'ReactNativeWebException' in name).
+ *  consumer-rules.pro keeps the name through R8. Never rename or nest it. */
+final class ReactNativeWebException extends Throwable {       // Throwable, as 6.x: crash.json exception_type "throwable"
+    ReactNativeWebException(@NonNull String payloadJson) { super(payloadJson); }
+}
+final class ExceptionBridge {
+    interface Sdk {                                             // prod adapter: Bugsee.logException / logUnhandledException
+        void logException(Throwable t, @Nullable Map<String, Object> options);
+        void logUnhandledException(Throwable t, @Nullable Map<String, Object> options);
+    }
+    /** domain -> String, labels -> List<String>, includeVideo -> Boolean; other keys dropped. null for null text.
+     *  Unparseable text, or a wrongly typed value: BridgeJson.BadJson. */
+    static @Nullable Map<String, Object> options(@Nullable String optionsJson) throws BridgeJson.BadJson;
+    /** Never throws. Bad options are logged (code only) and the exception is still sent, without options. */
+    static void logHandled(Sdk sdk, String payloadJson, @Nullable String optionsJson);
+    /** Never throws. */
+    static void logUnhandled(Sdk sdk, String payloadJson);
+}
+```
+
+`consumer-rules.pro` (exact):
+
+```
+# The Bugsee backend routes React Native exceptions on this class name.
+-keepnames class com.bugsee.reactnative.ReactNativeWebException
+```
+
+**Module:**
+- `logException(payloadJson, optionsJson)` → `ExceptionBridge.logHandled(PROD_SDK, …)`, then logs `exception handled sent bytes=<payload length>`. It catches `RuntimeException`, like every void method.
+- `logUnhandledException(payloadJson, promise)` → `ExceptionBridge.logUnhandled(PROD_SDK, …)`, which is synchronous in the SDK. It logs `exception unhandled sent bytes=<n>` and then `exception unhandled completed`, and resolves `null` in a `finally`, so it settles exactly once even if the SDK throws.
+
+- [ ] **Red**
+  - `ExceptionBridgeTest`:
+    - `theClassNameIsTheBackendContract` (`ReactNativeWebException.class.getName()` equals `"com.bugsee.reactnative.ReactNativeWebException"`, and the simple name contains `"ReactNativeWebException"`);
+    - `theReasonIsThePayloadVerbatim` (`getMessage()` equals the input, byte for byte, including a non-BMP character);
+    - `handledGoesToLogExceptionWithItsOptions`;
+    - `unhandledGoesToLogUnhandledExceptionWithoutOptions`;
+    - `optionsMapDomainLabelsAndIncludeVideo` (`labels` is a `List<String>`, `includeVideo` a `Boolean`);
+    - `unknownOptionKeysAreDropped`;
+    - `nullOptionsTextIsNullOptions`;
+    - `unparseableOptionsStillSendTheException`;
+    - `aWronglyTypedLabelIsABadJson`;
+    - `aThrowingSdkDoesNotEscape` (both paths).
+  - `android-keep-rules.test.ts`:
+    - `consumer-rules.pro keeps ReactNativeWebException by name`;
+    - `the library's build.gradle declares consumer-rules.pro`;
+    - `ReactNativeWebException is a top-level class in com.bugsee.reactnative` (not nested; the file and the package line are read).
+  - Run → FAIL.
+- [ ] **Green**
+  - As specified.
+  - `./gradlew :bugsee-android-bridge:testDebugUnitTest` and the example `assembleDebug` are green.
+  - `assembleRelease -PbugseeE2eMinify=true` builds, and `apkanalyzer dex packages` (or `unzip -p … classes*.dex | strings`) of the release APK shows `com/bugsee/reactnative/ReactNativeWebException`. Record the command and its output.
+- [ ] **Mutate**
+  - (1) Delete the keep line. The keep-rules test must fail. By hand, the minified APK must no longer contain the name. Record it.
+  - (2) Pass `getLocalizedMessage` through a wrapper that trims the payload. `theReasonIsThePayloadVerbatim` must fail.
+  - (3) Drop the `finally` resolve and let a throwing SDK escape. `aThrowingSdkDoesNotEscape` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(android): report JS exceptions as ReactNativeWebException, kept through R8`.
+
+---
+
+### Task 7.1d — Exceptions: iOS bridge
+
+**Depends on:** 7.1b. Stream C, in parallel with 7.1c.
+
+**Files:**
+- Create: `support/BGSRNExceptions.m`, `support/include/BGSRNExceptions.h`, `supportTests/BGSRNExceptionsTests.m`
+- Create: `support/BGSRNSettleOnce.m`, `support/include/BGSRNSettleOnce.h`, `supportTests/BGSRNSettleOnceTests.m`
+- Modify: `ios/BugseeModule.mm` (replace the stubs; both import branches)
+
+**Interface:**
+
+```objc
+FOUNDATION_EXPORT NSString *const BGSRNReactNativeExceptionName;   // @"ReactNativeWebException" -- the backend routes on it
+@interface BGSRNExceptions : NSObject
+/// `{domain?, labels?, includeVideo?}` as SDK options: domain -> exceptionDomain; includeVideo defaults to YES
+/// (the SDK's own object defaults to NO). nil for nil text. Unparseable text or a wrongly typed value -> nil and *error.
++ (nullable BugseeExceptionLoggingOptions *)loggingOptionsFromJSON:(nullable NSString *)json
+                                                             error:(NSError **)error;
+@end
+
+FOUNDATION_EXPORT const int64_t BGSRNUnhandledCompletionDeadlineMs;   // 1500, = UNHANDLED_REPORT_WAIT_MS
+/// Runs `settle` exactly once: when the returned block is first called, or after `deadlineMs` on `queue`,
+/// whichever comes first. The once-flag is atomic: the SDK may call back on any thread.
+FOUNDATION_EXPORT dispatch_block_t BGSRNSettleOnce(int64_t deadlineMs, dispatch_queue_t queue, dispatch_block_t settle);
+```
+
+**Module (inside `BGSRNRunOnMain`):**
+- `logException:optionsJson:` → `[Bugsee logException:BGSRNReactNativeExceptionName reason:payloadJson options:opts completion:nil]`.
+  - Unparseable options are logged, and the exception is sent with `nil` options.
+  - Then it logs `BugseeRN exception handled sent bytes=<n>`.
+- `logUnhandledException:resolve:reject:` → `[Bugsee logUnhandledException:BGSRNReactNativeExceptionName reason:payloadJson completion:done]`.
+  - The call is preceded by `exception unhandled sent bytes=<n>`.
+  - `done = BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs, main, ^{ log "exception unhandled completed"; resolve(nil); })`.
+  - A comment states why the deadline exists: on the simulator the SDK never calls this completion (verified facts), and a promise must still settle.
+
+- [ ] **Red** — `BGSRNSettleOnceTests`: `testSettlesOnceWhenCalled`; `testSettlesAtTheDeadlineWhenNeverCalled`; `testACallAfterTheDeadlineDoesNothing`; `testTwoConcurrentCallsSettleOnce` (two threads). `BGSRNExceptionsTests`:
+  - `testTheNameIsTheBackendContract`;
+  - `testDomainBecomesExceptionDomain`;
+  - `testIncludeVideoDefaultsToYes`;
+  - `testIncludeVideoFalseIsKept`;
+  - `testLabelsAreKept`;
+  - `testNilJsonIsNilOptions`;
+  - `testUnparseableJsonIsAnError`;
+  - `testANonStringLabelIsAnError`;
+  - `testUnknownKeysAreIgnored`.
+  - Run → FAIL.
+- [ ] **Green** — as specified. The iOS example builds on both delivery paths.
+- [ ] **Mutate**
+  - (1) Remove the `includeVideo = YES` default. `testIncludeVideoDefaultsToYes` must fail.
+  - (2) Change the name constant's value. `testTheNameIsTheBackendContract` must fail.
+  - (3) Make the once-flag a plain `BOOL`. `testTwoConcurrentCallsSettleOnce` must fail, or be flaky; if it is only flaky, the test is wrong and gets a barrier that makes the race deterministic.
+  - Revert and record.
+- [ ] **Commit** — `feat(ios): report JS exceptions as ReactNativeWebException`.
+
+---
+
+### Task 7.3 — Debug IDs: read `_bugseeDebugIds` and join them to frames
+
+**Depends on:** 7.1b. Stream A, in parallel with 7.1c and 7.1d.
+
+**Files:**
+- Create: `src/exceptions/debugIds.ts`, `src/exceptions/__tests__/debugIds.test.ts`
+- Modify: `src/exceptions/payload.ts` (the join), `src/exceptions/report.ts` (the call site: `debugIds: currentDebugIds()`), `payload.test.ts`
+
+**Interfaces (exact):**
+
+```ts
+export const DEBUG_IDS_MAX = 64;
+/** globalThis._bugseeDebugIds (stack string -> id), read defensively; each key's TOP frame's fileKey -> id.
+ *  Non-object global, non-string ids, unparseable stacks and entries past 64 are skipped. Never throws. */
+export function readDebugIdMap(globalObject: unknown): Map<string, string>;
+/** readDebugIdMap(globalThis), recomputed only when the registration object's key count changes. */
+export function currentDebugIds(): ReadonlyMap<string, string>;
+```
+
+In `buildExceptionPayload`:
+- a frame whose `fileKey(file)` is in `debugIds` gets `debug_id`;
+- the root gets `debug_ids` as a plain object of the **whole** map, entries in insertion order, when it is non-empty;
+- no key when it is empty.
+
+- [ ] **Red**
+  - `debugIds.test.ts`:
+    - `an absent or non-object registration is an empty map`;
+    - `a Hermes registration stack keys its id by the top frame's file`;
+    - `a Metro-URL registration keys by the URL`;
+    - `a non-string id is skipped`;
+    - `an unparseable stack is skipped`;
+    - `stops at 64 entries`;
+    - `currentDebugIds recomputes when a bundle registers later`;
+    - `never throws on a hostile registration object` (a `Proxy` whose `ownKeys` throws).
+  - `payload.test.ts` additions:
+    - `a frame in a registered file carries its debug_id`;
+    - `a frame in another file carries none`;
+    - `debug_ids is the whole map, as an object`;
+    - `no debug_ids key when nothing is registered`;
+    - `the join key is the same for a registration stack and a crash stack from one bundle` (both Hermes `address at` lines, one with `file://`).
+  - Run → FAIL.
+- [ ] **Green** — as specified. `yarn test` and `yarn mutate:src` are green.
+- [ ] **Mutate**
+  - (1) Key by the whole stack string instead of the top frame's file. `a Hermes registration stack keys…` must fail.
+  - (2) Send `debug_ids` as an array of ids. `debug_ids is the whole map, as an object` must fail.
+  - (3) Join on `cleanSource` instead of `fileKey`. `the join key is the same…` must fail, because the iOS `.app` case diverges.
+  - Revert and record.
+- [ ] **Commit** — `feat(exceptions): attach source-map debug IDs to JS frames`.
+
+---
+
+### Task 7.2 — Global handlers: `ErrorUtils` and unhandled rejections
+
+**Depends on:** 7.3, which is in `report.ts`. Stream A.
+
+**Files:**
+- Create: `src/exceptions/handlers.ts`, `src/exceptions/__tests__/handlers.test.ts`
+- Modify: `src/index.ts` (`launch`, `relaunch`, `attach`), `scripts/check-rn-compat.sh` (the guard below), `src/__tests__/` facade tests as needed
+
+**Interfaces (exact):**
+
+```ts
+export interface ErrorUtilsLike { getGlobalHandler(): (error: unknown, isFatal?: boolean) => void;
+  setGlobalHandler(handler: (error: unknown, isFatal?: boolean) => void): void; }
+export interface RejectionOptions { allRejections: true;
+  onUnhandled(id: number, rejection: unknown): void; onHandled(id: number): void; }
+export interface HandlerEnv {
+  errorUtils(): ErrorUtilsLike | undefined;                        // global.ErrorUtils
+  enableHermesTracker(): ((options: RejectionOptions) => void) | undefined;   // global.HermesInternal?.enablePromiseRejectionTracker, when hasPromise()
+  enablePromiseLibraryTracker(): ((options: RejectionOptions) => void) | undefined; // require('promise/setimmediate/rejection-tracking').enable
+  rnDevRejectionOptions(): Partial<RejectionOptions> | undefined;  // require('react-native/Libraries/promiseRejectionTrackingOptions').default
+  isDev: boolean;                                                  // __DEV__
+}
+/** Idempotent per JS runtime. */
+export function installExceptionHandlers(env?: HandlerEnv): void;
+/** R7: false only when the launch options set com.bugsee.option.detect.crash to false. */
+export function setExceptionCaptureEnabled(enabled: boolean): void;
+```
+
+**Behaviour:**
+- `launch(token, options)` and `relaunch(options)` call `installExceptionHandlers()`, then `setExceptionCaptureEnabled(options['com.bugsee.option.detect.crash'] !== false)`.
+- `attach()` installs, then reads `getLaunchOptions()` for the same key.
+- **ErrorUtils.** `previous = getGlobalHandler()`, then `setGlobalHandler(onError)`. `onError(error, isFatal)`:
+  - capture enabled and `markReported(error)`:
+    - `isFatal === true` → `reportUnhandled(error)`, and **then** `previous(error, isFatal)` once it settles (at most 1.5 s);
+    - otherwise → `reportHandled(error)`, then `previous(error, isFatal)` synchronously;
+  - capture disabled or already reported → `previous(error, isFatal)` synchronously;
+  - `previous` runs exactly once on every path, even when reporting throws. A throw in our code is caught and warned once.
+- **Rejections.**
+  - With Hermes (`HermesInternal.hasPromise()`), call `enablePromiseRejectionTracker(options)`. Otherwise call the `promise` library's `enable(options)`.
+  - `options.onUnhandled(id, rejection)`: if capture is enabled and `markReported(rejection)`, then `reportHandled(rejection)`. Then, in dev only, call RN's own `onUnhandled(id, rejection)`, so LogBox still shows it.
+  - `onHandled(id)`: in dev only, RN's `onHandled(id)`.
+  - Document on `launch()`: the last caller of `enablePromiseRejectionTracker` wins; Hermes has no getter. Another SDK that installs a tracker after `launch()` replaces ours.
+- **No `ErrorUtils`** (`RN$useAlwaysAvailableJSErrorHandling`): install the rejection tracker only, and warn once: `[Bugsee] ErrorUtils is unavailable; uncaught JS errors are not reported`.
+
+**Internals guard (`check-rn-compat.sh`, per matrix version).** Fail with a named message unless:
+- `Libraries/Core/setUpErrorHandling.js` calls `ErrorUtils.setGlobalHandler(`;
+- `Libraries/Core/polyfillPromise.js` calls `enablePromiseRejectionTracker`;
+- `Libraries/promiseRejectionTrackingOptions.js` exists and defines `onUnhandled`;
+- `react-native/package.json` depends on `promise`;
+- `src/private/renderer/errorhandling/ErrorHandlers.js` has `onUncaughtError` calling `handleException(error, true)`. This is R8's premise: if it stops being true, Task 7.4's root reporter must be revisited.
+
+- [ ] **Red** — `handlers.test.ts` (fake `ErrorUtils`, a fake Hermes tracker, fake timers):
+  - `installs once however often launch runs`;
+  - `a fatal error is reported as unhandled, then the previous handler runs with the same arguments`;
+  - `the previous handler waits for the report, at most 1500 ms`;
+  - `the previous handler runs even when reporting throws`;
+  - `a non-fatal error is reported as handled and the previous handler runs synchronously`;
+  - `an error already reported is not reported again, and the previous handler still runs`;
+  - `detect.crash false: nothing is reported, and the previous handler still runs`;
+  - `relaunch can turn capture back on`;
+  - `with Hermes, an unhandled rejection is reported as handled`;
+  - `in dev, RN's own rejection handlers still run`;
+  - `in release, no RN rejection handlers are called`;
+  - `without Hermes, the promise library's tracker gets the same options`;
+  - `onHandled reports nothing`;
+  - `without ErrorUtils, only the rejection tracker is installed, with one warning`.
+  - Run → FAIL.
+- [ ] **Green**
+  - As specified.
+  - The guard passes for 0.81 and 0.87 (`./scripts/check-rn-compat.sh 0.81`, `… 0.87`).
+  - `yarn test` and `yarn mutate:src` are green.
+- [ ] **Mutate**
+  - (1) Call `previous` before the report settles. `the previous handler waits for the report…` must fail.
+  - (2) Report a non-fatal error as unhandled. `a non-fatal error is reported as handled…` must fail.
+  - (3) Skip the dev chain. `in dev, RN's own rejection handlers still run` must fail.
+  - (4) Point the guard at a copy of 0.87 whose `ErrorHandlers.js` calls `handleException(error, false)`. The guard must fail (run by hand; record it).
+  - Revert and record.
+- [ ] **Commit** — `feat(exceptions): report uncaught JS errors and unhandled rejections`.
+
+---
+
+### Task 7.4 — `<ErrorBoundary>` and the root reporter in `Bugsee.wrap`
+
+**Depends on:** 7.2, and Phase 6's Task 6.4 (`wrap`) and Task 6.3 (`isWrapper`). Stream A.
+
+**Files:**
+- Create: `src/exceptions/ErrorBoundary.tsx`, `src/exceptions/RootErrorReporter.tsx`
+- Create tests: `src/exceptions/__tests__/ErrorBoundary.test.tsx`, `src/exceptions/__tests__/RootErrorReporter.test.tsx`
+- Modify: `src/viewtree/anchor.tsx` (`wrap` renders `<RootErrorReporter><Root {...props} /></RootErrorReporter>` beside the anchor), `src/viewtree/requests.ts` (`isWrapper` also matches `RootErrorReporter`), `src/viewtree/__tests__/walk.test.ts`, `src/index.ts` (export `ErrorBoundary` and its prop types)
+
+**Interfaces (exact):**
+
+```tsx
+export interface ErrorBoundaryFallbackProps { error: unknown; componentStack: string | undefined; resetError(): void; }
+export interface ErrorBoundaryProps {
+  children?: React.ReactNode;
+  fallback?: React.ReactElement | ((props: ErrorBoundaryFallbackProps) => React.ReactNode);
+  onError?(error: unknown, componentStack: string | undefined): void;
+  onReset?(error: unknown, componentStack: string | undefined): void;
+  options?: ExceptionOptions;                       // passed to the handled report
+}
+export class ErrorBoundary extends React.Component<ErrorBoundaryProps, { error: unknown; componentStack?: string; caught: boolean }> {}
+// RootErrorReporter: internal, NOT exported from src/index.ts
+export class RootErrorReporter extends React.Component<{ children?: React.ReactNode },
+  { phase: 'ok' | 'reporting' | 'rethrow'; error: unknown }> {}
+```
+
+**`ErrorBoundary`:**
+- `getDerivedStateFromError` → `caught: true`.
+- `componentDidCatch(error, info)`:
+  - `markReported(error)`, then `reportHandled(error, props.options, { componentStack: info.componentStack ?? undefined })`;
+  - then `props.onError?.(…)`.
+- It renders `fallback` (the element, or the function called with `resetError`), or `null` when there is none. `resetError` calls `onReset` and clears the state.
+- Children are a `ReactNode` only. 6.x's function-as-children form is not carried.
+
+**`RootErrorReporter` (R8):**
+- `getDerivedStateFromError` → `{ phase: 'reporting', error }`, and it renders `null`.
+- `componentDidCatch(error, info)`:
+  - if capture is enabled (R7) and `markReported(error)`: `reportUnhandled(error, { componentStack })`, then `.finally(() => setState({ phase: 'rethrow' }))`;
+  - otherwise `setState({ phase: 'rethrow' })` at once.
+- In the `rethrow` phase, `render()` throws `state.error`. React finds no boundary above, so its `onUncaughtError` runs RN's fatal path.
+- Document in the file header the soft-then-fatal sequence R8 records.
+
+- [ ] **Red**
+  - `ErrorBoundary.test.tsx` (react-test-renderer; native mock):
+    - `a render error below it is reported as handled, with its component stack`;
+    - `renders the fallback element`;
+    - `calls a fallback function with the error, the component stack and resetError`;
+    - `renders null without a fallback`;
+    - `onError gets the error and the component stack`;
+    - `resetError calls onReset and renders the children again`;
+    - `the caught error is not mutated` (its `cause` is unchanged);
+    - `options reach the report`;
+    - `an error reported once is not reported again by the boundary`.
+  - `RootErrorReporter.test.tsx`:
+    - `a render error below wrap is reported as unhandled, then rethrown`;
+    - `renders nothing while the report is in flight`;
+    - `rethrows after 1500 ms when native never answers`;
+    - `an error the app's own boundary catches is never seen by the root`;
+    - `with detect.crash false it rethrows without reporting`;
+    - `an error already reported is rethrown without a second report`.
+  - `walk.test.ts`: `the root reporter is not emitted, and its children are`.
+  - Run → FAIL.
+- [ ] **Green** — as specified. `yarn test` and `yarn mutate:src` (with `.tsx`) are green.
+- [ ] **Mutate**
+  - (1) Report from `RootErrorReporter` without rethrowing. `…is reported as unhandled, then rethrown` must fail.
+  - (2) Assign `error.cause = …` in `ErrorBoundary`. `the caught error is not mutated` must fail.
+  - (3) Drop `RootErrorReporter` from `isWrapper`. The walk test must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(exceptions): ErrorBoundary, and a root reporter for uncaught render errors`.
+
+---
+
+### Task 7.6a — `bugsee-e2e-native`: an example-only native module (native crash, temp files)
+
+**Depends on:** nothing in Phase 7. Stream D; it can start first.
+
+**Files (all new unless stated):**
+- `e2eNative/package.json`:
+  - `"name": "bugsee-e2e-native"`, `"private": true`, `"main": "src/index.ts"`;
+  - `"codegenConfig": { "name": "BugseeE2ENativeSpec", "type": "modules", "jsSrcsDir": "src", "android": { "javaPackageName": "com.bugsee.e2enative" }, "ios": { "modulesProvider": { "BugseeE2E": "BugseeE2EModule" } } }`.
+- `e2eNative/react-native.config.js`:
+  - `dependency.platforms.android` = `{ sourceDir: './android', packageImportPath: 'import com.bugsee.e2enative.BugseeE2EPackage;', packageInstance: 'new BugseeE2EPackage()' }`;
+  - `ios` = `{ podspecPath: './BugseeE2ENative.podspec' }`.
+- `e2eNative/src/NativeBugseeE2E.ts`, `e2eNative/src/index.ts`
+- `e2eNative/android/build.gradle` (`com.android.library`, `com.facebook.react`, `externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt' } }`, `minSdk rootProject.ext.minSdkVersion`), `android/src/main/AndroidManifest.xml`
+- `e2eNative/android/src/main/java/com/bugsee/e2enative/BugseeE2EModule.java`, `BugseeE2EPackage.java` (`BaseReactPackage`)
+- `e2eNative/android/src/main/cpp/CMakeLists.txt`, `e2eNative/android/src/main/cpp/bugsee_e2e_native.cpp`
+- `e2eNative/BugseeE2ENative.podspec` (`install_modules_dependencies(s)`), `e2eNative/ios/BugseeE2EModule.h`, `e2eNative/ios/BugseeE2EModule.mm`
+- Modify: `examples/bare/package.json` (`"bugsee-e2e-native": "workspace:*"`)
+- Create: `examples/bare/scenarios/native.ts` (scenario `e2e-native-smoke`), `examples/bare/e2e/e2e-native.test.ts`
+- Modify: `examples/bare/App.tsx`, `scripts/__tests__/example-wiring.test.ts`
+
+**Spec and JS (exact):**
+
+```ts
+// e2eNative/src/NativeBugseeE2E.ts -- TurboModuleRegistry.getEnforcing<Spec>('BugseeE2E')
+crashNative(kind: string): void;                               // Android: 'segv' | 'abort'. iOS: logs "Android-only" and returns.
+writeTempFile(name: string, contents: string): Promise<string>; // UTF-8 into the app's cache dir; resolves the absolute path
+fileExists(path: string): Promise<boolean>;
+// e2eNative/src/index.ts
+export type NativeCrashKind = 'segv' | 'abort';
+export function crashNative(kind: NativeCrashKind): void;      // TypeError for any other kind, before crossing
+export function writeTempFile(name: string, contents: string): Promise<string>;  // name: /^[\w.-]{1,64}$/, else TypeError
+export function fileExists(path: string): Promise<boolean>;
+```
+
+**Native:**
+- Android `crashNative` calls `nativeCrash(0 | 1)`, a JNI function:
+  - `0`: `*(volatile int *) nullptr = 0x42;` (SIGSEGV);
+  - `1`: `abort()` (SIGABRT).
+- `System.loadLibrary("bugsee_e2e_native")` runs in a static block. The CMake target is `bugsee_e2e_native`, compiled with `-O0`, so the volatile store survives.
+- `writeTempFile` writes to `getReactApplicationContext().getCacheDir()`; iOS writes to `NSTemporaryDirectory()`.
+
+**Scenario `e2e-native-smoke`:**
+- After `Launched`, `writeTempFile('smoke-<n>.txt', 'smoke <n>')`, then log `BUGSEE_E2E native tmp path=<p> exists=<fileExists(p)>`.
+- `crashNative('bogus' as never)` inside `try`; log `BUGSEE_E2E native bad-kind code=<error name>`.
+
+**Cases (`e2e/e2e-native.test.ts`, both platforms, debug build):**
+1. `writeTempFile returns an absolute path that exists` — the path starts with `/` and `exists=true`.
+2. `an unknown crash kind is rejected in JS` — `bad-kind code=TypeError`, and the process is still alive 2 s later.
+
+- [ ] **Red**
+  - `example-wiring.test.ts`:
+    - `bugsee-e2e-native is a dependency of the bare example only` (no `packages/*/package.json` names it);
+    - `no library source imports bugsee-e2e-native`.
+  - Write the device test. Run it before wiring → FAIL at the first marker.
+- [ ] **Green**
+  - `yarn install`.
+  - The Android example `assembleDebug` links `libbugsee_e2e_native.so` (it is listed in the APK's `lib/arm64-v8a/`).
+  - `pod install` picks up `BugseeE2ENative`, and the iOS example builds on the CocoaPods path.
+  - Both cases pass on the WOD_LX1 and on the simulator.
+- [ ] **Mutate** — make `writeTempFile` resolve the bare file name. Case 1 must fail. Revert and record.
+- [ ] **Commit** — `test(example): bugsee-e2e-native, a native crash and temp files for the device tests`.
+
+---
+
+### Task 7.6b — Device verification, Android: a real native crash reaches a report
+
+**Depends on:** 7.6a. Stream D. It runs on the WOD_LX1 before 7.5a.
+
+**Files:** create `e2e/native-crash.test.ts`; extend `scenarios/native.ts` (scenarios `native-crash-segv`, `native-crash-abort` and `native-crash-observe`); modify `App.tsx`.
+
+**Scenarios:**
+- `native-crash-<kind>`:
+  - register a report handler before `launch()`, whose `onAfterReportCreated` logs `BUGSEE_E2E native after type=<type>`;
+  - after `Launched`, log `BUGSEE_E2E native crashing kind=<kind>`, then `crashNative(kind)`.
+- `native-crash-observe`: the same handler, and nothing else.
+
+**Retention:** as 3.4d: airplane mode, bundles cleared and the clear asserted.
+
+**Cases (debug build; each kind is one run plus one relaunch):**
+1. `crashNative('segv') kills the process with SIGSEGV` — logcat has `Fatal signal 11 (SIGSEGV)` after the `crashing kind=segv` marker, and `pidOf()` is empty within 10 s.
+2. `the relaunch recovers it as a native crash` — relaunch with `native-crash-observe`. Exactly one bundle whose request `type` is `crash`, with:
+   - `crash.json` `ndkCrash === true`;
+   - `exception_type === 'native'`;
+   - `signal.name === 'SIGSEGV'` and `signal.number === 11`.
+3. `the report handler sees it` — `BUGSEE_E2E native after type=crash` appears in the relaunch.
+4. `crashNative('abort') is SIGABRT` — cases 1–2 again with `kind=abort`: `Fatal signal 6 (SIGABRT)`, and `signal.name === 'SIGABRT'`.
+
+- [ ] **Red/Green** — all four cases pass on the WOD_LX1.
+- [ ] **Mutate** — make `crashNative` throw a Java `RuntimeException` instead. Case 2 must fail on `ndkCrash`. Revert and record.
+- [ ] **Commit** — `test(e2e): a native crash from JS reaches an Android report`. The body records the banner, both signals, and each bundle's `signal` object.
+
+Task 3.4d's external `adb shell run-as … kill -11 <pid>` stays in place. This task gives the NDK path its own coverage and leaves 3.4d alone.
+
+---
+
+### Task 7.5a — Device verification, Android: exceptions end to end
+
+**Depends on:** 7.1c, 7.2, 7.3, 7.4, 7.6b (the device).
+
+**Files:**
+- Create: `scenarios/exceptions.tsx` (scenarios `exc-handled`, `exc-rejection`, `exc-fatal`, `exc-boundary`, `exc-root`, `exc-prelaunch` and `exc-observe`), `e2e/exceptions.test.ts`
+- Modify: `App.tsx`, `e2e/bundles.ts` (add `crashOf(bundle): Record<string, unknown> | undefined`, the parsed `crash` capture), `scripts/__tests__/e2e-capture-files.test.ts` (`crashOf parses the crash capture`)
+
+**Shared scenario pieces.** Every value carries the run's nonce `<n>`.
+- `ID = '8a1c2f4e-0d3b-5e6f-9a7b-' + <n>.padStart(12, '0').slice(-12)`.
+- Before the first throw, the scenario registers `globalThis._bugseeDebugIds = { [new Error().stack!]: ID }` from inside a function in `scenarios/exceptions.tsx`. Its top frame is in the same bundle as every throw site, which simulates Phase 13's stub.
+- `function bugseeE2EThrowSite(n: string): never`:
+  - `const e = new TypeError(\`E2E handled ${n}\`)`;
+  - `(e as any).cause = new RangeError(\`inner ${n}\`)`;
+  - `(e as any).secretToken = \`tok-${n}\``;
+  - `throw e`.
+- Before `launch()`, an app-level handler is installed: `ErrorUtils.setGlobalHandler((e, f) => { log('BUGSEE_E2E exc app-handler fatal=' + f); rnDefault(e, f); })`, where `rnDefault` is RN's handler read first. It proves the chain.
+
+**Scenarios:**
+- `exc-handled`:
+  - catch `bugseeE2EThrowSite(n)`, then `Bugsee.logException(e, { domain: \`e2e-${n}\`, labels: ['e2e', \`lbl-${n}\`], includeVideo: true })`;
+  - `Bugsee.logException({ password: \`pw-${n}\`, message: \`obj-${n}\` })`;
+  - marker `BUGSEE_E2E exc handled-sent nonce=<n>`.
+- `exc-rejection`: `Promise.reject(new Error(\`E2E rejection ${n}\`))`, never handled; marker after 3 s.
+- `exc-fatal`: `setTimeout(() => { throw new Error(\`E2E fatal ${n}\`); }, 0)`.
+- `exc-boundary`:
+  - `<ErrorBoundary fallback={<BoundaryFallback n={n} />} onError={() => log('BUGSEE_E2E exc boundary-onError')}><BugseeE2EThrower n={n} /></ErrorBoundary>`;
+  - `BugseeE2EThrower` throws `new Error(\`E2E boundary ${n}\`)` in render;
+  - `BoundaryFallback`'s effect logs `BUGSEE_E2E exc boundary-fallback`.
+- `exc-root`: renders `BugseeE2EThrower` with no app boundary. The example root is `Bugsee.wrap(App)`, from Task 6.4.
+- `exc-prelaunch`: `Bugsee.logException(new Error(\`pre-${n}\`))` **before** `launch()`, then the marker `BUGSEE_E2E exc prelaunch-sent nonce=<n>`.
+- `exc-observe`: the relaunch for a gated case. It launches and does nothing else.
+
+**The payload of a bundle** is `JSON.parse(crashOf(b).exception.reason)`, after asserting that the reason starts with `{`: there is no prefix to strip, on either platform.
+
+**Cases (`e2e/exceptions.test.ts`, debug build, one run per scenario):**
+1. `a handled exception is an error report named ReactNativeWebException` (plain `it`, the identity check):
+   - exactly one bundle whose payload `reason` is `E2E handled <n>`;
+   - `request.type === 'error'` and `crash.json` `handled === true`;
+   - `exception.name === 'com.bugsee.reactnative.ReactNativeWebException'`.
+2. `the reason is the JS payload`:
+   - `name === 'TypeError'`;
+   - `frames[0].data.member === 'bugseeE2EThrowSite'`;
+   - `signature` matches `/^[0-9a-f]{40}$/`;
+   - `platform_os === 'android'`;
+   - `cause` is `{ name: 'RangeError', reason: 'inner <n>' }`.
+3. `debug IDs travel as a map and on each frame of the bundle`:
+   - `debug_ids` deep-equals `{ [K]: ID }`, where `K` is `frames[0]`'s file key;
+   - every frame with that file key has `debug_id === ID`.
+4. `the payload carries nothing else of the error`:
+   - no bundle's raw `crash` capture contains `tok-<n>` or `pw-<n>`;
+   - the object bundle's payload `reason === 'obj-<n>'` and its `name === 'Error'`.
+5. `the domain reaches the report` — `crash.json` `exception.domain === 'e2e-<n>'`.
+6. `the client signature carries the JS signature` — `exception.additional_signature === payload.signature`.
+7. `labels reach the report` — **`it.failing` on Android** (7.3.0 ignores them; "To raise"): `request.labels ⊇ ['lbl-<n>']`.
+8. `an unhandled rejection is one error report` — exactly one bundle with payload `reason === 'E2E rejection <n>'` and `request.type === 'error'`.
+9. `a fatal JS error is reported as a crash, then RN's handler runs`:
+   - a bundle with payload `reason === 'E2E fatal <n>'` and `request.type === 'crash'`;
+   - the log order is `BugseeRN exception unhandled sent`, then `… unhandled completed`, then `BUGSEE_E2E exc app-handler fatal=true`;
+   - the process is alive 3 s later (debug: red box).
+10. `the fatal error files no second report for the incident` — **`it.failing` on Android** (7.3.0 also files an error report, `e1d56ed65`): no bundle other than case 9's contains `E2E fatal <n>`.
+11. `a boundary catches, reports as handled and renders the fallback`:
+    - one bundle with `reason === 'E2E boundary <n>'` and `request.type === 'error'`;
+    - its innermost cause is named `ErrorBoundary Error` and has a frame whose `member` is `BugseeE2EThrower`;
+    - the `boundary-onError` and `boundary-fallback` markers appear.
+12. `a render error with no boundary is reported once, as a crash, by the root reporter`:
+    - exactly one bundle with `reason === 'E2E boundary <n>'` (from `exc-root`) and `request.type === 'crash'`;
+    - `exception unhandled sent` precedes RN's red-box log line (`ReactNativeJS` `E` level with the message).
+13. `nothing reported before launch reaches a bundle` — the `prelaunch-sent` marker precedes `Launched` (the experiment ran), and no bundle contains `pre-<n>`.
+
+**Gated `E2E_RELEASE=1`** (the release build from the shared ground, which is also minified):
+- `exc-fatal` kills the process: logcat has `FATAL EXCEPTION` and `com.facebook.react.common.JavascriptException`, and `pidOf()` is empty.
+- Relaunch `exc-observe`. Then:
+  - R1 `ours survives R8` — a crash bundle whose `exception.name === 'com.bugsee.reactnative.ReactNativeWebException'` and payload `reason === 'E2E fatal <n>'`;
+  - R2 `RN's own crash is the second report` — exactly one crash bundle whose `exception.name` contains `JavascriptException` and whose raw reason contains `E2E fatal <n>`. This pins R13;
+  - R3 = case 10's `it.failing`, on this build too.
+
+- [ ] **Red** — write the test and the scenarios. Run once before wiring `App.tsx` → FAIL at the first marker.
+- [ ] **Green**
+  - Cases 1–13 pass on the WOD_LX1, with the two documented `it.failing` cases failing for the right reason (record the labels array and the extra error bundle).
+  - The gated R1–R3 pass on the release build.
+- [ ] **Mutate**
+  - (1) Delete the keep rule and rebuild the release APK. R1 must fail on `exception.name`.
+  - (2) Skip `previous` in the global handler. Case 9 must fail: there is no `app-handler` marker.
+  - (3) Send `debug_ids` as a list. Case 3 must fail.
+  - (4) Make `RootErrorReporter` swallow instead of rethrow. Case 12's red-box line must be missing.
+  - Revert and record.
+- [ ] **Commit** — `test(e2e): JS exceptions in Android bundles, handled, unhandled and from render`. The body records the banner, one payload verbatim (its nonce values are synthetic), and the full list of bundles R1–R3 produced.
+
+**If a prediction is wrong**, stop and report rather than loosening the assertion. The predictions are: case 12's red box, and R2's `JavascriptException` bundle. The controller rules on the change.
+
+---
+
+### Task 7.5b — Device verification, iOS: the simulator's documented behaviour, and the iPhone
+
+**Depends on:** 7.1d and 7.5a (the same files).
+
+**Files:** `e2e/exceptions.test.ts` runs under `E2E_PLATFORM=ios`; modify `examples/bare/scripts/run-ios.sh` (`IOS_CONFIGURATION`, default `Debug`, which selects `-configuration` and the `APP` path `ios/build/Build/Products/${IOS_CONFIGURATION}-iphoneos/BareExample.app`); `scripts/__tests__/` gains `run-ios-configuration.test.ts` (`the embed check follows IOS_CONFIGURATION`).
+
+**On the simulator (`E2E_IOS_TARGET=simulator`)** the SDK compiles `logException`/`logUnhandledException` out (verified facts). One case replaces cases 1–13:
+- `the simulator slice reports no JS exception` — run `exc-handled`, then:
+  - the `BugseeRN exception handled sent` line appears, which proves the call reached the SDK;
+  - 15 s later there are zero bundles.
+- The file header says why. This pins the SDK's behaviour, so the day it changes, the test fails.
+
+**On the iPhone (`E2E_IOS_TARGET=device`, Debug build, `DEAD_ENDPOINT` retention).** Cases 1–13 apply with these iOS values, each stated:
+- Case 1: `exception.name === 'ReactNativeWebException'`, and `crash.json` has `managed === true` and `type === 'ios'`.
+- Case 2: `platform_os === 'ios'`.
+- Case 5: `exceptionLoggingOptions.exceptionDomain === 'e2e-<n>'`, and `exceptionLoggingOptions.includeVideo === true`.
+- Case 7: a plain `it`. iOS applies labels.
+- Cases 9 and 12: the unhandled report is **stored, not sent**. After the markers, `terminateIosApp()`, then relaunch `exc-observe`. Exactly one recovered bundle with `request.type === 'crash'` and payload `reason === 'E2E fatal <n>'` (or `E2E boundary <n>` for case 12).
+- Case 10: a plain `it` on iOS. There is no second report in the Debug build.
+
+**Gated `E2E_RELEASE=1` on the iPhone** (`IOS_CONFIGURATION=Release`): `exc-fatal` kills the process (the console stream ends). Relaunch `exc-observe`. **Exactly one** crash bundle for the incident, named `ReactNativeWebException`: the overriding report replaces `RCTFatalException`'s. If a second, `RCTFatalException` bundle arrives, stop and report.
+
+- [ ] **Red/Green** — the simulator case passes on the iOS 26.5 simulator. Cases 1–13 pass on the iPhone XS.
+- [ ] **Mutate** — make `BGSRNReactNativeExceptionName` `@"ReactNativeException"`. Case 1 must fail on the iPhone. Revert and record.
+- [ ] **Commit** — `test(e2e): JS exceptions in iOS bundles, on the iPhone`.
+
+**Hardware pass: add to Task 3.H:**
+- Task 7.5b whole on the iPhone, including the gated Release case;
+- Task 7.5a's gated `E2E_RELEASE=1` cases on the WOD_LX1.
+
+---
+
+### Phase 7 review gate
+
+Spawn a reviewer subagent. It must independently:
+- run `yarn test`, `yarn mutate:src`, the JVM tests, the Support XCTests, and `check-rn-compat.sh` for 0.81 and 0.87;
+- confirm by reading the code that:
+  - no path serialises a thrown non-Error value, and the payload builder reads no error property beyond `name`, `message`, `stack`, `cause` (and `errors` at the entry);
+  - every route (facade, `ErrorUtils`, rejections, `<ErrorBoundary>`, root reporter) goes through `markReported`, so no error object is reported twice;
+  - the previous global handler runs exactly once on every path, fatal or not, enabled or not, reporting or throwing;
+  - `logUnhandledException` settles on every native path, and JS never waits past `UNHANDLED_REPORT_WAIT_MS`;
+  - neither native parses, logs or truncates the payload;
+  - `consumer-rules.pro` ships in the AAR (unzip the built AAR and read `proguard.txt`);
+- **rerun** 7.5a (with the gated release cases), 7.6b, and 7.5b on the simulator.
+
+Record, for the controller:
+- R13 (the second Android crash report per fatal JS error);
+- the four SDK gaps this phase adds to "To raise".
 
 ---
 
 ## Phase 8 — Reporting
 
-`showReportDialog`, `upload`, `createReport`, attachments via the wrapper's `ReportHandler`. Note `upload` has no `includeVideo` overload in 7.x — the 6.x parameter is gone and must not be reintroduced. `upload(summary, description)` exists since Task 3.4c; add the severity/labels forms. Device test: trigger the dialog, submit, confirm the issue appears.
+**Ships:**
+- `upload(summary, description, severity?, labels?)`, the severity and labels forms beside Task 3.4c's two-argument one. There is no `includeVideo`, and a fifth argument throws;
+- `showReportDialog(summary?, description?, severity?, labels?)`;
+- `createReport()`, a report the app fills and then uploads;
+- attachments through the report handler (Phase 3's `addFileAttachment`/`addDataAttachment`), now proven on device for files, copied and moved;
+- device proof, from retained bundles, that each of these files the issue it should.
+
+### Planner rulings (reviewable; change them here)
+
+- **P1. `upload` stays positional, as both SDKs are:** `upload(summary, description, severity?, labels?)`.
+  - 6.x's fifth parameter, `includeVideo`, is gone in 7.x (design §10.1 "Removed"). Passing a fifth argument throws `TypeError` (`arguments.length > 4`), so a 6.x call site fails loudly instead of losing its flag.
+  - A type-level test (`// @ts-expect-error`) pins the signature.
+- **P2. `showReportDialog(summary?, description?, severity?, labels?)` is positional too.** 6.x took the first three; both 7.x SDKs add labels.
+- **P3. One native method each; "not given" crosses as a sentinel, and the SDK default is resolved natively.**
+  - The spec's `upload` changes to `(summary, description, severity: number, labels: string[] | null)`, where `0` means the SDK's default.
+  - Android passes a `null` severity: the SDK applies its default.
+  - iOS resolves `0` to the launch option `com.bugsee.option.reporting.defaults.bug-priority`, or to `High` (3) when that is missing. The alternative, the SDK's own two-argument selector, cannot carry labels.
+  - `showReportDialog` crosses the same way. iOS's dialog path already skips a `0` severity (`if (level)`, verified).
+- **P4. `createReport()` resolves `BugseeCreatedReport | null`,** and has its own registry and its own `createdReport*` spec methods, not the handler's `report*` ones.
+  - iOS hands out a `BugseeExtendedReport`, not a `BGSReportContract`.
+  - A created report has no deadline, and on iOS no id or type.
+  - `null` means the SDK made none (not launched).
+- **P5. One created report is outstanding per JS runtime.** A second `createReport()` before the first is uploaded rejects with the new stable code `E_REPORT_CREATE_BUSY`.
+  - Why: iOS beta3's `BugseeExtendedReport` keeps its attributes in a file-scope global, so a second created report wipes the first's attributes (verified; "To raise").
+  - One at a time also bounds what native holds.
+  - A created report is released by `upload()` and by a JS reload (module `invalidate`).
+  - Neither SDK has a discard. Android drops an un-submitted created report at the next launch's recovery (verified). What iOS does with one is not asserted anywhere.
+  - Lift the rule when the SDK is fixed.
+- **P6. The handler's timing around a created report differs per platform. It is documented and pinned, not normalised.**
+  - Android runs `onBeforeReportCreated` inside `createReport`, before the promise resolves, and `onAfterReportCreated` at upload.
+  - iOS runs both at upload, **after** it copies the created report's fields over (`applyExtendedReport`). A handler's `setLabels` there replaces the app's labels.
+- **P7. iOS created-report attachments: at most 3, each of at most 3 MiB.** The SDK drops the rest silently at upload. The bridge enforces both limits when the attachment is added and rejects with `E_REPORT_ATTACHMENT_REJECTED`, the Phase 5 "no silent drop" rule.
+  - iOS created reports have no `move` and no `mimeType` (`BugseeAttachment` has neither). JS accepts `mimeType`, and iOS ignores it, which is documented.
+  - Android uses `Report.addAttachment`, capped at 1000.
+- **P8. "Attachments via the ReportHandler" means Phase 3's `BugseeReport.addFileAttachment`/`addDataAttachment`. No new attachment API is added.** Phase 8 adds the device proof for file attachments, copy and move, which Task 3.4d could not stage because JS cannot create a file. `bugsee-e2e-native`'s `writeTempFile` (Task 7.6a) creates the file.
+- **P9. Submitting the report dialog.**
+  - The pre-fill is proven on both platforms through the wrapper's `onBeforeReportCreated`, which both SDKs run **before** the dialog opens (verified), plus the `BeforeReportShown` lifecycle event.
+  - The submitted bundle is proven on Android with a `uiautomator` tap.
+  - On the iPhone, a person taps Send in a gated case (`E2E_IOS_OPERATOR=1`) on the Task 3.H list: this machine has no XCUITest target, idb or maestro for the harness to tap with.
+- **P10. The trigger type differs.** iOS `uploadWithSummary:…` files `source.type = "unknown"` (`BGSReportingTriggerTypeUnknown`), while Android files `code_upload`. The device test asserts `code_upload` on both platforms, with the iOS case `it.failing` ("To raise").
+
+### Verified facts (2026-09-29)
+
+**Android `v7.3.0`:**
+- `showReportDialog()`, `(summary, description)`, `(…, IssueSeverity)` and `(…, IssueSeverity, ArrayList<String> labels)` all take nullable arguments.
+- `upload(summary, description)`, `(…, IssueSeverity)` and `(…, IssueSeverity, List<String> labels)` also take nullable arguments.
+- `createReport(ReportCreationListener)` → `onCreated(@Nullable Report)`, delivered on main.
+  - It runs `onBeforeReportCreated` before the listener (`createAndPrepareBugReport`).
+  - Its request is persisted so that a report never submitted is discarded by the next launch's recovery.
+- `upload(Report)` and `upload(Report, Callback1<Boolean>)` run `onAfter`, bounded, and call back after processing is scheduled.
+- `Report` is the same interface the handler gets, so `ReportOps` works on it unchanged.
+- The dialog and `upload` are no-ops before launch (`Log.w`).
+- The trigger types are `DialogFromCode` (`code_dialog`) and `Upload` (`code_upload`).
+
+**iOS `7.0.0-beta3` (`0d9c9d0a3`):**
+- `showReportDialog`; `…WithSummary:description:`, `…:severity:` and `…:severity:labels:`. The summary and description are `nonnull`.
+  - The dialog path creates the report, seeds only the fields given (`if (summ)`, `if (level)`, `if (labels)`), runs the wrapper's `onBeforeReportCreated`, then presents the dialog.
+- `uploadWithSummary:description:` (the default priority) and `…:severity:` / `…:severity:labels:` use `TriggerTypeUnknown`.
+- `createReportWithCompletion:` → `BugseeExtendedReport`, or `nil` when not `Launched` or when the request fails to open. A report is delivered on main, although the header says otherwise.
+- `uploadReport:completion:`:
+  - copies the fields over (`applyExtendedReport`: it clears the labels, attributes and attachments, then copies them);
+  - runs the wrapper's before and after handlers;
+  - calls `completion` on main once the report is persisted and scheduled.
+- A created report's attachments are capped at 3 (`ATTACHMENTS_LIMIT`) and 3 MiB each (`MAX_SIZE_ATTACHMENT`); empty data is dropped.
+- A handler report holds up to 1000 attachments (`kBGSMaxReportAttachments`).
+- `BugseeExtendedReport` stores `internalAttributes` and `screenshotInitialized` in **file-scope globals**, and `-init` resets them.
+- `showReportDialog*` and `upload*` are no-ops unless the SDK is `Launched`.
+
+**Bundle:** `request.json` carries `type`, `summary`, `description`, `labels`, `severity` and `source.type`. A manifest `attachment` entry is `{name, mimeType, fileName}` (`sdk/reporting/bundle/request.md`, `manifest.md`).
+
+### Constants
+
+| Name | Value | Where |
+|---|---|---|
+| `ReportErrorCode.CreateBusy` | `'E_REPORT_CREATE_BUSY'` | `src/report/errors.ts`; both natives |
+| `BGSRNCreatedReportAttachmentMaxCount` | `3` | iOS Support (mirrors `ATTACHMENTS_LIMIT`) |
+| `BGSRNCreatedReportAttachmentMaxBytes` | `3145728` | iOS Support (mirrors `MAX_SIZE_ATTACHMENT`) |
+| `BGSRNDefaultBugPriorityFallback` | `3` (`BugseeSeverityHigh`) | iOS Support |
+| `ANDROID_REPORT_SEND_RESOURCE_ID` | pinned by Task 8.3a Step 0 | `e2e/report-dialog.ts` |
+
+**Log lines** (`BugseeRN`):
+- `created report <handle> created`
+- `created report - busy`
+- `created report - none`
+- `created report <handle> uploaded ok=<b>`
+
+### Execution order and parallel streams
+
+8.1 → 8.2a → (8.2b ∥ 8.2c) → 8.3a → 8.3b.
+
+8.1 and 8.2a both change `NativeBugsee.ts`, `index.ts`, the mock and both module files, so they are sequential. 8.2b (`android/**`) and 8.2c (`ios/**`) run in parallel. The two device tasks share their test files, so 8.3b follows 8.3a.
+
+---
+
+### Task 8.1 — `upload` with severity and labels, and `showReportDialog`
+
+**Depends on:** Phase 7's gate.
+
+**Files:**
+- Modify: `src/NativeBugsee.ts`, `src/index.ts`, `src/__mocks__/native.ts`, `src/__tests__/upload.test.ts`
+- Create: `src/__tests__/report-dialog.test.ts`, `src/report/fields.ts` (the shared validation)
+- Create: `android/ReportArgs.java`, `androidTest/ReportArgsTest.java`; modify `android/BugseeModule.java`
+- Create: `support/BGSRNReportArgs.m`, `support/include/BGSRNReportArgs.h`, `supportTests/BGSRNReportArgsTests.m`; modify `ios/BugseeModule.mm` (both import branches)
+
+**TurboModule (exact):**
+
+```ts
+// changed (was: upload(summary: string, description: string): void)
+upload(summary: string, description: string, severity: number, labels: string[] | null): void;  // severity 0 = SDK default
+// added
+showReportDialog(summary: string | null, description: string | null, severity: number, labels: string[] | null): void;
+```
+
+**Public JS API (exact):**
+
+```ts
+// src/report/fields.ts
+/** 0 for undefined; RangeError unless an integer 1..5. */
+export function severityArgument(severity: unknown, method: string): number;
+/** null for undefined; TypeError unless an array of strings; a fresh copy. */
+export function labelsArgument(labels: unknown, method: string): string[] | null;
+// src/index.ts, on class Bugsee
+upload(summary: string, description: string, severity?: IssueSeverity, labels?: readonly string[]): void;
+showReportDialog(summary?: string, description?: string, severity?: IssueSeverity, labels?: readonly string[]): void;
+```
+
+- `upload` throws `TypeError` when `arguments.length > 4`, with the message `Bugsee.upload takes at most four arguments; 7.x has no includeVideo`. The summary and description checks stay as they are.
+- `showReportDialog`'s summary and description are `undefined` or a string (`TypeError` otherwise), and cross as `null` when absent.
+- Errors never echo a value.
+- Both methods document that they do nothing before `launch()`, and that the dialog runs `onBeforeReportCreated` before it opens.
+
+**Android:**
+
+```java
+final class ReportArgs {
+    static @Nullable IssueSeverity severity(int wire);                 // 0 -> null; 1..5 -> IssueSeverity.fromIntValue(n); else null, logged
+    static @Nullable ArrayList<String> labels(@Nullable List<?> wire);  // null -> null; non-strings dropped
+}
+```
+
+- `upload` → `Bugsee.upload(summary, description, ReportArgs.severity((int) severity), ReportArgs.labels(labels == null ? null : labels.toArrayList()))`.
+- `showReportDialog` → `UiThreadUtil.runOnUiThread(() -> Bugsee.showReportDialog(summary, description, sev, labels))`.
+- Both catch `RuntimeException`.
+
+**iOS:**
+
+```objc
+FOUNDATION_EXPORT const NSInteger BGSRNDefaultBugPriorityFallback;     // 3
+/// requested if 1..5; else launchOptions[BugseeOptionReportingDefaultBugPriority] if 1..5; else 3.
+FOUNDATION_EXPORT NSInteger BGSRNUploadSeverity(NSInteger requested, NSDictionary *_Nullable launchOptions);
+/// nil for nil; the NSString elements otherwise.
+FOUNDATION_EXPORT NSArray<NSString *> *_Nullable BGSRNStringArray(NSArray *_Nullable raw);
+```
+
+Both methods run inside `BGSRNRunOnMain`.
+- `upload:description:severity:labels:` → `[Bugsee uploadWithSummary:… description:… severity:(BugseeSeverityLevel)BGSRNUploadSeverity(severity, [Bugsee getLaunchOptions]) labels:BGSRNStringArray(labels)]`.
+- `showReportDialog:…` → `[Bugsee showReportDialog]` when every argument is absent (`nil`, `nil`, `0`, `nil`). Otherwise → `showReportDialogWithSummary:(summary ?: @"") description:(description ?: @"") severity:(BugseeSeverityLevel)severity labels:BGSRNStringArray(labels)`.
+
+- [ ] **Red**
+  - `upload.test.ts`:
+    - `the two-argument form crosses severity 0 and null labels`;
+    - `severity crosses by value`;
+    - `labels cross as a copy`;
+    - `rejects severity 0, 6, 2.5 and a string before crossing` (`RangeError`/`TypeError`);
+    - `rejects labels that are not strings before crossing`;
+    - `a fifth argument throws TypeError and crosses nothing`;
+    - `upload has no fifth parameter` (a `// @ts-expect-error` call that must fail to typecheck);
+    - `no message contains the rejected value`.
+  - `report-dialog.test.ts`:
+    - `no arguments crosses null, null, 0, null`;
+    - `every argument crosses in order`;
+    - `a non-string summary or description throws before crossing`;
+    - `severity and labels are validated as upload's`.
+  - `ReportArgsTest`:
+    - `zeroIsTheSdkDefault`;
+    - `severityIsByValueNotOrdinal` (4 → `Critical`, 1 → `VeryLow`);
+    - `outOfRangeIsTheDefault`;
+    - `labelsBecomeAnArrayList`;
+    - `nullLabelsStayNull`;
+    - `nonStringLabelsAreDropped`.
+  - `BGSRNReportArgsTests`:
+    - `testARequestedSeverityWins`;
+    - `testZeroTakesTheLaunchOption`;
+    - `testZeroWithoutTheOptionIsHigh`;
+    - `testAnOutOfRangeOptionIsHigh`;
+    - `testStringArrayKeepsStrings`;
+    - `testStringArrayOfNilIsNil`.
+  - Run → FAIL.
+- [ ] **Green**
+  - As specified.
+  - `ios-spec-coverage`, `check-rn-compat.sh 0.81` (its java-signatures step sees the changed `upload`), both example builds and every existing `upload` call site (scenarios) are green. The existing call sites still compile unchanged.
+- [ ] **Mutate**
+  - (1) Map the Android severity with `IssueSeverity.values()[n]`. `severityIsByValueNotOrdinal` must fail.
+  - (2) Drop the `arguments.length` guard. `a fifth argument throws…` must fail.
+  - (3) Make `BGSRNUploadSeverity` return `requested` unconditionally. `testZeroTakesTheLaunchOption` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(report): upload with severity and labels, and showReportDialog`.
+
+---
+
+### Task 8.2a — `createReport`: JS API, types, spec and stubs
+
+**Depends on:** 8.1.
+
+**Files:**
+- Create: `src/report/CreatedReport.ts`, `src/report/__tests__/created-report.test.ts`
+- Modify: `src/report/BugseeReport.ts` (export `normalizeSnapshot` and `toReportError`; no behaviour change), `src/report/errors.ts` (add `CreateBusy`), `src/report/types.ts`, `src/report/__tests__/validate.test.ts` (four codes), `src/NativeBugsee.ts`, `src/index.ts`, `src/__mocks__/native.ts`
+- Modify (stubs only): `android/BugseeModule.java`, `ios/BugseeModule.mm`
+
+**TurboModule additions (exact):**
+
+```ts
+createReport(): Promise<string | null>;                             // 'cr-<n>' or null; rejects E_REPORT_CREATE_BUSY
+createdReportRead(handleId: string): Promise<UnsafeObject>;         // the BugseeReportSnapshot wire shape
+createdReportUpdate(handleId: string, patchJson: string): Promise<void>;
+createdReportAddDataAttachment(handleId: string, base64: string, name: string, mimeType: string | null): Promise<void>;
+createdReportAddFileAttachment(handleId: string, path: string, name: string, mimeType: string | null): Promise<void>;
+createdReportUpload(handleId: string): Promise<boolean>;            // the handle is dead afterwards, whatever the result
+```
+
+**Public JS API (exact):**
+
+```ts
+// src/report/types.ts
+export interface BugseeCreatedReport {
+  read(): Promise<BugseeReportSnapshot>;
+  update(patch: ReportPatch): Promise<void>;
+  addFileAttachment(path: string, options: { name: string; mimeType?: string }): Promise<void>;  // copied now; no move
+  addDataAttachment(base64: string, options: { name: string; mimeType?: string }): Promise<void>;
+  /** Uploads; resolves the SDK's result. Every later call rejects E_REPORT_HANDLE_DEAD. */
+  upload(): Promise<boolean>;
+}
+// src/report/errors.ts: ReportErrorCode.CreateBusy = 'E_REPORT_CREATE_BUSY'
+// src/index.ts, on class Bugsee
+/** A report to fill and upload. null when the SDK made none (not launched). One at a time: E_REPORT_CREATE_BUSY. */
+createReport(): Promise<BugseeCreatedReport | null>;
+```
+
+- `CreatedReport` validates exactly as `BugseeReportProxy` does, with the same validators, `normalizeFilePath` and base64 check. Rejections go through `toReportError`.
+- `upload()` marks the object dead **synchronously**, before it crosses, so a second `upload()` rejects locally.
+- The JSDoc on `createReport` states P6, P7 (the limits per platform) and P5, with the reason.
+- `setReportHandler`'s JSDoc gains an "Attachments" paragraph: a handler report takes up to 1000 attachments on both platforms; a file is captured when it is added; `move` is honoured; and `onAfterReportCreated` must check `getAttachmentNames()` before adding.
+- Export `BugseeCreatedReport` from `src/index.ts`.
+
+**Stubs:** `createReport` resolves `null`, and the five `createdReport*` methods reject `E_REPORT_HANDLE_DEAD`, which is truthful since no stub mints a handle. Each is commented `Task 8.2b` or `Task 8.2c`.
+
+- [ ] **Red** — `created-report.test.ts` (native mock):
+  - `createReport resolves null when native made none`;
+  - `createReport wraps a handle`;
+  - `E_REPORT_CREATE_BUSY surfaces as BugseeReportError with its code`;
+  - `update sends the validated patch as JSON`;
+  - `update with one bad field sends nothing`;
+  - `addFileAttachment strips file:// and sends no move`;
+  - `addDataAttachment rejects non-base64 before crossing`;
+  - `upload resolves native's result`;
+  - `after upload every op rejects E_REPORT_HANDLE_DEAD without crossing`;
+  - `two concurrent upload calls cross once`;
+  - `read normalises the snapshot as the handler proxy does`.
+
+  `validate.test.ts`: `ReportErrorCode values are exactly the four stable strings`. Run → FAIL.
+- [ ] **Green** — the module, the mock (the six `jest.fn`s; `createReport` resolves `null` by default) and the stubs. Every gate is green.
+- [ ] **Mutate**
+  - (1) Mark dead after the native upload resolves. `two concurrent upload calls cross once` must fail.
+  - (2) Pass `move: true` for files. `addFileAttachment … sends no move` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(report): createReport, a report the app fills and uploads, bridge stubbed`.
+
+---
+
+### Task 8.2b — `createReport`: Android bridge
+
+**Depends on:** 8.2a. It runs in parallel with 8.2c.
+
+**Files:** create `android/CreatedReports.java` and `androidTest/CreatedReportsTest.java`; modify `android/BugseeModule.java` (replace the stubs, and clear the registry in `invalidate()`).
+
+**Interface (plain Java):**
+
+```java
+final class CreatedReports {
+    static CreatedReports shared();
+    CreatedReports();                                   // package-private, for tests
+    /** false while a created report is outstanding or being created. */
+    synchronized boolean reserve();
+    /** Ends a reservation: a report gets "cr-<n>" (fresh per process) and holds the slot; null frees the slot. */
+    synchronized @Nullable String fulfil(@Nullable Report report);
+    synchronized @Nullable Report get(String handleId);
+    /** Removes the report and frees the slot. */
+    synchronized @Nullable Report take(String handleId);
+    synchronized void clear();
+}
+```
+
+**Module:**
+- `createReport(promise)`:
+  - `!reserve()` → reject `E_REPORT_CREATE_BUSY` (log `created report - busy`);
+  - otherwise `Bugsee.createReport(r -> promise.resolve(registry.fulfil(r)))`, logging `created` or `none`;
+  - a throw → `fulfil(null)`, and reject.
+- The read, update and attachment methods mirror `reportRead`/`reportUpdate`/`reportAdd*Attachment` over `registry.get(h)`, through `ReportOps`. `addFile` passes `move = false`.
+- `createdReportUpload(h, promise)`:
+  - `take(h)`; `null` → `E_REPORT_HANDLE_DEAD`;
+  - otherwise `Bugsee.upload(report, ok -> promise.resolve(ok))`, logging `uploaded ok=`.
+
+- [ ] **Red** — `CreatedReportsTest`:
+  - `oneOutstandingAtATime`;
+  - `aNullReportFreesTheSlot`;
+  - `takeFreesTheSlot`;
+  - `handlesAreFreshAndPrefixed` (`cr-1`, `cr-2`, never reused after a take);
+  - `aTakenHandleIsGone`;
+  - `clearFreesEverything`;
+  - `concurrentReservationsAdmitOne` (eight threads through a start barrier).
+  - Run → FAIL.
+- [ ] **Green** — as specified. The example builds.
+- [ ] **Mutate** — make `reserve()` return `true` always. `oneOutstandingAtATime` must fail. Revert and record.
+- [ ] **Commit** — `feat(android): createReport through a one-slot registry`.
+
+---
+
+### Task 8.2c — `createReport`: iOS bridge
+
+**Depends on:** 8.2a. It runs in parallel with 8.2b.
+
+**Files:**
+- Create: `support/BGSRNCreatedReports.{h,m}`, `support/BGSRNCreatedReportOps.{h,m}` (under `include/` for headers)
+- Create tests: `supportTests/BGSRNCreatedReportsTests.m`, `supportTests/BGSRNCreatedReportOpsTests.m`
+- Modify: `support/BGSRNReportOps.{h,m}` (extract `+validatedPatch:error:`, the validation half of `applyPatch:…`, which now calls it; behaviour unchanged, and the existing tests stay green), `ios/BugseeModule.mm` (replace the stubs; `invalidate` clears the registry; both import branches)
+
+**Interfaces:**
+
+```objc
+@interface BGSRNCreatedReports : NSObject                      // os_unfair_lock; the API of Android's CreatedReports
+@property (class, readonly) BGSRNCreatedReports *shared;
+- (BOOL)reserve;
+- (nullable NSString *)fulfil:(nullable BugseeExtendedReport *)report;
+- (nullable BugseeExtendedReport *)reportFor:(NSString *)handleId;
+- (nullable BugseeExtendedReport *)take:(NSString *)handleId;
+- (void)clear;
+@end
+FOUNDATION_EXPORT const NSUInteger BGSRNCreatedReportAttachmentMaxCount;   // 3
+FOUNDATION_EXPORT const NSUInteger BGSRNCreatedReportAttachmentMaxBytes;   // 3145728
+@interface BGSRNCreatedReportOps : NSObject
++ (NSDictionary<NSString *, id> *)readReport:(BugseeExtendedReport *)report;
+  // BGSRNReportOps' keys; severity as held; screenshotDisplayIds @[@0] iff a screenshot; attachmentNames from attachments[].name
++ (BOOL)applyPatchJSON:(NSString *)json toReport:(BugseeExtendedReport *)report error:(NSError **)error;
+  // validatedPatch first (all-or-nothing); summary/description via setSummary:/setDescription: (NSNull -> nil);
+  // severity via setSeverity:; labels assigned (replace); clearAttributes -> clearAllAttributes first;
+  // attributes: NSNull -> clearAttribute:, else setAttribute:withValue:
++ (BOOL)addData:(NSString *)base64 name:(NSString *)name toReport:(BugseeExtendedReport *)report error:(NSError **)error;
++ (BOOL)addFileAtPath:(NSString *)path name:(NSString *)name toReport:(BugseeExtendedReport *)report error:(NSError **)error;
+  // Size from the file's attributes before reading; read now. BadArgument for bad base64. AttachmentRejected when the
+  // report already holds 3, the data is empty or over 3 MiB, or the file is missing or unreadable.
+  // Attachment = [BugseeAttachment attachmentWithName:name filename:name data:data].
+@end
+```
+
+**Module:**
+- **Every created-report op runs inside `BGSRNRunOnMain`,** unlike the handler's report ops. `BugseeExtendedReport` is unsynchronised, and the SDK hands it out and takes it back on main.
+- `createReport`: `reserve` else reject busy. Then `[Bugsee createReportWithCompletion:^(r){ resolve([registry fulfil:r]); }]`. The completion is called on every path (`nil` when not launched).
+- `createdReportUpload`: `take`, else dead. Then `[Bugsee uploadReport:r completion:^{ resolve(@YES); }]`.
+
+- [ ] **Red**
+  - `BGSRNCreatedReportsTests`: mirror 8.2b's seven, by name, with a `test` prefix.
+  - `BGSRNCreatedReportOpsTests` (a real `BugseeExtendedReport`):
+    - `testReadsTheFields`;
+    - `testPatchIsAllOrNothing`;
+    - `testLabelsReplace`;
+    - `testNSNullClearsTheSummaryAndRemovesAnAttribute`;
+    - `testClearAttributesRunsFirst`;
+    - `testAFourthAttachmentIsRejected`;
+    - `testAnAttachmentOver3MiBIsRejected`;
+    - `testAnEmptyAttachmentIsRejected`;
+    - `testAMissingFileIsRejected`;
+    - `testAFileIsCapturedWhenAdded` (overwrite the file afterwards; the attachment keeps the original bytes);
+    - `testInvalidBase64IsABadArgument`;
+    - `testTheLimitsMirrorTheSdk` (3 and 3145728, with the SDK constants named in the message);
+    - `testTheSdkSharesAttributesAcrossExtendedReports`. This pins the SDK bug behind P5: create A, set an attribute, create B, and A's attribute is gone. When this test fails, the SDK is fixed and P5 can be lifted; the test's message says so.
+  - `BGSRNReportOpsTests` stay green unchanged.
+  - Run → FAIL.
+- [ ] **Green** — as specified. The iOS example builds on both delivery paths.
+- [ ] **Mutate**
+  - (1) Drop the count check. `testAFourthAttachmentIsRejected` must fail.
+  - (2) Read the file lazily, keeping the path. `testAFileIsCapturedWhenAdded` must fail.
+  - Revert and record.
+- [ ] **Commit** — `feat(ios): createReport, with the SDK's attachment limits enforced up front`.
+
+---
+
+### Task 8.3a — Device verification, Android: every reporting path, proven from retained bundles
+
+**Depends on:** 8.1, 8.2b and Task 7.6a (`writeTempFile`, `fileExists`).
+
+**Files:**
+- Create: `scenarios/reporting.ts` (scenarios `rp-upload`, `rp-prelaunch`, `rp-dialog`, `rp-create` and `rp-attach`), `e2e/reporting.test.ts`, `e2e/report-dialog.ts` (the `uiautomator` helpers and `ANDROID_REPORT_SEND_RESOURCE_ID`)
+- Modify: `App.tsx`, `e2e/bundles.ts` (add `attachmentsOf(bundle): Array<{ name: string; mimeType?: string; path: string }>`, joining the manifest's `attachment` entries to their stored files), `scripts/__tests__/e2e-capture-files.test.ts` (`attachmentsOf joins names to files`; `attachmentsOf is empty without attachments`)
+
+**Retention and preconditions:** as 3.4d: the banner, the asserted clear, airplane mode, and `Launched`.
+
+**Step 0 — pin the dialog's send control, once, before writing case 6.**
+- Run `rp-dialog`. After `BeforeReportShown`, run `adb shell uiautomator dump /sdcard/rp.xml`, pull it, and find the control that submits.
+- Pin its `resource-id` as `ANDROID_REPORT_SEND_RESOURCE_ID`, and put the dump's excerpt in the commit body.
+- If it has no stable `resource-id`, stop and report. Do not fall back to coordinates or text.
+
+**Scenarios.** Every value carries the run's nonce `<n>`.
+
+`rp-upload` runs, in order, after `Launched`:
+
+| call | expected `severity` | expected `labels` |
+|---|---|---|
+| `upload('up2-<n>', 'd2-<n>')` | `S` | no label contains `<n>` |
+| `upload('up3-<n>', 'd3-<n>', IssueSeverity.Critical)` | `4` | no label contains `<n>` |
+| `upload('up4-<n>', 'd4-<n>', IssueSeverity.Blocker, ['e2e', 'l4-<n>'])` | `5` | `⊇ ['e2e', 'l4-<n>']` |
+| `upload('up5-<n>', 'd5-<n>', undefined, ['l5-<n>'])` | `S` | `⊇ ['l5-<n>']` |
+
+`S` is up2's severity. It must be an integer 1–5, and is recorded. Then the scenario calls `(Bugsee.upload as any)('x5-<n>', '', 3, [], false)` inside `try`, and logs `BUGSEE_E2E rp upload-5th code=<error name>`.
+
+`rp-prelaunch`: before `launch()`, `upload('pre-<n>', '')` and `showReportDialog('pre-<n>')`, then the marker `BUGSEE_E2E rp prelaunch-sent`. A lifecycle subscription logs `BUGSEE_E2E rp lifecycle <name>`.
+
+`rp-dialog`:
+- A handler is registered before `launch()`. Its `onBeforeReportCreated` reads the report and logs `BUGSEE_E2E rp dialog-before summary=<json> description=<json> severity=<n> labels=<json>`.
+- A lifecycle subscription logs `BeforeReportShown`.
+- After `Launched`: `showReportDialog('dlg-<n>', 'dd-<n>', IssueSeverity.High, ['dlg-<n>'])`.
+
+`rp-create`:
+- A handler is registered before `launch()`. `onBefore` runs `setAttribute('phase_before', 'h-<n>')` and logs `rp create before`; `onAfter` logs `rp create after`.
+- After `Launched`:
+  1. `r = await createReport()`, then log `rp created null=<r === null>`.
+  2. `await r.update({ summary: 'cr-<n>', description: 'crd-<n>', severity: IssueSeverity.VeryLow, labels: ['c-<n>'], attributes: { created: 'c-<n>' } })`.
+  3. `await r.addDataAttachment(b64('data <n>'), { name: 'crdata-<n>.txt', mimeType: 'text/plain' })`.
+  4. `p = await writeTempFile('crfile-<n>.txt', 'file <n>')`, then `await r.addFileAttachment(p, { name: 'crfile-<n>.txt' })`.
+  5. `extra1` and `extra2` data attachments, each logging its outcome as `rp extra<k> ok|code=<c>`.
+  6. A second `createReport()`, logging its code.
+  7. Log `rp uploading`, then `ok = await r.upload()`, and log it.
+  8. `await r.read()`, logging its code.
+
+`rp-attach`:
+- A handler's `onBefore` writes `copy-<n>.txt` (`'copy <n>'`) and `move-<n>.txt` (`'move <n>'`).
+- It adds the first with `{ name: 'copy-<n>.txt', mimeType: 'text/plain' }` and the second with `{ name: 'move-<n>.txt', mimeType: 'text/plain', move: true }`.
+- It logs `rp exists copy=<b> move=<b>`.
+- The app calls `upload('att-<n>', '')`.
+
+**Cases (`e2e/reporting.test.ts`):**
+1. `each upload form files one report with its fields` — exactly four bundles whose `summary` starts `up`, with the table's `description`, `severity` and `labels`.
+2. `a fifth argument is refused` — `upload-5th code=TypeError`, and no bundle's summary is `x5-<n>`.
+3. `upload files as code_upload` — every `up*` bundle has `request.source.type === 'code_upload'`.
+4. `nothing is filed or shown before launch` — `prelaunch-sent` precedes `Launched`; no bundle's summary is `pre-<n>`; no `BeforeReportShown` appears in that run.
+5. `the dialog opens pre-filled` — `dialog-before summary="dlg-<n>" description="dd-<n>" severity=3 labels=["dlg-<n>"]`, then `BeforeReportShown`, in that order.
+6. `submitting the dialog files the report` — tap `ANDROID_REPORT_SEND_RESOURCE_ID` (found by resource-id in a fresh dump, tapped at its bounds' centre). Then exactly one bundle with `summary === 'dlg-<n>'`, `description === 'dd-<n>'`, `severity === 3`, `labels ⊇ ['dlg-<n>']` and `source.type === 'code_dialog'`.
+7. `a created report's edits reach its bundle`:
+   - exactly one bundle with `summary === 'cr-<n>'`, `description === 'crd-<n>'`, `severity === 1` and `labels ⊇ ['c-<n>']`;
+   - `manifest.attrs.created === 'c-<n>'` and `manifest.attrs.phase_before === 'h-<n>'`;
+   - `attachmentsOf` has `crdata-<n>.txt` with content `data <n>`, and `crfile-<n>.txt` with content `file <n>`.
+8. `the handler runs at create, then at upload` (Android) — `rp create before` precedes `rp created null=false`, and `rp create after` follows `rp uploading`.
+9. `one created report at a time, and none after upload` — the second `createReport` logs `E_REPORT_CREATE_BUSY`; `upload` logs `true`; the later `read` logs `E_REPORT_HANDLE_DEAD`.
+10. `created-report attachment limits` — **Android:** `extra1 ok` and `extra2 ok`, and case 7's bundle has 4 attachments.
+11. `a handler attaches a file by copy and by move` — `exists copy=true move=false`. Exactly one bundle with summary `att-<n>`, whose `attachmentsOf` has both names with contents `copy <n>` and `move <n>`, and `mimeType === 'text/plain'` on both.
+
+- [ ] **Step 0** — as above. Record the result.
+- [ ] **Red** — write the tests and scenarios. Run once before wiring `App.tsx` → FAIL at the first marker.
+- [ ] **Green** — cases 1–11 pass on the WOD_LX1.
+- [ ] **Mutate**
+  - (1) Map the Android severity by ordinal. Case 1 must fail on `up3`.
+  - (2) Pass `move = false` from `ReportOps.addFile`'s caller. Case 11 must fail on `move=true`.
+  - (3) Make `CreatedReports.reserve()` always `true`. Case 9 must fail.
+  - Revert and record.
+- [ ] **Commit** — `test(e2e): upload, the dialog, createReport and attachments in Android bundles`. The body records the banner, `S`, the Step 0 excerpt, and one `request.json` verbatim.
+
+---
+
+### Task 8.3b — Device verification, iOS: the simulator and the iPhone
+
+**Depends on:** 8.2c and 8.3a (the same files).
+
+The cases of 8.3a apply, run under `E2E_PLATFORM=ios` on the simulator, and on the iPhone with `E2E_IOS_TARGET=device`. These iOS values are stated per case:
+- **Case 3:** `it.failing` on iOS (P10). The plain `it` before it is case 1, which checks identity.
+- **Case 6:** a gated case, `E2E_IOS_OPERATOR=1`, on the iPhone only.
+  - The test prints `>>> Tap Send in the Bugsee report dialog on the iPhone now (60 s)` and waits up to 60 s for the bundle.
+  - Its assertions are Android's, with `source.type === 'code_dialog'`.
+  - Without the variable it is skipped, and the simulator never runs it.
+- **Case 8:** `rp create before` and `rp create after` **both** follow `rp uploading` (P6), and `rp created null=false` precedes `rp uploading`.
+- **Case 10:** `extra1 ok` and `extra2 code=E_REPORT_ATTACHMENT_REJECTED`, and case 7's bundle has exactly 3 attachments (P7).
+- **Case 11:** as Android. iOS's `addAttachmentWithFilePath:…move:` honours `move`.
+- **Every case:** retention is by `DEAD_ENDPOINT`, and `environment.sdk.version` is the pin.
+
+- [ ] **Red/Green** — every case except case 6 passes on the iOS 26.5 simulator, with case 3 failing for the right reason (record `source.type`).
+- [ ] **Mutate** — drop the count check in `BGSRNCreatedReportOps`. Case 10 must fail on the simulator. Revert and record.
+- [ ] **Commit** — `test(e2e): upload, the dialog, createReport and attachments in iOS bundles`.
+
+**Hardware pass: add to Task 3.H** — Task 8.3b whole on the iPhone, including the gated operator case 6.
+
+---
+
+### Phase 8 review gate
+
+The reviewer must independently:
+- run every unit, JVM, XCTest and mutation suite, and `check-rn-compat.sh 0.81`;
+- confirm by reading the code that:
+  - no `upload` path, JS or native, accepts or forwards an `includeVideo`;
+  - a severity crosses by value on both platforms, and `0` never reaches an SDK setter as a severity;
+  - every `createdReport*` promise settles exactly once, and the registry frees its slot on upload, on a `null` report and on `invalidate`;
+  - no iOS created-report op runs off main;
+  - neither platform silently drops an attachment JS was told succeeded (iOS limits enforced up front; Android's `null` → `E_REPORT_ATTACHMENT_REJECTED`);
+- **rerun** 8.3a and 8.3b on the simulator.
+
+Record, for the controller:
+- P5's SDK bug;
+- P10;
+- that iOS dialog submission is proven only by the operator case.
 
 ---
 
@@ -2575,12 +4044,19 @@ The phase with the most native↔JS round-tripping, hence the most device testin
 - **`@bugsee/cli`** — merged in `bugsee/bugsee-cli#21`; needs its trusted-publisher bootstrap before first publish. Blocks Phase 13.1.
 - **Option manifests** — schema merged as `bugsee/specs#14`; neither SDK publishes one yet. Blocks Phase 2.7 only.
 - **`bugsee/bugsee-cocoa#91` / `bugsee-android#90`** — **resolved**, via the wrapper channel rather than the public source-aware overload originally filed for it (`bugsee/specs` `sdk/wrapper-channel`; Android #149, iOS #137–#140). The wrapper records `LogSource.Custom` through `onWrapperChannelAvailable` (Task 3.5). `bugsee-android#90` is closed; `bugsee-cocoa#91` is still open on GitHub and should be closed as superseded.
-- **`bugsee/bugsee-android#178`** — screenshot display ids are not returned in ascending order. Open; the bridge sorts them itself (`getScreenshotDisplayIds`, Task 3.4a) until it lands.
-- **`bugsee/bugsee-android#186`** — `setUserIdentifier`/`setAttribute` values written verbatim to the SDK-internal log; fixed there, shipping with Android 7.3.0 (and the next iOS beta). Phase 5's device tests use synthetic values and assert nothing about `log.internal`.
+- **`bugsee/bugsee-android#178`** — screenshot display ids were not returned in ascending order. **Shipped in Android 7.3.0** (`15abdb28b`). The bridge still sorts (`getScreenshotDisplayIds`, Task 3.4a): it is harmless, and it keeps the JS contract independent of the SDK version.
+- **`bugsee/bugsee-android#186`** — `setUserIdentifier`/`setAttribute` values were written verbatim to the SDK-internal log. **Shipped in Android 7.3.0** (`afdded7be`); the iOS half ships with the next beta. Phase 5's device tests still use synthetic values and assert nothing about `log.internal`.
 - **To raise (controller; implementers never file these):**
   - `bugsee/specs` `sdk/wrapper-data-requests` says `vh` bounds are "physical screen pixels" but also "the native tree's coordinate space", which is points on iOS; Phase 6 follows the latter (workbook 6.6).
   - That spec's open item 2 (the viewer does not parse `managed`) means the RN view tree will not render in the dashboard until the viewer changes.
   - Android's `startBlackout` is a no-op before launch, while iOS honours it (fails closed); Phase 6 case `blackout` 5 pins both behaviours.
+  - **Android 7.3.0 `logUnhandledException` files a crash report *and* an error report** for one incident: `logExceptionInternal` falls through from the crash branch. The fix is `e1d56ed65`, on branch `fix/unhandled-error-single-report`, which is neither merged nor released. Phase 7 pins it as `it.failing` (Task 7.5a case 10, gated R3).
+  - **Android 7.3.0 `logException(Throwable, Map)` reads only `domain` and `skipFrames`.** Its javadoc documents `labels` and `includeVideo`, which nothing reads. Task 7.5a case 7 is `it.failing` on Android.
+  - **`includeVideo` is a dead exception option on both SDKs in 7.x.** Android ignores it. iOS records it in `crash.json` `exceptionLoggingOptions` and acts on nothing, and `[BugseeExceptionLoggingOptions new]` defaults it to `NO`. Implement it, or say so in the javadoc and the header.
+  - **Android has no counterpart to iOS's overriding crash report** (`createAndStoreOverridingCrashReportWithException:`). A fatal JS error files the wrapper's `ReactNativeWebException` crash **and** RN's own `JavascriptException` crash (Phase 7 R13; pinned by Task 7.5a's gated R2). Raise it once R2 confirms it on the device.
+  - **iOS beta3 compiles `logException:…` and `logUnhandledException:…` out on the simulator** (`#if !TARGET_OS_SIMULATOR`), including the call to `completion`. The no-op may be deliberate; never calling `completion` is not. Task 7.1d settles its promise on a deadline because of it.
+  - **iOS beta3 `BugseeExtendedReport` keeps its attributes (and `screenshotInitialized`) in file-scope globals.** Each `createReport` resets the attributes of every earlier created report. Phase 8 P5 allows one created report at a time; `testTheSdkSharesAttributesAcrossExtendedReports` (Task 8.2c) fails when this is fixed.
+  - **iOS beta3 `uploadWithSummary:…` files `source.type = "unknown"`** (`BGSReportingTriggerTypeUnknown`), where Android files `code_upload`. Task 8.3b case 3 is `it.failing` on iOS.
 
 ## Out of scope
 
