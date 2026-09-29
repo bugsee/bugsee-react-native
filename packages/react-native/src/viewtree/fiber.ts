@@ -94,7 +94,12 @@ export interface WindowRect {
  *
  * Never throws and never loops forever: a missing, non-object or cyclic
  * `.return` chain (all of which would be a bug elsewhere, never legitimate)
- * ends the walk with `null` rather than a `TypeError` or a hang.
+ * ends the walk with `null` rather than a `TypeError` or a hang. Nor does a
+ * *hostile* `publicInstance` — one whose fields are throwing getters, or a
+ * revoked `Proxy` — because `Task 6.4`'s exported `registerAnchor(instance:
+ * unknown)` calls this on whatever gets registered, and its own spec turns
+ * any throw here into a `null` reply for every root, for as long as that one
+ * bad object stays registered. See the `try`/`catch` in `fiberRootOf` itself.
  */
 const FIBER_ROOT_RETURN_CHAIN_CAP = 10_000;
 
@@ -110,50 +115,62 @@ function isObject(value: unknown): value is object {
 }
 
 export function fiberRootOf(publicInstance: unknown): { current: FiberLike } | null {
-  // No blanket try/catch: every property this function reads is read only
-  // after a type check has already proven it safe to read, so nothing here
-  // throws for any malformed-but-plain-object input — and a blanket catch
-  // around checks that already make the function safe would only turn every
-  // one of them into an equally-safe no-op if it were ever deleted, not a
-  // failure. (A fiber whose `.return`/`.stateNode` is a *throwing getter*
-  // is not defended against — but a fiber object is never adversarial,
-  // user-supplied data the way a component's props are.)
-  if (!isObject(publicInstance)) {
-    return null;
-  }
-
-  const handle = (publicInstance as { __internalInstanceHandle?: unknown }).__internalInstanceHandle;
-  if (!isObject(handle)) {
-    return null;
-  }
-
-  let fiber = handle as FiberLike;
-  for (let steps = 0; fiber.tag !== FiberTag.HostRoot; steps += 1) {
-    if (steps >= FIBER_ROOT_RETURN_CHAIN_CAP) {
-      // A `.return` chain this long is a cycle (or some other corruption),
-      // never a real tree: React's own depth cap is nowhere near this.
+  // Both defences stay, deliberately: the explicit `isObject` checks below
+  // make every *plain*, well-formed-but-wrong-shaped input safe on their
+  // own (a missing/non-object handle, a `.return` chain that never reaches
+  // a HostRoot, a HostRoot with no usable `stateNode`), and each is tested
+  // in isolation. The outer `try`/`catch` is for the input those checks
+  // cannot see coming: a throwing getter on any of `__internalInstanceHandle`
+  // / `.tag` / `.return` / `.stateNode`, a `Proxy` whose `get` trap throws,
+  // or a revoked `Proxy` used as `publicInstance` or as the handle itself —
+  // none of which are "a fiber", but all of which this function's public
+  // contract ("never throws") must still survive, since `Task 6.4`'s
+  // `registerAnchor(instance: unknown)` calls this on whatever a consumer
+  // registers. A round of review found this function still threw on exactly
+  // those inputs when the `try` was left off in favour of the explicit
+  // checks alone (see the equivalent-mutant note below) — a public-surface
+  // "never throws" contract is worth more than a few fully-equivalent
+  // mutants inside the checks the `try` now also backstops.
+  try {
+    if (!isObject(publicInstance)) {
       return null;
     }
-    // `isObject`, not just `!== null`: a malformed fiber's `.return` being
-    // `undefined` (rather than the `null` React itself would leave at the
-    // top), or any other non-object value, ends the walk the same way, not
-    // with a `TypeError` on the next iteration.
-    const parent = fiber.return;
-    if (!isObject(parent)) {
+
+    const handle = (publicInstance as { __internalInstanceHandle?: unknown }).__internalInstanceHandle;
+    if (!isObject(handle)) {
       return null;
     }
-    fiber = parent;
-  }
 
-  const stateNode = fiber.stateNode;
-  if (!isObject(stateNode)) {
+    let fiber = handle as FiberLike;
+    for (let steps = 0; fiber.tag !== FiberTag.HostRoot; steps += 1) {
+      if (steps >= FIBER_ROOT_RETURN_CHAIN_CAP) {
+        // A `.return` chain this long is a cycle (or some other corruption),
+        // never a real tree: React's own depth cap is nowhere near this.
+        return null;
+      }
+      // `isObject`, not just `!== null`: a malformed fiber's `.return` being
+      // `undefined` (rather than the `null` React itself would leave at the
+      // top), or any other non-object value, ends the walk the same way, not
+      // with a `TypeError` on the next iteration.
+      const parent = fiber.return;
+      if (!isObject(parent)) {
+        return null;
+      }
+      fiber = parent;
+    }
+
+    const stateNode = fiber.stateNode;
+    if (!isObject(stateNode)) {
+      return null;
+    }
+    const current = (stateNode as { current?: unknown }).current;
+    if (!isObject(current)) {
+      return null;
+    }
+    return stateNode as { current: FiberLike };
+  } catch {
     return null;
   }
-  const current = (stateNode as { current?: unknown }).current;
-  if (!isObject(current)) {
-    return null;
-  }
-  return stateNode as { current: FiberLike };
 }
 
 type MeasureInWindowCallback = (x: number, y: number, width: number, height: number) => void;
@@ -199,6 +216,15 @@ export function measureHostFiber(fiber: FiberLike): WindowRect | null {
 
   const measurable = publicInstance as { measureInWindow: (callback: MeasureInWindowCallback) => void };
 
+  // Pinned behaviour, tested explicitly (not merely an untested consequence
+  // of the `catch`): if the callback fires synchronously with a good rect
+  // and `measureInWindow` *itself* then throws — some cleanup step inside
+  // the renderer failing after already reporting a measurement — this still
+  // returns `null`, not the rect the callback captured. A mid-call throw
+  // means the renderer's own state around this measurement is not something
+  // this module trusts, and there is exactly one "unmeasurable" outcome for
+  // every way that call can go wrong, not a special case for "wrong, but
+  // only after telling us something first".
   let delivered = false;
   let result: WindowRect | null = null;
   try {

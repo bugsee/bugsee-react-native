@@ -96,6 +96,98 @@ describe('fiberRootOf', () => {
 
     expect(fiberRootOf({ __internalInstanceHandle: handle })).toBeNull();
   });
+
+  // N1 (fix round 2): `fiberRootOf` must never throw, even on input the
+  // explicit `isObject`/tag checks cannot see coming — a throwing getter
+  // anywhere along the read path, or a revoked `Proxy` standing in for
+  // either the public instance itself or the handle it carries. Task 6.4's
+  // `registerAnchor(instance: unknown)` calls this on whatever a consumer
+  // registers, and turns any throw into a blanked-out `vh` reply for every
+  // root, for as long as that one bad object stays registered — so each of
+  // these is a `not.toThrow()` alongside the `toBeNull()`.
+  describe('never throws, even on hostile input (N1)', () => {
+    it('a throwing __internalInstanceHandle getter', () => {
+      const publicInstance: unknown = {
+        get __internalInstanceHandle(): unknown {
+          throw new Error('boom');
+        },
+      };
+      expect(() => fiberRootOf(publicInstance)).not.toThrow();
+      expect(fiberRootOf(publicInstance)).toBeNull();
+    });
+
+    it('a get trap that throws, on the public instance itself', () => {
+      const publicInstance = new Proxy(
+        {},
+        {
+          get() {
+            throw new Error('boom');
+          },
+        },
+      );
+      expect(() => fiberRootOf(publicInstance)).not.toThrow();
+      expect(fiberRootOf(publicInstance)).toBeNull();
+    });
+
+    it('a get trap that throws, on the handle', () => {
+      const handle = new Proxy(
+        {},
+        {
+          get() {
+            throw new Error('boom');
+          },
+        },
+      );
+      expect(() => fiberRootOf({ __internalInstanceHandle: handle })).not.toThrow();
+      expect(fiberRootOf({ __internalInstanceHandle: handle })).toBeNull();
+    });
+
+    it('a revoked Proxy as the public instance', () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      expect(() => fiberRootOf(proxy)).not.toThrow();
+      expect(fiberRootOf(proxy)).toBeNull();
+    });
+
+    it('a revoked Proxy as the handle', () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+      expect(() => fiberRootOf({ __internalInstanceHandle: proxy })).not.toThrow();
+      expect(fiberRootOf({ __internalInstanceHandle: proxy })).toBeNull();
+    });
+
+    it('a throwing .tag getter', () => {
+      const handle: unknown = {
+        get tag(): number {
+          throw new Error('boom');
+        },
+      };
+      expect(() => fiberRootOf({ __internalInstanceHandle: handle })).not.toThrow();
+      expect(fiberRootOf({ __internalInstanceHandle: handle })).toBeNull();
+    });
+
+    it('a throwing .return getter', () => {
+      const handle: unknown = {
+        tag: FiberTag.FunctionComponent,
+        get return(): unknown {
+          throw new Error('boom');
+        },
+      };
+      expect(() => fiberRootOf({ __internalInstanceHandle: handle })).not.toThrow();
+      expect(fiberRootOf({ __internalInstanceHandle: handle })).toBeNull();
+    });
+
+    it('a throwing .stateNode getter on the HostRoot fiber', () => {
+      const handle: unknown = {
+        tag: FiberTag.HostRoot,
+        get stateNode(): unknown {
+          throw new Error('boom');
+        },
+      };
+      expect(() => fiberRootOf({ __internalInstanceHandle: handle })).not.toThrow();
+      expect(fiberRootOf({ __internalInstanceHandle: handle })).toBeNull();
+    });
+  });
 });
 
 describe('measureHostFiber', () => {
@@ -175,6 +267,27 @@ describe('measureHostFiber', () => {
       getPublicInstanceFromInternalInstanceHandle: () => ({
         measureInWindow: () => {
           throw new Error('boom');
+        },
+      }),
+    }));
+
+    expect(measureHostFiber(fiber)).toBeNull();
+  });
+
+  it('is null (not the delivered rect) when the callback fires with a good rect and measureInWindow then throws (M10, pinned)', () => {
+    // Distinct from the case above: here the callback DOES run first,
+    // synchronously, with a fully valid rect — and only then does
+    // `measureInWindow` itself throw (e.g. some renderer-side bookkeeping
+    // after the callback). Without its own `catch`, this specific ordering
+    // would let the exception propagate out of `measureHostFiber` instead
+    // of yielding a clean `null` — see the doc comment on the second `try`
+    // in fiber.ts for why `null`, not the already-delivered rect, is the
+    // pinned outcome.
+    jest.doMock(RENDERER_PROXY_PATH, () => ({
+      getPublicInstanceFromInternalInstanceHandle: () => ({
+        measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => {
+          callback(1, 2, 3, 4);
+          throw new Error('boom after delivering');
         },
       }),
     }));
