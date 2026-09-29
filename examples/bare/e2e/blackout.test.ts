@@ -135,9 +135,15 @@ describeAndroid('blackout on an Android handset', () => {
     report('lifecycle', { started: blackoutStarted.map(l => l.text.trim()), ended: blackoutEnded.map(l => l.text.trim()) });
     expect(blackoutStarted).toHaveLength(1);
     expect(blackoutEnded).toHaveLength(1);
-    // After, in the log: each event follows the marker of the call that caused it.
-    expect(blackoutStarted[0]!.index).toBeGreaterThan(started.index);
-    expect(blackoutEnded[0]!.index).toBeGreaterThan(ended.index);
+    // Each event follows the call that caused it, by the JS clock: startedT
+    // and endedT are read right after the call, before the isBlackout()
+    // await the marker waits on, and a listener cannot run before them.
+    const startedAt = numberIn(blackoutStarted[0]!, 't');
+    const endedAt = numberIn(blackoutEnded[0]!, 't');
+    report('lifecycle t vs calls', { startedT, startedAt, endedT, endedAt });
+    expect(startedAt).toBeGreaterThanOrEqual(startedT);
+    expect(startedAt).toBeLessThan(endedT);
+    expect(endedAt).toBeGreaterThanOrEqual(endedT);
   });
 
   it('a report taken during blackout has a black screenshot and no view tree', async () => {
@@ -165,6 +171,11 @@ describeAndroid('blackout on an Android handset', () => {
     expect(asked).toEqual([]);
     // Precondition: the same log does carry such lines outside it.
     expect(log.all(/BugseeRN\s*:\s*data request dr-\d+ type=vh /, run.start).length).toBeGreaterThan(0);
+    // And outside the blackout the capture does produce trees: the report
+    // taken after it carries the snapshot of its own upload.
+    const afterTrees = captureEvents(after, 'viewtree').map(tree => tree.timestamp as number);
+    report('after: viewtree timestamps', { endedT, afterTrees });
+    expect(afterTrees.filter(t => t > endedT).length).toBeGreaterThanOrEqual(1);
   });
 
   it('the capture trace brackets the blackout', () => {
@@ -233,5 +244,8 @@ describeAndroid('blackout on an Android handset', () => {
     // Android: the SDK drops a startBlackout() before launch (a logged no-op).
     expect(state.text).toMatch(/ isBlackout=false /);
     expect(cleared.text).toMatch(/ isBlackout=false /);
+    // ...and says nothing about it: the lifecycle listener, subscribed before
+    // the call, hears no BlackoutStarted for this run.
+    expect(log.all(new RegExp(`BUGSEE_E2E blackout lifecycle BlackoutStarted .*nonce=${prelaunchNonce}`), prelaunchRun.start)).toEqual([]);
   });
 });
