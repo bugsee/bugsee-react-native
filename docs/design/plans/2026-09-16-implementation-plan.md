@@ -2292,7 +2292,7 @@ FOUNDATION_EXPORT const int64_t BGSRNDataRequestDeadlineMs;            // 450
 - The module's `origin` block runs on main, where the SDK calls `requestData`. It takes the key window of the foreground-active `UIWindowScene` and returns `[NSValue valueWithCGPoint:[window convertPoint:CGPointZero toCoordinateSpace:window.screen.coordinateSpace]]`, or `nil` without one.
 - The request-order rules and the log lines are the same as in 6.5.
 
-- [ ] **Red** — `BGSRNDataRequestBridgeTests`, mirroring 6.5's names:
+- [x] **Red** — `BGSRNDataRequestBridgeTests`, mirroring 6.5's names:
   - `testDeadlineIsBelowTheSdkBudget` (`< 500`);
   - `testAnUnknownTypeRepliesNilSynchronously`;
   - `testNoSinkRepliesNilSynchronously`;
@@ -2305,12 +2305,12 @@ FOUNDATION_EXPORT const int64_t BGSRNDataRequestDeadlineMs;            // 450
   - `testDetachRepliesNilToEverythingOutstandingAndDisables`;
   - `testEachRequestGetsAFreshId`.
   - Run → FAIL.
-- [ ] **Green** — as specified. The iOS example builds on both delivery paths.
-- [ ] **Mutate**
+- [x] **Green** — as specified. The iOS example builds on both delivery paths.
+- [x] **Mutate**
   - (1) Drop the once-guard. `testCompleteDeliversThePayloadExactlyOnce` must fail.
   - (2) Call `reply` while holding the lock, and add a test-only reply that re-enters `complete:`. It must deadlock the test run, which the XCTest timeout reports as a failure.
   - Revert and record.
-- [ ] **Commit** — `feat(ios): answer the vh data request from JS, within the budget`.
+- [x] **Commit** — `feat(ios): answer the vh data request from JS, within the budget`.
 
 ---
 
