@@ -1,4 +1,4 @@
-import { cleanSource, fileKey, parseStack } from '../stack';
+import { cleanSource, fileKey, parseStack, STACK_MAX_INPUT_LENGTH, STACK_MAX_LINE_LENGTH } from '../stack';
 
 describe('parseStack', () => {
   it('parses a Hermes release frame (address at)', () => {
@@ -297,5 +297,203 @@ describe('cleanSource', () => {
     expect(cleanSource('garbage\n/real/path/MyApp.app/main.js')).toBe(
       'garbage\n/real/path/MyApp.app/main.js',
     );
+  });
+});
+
+describe('parseStack: bounded against a hostile stack (review C1)', () => {
+  // A generous, CI-safe budget. Every case here previously took from over a
+  // second to (extrapolated) minutes; a correct, bounded parse finishes in
+  // low single-digit milliseconds, so 100 ms leaves ample headroom without
+  // making the test flaky on a loaded CI box.
+  const TIME_BUDGET_MS = 100;
+
+  function assertFast(fn: () => void): number {
+    const start = performance.now();
+    fn();
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(TIME_BUDGET_MS);
+    return elapsed;
+  }
+
+  // A trailing non-space character at this length survives both length
+  // caps (so it is still there for `trim()` to see) but keeps the line
+  // itself well under `STACK_MAX_LINE_LENGTH`, so these cases stress a
+  // pattern's own backtracking, not just "does the cap apply". A run this
+  // long, with no trailing marker, would instead `trim()` down to nothing
+  // before any pattern ran -- see the "whole-input/whole-line cap" cases
+  // below for that (different, still real) property.
+  const SURVIVING_PADDING = 1800;
+
+  it('a 1 MB single line of spaces (the review\'s literal case; trims to empty before any pattern runs)', () => {
+    assertFast(() => parseStack(' '.repeat(1024 * 1024)));
+  });
+
+  it('a 200,000-space line (the review\'s literal JSC_RE case; same fast path)', () => {
+    assertFast(() => parseStack(' '.repeat(200000)));
+  });
+
+  it('a 1 MB "in " + spaces line (the review\'s literal COMPONENT_STACK_RE case)', () => {
+    assertFast(() => parseStack(`in ${' '.repeat(1024 * 1024)}x`));
+  });
+
+  it('"in " + padding + "x" that survives to COMPONENT_STACK_RE intact', () => {
+    // This is the case that actually exercises the pattern: with the old
+    // `/^\s*in\s+(.*?)\s*\(at.../` (this file's own history), 2,000 spaces
+    // here took 1.5 s; the fix (no separate `\s*` between the name group
+    // and the parenthesis) takes under 1 ms for the same input.
+    assertFast(() => parseStack(`in ${' '.repeat(SURVIVING_PADDING)}x`));
+  });
+
+  it('padding + a trailing letter that survives to JSC_RE intact, no "@" and no digits', () => {
+    assertFast(() => parseStack(`a${' '.repeat(SURVIVING_PADDING)}b`));
+  });
+
+  it('"at a (/x:1:1" + padding + "x" that survives to CHROME_RE intact, never closed', () => {
+    assertFast(() => parseStack(`at a (/x:1:1${' '.repeat(SURVIVING_PADDING)}x`));
+  });
+
+  it('"at /x" + padding + "x" that survives to NODE_RE intact, no trailing digits at all', () => {
+    // The second-order bug this fix's own first draft had: a single
+    // combined "at NAME? (FILE" pattern (an optional name group ending in
+    // one literal space, or later a `\s*`, before the file group) still
+    // took over 3 s directly on a 1 MB line here, even with its outer
+    // `^\s*`/`\s*$` already removed -- the name group's search for a
+    // single-space terminator, combined with the file group's own
+    // expensive failed scan, was still quadratic. Splitting it into
+    // NODE_PAREN_RE and NODE_BARE_RE (neither with a separator quantifier
+    // of its own) fixed it: under 1 ms for the same input.
+    assertFast(() => parseStack(`at /x${' '.repeat(SURVIVING_PADDING)}x`));
+  });
+
+  it('"at foo (" + padding + "x" that survives to NODE_RE intact, never closed', () => {
+    assertFast(() => parseStack(`at foo (${' '.repeat(SURVIVING_PADDING)}x`));
+  });
+
+  it('a component-stack line with a long run of closing parentheses', () => {
+    assertFast(() => parseStack(`in a ${')'.repeat(SURVIVING_PADDING)}x`));
+  });
+
+  it('a Chrome-shaped line with a long run of closing parentheses', () => {
+    assertFast(() => parseStack(`at a (${')'.repeat(SURVIVING_PADDING)}x`));
+  });
+
+  it('100,000 short, individually valid lines', () => {
+    const stack = Array.from({ length: 100000 }, (_, i) => `    at fn${i} (/a.js:${i}:1)`).join(
+      '\n',
+    );
+    let frames: ReturnType<typeof parseStack> = [];
+    assertFast(() => {
+      frames = parseStack(stack, 256);
+    });
+    expect(frames).toHaveLength(256);
+  });
+
+  it('a 1,000,000-line stack stops at maxFrames instead of parsing every line', () => {
+    const stack = Array.from(
+      { length: 1_000_000 },
+      (_, i) => `    at fn${i} (/a.js:${i}:1)`,
+    ).join('\n');
+    let frames: ReturnType<typeof parseStack> = [];
+    assertFast(() => {
+      frames = parseStack(stack, 256);
+    });
+    expect(frames).toHaveLength(256);
+    expect(frames[0]).toMatchObject({ methodName: 'fn0' });
+  });
+
+  it('exports its bounds as documented constants', () => {
+    expect(STACK_MAX_INPUT_LENGTH).toBe(64 * 1024);
+    expect(STACK_MAX_LINE_LENGTH).toBe(2 * 1024);
+  });
+
+  it('caps the whole stack before splitting into lines', () => {
+    const hugeLine = 'x'.repeat(STACK_MAX_INPUT_LENGTH * 2);
+    // Nothing here can parse as a frame; the point is only that this
+    // returns (fast) instead of processing 2x the input cap.
+    assertFast(() => parseStack(hugeLine));
+  });
+
+  it('caps each line before matching, independent of the whole-stack cap', () => {
+    // A single very long, but individually well-formed, frame line: still
+    // capped per-line, so its file is truncated rather than blowing up a
+    // regex on the full length.
+    const hugeFile = '/a/' + 'b'.repeat(STACK_MAX_LINE_LENGTH * 4);
+    const frames = parseStack(`    at fn (${hugeFile}:1:2)`);
+    expect(frames[0]?.raw.length).toBeLessThanOrEqual(STACK_MAX_LINE_LENGTH);
+  });
+});
+
+describe('parseStack: a garbage-prefixed line is rejected, not matched starting later (review M1)', () => {
+  it('component-stack: "xin A (at f.js:1)" and "Within A (at f.js:1)" are not frames', () => {
+    expect(parseStack('xin A (at f.js:1)')).toEqual([]);
+    expect(parseStack('Within A (at f.js:1)')).toEqual([]);
+  });
+
+  it('JSC: a carriage return where the file must start rejects the line, not just that position', () => {
+    // `\r` is whitespace, so `\S` (the file group's required first
+    // character) cannot match it; the only way to still get a frame is for
+    // the match to slide past the `x@\r` prefix to start at "file:1:2" --
+    // which only an unanchored pattern would allow.
+    expect(parseStack('x@\rfile:1:2')).toEqual([]);
+  });
+});
+
+describe('parseStack: a V8/Hermes anonymous or relative-file frame (6.x parity, review M3)', () => {
+  it('a V8 anonymous frame with an absolute path and no function name', () => {
+    const frames = parseStack('    at /Users/me/app/index.js:10:5');
+    expect(frames).toEqual([
+      {
+        raw: '    at /Users/me/app/index.js:10:5',
+        file: '/Users/me/app/index.js',
+        methodName: null,
+        lineNumber: 10,
+        column: 5,
+      },
+    ]);
+  });
+
+  it('a V8 anonymous frame served from a Metro URL, no function name', () => {
+    const line = '    at http://localhost:8081/index.bundle?platform=ios:10:5';
+    const frames = parseStack(line);
+    expect(frames).toEqual([
+      {
+        raw: line,
+        file: 'http://localhost:8081/index.bundle?platform=ios',
+        methodName: null,
+        lineNumber: 10,
+        column: 5,
+      },
+    ]);
+  });
+
+  it('a Chrome-shaped frame whose file has no recognised scheme (a relative bundle file)', () => {
+    expect(parseStack('    at foo (index.android.bundle:1:1234)')).toEqual([
+      {
+        raw: '    at foo (index.android.bundle:1:1234)',
+        file: 'index.android.bundle',
+        methodName: 'foo',
+        lineNumber: 1,
+        column: 1234,
+      },
+    ]);
+
+    expect(parseStack('    at foo (InternalBytecode.js:1:1234)')).toEqual([
+      {
+        raw: '    at foo (InternalBytecode.js:1:1234)',
+        file: 'InternalBytecode.js',
+        methodName: 'foo',
+        lineNumber: 1,
+        column: 1234,
+      },
+    ]);
+  });
+
+  it('still lets a real Chrome/Hermes/JSC/component-stack line take priority', () => {
+    // NODE_RE is tried after Hermes-address and before JSC; it must not
+    // shadow any of the other four shapes.
+    expect(parseStack('    at forEach (native)')[0]).toMatchObject({ file: null });
+    expect(
+      parseStack('    at bugseeE2EThrowSite (address at index.android.bundle:1:20417)')[0],
+    ).toMatchObject({ file: 'address at index.android.bundle' });
   });
 });
