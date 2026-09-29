@@ -10,11 +10,22 @@
  * it. A thrown non-`Error` is described (R9), never serialised: nothing else
  * it carries is read, so nothing else it carries can leak into the payload.
  */
-import { cleanSource, fileKey, parseStack, type ParsedFrame } from './stack';
+import { cleanSource, fileKey, parseStack, STACK_MAX_INPUT_LENGTH, type ParsedFrame } from './stack';
 import { sha1Hex } from './sha1';
 
 export const EXCEPTION_MAX_FRAMES = 256;
 export const EXCEPTION_MAX_CAUSE_DEPTH = 10;
+/**
+ * The most stack content (`error.stack`, `componentStack`, `fallbackStack`
+ * combined, in UTF-16 units) `buildExceptionPayload` will hand to
+ * `parseStack` for one call. `STACK_MAX_INPUT_LENGTH` bounds a single
+ * stack; nothing on its own bounded the *sum* across a cause chain's up to
+ * 11 nodes plus `componentStack`, so that total could still reach 12x a
+ * single node's own worst case (review N1). Shared across the whole tree
+ * via one mutable counter (`ParseBudget`): once it reaches zero, every
+ * later node's frames are `[]`, the same as if it had no stack at all.
+ */
+export const EXCEPTION_MAX_TOTAL_STACK_LENGTH = 128 * 1024;
 /**
  * The most a trimmed `reason` keeps of the original content, in UTF-16
  * units. A reason actually cut is one unit longer than this: the appended
@@ -152,10 +163,25 @@ function normalizeField(raw: string): string {
 
 /**
  * Strips a stack's own "Name: message" header (I2), matching 6.x's
- * `getCleanStack`. Hermes and V8 prepend `<name>: <message>` (or just
- * `<name>` for an empty message) before the real frames; JSC does not, so
- * this is a no-op there. Tried longest-candidate-first so a message that
- * itself starts with the bare name does not cause a partial strip.
+ * `getCleanStack`. Hermes and V8 prepend `<name>: <message>` before the
+ * real frames (or just `<message>` when `name` is `''`, or just `<name>`
+ * when `message` is `''`); JSC does not, so this is a no-op there. Tried
+ * longest-candidate-first so a message that itself starts with the bare
+ * name does not cause a partial strip.
+ *
+ * `name` here is the *raw* value read off the error (via `safeGetString`,
+ * so `''` when absent or non-string) -- not the display name `'Error'`
+ * falls back to -- because that fallback is exactly the case where V8 and
+ * Hermes write no name at all, only `message`, as the header (review N2).
+ *
+ * A candidate is accepted only when it is followed by the end of the
+ * string, `\n` or `\r`: `stack.startsWith(name)` alone is not enough,
+ * because a real frame's own function name can start with the error's
+ * name as plain text -- captured with JSC: `new TypeError('boom')` thrown
+ * from a function named `TypeErrorFactory` gives a stack whose first (and
+ * only) line is `TypeErrorFactory@file:2:22`, and `name` is `'TypeError'`.
+ * Without this check that line becomes `Factory@file:2:22`, a wrong
+ * member name.
  *
  * `message` may contain newlines; matching it as one literal prefix (rather
  * than only its first line) strips a multi-line message in one step,
@@ -169,14 +195,22 @@ function normalizeField(raw: string): string {
  * safety.
  */
 function stripKnownHeader(stack: string, name: string, message: string): string {
-  // `name` is always non-empty here (the caller's `effectiveName`), so
-  // neither candidate is ever '' -- there is no third, "nothing to strip"
-  // case to guard against beyond `startsWith` itself returning false.
-  const candidates = message.length > 0 ? [`${name}: ${message}`, name] : [name];
+  const candidates: string[] = [];
+  if (name.length > 0 && message.length > 0) {
+    candidates.push(`${name}: ${message}`);
+  }
+  if (name.length > 0) {
+    candidates.push(name);
+  } else if (message.length > 0) {
+    candidates.push(message);
+  }
 
   for (const candidate of candidates) {
     if (stack.startsWith(candidate)) {
-      return stack.slice(candidate.length);
+      const next = stack.charAt(candidate.length);
+      if (next === '' || next === '\n' || next === '\r') {
+        return stack.slice(candidate.length);
+      }
     }
   }
 
@@ -198,6 +232,21 @@ function isUserSource(source: string): boolean {
   return !source.includes('node_modules') && !source.includes('native code') && !source.includes('(native)');
 }
 
+/**
+ * React 19's `describeBuiltInComponentFrame` (`ReactFabric-dev.js`) emits a
+ * synthetic frame for a built-in host component (`View`, `Text`, ...) with
+ * no real source: `"View (<anonymous>)"` on an engine whose own stacks say
+ * "at" (Hermes, V8 -- `file` is the literal string `<anonymous>`, with no
+ * line/column at all, so `user` is already `false` there); `"View@unknown:0:0"`
+ * on one that does not (JSC -- `file` is the literal string `unknown`, with
+ * line and column both `0`, which are *not* `null`). Only the second shape
+ * needs an explicit check: `0` is a real number, so without it this parses
+ * as a user frame (review N4).
+ */
+function isBuiltInComponentSentinel(file: string, line: number | null, column: number | null): boolean {
+  return file === 'unknown' && line === 0 && column === 0;
+}
+
 function toExceptionFrame(frame: ParsedFrame, debugIds: ReadonlyMap<string, string> | undefined): ExceptionFrame {
   const source = normalizeField(cleanSource(frame.file));
   const member = normalizeField(frame.methodName || UNKNOWN_MEMBER);
@@ -213,8 +262,13 @@ function toExceptionFrame(frame: ParsedFrame, debugIds: ReadonlyMap<string, stri
     // "its file" (the payload table's `user` row) -- checked on the frame's
     // own file, not the cleaned `source`, matching the spec's wording (M6).
     // In practice this never changes the result: none of `cleanSource`'s
-    // five steps can remove `node_modules`, `native code` or `(native)`.
-    exceptionFrame.user = line !== null && column !== null && isUserSource(frame.file);
+    // five steps can remove `node_modules`, `native code`, `(native)` or
+    // the built-in-component sentinel `unknown` (review N4).
+    exceptionFrame.user =
+      line !== null &&
+      column !== null &&
+      !isBuiltInComponentSentinel(frame.file, line, column) &&
+      isUserSource(frame.file);
 
     const debugId = debugIds?.get(fileKey(frame.file));
     if (debugId !== undefined) {
@@ -225,15 +279,26 @@ function toExceptionFrame(frame: ParsedFrame, debugIds: ReadonlyMap<string, stri
   return exceptionFrame;
 }
 
+/** A mutable counter shared across one `buildExceptionPayload` call's whole node tree. */
+interface ParseBudget {
+  remaining: number;
+}
+
 function buildFrames(
   stack: string | undefined,
   debugIds: ReadonlyMap<string, string> | undefined,
+  budget: ParseBudget,
 ): ExceptionFrame[] {
-  if (typeof stack !== 'string') {
+  if (typeof stack !== 'string' || budget.remaining <= 0) {
     return [];
   }
 
-  return parseStack(stack, EXCEPTION_MAX_FRAMES).map((frame) => toExceptionFrame(frame, debugIds));
+  const takeLength = Math.min(stack.length, budget.remaining, STACK_MAX_INPUT_LENGTH);
+  budget.remaining -= takeLength;
+
+  return parseStack(stack.slice(0, takeLength), EXCEPTION_MAX_FRAMES).map((frame) =>
+    toExceptionFrame(frame, debugIds),
+  );
 }
 
 function buildNode(
@@ -242,6 +307,7 @@ function buildNode(
   seen: WeakSet<object>,
   fallbackStack: string | undefined,
   debugIds: ReadonlyMap<string, string> | undefined,
+  budget: ParseBudget,
 ): ExceptionNode {
   let name: string;
   let rawReason: string;
@@ -249,14 +315,15 @@ function buildNode(
   let rawCause: unknown;
 
   if (safeIsError(value)) {
-    const errorName = safeGetString(value, 'name');
-    const effectiveName = errorName || 'Error';
-    name = effectiveName;
+    const errorName = safeGetString(value, 'name') ?? '';
+    name = errorName || 'Error';
     rawReason = safeGetString(value, 'message') ?? '';
     const stackVal = safeGetString(value, 'stack');
+    // The *raw* name (which may be '') goes to stripKnownHeader, not the
+    // display fallback `name` above -- see its own comment (review N2).
     const strippedStack =
-      stackVal !== undefined ? stripKnownHeader(stackVal, effectiveName, rawReason) : undefined;
-    frames = buildFrames(strippedStack, debugIds);
+      stackVal !== undefined ? stripKnownHeader(stackVal, errorName, rawReason) : undefined;
+    frames = buildFrames(strippedStack, debugIds, budget);
     rawCause = safeGet(value, 'cause');
   } else {
     const described = describeThrown(value);
@@ -264,7 +331,7 @@ function buildNode(
     rawReason = described.reason;
     // Recursive calls (building a cause) never pass a fallback stack -- it is
     // only ever meaningful for the top-level thrown value.
-    frames = buildFrames(fallbackStack, debugIds);
+    frames = buildFrames(fallbackStack, debugIds, budget);
     rawCause = undefined;
   }
 
@@ -281,7 +348,7 @@ function buildNode(
       if (repeatKey !== undefined) {
         seen.add(repeatKey);
       }
-      node.cause = buildNode(rawCause, depth + 1, seen, undefined, debugIds);
+      node.cause = buildNode(rawCause, depth + 1, seen, undefined, debugIds, budget);
     }
   }
 
@@ -293,6 +360,7 @@ function attachBoundaryNode(
   root: ExceptionNode,
   componentStack: string,
   debugIds: ReadonlyMap<string, string> | undefined,
+  budget: ParseBudget,
 ): void {
   let tail = root;
   while (tail.cause !== undefined) {
@@ -302,7 +370,7 @@ function attachBoundaryNode(
   tail.cause = {
     name: ERROR_BOUNDARY_CAUSE_NAME,
     reason: '',
-    frames: buildFrames(componentStack, debugIds),
+    frames: buildFrames(componentStack, debugIds, budget),
   };
 }
 
@@ -322,11 +390,12 @@ function buildPayloadUnsafe(input: PayloadInput): ExceptionPayload {
   if (isReferenceType(input.error)) {
     seen.add(input.error);
   }
+  const budget: ParseBudget = { remaining: EXCEPTION_MAX_TOTAL_STACK_LENGTH };
 
-  const root = buildNode(input.error, 0, seen, input.fallbackStack, input.debugIds);
+  const root = buildNode(input.error, 0, seen, input.fallbackStack, input.debugIds, budget);
 
   if (input.componentStack) {
-    attachBoundaryNode(root, input.componentStack, input.debugIds);
+    attachBoundaryNode(root, input.componentStack, input.debugIds, budget);
   }
 
   const payload: ExceptionPayload = {
