@@ -12,6 +12,12 @@ import { setReportHandler as installReportHandler } from './report/dispatcher';
 import type { BugseeReportHandler } from './report/types';
 import { forwardLog } from './wrapper/channel';
 import { LogLevel } from './options/enums';
+import {
+  assertEventOrTraceName,
+  assertTraceValue,
+  copyEventParams,
+} from './data/validate';
+import type { EventParams, TraceValue } from './data/validate';
 
 export { Status } from './status';
 
@@ -186,6 +192,45 @@ class Bugsee {
   }
 
   /**
+   * Records a named event, with optional params.
+   *
+   * `params` is validated against the accepted value domain
+   * (`src/data/validate.ts`) and copied before it crosses -- a value outside
+   * that domain throws synchronously, in JS, rather than reaching native in
+   * some guessed-at shape. Omitting `params` sends `null` natively, not `{}`:
+   * the bundle's event entry has no `params` key at all when none were given.
+   */
+  event(name: string, params?: EventParams): void {
+    assertEventOrTraceName('event', name);
+    if (params === undefined) {
+      NativeBugsee.event(name, null);
+      return;
+    }
+    NativeBugsee.event(name, copyEventParams(params));
+  }
+
+  /**
+   * Records a named trace value.
+   *
+   * Dispatches on `typeof value` to one of three typed native methods --
+   * `traceNumber`, `traceString` or `traceBoolean` -- rather than one
+   * untyped call: codegen has no union parameter type, and an untyped path
+   * would let a boolean silently arrive as `0`/`1` on the SDK side. `value`
+   * is validated first, so nothing outside the domain reaches any of them.
+   */
+  trace(name: string, value: TraceValue): void {
+    assertEventOrTraceName('trace', name);
+    assertTraceValue(value);
+    if (typeof value === 'number') {
+      NativeBugsee.traceNumber(name, value);
+    } else if (typeof value === 'string') {
+      NativeBugsee.traceString(name, value);
+    } else {
+      NativeBugsee.traceBoolean(name, value);
+    }
+  }
+
+  /**
    * Wires up the JS layer when the native SDK launched itself — on Android,
    * from `com.bugsee.app-token` manifest metadata. Deliberately makes no
    * native launch call; doing so would start a second session.
@@ -259,3 +304,5 @@ export type {
   ReportPatch,
   ReportType,
 } from './report/types';
+
+export type { EventParams, EventParamValue, TraceValue } from './data/validate';

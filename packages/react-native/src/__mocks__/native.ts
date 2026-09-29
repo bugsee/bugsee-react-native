@@ -77,6 +77,10 @@ export const native = {
   testCrash: jest.fn<void, []>(),
   upload: jest.fn<void, [string, string]>(),
   wrapperLog: jest.fn<void, [string, number]>(),
+  event: jest.fn<void, [string, Record<string, unknown> | null]>(),
+  traceNumber: jest.fn<void, [string, number]>(),
+  traceString: jest.fn<void, [string, string]>(),
+  traceBoolean: jest.fn<void, [string, boolean]>(),
 
   /**
    * The codegen EventEmitter for report handoffs -- a SUBSCRIBE function
