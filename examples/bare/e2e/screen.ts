@@ -16,6 +16,7 @@
  * video -- is `assertMedia`. A report that fails it fails its test.
  */
 import type { PulledBundle } from './bundles';
+import { ON_IOS } from './harness';
 import { imageSize, probeCodec, regionLuma, shadeOf } from './media';
 import { adb, type LogLine } from './scenario';
 
@@ -46,6 +47,9 @@ const DUMP = '/data/local/tmp/bugsee-e2e-privacy-ui.xml';
  * could only read a screen that has moved on.
  */
 export async function uiDump(): Promise<{ xml: string; endMs: number }> {
+  if (ON_IOS) {
+    throw new Error('uiDump: uiautomator is Android-only; iOS has no accessibility dump to read');
+  }
   const out = await adb('shell', 'uiautomator', 'dump', DUMP).catch((error: unknown) => String(error));
   const endMs = await deviceNow();
   if (!/UI hier[a-z]* dumped to/.test(out)) {
@@ -232,4 +236,28 @@ export function numberIn(line: LogLine, key: string): number {
     throw new Error(`no ${key}= in: ${line.text}`);
   }
   return Number(found[1]);
+}
+
+/**
+ * The rectangle a scenario marker logs from JS `measureInWindow`
+ * (`x=<x> y=<y> w=<w> h=<h>`), as edges, in points on iOS. The iOS ground
+ * truth where Android reads uiautomator (Task 6.9): the simulator's window
+ * is full-screen, so window points are screen points.
+ */
+export function markerRect(line: LogLine): Rect {
+  const found = /\bx=(-?[\d.]+) y=(-?[\d.]+) w=([\d.]+) h=([\d.]+)/.exec(line.text);
+  if (found === null) {
+    throw new Error(`no x= y= w= h= rectangle in: ${line.text}`);
+  }
+  const [x, y, w, h] = found.slice(1, 5).map(Number) as [number, number, number, number];
+  return { left: x, top: y, right: x + w, bottom: y + h };
+}
+
+/** `screen=<w>x<h>` from a scenario marker: `Dimensions.get('screen')`, in points on iOS. */
+export function markerScreen(line: LogLine): { width: number; height: number } {
+  const found = /\bscreen=([\d.]+)x([\d.]+)/.exec(line.text);
+  if (found === null) {
+    throw new Error(`no screen=<w>x<h> in: ${line.text}`);
+  }
+  return { width: Number(found[1]), height: Number(found[2]) };
 }

@@ -224,6 +224,7 @@ const SECURE_RECT = { position: 'absolute', top: 260, left: 60, width: 180, heig
 function SecureComponentProbe({ nonce, setMoving }: ProbeProps) {
   const scroll = useRef<ScrollView>(null);
   const twin = useRef<View>(null);
+  const witness = useRef<View>(null);
   const [mounted, setMounted] = useState(true);
   const height = Dimensions.get('window').height;
 
@@ -239,6 +240,12 @@ function SecureComponentProbe({ nonce, setMoving }: ProbeProps) {
       const r = await measure(twin.current);
       mark(`secure-component rect phase=${phase} x=${r.x} y=${r.y} w=${r.w} h=${r.h} ${screenLine()} nonce=${nonce}`);
     };
+    // Where the witness is, for a platform with no accessibility dump to
+    // read it from (iOS, Task 6.9). It never moves.
+    const logWitness = async () => {
+      const r = await measure(witness.current);
+      mark(`secure-component witness x=${r.x} y=${r.y} w=${r.w} h=${r.h} ${screenLine()} nonce=${nonce}`);
+    };
     const hold = async (phase: string) => {
       await sleep(SETTLE_MS);
       setMoving(false);
@@ -251,6 +258,8 @@ function SecureComponentProbe({ nonce, setMoving }: ProbeProps) {
       await logRect('mounted');
       Bugsee.upload(`secure-mounted-${nonce}`, '');
       mark(`secure-component uploaded phase=mounted t=${Date.now()} nonce=${nonce}`);
+      // After the upload, so it cannot shift the report's timing.
+      await logWitness();
       await hold('mounted');
 
       mark(`secure-component scrolling t=${Date.now()} nonce=${nonce}`);
@@ -288,6 +297,8 @@ function SecureComponentProbe({ nonce, setMoving }: ProbeProps) {
       </ScrollView>
       {mounted && (
         <View
+          ref={witness}
+          collapsable={false}
           accessible
           accessibilityLabel={SECURE_WITNESS_LABEL}
           pointerEvents="none"

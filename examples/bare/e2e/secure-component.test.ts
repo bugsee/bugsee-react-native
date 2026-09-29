@@ -31,10 +31,32 @@
  * `E2E_EDGE_TO_EDGE=true|false` must name the setting the installed build was
  * made with (B1): `false` also asserts the React root's display origin is
  * really below the status bar, so the run exercises the origin conversion.
+ *
+ * Task 6.9: the same file under `E2E_PLATFORM=ios`. iOS has no accessibility
+ * dump, so the ground truth is the scenario's logged `measureInWindow`
+ * rectangles, in points (the component's twin, and the witness), mapped onto
+ * a screenshot at `screenshot.width / Dimensions.screen.width` -- the
+ * simulator's window is full-screen, so window points are screen points. The
+ * video maps the same way (media.ts `widthFitRegion`: no letterbox, and no
+ * `video.aux`). iOS logs no served buffer, so the served-rectangle check is
+ * Android-only, and `E2E_EDGE_TO_EDGE` is not read.
  */
 import { type PulledBundle, airplane, captureEvents, removePulledBundles } from './bundles';
-import { ANDROID_PACKAGE } from './device';
-import { ON_ANDROID, type Run, awaitBundles, clearBundles, escape, must, report, startRun, useLog } from './harness';
+import {
+  ON_IOS,
+  type Run,
+  TARGET_NAME,
+  awaitBundles,
+  clearBundles,
+  describeDevice,
+  escape,
+  must,
+  report,
+  startDeviceLog,
+  startRun,
+  stopApp,
+  stopDeviceLog,
+} from './harness';
 import {
   LUMA_BRIGHT_MIN,
   LUMA_DARK_MAX,
@@ -43,8 +65,9 @@ import {
   letterbox,
   regionFrameLumas,
   videoRegion,
+  widthFitRegion,
 } from './media';
-import { type LogLine, Logcat, adb, resetScenario } from './scenario';
+import { type DeviceLog, type LogLine, adb, resetScenario } from './scenario';
 import {
   type Media,
   type Rect,
@@ -54,13 +77,13 @@ import {
   displaySize,
   hasNode,
   interiorFrames,
+  markerRect,
+  markerScreen,
   moved,
   screenshotLumas,
   servedOf,
   uiDump,
 } from './screen';
-
-const describeAndroid = ON_ANDROID ? describe : describe.skip;
 
 jest.setTimeout(6 * 60_000);
 
@@ -78,8 +101,8 @@ interface Series {
   luma: number[];
 }
 
-describeAndroid('<BugseeSecure> on an Android handset', () => {
-  let log: Logcat;
+describeDevice(`<BugseeSecure> on ${TARGET_NAME}`, () => {
+  let log: DeviceLog;
   let run: Run;
   let nonce: string;
   let display: { width: number; height: number };
@@ -118,16 +141,17 @@ describeAndroid('<BugseeSecure> on an Android handset', () => {
   };
 
   beforeAll(async () => {
-    if (EDGE_TO_EDGE !== 'true' && EDGE_TO_EDGE !== 'false') {
+    if (!ON_IOS && EDGE_TO_EDGE !== 'true' && EDGE_TO_EDGE !== 'false') {
       throw new Error(
         `E2E_EDGE_TO_EDGE must state how the installed build was made, "true" or "false"; got ${JSON.stringify(EDGE_TO_EDGE)}`,
       );
     }
-    log = await Logcat.start();
-    useLog(log, '6.8');
-    await adb('shell', 'setprop', 'log.tag.BugseeRN', 'DEBUG');
-    await airplane(true);
-    display = await displaySize();
+    log = await startDeviceLog('6.8', '6.9');
+    if (!ON_IOS) {
+      await adb('shell', 'setprop', 'log.tag.BugseeRN', 'DEBUG');
+      await airplane(true);
+      display = await displaySize();
+    }
 
     await clearBundles();
     run = await startRun('secure-component');
@@ -138,30 +162,47 @@ describeAndroid('<BugseeSecure> on an Android handset', () => {
     const rectMounted = await marker('rect phase=mounted', run.launched.index);
     await marker('uploaded phase=mounted', rectMounted.index);
     const stillMounted = await marker('still phase=mounted', rectMounted.index);
-    const upTo = log.mark();
-    servedMounted = must(log.all(SERVED, run.start, upTo).pop(), 'a served line before the mounted report', run.start);
-    originMounted = log.all(/BugseeRN\s*:\s*secure origin /, run.start, upTo).pop();
-    const mountedXml = await dumpBefore('scrolling', stillMounted.index);
-    mountedBounds = boundsIn(mountedXml, LABEL);
-    witnessBounds = boundsIn(mountedXml, WITNESS);
+    if (ON_IOS) {
+      // No accessibility dump: the ground truth is the scenario's own
+      // measureInWindow rectangles, in points (the brief's iOS rule).
+      const witnessLine = await marker('witness', rectMounted.index);
+      display = markerScreen(rectMounted);
+      mountedBounds = markerRect(rectMounted);
+      witnessBounds = markerRect(witnessLine);
+    } else {
+      const upTo = log.mark();
+      servedMounted = must(log.all(SERVED, run.start, upTo).pop(), 'a served line before the mounted report', run.start);
+      originMounted = log.all(/BugseeRN\s*:\s*secure origin /, run.start, upTo).pop();
+      const mountedXml = await dumpBefore('scrolling', stillMounted.index);
+      mountedBounds = boundsIn(mountedXml, LABEL);
+      witnessBounds = boundsIn(mountedXml, WITNESS);
+    }
 
     const rectScrolled = await marker('rect phase=scrolled', rectMounted.index);
     await marker('uploaded phase=scrolled', rectScrolled.index);
     const stillScrolled = await marker('still phase=scrolled', rectScrolled.index);
-    scrolledBounds = boundsIn(await dumpBefore('unmounting', stillScrolled.index), LABEL);
+    scrolledBounds = ON_IOS
+      ? markerRect(rectScrolled)
+      : boundsIn(await dumpBefore('unmounting', stillScrolled.index), LABEL);
 
     const unmounting = await marker('unmounting', rectScrolled.index);
     await marker('uploaded phase=unmounted', unmounting.index);
     await marker('still phase=unmounted', unmounting.index);
-    unmountedXml = await dumpBefore('', 0);
-    lastServed = must(log.all(SERVED, run.start).pop(), 'a served line', run.start);
+    if (!ON_IOS) {
+      unmountedXml = await dumpBefore('', 0);
+      lastServed = must(log.all(SERVED, run.start).pop(), 'a served line', run.start);
+    }
 
     report('display', display);
     report('rect markers', [rectMounted.text.trim(), rectScrolled.text.trim()]);
-    report('uiautomator bounds', { mounted: mountedBounds, scrolled: scrolledBounds, witness: witnessBounds });
-    report('served (mounted)', servedMounted.text.trim());
-    report('origin (mounted)', originMounted?.text.trim() ?? '(none)');
-    report('served (last)', lastServed.text.trim());
+    if (ON_IOS) {
+      report('JS rectangles (points)', { mounted: mountedBounds, scrolled: scrolledBounds, witness: witnessBounds });
+    } else {
+      report('uiautomator bounds', { mounted: mountedBounds, scrolled: scrolledBounds, witness: witnessBounds });
+      report('served (mounted)', servedMounted.text.trim());
+      report('origin (mounted)', originMounted?.text.trim() ?? '(none)');
+      report('served (last)', lastServed.text.trim());
+    }
 
     const bundles = await awaitBundles(3);
     mounted = bundleBySummary(bundles, `secure-mounted-${nonce}`);
@@ -177,16 +218,20 @@ describeAndroid('<BugseeSecure> on an Android handset', () => {
 
   afterAll(async () => {
     try {
-      await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+      await stopApp();
       await clearBundles().catch((error: unknown) => report('cleanup clear failed', String(error)));
     } finally {
       try {
-        await airplane(false);
+        if (!ON_IOS) {
+          await airplane(false);
+        }
       } finally {
-        await adb('shell', 'setprop', 'log.tag.BugseeRN', "''").catch(() => {});
+        if (!ON_IOS) {
+          await adb('shell', 'setprop', 'log.tag.BugseeRN', "''").catch(() => {});
+        }
         const { removed, kept } = removePulledBundles();
         report('pulled bundle roots', { removed: removed.length, kept });
-        log?.stop();
+        stopDeviceLog(log);
         resetScenario();
       }
     }
@@ -199,21 +244,33 @@ describeAndroid('<BugseeSecure> on an Android handset', () => {
    */
   async function videoSeries(bundle: PulledBundle, video: string, rects: Record<string, Rect>): Promise<Record<string, Series>> {
     const size = await imageSize(video);
-    const box = letterbox(display, size);
-    const aux = captureEvents(bundle, 'video.aux')[0] as
-      | { paddingH?: number; paddingV?: number; screenW?: number; screenH?: number }
-      | undefined;
-    report(`${String(bundle.request.summary)}: letterbox`, { size, derived: box, aux });
-    expect(aux).toBeDefined();
-    expect({ screenW: aux!.screenW, screenH: aux!.screenH }).toEqual({ screenW: display.width, screenH: display.height });
-    expect(Math.abs(box.padH - aux!.paddingH!)).toBeLessThanOrEqual(1);
-    expect(Math.abs(box.padV - aux!.paddingV!)).toBeLessThanOrEqual(1);
+    let region: (rect: Rect) => { x: number; y: number; w: number; h: number };
+    if (ON_IOS) {
+      // iOS does not letterbox and writes no video.aux to check a mapping
+      // against: it scales by width from the top-left, as its screenshot
+      // does (media.ts widthFitRegion). The witness and control regions
+      // below are what prove the crops land where they should.
+      report(`${String(bundle.request.summary)}: video size`, { size, screen: display, scale: size.width / display.width });
+      expect(captureEvents(bundle, 'video.aux')).toEqual([]);
+      region = rect => widthFitRegion(rect, display, size, VIDEO_INSET);
+    } else {
+      const box = letterbox(display, size);
+      const aux = captureEvents(bundle, 'video.aux')[0] as
+        | { paddingH?: number; paddingV?: number; screenW?: number; screenH?: number }
+        | undefined;
+      report(`${String(bundle.request.summary)}: letterbox`, { size, derived: box, aux });
+      expect(aux).toBeDefined();
+      expect({ screenW: aux!.screenW, screenH: aux!.screenH }).toEqual({ screenW: display.width, screenH: display.height });
+      expect(Math.abs(box.padH - aux!.paddingH!)).toBeLessThanOrEqual(1);
+      expect(Math.abs(box.padV - aux!.paddingV!)).toBeLessThanOrEqual(1);
+      region = rect => videoRegion(rect, display, size, VIDEO_INSET);
+    }
 
     const centre = await frameLumas(video);
     const { from, to } = interiorFrames(centre);
     const out: Record<string, Series> = {};
     for (const [name, rect] of Object.entries(rects)) {
-      const frames = await regionFrameLumas(video, videoRegion(rect, display, size, VIDEO_INSET));
+      const frames = await regionFrameLumas(video, region(rect));
       // The same decode, frame for frame: the pairing below is by index.
       expect(frames.map(f => f.t)).toEqual(centre.map(f => f.t));
       out[name] = { t: frames.slice(from, to).map(f => f.t), luma: frames.slice(from, to).map(f => Math.round(f.luma)) };
@@ -236,6 +293,11 @@ describeAndroid('<BugseeSecure> on an Android handset', () => {
       expect(luma).toBeGreaterThanOrEqual(LUMA_BRIGHT_MIN);
     }
 
+    if (ON_IOS) {
+      // The served-rectangle and origin checks are Android-only: iOS logs
+      // no served buffer (the brief).
+      return;
+    }
     const served = servedOf(servedMounted);
     expect(served.count).toBe(1);
     const rect = served.rects[0]!;
@@ -261,16 +323,32 @@ describeAndroid('<BugseeSecure> on an Android handset', () => {
 
   it('every video frame with the component on screen is masked there', async () => {
     const control: Rect = moved(mountedBounds, mountedBounds.bottom - mountedBounds.top + 40);
+    // iOS: the same-size region right of the witness, white stage.
+    const beside: Rect = { ...witnessBounds, left: witnessBounds.right + 20, right: 2 * witnessBounds.right - witnessBounds.left + 20 };
     const series = await videoSeries(mounted, media.mounted.video, {
       witness: witnessBounds,
       secure: mountedBounds,
       control,
+      ...(ON_IOS ? { beside } : {}),
     });
     const witnessed = series.witness!.luma.map(l => l <= LUMA_DARK_MAX);
     const first = witnessed.indexOf(true);
-    // The witness maps correctly: it is white stage before the mount and
-    // black from it, never letterbox bar.
-    expect(first).toBeGreaterThan(0);
+    if (ON_IOS) {
+      // iOS starts recording at launch, about 100 ms before the probe's
+      // commit (the bundle's first `capture` trace against the `mounted`
+      // marker), and its first encoded frame can already show the
+      // component, so a white witness before the mount is not guaranteed.
+      // The witness crop is proven instead by the stage beside it: white in
+      // every frame the witness is black.
+      expect(first).toBeGreaterThanOrEqual(0);
+      report('mounted: frames before the witness', first);
+      const besideDim = series.beside!.luma.slice(first).filter(l => l < LUMA_BRIGHT_MIN);
+      expect(besideDim).toEqual([]);
+    } else {
+      // The witness maps correctly: it is white stage before the mount and
+      // black from it, never letterbox bar.
+      expect(first).toBeGreaterThan(0);
+    }
     expect(series.witness!.luma.slice(0, first).every(l => l >= LUMA_BRIGHT_MIN)).toBe(true);
     // Mounted until the report: every frame from the first witnessed one.
     expect(witnessed.slice(first).every(Boolean)).toBe(true);
@@ -318,14 +396,26 @@ describeAndroid('<BugseeSecure> on an Android handset', () => {
 
   it('unmounting disposes the mask', async () => {
     // Precondition: the component is really gone from the screen.
-    expect(hasNode(unmountedXml, LABEL)).toBe(false);
-    expect(hasNode(unmountedXml, WITNESS)).toBe(false);
+    if (ON_IOS) {
+      // No accessibility dump: the report's own screenshot shows the
+      // witness -- unmounted in the component's commit -- gone.
+      const witnessLumas = await screenshotLumas(media.unmounted.screenshots, witnessBounds, display.width, 0.6);
+      report('unmounted: witness lumas', witnessLumas);
+      for (const luma of witnessLumas) {
+        expect(luma).toBeGreaterThanOrEqual(LUMA_BRIGHT_MIN);
+      }
+    } else {
+      expect(hasNode(unmountedXml, LABEL)).toBe(false);
+      expect(hasNode(unmountedXml, WITNESS)).toBe(false);
+    }
     const lumas = await screenshotLumas(media.unmounted.screenshots, scrolledBounds, display.width);
     report('unmounted: last-bounds lumas', lumas);
     for (const luma of lumas) {
       expect(luma).toBeGreaterThanOrEqual(LUMA_BRIGHT_MIN);
     }
-    expect(servedOf(lastServed).count).toBe(0);
+    if (!ON_IOS) {
+      expect(servedOf(lastServed).count).toBe(0);
+    }
 
     // In the video: every frame after the witness went, the last bounds are
     // white content again.

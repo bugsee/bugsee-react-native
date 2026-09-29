@@ -213,6 +213,42 @@ export function videoRegion(
   return { x, y, w: right - x, h: bottom - y };
 }
 
+/**
+ * A screen rectangle (edges, in the unit `screen` is given in) as a crop of
+ * an iOS video frame, shrunk by `inset` video pixels on every edge and
+ * rounded inwards. The iOS SDK does not letterbox: it scales the screen by
+ * `video.width / screen.width`, from the top-left corner, and the frame's
+ * height cuts off whatever is left below (on the iPhone 17 Pro simulator, a
+ * 402x874 pt screen goes into 416x880 frames, which hold its top 850 pt --
+ * the same scale and cut as the report screenshot, 484x1024). Throws when the
+ * crop would reach outside the frame, or nothing is left after the inset.
+ */
+export function widthFitRegion(
+  rect: { left: number; top: number; right: number; bottom: number },
+  screen: { width: number; height: number },
+  video: { width: number; height: number },
+  inset: number,
+): { x: number; y: number; w: number; h: number } {
+  if (!(screen.width > 0 && screen.height > 0 && video.width > 0 && video.height > 0)) {
+    throw new Error(`widthFitRegion: sizes must be positive, got screen ${JSON.stringify(screen)} video ${JSON.stringify(video)}`);
+  }
+  const scale = video.width / screen.width;
+  const x = Math.ceil(rect.left * scale + inset);
+  const y = Math.ceil(rect.top * scale + inset);
+  const right = Math.floor(rect.right * scale - inset);
+  const bottom = Math.floor(rect.bottom * scale - inset);
+  if (right <= x || bottom <= y) {
+    throw new Error(`widthFitRegion: ${JSON.stringify(rect)} leaves nothing after a ${inset} px inset`);
+  }
+  if (x < 0 || y < 0 || right > video.width || bottom > video.height) {
+    throw new Error(
+      `widthFitRegion: ${JSON.stringify(rect)} maps to x ${x}..${right}, y ${y}..${bottom}, ` +
+        `outside the ${video.width}x${video.height} frame`,
+    );
+  }
+  return { x, y, w: right - x, h: bottom - y };
+}
+
 /** One decoded region sample's raw byte count: a 16x16 `format=gray` plane. */
 const REGION_LUMA_BYTES = 16 * 16;
 
@@ -332,5 +368,50 @@ export function blackoutPattern(
     reason:
       'no bright frame, followed by an unbroken dark run of at least ' +
       `${BLACKOUT_MIN_DARK_S}s, followed by a bright frame`,
+  };
+}
+
+/**
+ * The iOS counterpart of `blackoutPattern`. The iOS SDK stops encoding while
+ * blacked out: it writes one black frame when the blackout starts and the
+ * next frame only when recording resumes, so the black frame is *held* for
+ * the whole blackout (seen on the iOS 26.5 simulator: one dark frame at
+ * 3.132 s, the next frame bright at 7.735 s). A player shows it until the
+ * next frame, so how long the video is dark is from the first dark frame to
+ * the first bright frame after the run -- not the span between dark frames,
+ * which for a single held frame is zero.
+ *
+ * Accepts a bright frame, immediately followed by a dark run (one frame or
+ * more), immediately followed by a bright frame, where the dark run's held
+ * duration is at least `BLACKOUT_MIN_DARK_S`. An `other` frame on either
+ * side breaks the pattern, as in `blackoutPattern`.
+ */
+export function heldBlackout(
+  frames: Array<{ t: number; luma: number }>,
+): { ok: true; darkSeconds: number; darkFrames: number } | { ok: false; reason: string } {
+  const shades = frames.map(frame => shadeOf(frame.luma));
+  let i = 0;
+  while (i < frames.length) {
+    if (shades[i] !== 'dark') {
+      i += 1;
+      continue;
+    }
+    let end = i;
+    while (end + 1 < frames.length && shades[end + 1] === 'dark') end += 1;
+    const before = shades[i - 1];
+    const after = shades[end + 1];
+    if (before === 'bright' && after === 'bright') {
+      const darkSeconds = frames[end + 1]!.t - frames[i]!.t;
+      if (darkSeconds >= BLACKOUT_MIN_DARK_S) {
+        return { ok: true, darkSeconds, darkFrames: end - i + 1 };
+      }
+    }
+    i = end + 1;
+  }
+  return {
+    ok: false,
+    reason:
+      'no bright frame, followed by a dark run held for at least ' +
+      `${BLACKOUT_MIN_DARK_S}s until a bright frame`,
   };
 }

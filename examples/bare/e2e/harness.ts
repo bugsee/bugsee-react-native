@@ -8,6 +8,8 @@
  * own module registry): a suite calls `useLog` once its log exists, and every
  * helper here reads that log.
  */
+import { writeFileSync } from 'node:fs';
+
 import { checkAndroidBanner } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
 import {
@@ -19,14 +21,17 @@ import {
   listIosBundles,
   pullAndroidBundles,
   pullIosBundles,
+  terminateIosApp,
 } from './bundles';
-import { IOS_SIMULATOR_ID, iosDeviceId, iosTarget, verifyIosDevice } from './device';
+import { ANDROID_PACKAGE, IOS_SIMULATOR_ID, iosDeviceId, iosTarget, verifyIosDevice } from './device';
 import {
   type DeviceLog,
-  type IosConsole,
+  IosConsole,
   type IosLaunch,
   type LogLine,
+  Logcat,
   type Scenario,
+  adb,
   awaitMetroServes,
   launchScenario,
   scenarioArgs,
@@ -93,6 +98,51 @@ export function must(line: LogLine | undefined, what: string, from = 0): LogLine
 /** Evidence surfaced for the commit body, tagged with the suite's task. */
 export function report(label: string, value: unknown): void {
   console.log(`[${reportTag}] ${label}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
+}
+
+/**
+ * The platform's log for a suite, handed to the helpers here: logcat on
+ * Android (tagged `androidTag`), the launched app's console on iOS (tagged
+ * `iosTag`).
+ */
+export async function startDeviceLog(androidTag: string, iosTag: string): Promise<DeviceLog> {
+  const log = ON_IOS ? IosConsole.start() : await Logcat.start();
+  useLog(log, ON_IOS ? iosTag : androidTag);
+  return log;
+}
+
+/**
+ * Stops `log` and, when `E2E_LOGCAT_DUMP=<file>` is set, saves every line it
+ * captured there (as report-handler.test.ts does), for reading a run after
+ * the fact.
+ */
+export function stopDeviceLog(log: DeviceLog | undefined): void {
+  if (log === undefined) {
+    return;
+  }
+  log.stop();
+  const dump = process.env.E2E_LOGCAT_DUMP;
+  if (dump) {
+    writeFileSync(dump, log.lines.map(line => line.text).join('\n'));
+  }
+}
+
+/** Stops the app under test; not running is fine. */
+export async function stopApp(): Promise<void> {
+  if (ON_IOS) {
+    await terminateIosApp();
+  } else {
+    await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+  }
+}
+
+/**
+ * A line of the bridge's own log, `BugseeRN <rest>`: logcat's `BugseeRN:`
+ * tag on Android, the `NSLog` text on iOS (`... BareExample[pid:tid]
+ * BugseeRN <rest>`). `rest` is a regex source.
+ */
+export function bridgeLine(rest: string): RegExp {
+  return new RegExp(ON_IOS ? `\\] BugseeRN ${rest}` : `BugseeRN\\s*:\\s*${rest}`);
 }
 
 export function escape(text: string): string {
