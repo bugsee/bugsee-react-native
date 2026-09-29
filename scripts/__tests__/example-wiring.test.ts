@@ -79,11 +79,6 @@ describe('the example wires the embed assertion to a path it can resolve', () =>
   });
 });
 
-// Final-review ruling D3: CI's ios-e2e job runs the launch suite only. The
-// report-handler and wrapper-channel suites have tight timing windows (a 25 s
-// deadline asserted to within a second) that a shared runner cannot promise,
-// and they retain bundles, which hold credentials on iOS beta3 -- CI has no
-// policy for that. A bare `yarn e2e` would pick them all up silently.
 // Task 6.4: without Bugsee.wrap, the SDK's 'vh' view-hierarchy request always
 // answers with nothing -- there is no registered anchor for the walk to start
 // from. The example is the one place a regression here would otherwise go
@@ -95,6 +90,11 @@ describe('the example registers Bugsee.wrap(App)', () => {
   });
 });
 
+// Final-review ruling D3: CI's ios-e2e job runs the launch suite only. The
+// report-handler and wrapper-channel suites have tight timing windows (a 25 s
+// deadline asserted to within a second) that a shared runner cannot promise,
+// and they retain bundles, which hold credentials on iOS beta3 -- CI has no
+// policy for that. A bare `yarn e2e` would pick them all up silently.
 describe("CI's ios-e2e step", () => {
   const workflow = readFileSync(
     join(__dirname, '..', '..', '.github', 'workflows', 'ci.yml'),

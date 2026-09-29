@@ -7,9 +7,10 @@ const pkg = (...p: string[]) =>
 /**
  * Every callable member the `Spec` interface declares in `NativeBugsee.ts`.
  *
- * The `EventEmitter` properties (`onLifecycleEvent`, `onReportHandlerRequest`)
- * are deliberately excluded: codegen turns those into `emit*` methods on the
- * generated `NativeBugseeSpecBase` class, not into a selector this module
+ * The `EventEmitter` properties (`onLifecycleEvent`, `onReportHandlerRequest`,
+ * `onDataRequest`) are deliberately excluded: codegen turns those into
+ * `emit*` methods on the generated `NativeBugseeSpecBase` class, not into a
+ * selector this module
  * implements -- that wiring is covered by event-emitter-wiring.test.ts, not
  * this file. A plain interface method reads as `name(` at the start of a
  * line; an `EventEmitter` property reads as `readonly name:` and never
