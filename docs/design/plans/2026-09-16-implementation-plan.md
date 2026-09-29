@@ -1862,9 +1862,9 @@ The reviewer must independently:
 
 **Log lines** (Android `Log.i("BugseeRN", …)`, iOS `NSLog(@"BugseeRN …")`); the device tests match these:
 - `data request <id> type=<type> origin=<x>,<y>`
-- `data request <id> completed by=<js|deadline|no-js|no-origin|unknown-type|detach|sink-threw> bytes=<n|null> ms=<elapsed>`
+- `data request <id> completed by=<js|deadline|no-js|no-origin|unknown-type|detach|sink-threw|failed> bytes=<n|null> ms=<elapsed>`
 
-Here `<id>` is `dr-<counter>` and `ms` is measured from the moment `requestData` was entered.
+Here `<id>` is `dr-<counter>` and `ms` is measured from the moment `requestData` was entered. `failed` means the bridge itself threw after the request was registered (Task 6.5 M3); the SDK still gets exactly one `null`.
 
 ### The `vh` payload (exact)
 
