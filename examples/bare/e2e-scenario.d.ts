@@ -8,7 +8,7 @@ declare module '*/e2e-scenario.json' {
   const scenario: {
     scenario: string;
     nonce?: string;
-    /** Overrides the credentials' endpoint (iOS simulator retention). */
+    /** Overrides the credentials' endpoint (iOS retention, e2e/bundles.ts). */
     endpoint?: string;
   };
   export default scenario;
