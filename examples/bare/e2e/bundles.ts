@@ -68,6 +68,11 @@ export interface PulledBundle {
   };
   /** The `type: "log"` file the manifest names, or undefined if none. */
   readonly log: string | undefined;
+  /**
+   * Raw text, keyed by manifest `type`, for every entry whose stored file
+   * ends in `.json` (`log`, `events.user`, `traces.user`, ...).
+   */
+  readonly captures: ReadonlyMap<string, string>;
 }
 
 /** Everything the SDK keeps on disk: capture, pending reports, NDK state. */
@@ -149,16 +154,47 @@ export async function pullAndroidBundles(): Promise<PulledBundle[]> {
   return bundles;
 }
 
-function parseBundle(file: string, dir: string): PulledBundle {
+/**
+ * Reads a pulled bundle's directory: its request, its manifest, and every
+ * JSON capture file the manifest names. Exported for the harness's own unit
+ * tests (scripts/__tests__/e2e-capture-files.test.ts).
+ */
+export function parseBundle(file: string, dir: string): PulledBundle {
   const request = JSON.parse(readFileSync(join(dir, 'request.json'), 'utf8'));
   const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
   const logEntry = (manifest.files as ManifestFile[]).find(f => f.type === 'log');
   const logName = logEntry === undefined ? undefined : fileNameOf(logEntry);
+  const present = new Set(readdirSync(dir));
   const log =
-    logName !== undefined && readdirSync(dir).includes(logName)
+    logName !== undefined && present.has(logName)
       ? readFileSync(join(dir, logName), 'utf8')
       : undefined;
-  return { file, dir, request, manifest, log };
+  // A manifest entry whose file is not in the bundle is skipped, not an
+  // error: the caller asserting on that capture is where its absence fails.
+  const captures = new Map<string, string>();
+  for (const entry of manifest.files as ManifestFile[]) {
+    const name = fileNameOf(entry);
+    if (name !== undefined && name.endsWith('.json') && present.has(name)) {
+      captures.set(entry.type, readFileSync(join(dir, name), 'utf8'));
+    }
+  }
+  return { file, dir, request, manifest, log, captures };
+}
+
+/**
+ * The `events` array of the capture file of manifest `type` (`log`,
+ * `events.user`, `traces.user`), or `[]` when the bundle has none.
+ */
+export function captureEvents(bundle: PulledBundle, type: string): Array<Record<string, unknown>> {
+  const text = bundle.captures.get(type);
+  if (text === undefined) {
+    return [];
+  }
+  const document = JSON.parse(text) as { events?: unknown };
+  if (!Array.isArray(document.events)) {
+    throw new Error(`capture ${type} in ${bundle.file} has no events array: ${text.slice(0, 200)}`);
+  }
+  return document.events as Array<Record<string, unknown>>;
 }
 
 /** The stored file name a manifest entry points at. */

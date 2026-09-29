@@ -10,7 +10,8 @@
  * What it does after launching is picked by a scenario (e2e/scenario.ts):
  * `launch`, the default, is the lifecycle walk launch.test.ts asserts; the
  * `rh-*` scenarios are the report-handler cases in scenarios/report-handler.ts;
- * `channel` is scenarios/channel.ts and `secure` is scenarios/secure.tsx.
+ * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts and `secure`
+ * is scenarios/secure.tsx.
  */
 import { useEffect, useState } from 'react';
 import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
@@ -36,6 +37,11 @@ import {
   preLaunchChannelProbe,
   runChannelScenario,
 } from './scenarios/channel';
+import {
+  isDataScenario,
+  preLaunchDataProbe,
+  runDataScenario,
+} from './scenarios/data';
 import { SecureProbe, isSecureScenario } from './scenarios/secure';
 
 const STATUS_NAMES: Record<number, string> = {
@@ -171,6 +177,7 @@ export default function App() {
       const channel = isChannelScenario(choice.scenario)
         ? choice.scenario
         : undefined;
+      const data = isDataScenario(choice.scenario) ? choice.scenario : undefined;
       // Before launch(): a report the SDK recovers at launch is only offered
       // to a handler that is already registered.
       if (reportHandler !== undefined) {
@@ -180,6 +187,11 @@ export default function App() {
       // here must be dropped, since nothing is buffered before the SDK is up.
       if (channel !== undefined) {
         preLaunchChannelProbe(choice.nonce);
+      }
+      // Before launch(): the data scenario's negative case -- a log line,
+      // event and trace sent here must not reach the bundle.
+      if (data !== undefined) {
+        preLaunchDataProbe(choice.nonce);
       }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
@@ -207,6 +219,11 @@ export default function App() {
 
         if (channel !== undefined) {
           runChannelScenario(choice.nonce);
+          return;
+        }
+
+        if (data !== undefined) {
+          runDataScenario(choice.nonce);
           return;
         }
 
