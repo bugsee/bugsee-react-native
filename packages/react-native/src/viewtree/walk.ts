@@ -1,7 +1,8 @@
 /**
  * Turns a React fiber tree into a privacy-safe "managed view tree": a plain,
  * serialisable description of what is on screen, with no text content and no
- * prop other than `testID`/`nativeID` ever read off a fiber.
+ * prop other than `testID`/`nativeID` ever read off a fiber (and, per the
+ * plan's payload contract, `testID`/`nativeID` only on host nodes).
  *
  * Pure on purpose: no import of `react` or `react-native`. Everything this
  * module needs to know about the host platform, the renderer and the two
@@ -9,6 +10,15 @@
  * wrap component) arrives through `WalkEnv`, so this file is testable with
  * nothing but plain objects (see `__tests__/fakeFibers.ts`) and stays true
  * whether it is walking a fake tree or a real one.
+ *
+ * The walk itself is iterative (an explicit stack, not recursion): a fiber
+ * tree is untrusted input as far as this module is concerned (it did not
+ * build it), and a long transparent chain — thousands of Fragments, or a
+ * pathological `Suspense`/context nesting — must not exhaust the JS call
+ * stack the way naive recursion would. Cycles (a `.child` or `.sibling` that
+ * loops back on itself) are detected with a visited set rather than assumed
+ * away, and `.child`/`.sibling`/`.return` being `undefined` or some other
+ * non-object value is tolerated the same as `null` throughout.
  */
 import { FiberTag } from './fiber';
 import type { FiberLike, WindowRect } from './fiber';
@@ -18,6 +28,19 @@ export const VH_MAX_NODES = 2000;
 export const VH_MAX_DEPTH = 64;
 export const VH_TAG_MAX_LENGTH = 99;
 export const VH_IOS_DECIMALS = 2;
+
+// Not part of the public contract: a ceiling on the total number of fibers
+// *visited* (emitted or not — Fragments, providers, HostText, wrappers...).
+// Generous relative to VH_MAX_NODES, since most visited fibers are never
+// emitted, but it exists so a pathological shape (a very long transparent
+// chain, a wide fan-out, or either under a frozen `now()`) cannot make the
+// walk do unbounded work even though it can no longer overflow the stack.
+const VH_FIBER_VISIT_BUDGET = VH_MAX_NODES * 8;
+
+// A defensive bound on `fiberRootOf`-adjacent list-walks this module itself
+// does (see `hasVisibleContentChild`): never more than a sanity check on a
+// sibling chain, so a cyclic `.sibling` there cannot hang either.
+const SIBLING_PEEK_CAP = 10_000;
 
 export interface ManagedNode {
   id: string;
@@ -49,24 +72,50 @@ export interface WalkEnv {
 
 type Bounds = [number, number, number, number];
 
-type StopReason = 'nodes' | 'budget' | null;
-
 interface Ctx {
   env: WalkEnv;
   startedAt: number;
-  nextId: number;
   emittedCount: number;
+  fiberVisits: number;
+  /** Why doesn't matter beyond this: every stop, whatever tripped it, marks whichever fiber was mid-visit truncated the same way (see the payload contract — "depth, node cap or budget" are one case, not three). */
   stopped: boolean;
-  stopReason: StopReason;
+  /** Set the moment any node (host, composite, surface or root) is marked `truncated`, so the root can carry it too regardless of where it happened. */
+  anyTruncated: boolean;
+  /** Every fiber visited so far, across every root — a repeat means a cycle, not a legitimate second visit (a well-formed tree never revisits a fiber). */
+  visited: Set<FiberLike>;
 }
 
-interface ChildrenResult {
+/** The children collected for one fiber (or one fiber root), plus whether that list is known to be incomplete. */
+interface Frame {
   nodes: ManagedNode[];
-  /** True when this children list was cut short by VH_MAX_NODES. */
-  cutByNodeBudget: boolean;
+  truncated: boolean;
 }
 
-const EMPTY_CHILDREN: ChildrenResult = { nodes: [], cutByNodeBudget: false };
+type Task =
+  | { kind: 'visit'; fiber: FiberLike; secure: boolean; depthRemaining: number; frame: Frame }
+  | {
+      kind: 'finishHost';
+      frame: Frame;
+      parentFrame: Frame;
+      className: string;
+      bounds: Bounds;
+      secureHere: boolean;
+      tagOpts: TagOpts;
+      depthCut: boolean;
+    }
+  | { kind: 'finishComposite'; frame: Frame; parentFrame: Frame; className: string; secureHere: boolean }
+  | { kind: 'finishFlatten'; frame: Frame; parentFrame: Frame };
+
+type TagOpts = { tag?: string; native_id?: string };
+
+function isObject(value: unknown): value is object {
+  return value !== null && typeof value === 'object';
+}
+
+/** Loose on purpose: a malformed fiber's link being `undefined` (or anything else non-object) ends a walk the same way `null` does. */
+function linkOf(value: unknown): FiberLike | null {
+  return isObject(value) ? (value as unknown as FiberLike) : null;
+}
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
@@ -128,21 +177,50 @@ function nameOf(candidate: unknown): string {
   return 'Anonymous';
 }
 
-/** ForwardRef and Memo/SimpleMemo unwrap to the component they wrap. */
+/** A manually-set `displayName` on the outer (wrapper) object wins over the inner component's own name — the same preference `getComponentNameFromType` and DevTools use. */
+function preferOuterName(outer: unknown, inner: unknown): string {
+  if (typeof outer === 'object' && outer !== null) {
+    const displayName = (outer as { displayName?: unknown }).displayName;
+    if (typeof displayName === 'string' && displayName.length > 0) {
+      return displayName;
+    }
+  }
+  return nameOf(inner);
+}
+
+/**
+ * ForwardRef and Memo/SimpleMemo unwrap to the component they wrap — but the
+ * two shapes React actually builds are different, verified against a real
+ * fiber tree (`__tests__/realFiberNaming.test.ts`) and against
+ * `updateMemoComponent`/`updateMemoComponent`'s SimpleMemo downgrade in the
+ * bundled renderer:
+ * - `ForwardRef` (11): `fiber.type` is the wrapper `{ $$typeof, render }`.
+ * - `Memo` (14): `fiber.type` is the wrapper `{ $$typeof, type, compare }` —
+ *   React only downgrades a *plain-function, comparator-less* `memo(...)` to
+ *   SimpleMemo; a class component, a custom `compare`, or `defaultProps`
+ *   keeps the fiber at this tag, with the wrapped component on `.type.type`.
+ * - `SimpleMemo` (15): React reassigns `fiber.type` to the inner function
+ *   *directly* the first time such a fiber renders; the memo wrapper itself
+ *   survives only on `fiber.elementType`.
+ */
 function compositeClassName(fiber: FiberLike): string {
   if (fiber.tag === FiberTag.ForwardRef) {
     const render = (fiber.type as { render?: unknown } | null)?.render;
-    return nameOf(render);
+    return preferOuterName(fiber.type, render);
   }
-  if (fiber.tag === FiberTag.Memo || fiber.tag === FiberTag.SimpleMemo) {
+  if (fiber.tag === FiberTag.Memo) {
     const inner = (fiber.type as { type?: unknown } | null)?.type;
-    return nameOf(inner);
+    return preferOuterName(fiber.type, inner);
+  }
+  if (fiber.tag === FiberTag.SimpleMemo) {
+    return preferOuterName(fiber.elementType, fiber.type);
   }
   return nameOf(fiber.type);
 }
 
+/** Real host types are always strings (the native component name). Anything else is a malformed or hostile fiber, and `String(x)` would run an arbitrary `toString` this module has no business invoking. */
 function hostClassName(fiber: FiberLike): string {
-  return String(fiber.type);
+  return typeof fiber.type === 'string' ? fiber.type : 'Unknown';
 }
 
 type Kind = 'host' | 'composite' | 'transparent';
@@ -159,66 +237,150 @@ function classify(tag: number): Kind {
       return 'composite';
     default:
       // Fragment, Mode, ContextConsumer, ContextProvider, HostPortal,
-      // HostRoot, Profiler, Suspense, LegacyHidden: none of these are
-      // visual on their own, so their children are flattened into whichever
-      // ancestor node ends up containing them.
+      // HostRoot, Profiler, Suspense: none of these are visual on their own,
+      // so their children are flattened into whichever ancestor node ends up
+      // containing them. Offscreen and LegacyHidden are handled before this
+      // is ever called (see `isHidden`).
       return 'transparent';
   }
 }
 
 /**
- * `OffscreenComponent`'s visibility is not a prop: it lives on the fiber's
- * `stateNode` as a bitmask (`OffscreenVisible = 1`), which is what lets this
- * check happen without ever reading `memoizedProps.mode` — this module reads
- * no prop but `testID`/`nativeID`, anywhere, including here.
+ * Offscreen/LegacyHidden visibility is not a prop: React's own commit phase
+ * reads `memoizedState` for it (see `FiberLike.memoizedState`'s doc comment
+ * in `fiber.ts`) — hidden while it holds a `{ baseLanes, cachePool }` object,
+ * visible once it is `null` again. This never touches `memoizedProps`.
+ *
+ * Fails closed: `LegacyHidden` is an unstable, internal-only tag with no
+ * shape this module has verified against a real renderer, so it is always
+ * treated as hidden — privacy over completeness for a tag OSS React does not
+ * even expose. For `Offscreen`, anything other than exactly `null` (the one
+ * value React's own "visible" branch produces) is likewise treated as
+ * hidden, so an unrecognised future shape drops the subtree instead of
+ * showing it.
  */
-function isHiddenOffscreen(fiber: FiberLike): boolean {
-  const stateNode = fiber.stateNode as { _visibility?: number } | null;
-  return typeof stateNode?._visibility === 'number' && (stateNode._visibility & 1) === 0;
+function isHidden(fiber: FiberLike): boolean {
+  if (fiber.tag === FiberTag.LegacyHidden) {
+    return true;
+  }
+  return fiber.memoizedState !== null;
 }
 
-/** Reads `testID`/`nativeID` and nothing else — the only props this module ever touches, and only when the node is not secure. */
-function tagOptions(fiber: FiberLike): { tag?: string; native_id?: string } {
-  const props = fiber.memoizedProps as { testID?: unknown; nativeID?: unknown } | null | undefined;
-  const out: { tag?: string; native_id?: string } = {};
-  const testID = props?.testID;
-  if (typeof testID === 'string' && testID.length <= VH_TAG_MAX_LENGTH) {
-    out.tag = testID;
+/** Reads `testID`/`nativeID` and nothing else — the only props this module ever touches, only for host nodes (the plan's payload contract), and only when the node is not secure. Never throws: a throwing prop getter yields no tag, not a crashed walk. */
+function tagOptions(fiber: FiberLike): TagOpts {
+  try {
+    const props = fiber.memoizedProps as { testID?: unknown; nativeID?: unknown } | null | undefined;
+    const out: TagOpts = {};
+    const testID = props?.testID;
+    if (typeof testID === 'string' && testID.length <= VH_TAG_MAX_LENGTH) {
+      out.tag = testID;
+    }
+    const nativeID = props?.nativeID;
+    if (typeof nativeID === 'string' && nativeID.length <= VH_TAG_MAX_LENGTH) {
+      out.native_id = nativeID;
+    }
+    return out;
+  } catch {
+    return {};
   }
-  const nativeID = props?.nativeID;
-  if (typeof nativeID === 'string' && nativeID.length <= VH_TAG_MAX_LENGTH) {
-    out.native_id = nativeID;
+}
+
+function safeNow(env: WalkEnv): number {
+  try {
+    // `Number.isFinite` (unlike the global `isFinite`) never coerces its
+    // argument — it is already `false` for anything that is not a plain
+    // finite number, including every non-number value, so a separate
+    // `typeof value === 'number'` guard ahead of it would only ever agree.
+    const value = env.now();
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    return 0;
   }
-  return out;
+}
+
+function safeMeasure(env: WalkEnv, fiber: FiberLike): WindowRect | null {
+  try {
+    return env.measure(fiber);
+  } catch {
+    return null;
+  }
+}
+
+function safeIsSecureBoundary(env: WalkEnv, fiber: FiberLike): boolean {
+  try {
+    return env.isSecureBoundary(fiber);
+  } catch {
+    return false;
+  }
+}
+
+function safeIsWrapper(env: WalkEnv, fiber: FiberLike): boolean {
+  try {
+    return env.isWrapper(fiber);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a depth cut at `firstChild` would actually hide anything: a host
+ * whose only child is `HostText` (`<Text>plain string</Text>`, the common
+ * case) never emits that child anyway, so cutting it off is not a loss worth
+ * flagging. Only looks at `.tag` and `.sibling` — never `.child` (that would
+ * defeat the point of not recursing) and never a prop.
+ *
+ * Bounded and cycle-safe: an inconclusive walk (a cyclic or implausibly long
+ * sibling chain) reports "yes, something real might be there" rather than
+ * silently swallowing a truncation that may be genuine.
+ */
+function hasVisibleContentChild(firstChild: FiberLike): boolean {
+  const seen = new Set<FiberLike>();
+  let child: FiberLike | null = firstChild;
+  let steps = 0;
+  while (child !== null) {
+    if (steps >= SIBLING_PEEK_CAP || seen.has(child)) {
+      return true;
+    }
+    seen.add(child);
+    if (child.tag !== FiberTag.HostText) {
+      return true;
+    }
+    child = linkOf(child.sibling);
+    steps += 1;
+  }
+  return false;
 }
 
 function checkStop(ctx: Ctx): boolean {
   if (ctx.stopped) {
     return true;
   }
-  if (ctx.env.now() - ctx.startedAt > VH_WALK_BUDGET_MS) {
+  const overTimeBudget = safeNow(ctx.env) - ctx.startedAt > VH_WALK_BUDGET_MS;
+  const overNodeBudget = ctx.emittedCount >= VH_MAX_NODES;
+  const overFiberVisitBudget = ctx.fiberVisits > VH_FIBER_VISIT_BUDGET;
+  if (overTimeBudget || overNodeBudget || overFiberVisitBudget) {
     ctx.stopped = true;
-    ctx.stopReason = 'budget';
-    return true;
-  }
-  if (ctx.emittedCount >= VH_MAX_NODES) {
-    ctx.stopped = true;
-    ctx.stopReason = 'nodes';
     return true;
   }
   return false;
 }
 
+// Every node's real `id` is assigned by `renumberPreorder`, unconditionally,
+// once the whole tree is built — nothing before that point reads a node's
+// `id`, so `makeNode` never takes one; it always starts a node off with this
+// same placeholder, which final id it ends up with is simply not this
+// function's concern.
+const PLACEHOLDER_ID = '';
+
 function makeNode(
-  ctx: Ctx,
-  id: string,
   className: string,
   kind: ManagedNode['options']['kind'],
   bounds: Bounds,
   secure: boolean,
-  tagOpts: { tag?: string; native_id?: string },
+  tagOpts: TagOpts,
   children: ManagedNode[],
   truncated: boolean,
+  ctx: Ctx,
 ): ManagedNode {
   const options: ManagedNode['options'] = { kind };
   if (secure) {
@@ -231,156 +393,222 @@ function makeNode(
       options.native_id = tagOpts.native_id;
     }
   }
-  const node: ManagedNode = { id, class_name: className, bounds, options };
+  const node: ManagedNode = { id: PLACEHOLDER_ID, class_name: className, bounds, options };
   if (children.length > 0) {
     node.subitems = children;
   }
   if (truncated) {
     node.truncated = true;
+    ctx.anyTruncated = true;
   }
-  ctx.emittedCount += 1;
   return node;
 }
 
-/**
- * Walks one fiber and everything transparent above the next host/composite
- * boundary, returning the (possibly empty, possibly multi-element —
- * flattening can fan a single fiber out into several sibling nodes) list of
- * managed nodes it produced, plus whether that list was cut short by the
- * node budget (so the caller can mark itself `truncated`).
- */
-function walkFiber(fiber: FiberLike, ctx: Ctx, secure: boolean, depthRemaining: number): ChildrenResult {
-  // Whether this specifically was a node-budget stop (as opposed to a
-  // time-budget one) is not decided here: `walkChildren`'s own `ctx.stopped`
-  // fallback, immediately after calling this function, reads `ctx.stopReason`
-  // itself once this returns — computing it twice would only ever agree.
-  if (checkStop(ctx)) {
-    return { nodes: [], cutByNodeBudget: false };
+/** Pushes the work to flatten `fiber`'s children directly into `parentFrame` — used for every "this fiber emits nothing of its own" case (transparent tags, the wrap component/anchor, a visible Offscreen/LegacyHidden, and an unmeasurable host promoting its children per the plan's "no measurable host" rule). */
+function pushFlatten(stack: Task[], fiber: FiberLike, secure: boolean, depthRemaining: number, parentFrame: Frame): void {
+  const child = linkOf(fiber.child);
+  if (child === null) {
+    return;
   }
-
-  if (fiber.tag === FiberTag.HostText) {
-    return EMPTY_CHILDREN;
-  }
-
-  const secureHere = secure || ctx.env.isSecureBoundary(fiber);
-
-  if (ctx.env.isWrapper(fiber)) {
-    return walkChildren(fiber.child, ctx, secureHere, depthRemaining);
-  }
-
-  if (fiber.tag === FiberTag.Offscreen) {
-    if (isHiddenOffscreen(fiber)) {
-      return EMPTY_CHILDREN;
-    }
-    return walkChildren(fiber.child, ctx, secureHere, depthRemaining);
-  }
-
-  const kind = classify(fiber.tag);
-  if (kind === 'transparent') {
-    return walkChildren(fiber.child, ctx, secureHere, depthRemaining);
-  }
-
-  const id = String(ctx.nextId);
-  ctx.nextId += 1;
-
-  if (kind === 'host') {
-    const rect = ctx.env.measure(fiber);
-    if (rect === null) {
-      return EMPTY_CHILDREN;
-    }
-
-    let children = EMPTY_CHILDREN;
-    let truncatedByDepth = false;
-    if (fiber.child !== null) {
-      if (depthRemaining <= 1) {
-        truncatedByDepth = true;
-      } else {
-        children = walkChildren(fiber.child, ctx, secureHere, depthRemaining - 1);
-      }
-    }
-
-    const tagOpts = secureHere ? {} : tagOptions(fiber);
-    const node = makeNode(
-      ctx,
-      id,
-      hostClassName(fiber),
-      'host',
-      toBounds(rect, ctx.env),
-      secureHere,
-      tagOpts,
-      children.nodes,
-      truncatedByDepth || children.cutByNodeBudget,
-    );
-    return { nodes: [node], cutByNodeBudget: false };
-  }
-
-  if (kind === 'composite') {
-    // Unlike a host node, a composite's bounds come only from its children's
-    // bounds, so hitting the depth limit here (skipping recursion) always
-    // leaves `children` empty — which the "nothing measurable" check just
-    // below already drops. There is no case where a composite is both
-    // depth-truncated and still has something to show, so — unlike the host
-    // branch above — only the node-budget cutoff can mark this node truncated.
-    let children = EMPTY_CHILDREN;
-    if (fiber.child !== null && depthRemaining > 1) {
-      children = walkChildren(fiber.child, ctx, secureHere, depthRemaining - 1);
-    }
-
-    if (children.nodes.length === 0) {
-      return EMPTY_CHILDREN;
-    }
-
-    const tagOpts = secureHere ? {} : tagOptions(fiber);
-    const node = makeNode(
-      ctx,
-      id,
-      compositeClassName(fiber),
-      'composite',
-      unionBounds(
-        children.nodes.map((n) => n.bounds),
-        ctx.env,
-      ),
-      secureHere,
-      tagOpts,
-      children.nodes,
-      children.cutByNodeBudget,
-    );
-    return { nodes: [node], cutByNodeBudget: false };
-  }
-
-  // Exhaustive given `classify`'s declared return type: 'transparent' is
-  // handled above, leaving only 'host' and 'composite'. Reached only if a
-  // change to `classify` stops honouring that — caught here loudly, rather
-  // than silently returning `undefined` to a caller expecting a ChildrenResult.
-  throw new Error(`unreachable view-tree fiber kind: ${String(kind)}`);
+  const frame: Frame = { nodes: [], truncated: false };
+  stack.push({ kind: 'finishFlatten', frame, parentFrame });
+  stack.push({ kind: 'visit', fiber: child, secure, depthRemaining, frame });
 }
 
-function walkChildren(firstChild: FiberLike | null, ctx: Ctx, secure: boolean, depthRemaining: number): ChildrenResult {
-  const nodes: ManagedNode[] = [];
-  let cutByNodeBudget = false;
-  let child = firstChild;
-  while (child !== null) {
-    // No checkStop guard here before calling walkFiber: walkFiber already
-    // makes that its own first move, and re-checking here first would only
-    // ever reach the same answer it is about to reach anyway.
-    const result = walkFiber(child, ctx, secure, depthRemaining);
-    nodes.push(...result.nodes);
-    if (result.cutByNodeBudget) {
-      cutByNodeBudget = true;
-      break;
+/**
+ * Walks every fiber reachable from `rootFiber` (its siblings included, so it
+ * can be called directly on what a fiber root's `.current` is), collecting
+ * emitted nodes into `outerFrame`. Iterative: an explicit stack instead of
+ * recursion, so neither a long transparent chain nor a cycle can exhaust the
+ * JS call stack or loop forever.
+ */
+function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
+  const stack: Task[] = [{ kind: 'visit', fiber: rootFiber, secure: false, depthRemaining: VH_MAX_DEPTH, frame: outerFrame }];
+
+  while (stack.length > 0) {
+    const task = stack.pop() as Task;
+
+    if (task.kind === 'finishFlatten') {
+      task.parentFrame.nodes.push(...task.frame.nodes);
+      task.parentFrame.truncated = task.parentFrame.truncated || task.frame.truncated;
+      continue;
     }
-    // A stop that `result` cannot carry: `result.cutByNodeBudget` is only
-    // ever true for the node-budget (never the time-budget, by design — see
-    // `checkStop`), so a time-budget stop discovered while walking `child`
-    // still has to be noticed here, or the loop would run on to the next
-    // sibling regardless.
-    if (ctx.stopped) {
-      cutByNodeBudget = ctx.stopReason === 'nodes';
-      break;
+
+    if (task.kind === 'finishHost') {
+      const truncatedHere = task.depthCut || task.frame.truncated;
+      const node = makeNode(task.className, 'host', task.bounds, task.secureHere, task.tagOpts, task.frame.nodes, truncatedHere, ctx);
+      task.parentFrame.nodes.push(node);
+      continue;
     }
-    child = child.sibling;
+
+    if (task.kind === 'finishComposite') {
+      if (task.frame.nodes.length === 0) {
+        // Nothing measurable under this composite (or a depth cut that never
+        // got to recurse at all): it contributes no node of its own, so
+        // whatever was cut bubbles to whichever ancestor DOES get emitted,
+        // instead of being reported on a composite that was never there.
+        task.parentFrame.truncated = task.parentFrame.truncated || task.frame.truncated;
+        continue;
+      }
+      const node = makeNode(
+        task.className,
+        'composite',
+        unionBounds(
+          task.frame.nodes.map((n) => n.bounds),
+          ctx.env,
+        ),
+        task.secureHere,
+        {},
+        task.frame.nodes,
+        task.frame.truncated,
+        ctx,
+      );
+      task.parentFrame.nodes.push(node);
+      continue;
+    }
+
+    // Exhaustive given `Task`'s declared shape: 'finishFlatten', 'finishHost'
+    // and 'finishComposite' are handled (and `continue`d past) above,
+    // leaving only 'visit' — checked explicitly, rather than assumed by
+    // falling through, so a `Task` built with any other `kind` is caught
+    // here instead of silently being treated as a fiber to visit.
+    if ((task as { kind: unknown }).kind !== 'visit') {
+      throw new Error(`unreachable view-tree task kind: ${String((task as { kind: unknown }).kind)}`);
+    }
+    const { fiber, secure, depthRemaining, frame } = task;
+
+    if (ctx.visited.has(fiber)) {
+      // A repeat visit only happens via a `.child`/`.sibling` cycle in a
+      // well-formed walk (nothing legitimate revisits the same fiber): stop
+      // this path rather than loop forever, and say so.
+      frame.truncated = true;
+      continue;
+    }
+    ctx.visited.add(fiber);
+
+    // The sibling chain continues after this fiber (and everything it
+    // produces) is fully resolved — pushed now, ahead of whatever this fiber
+    // itself pushes next, so the LIFO stack only reaches it once this
+    // fiber's own subtree is done.
+    const sibling = linkOf(fiber.sibling);
+    if (sibling !== null) {
+      stack.push({ kind: 'visit', fiber: sibling, secure, depthRemaining, frame });
+    }
+
+    ctx.fiberVisits += 1;
+    if (checkStop(ctx)) {
+      frame.truncated = true;
+      continue;
+    }
+
+    if (fiber.tag === FiberTag.HostText) {
+      continue;
+    }
+
+    const secureHere = secure || safeIsSecureBoundary(ctx.env, fiber);
+
+    if (safeIsWrapper(ctx.env, fiber)) {
+      pushFlatten(stack, fiber, secureHere, depthRemaining, frame);
+      continue;
+    }
+
+    if (fiber.tag === FiberTag.Offscreen || fiber.tag === FiberTag.LegacyHidden) {
+      if (isHidden(fiber)) {
+        continue;
+      }
+      pushFlatten(stack, fiber, secureHere, depthRemaining, frame);
+      continue;
+    }
+
+    const kind = classify(fiber.tag);
+
+    if (kind === 'transparent') {
+      pushFlatten(stack, fiber, secureHere, depthRemaining, frame);
+      continue;
+    }
+
+    if (kind === 'host') {
+      const rect = safeMeasure(ctx.env, fiber);
+      if (rect === null) {
+        // No measurable host here — promote whatever children it has
+        // (as if this fiber were transparent) rather than dropping a
+        // subtree that might still have something to show underneath.
+        pushFlatten(stack, fiber, secureHere, depthRemaining, frame);
+        continue;
+      }
+
+      ctx.emittedCount += 1;
+
+      const child = linkOf(fiber.child);
+      const atDepthLimit = child !== null && depthRemaining <= 1;
+      const depthCut = atDepthLimit && hasVisibleContentChild(child as FiberLike);
+      const bounds = toBounds(rect, ctx.env);
+      const tagOpts = secureHere ? {} : tagOptions(fiber);
+      const className = hostClassName(fiber);
+
+      if (child !== null && !atDepthLimit) {
+        const childFrame: Frame = { nodes: [], truncated: false };
+        stack.push({ kind: 'finishHost', frame: childFrame, parentFrame: frame, className, bounds, secureHere, tagOpts, depthCut: false });
+        stack.push({ kind: 'visit', fiber: child, secure: secureHere, depthRemaining: depthRemaining - 1, frame: childFrame });
+      } else {
+        stack.push({
+          kind: 'finishHost',
+          frame: { nodes: [], truncated: false },
+          parentFrame: frame,
+          className,
+          bounds,
+          secureHere,
+          tagOpts,
+          depthCut,
+        });
+      }
+      continue;
+    }
+
+    if (kind === 'composite') {
+      ctx.emittedCount += 1;
+
+      const child = linkOf(fiber.child);
+      const atDepthLimit = child !== null && depthRemaining <= 1;
+      const depthCut = atDepthLimit && hasVisibleContentChild(child as FiberLike);
+      const className = compositeClassName(fiber);
+
+      if (child !== null && !atDepthLimit) {
+        const childFrame: Frame = { nodes: [], truncated: false };
+        stack.push({ kind: 'finishComposite', frame: childFrame, parentFrame: frame, className, secureHere });
+        stack.push({ kind: 'visit', fiber: child, secure: secureHere, depthRemaining: depthRemaining - 1, frame: childFrame });
+      } else {
+        stack.push({
+          kind: 'finishComposite',
+          frame: { nodes: [], truncated: depthCut },
+          parentFrame: frame,
+          className,
+          secureHere,
+        });
+      }
+      continue;
+    }
+
+    // Exhaustive given `classify`'s declared return type: 'transparent' is
+    // handled above, leaving only 'host' and 'composite'. Reached only if a
+    // change to `classify` stops honouring that.
+    throw new Error(`unreachable view-tree fiber kind: ${String(kind)}`);
   }
-  return { nodes, cutByNodeBudget };
+}
+
+/** Renumbers every node's `id` to its preorder index in the final, already-emitted tree — decoupled from however many candidate fibers were visited and dropped along the way, so ids stay gap-free ("0" for the root, then depth-first) as the plan requires. */
+function renumberPreorder(root: ManagedNode): void {
+  let counter = 0;
+  const visit = (node: ManagedNode): void => {
+    node.id = String(counter);
+    counter += 1;
+    if (node.subitems) {
+      for (const child of node.subitems) {
+        visit(child);
+      }
+    }
+  };
+  visit(root);
 }
 
 /**
@@ -388,48 +616,75 @@ function walkChildren(firstChild: FiberLike | null, ctx: Ctx, secure: boolean, d
  * "ReactSurface" child per fiber root that has anything measurable under it.
  * Returns null when nothing was emitted at all (nothing mounted, nothing
  * measurable, or every root was empty).
+ *
+ * Never throws: every call out to `env` and into a fiber's own props is
+ * individually guarded (see `safeMeasure`/`safeIsSecureBoundary`/
+ * `safeIsWrapper`/`tagOptions`), and each root's own walk is wrapped too —
+ * narrowly, around the one call not already self-guarded — so a root that
+ * hits an unanticipated bug is reported truncated instead of losing the
+ * whole tree (the other roots, and whatever that root already emitted
+ * before the throw, still stand).
  */
 export function buildViewTree(roots: readonly { current: FiberLike }[], env: WalkEnv): ManagedNode | null {
   const ctx: Ctx = {
     env,
-    startedAt: env.now(),
-    nextId: 0,
+    startedAt: safeNow(env),
     emittedCount: 0,
+    fiberVisits: 0,
     stopped: false,
-    stopReason: null,
+    anyTruncated: false,
+    visited: new Set<FiberLike>(),
   };
 
-  const rootId = String(ctx.nextId);
-  ctx.nextId += 1;
-
   const surfaces: ManagedNode[] = [];
+
+  // Reserved up front, not as each is committed: the root and every surface
+  // are ancestors open for the whole walk beneath them, exactly the case
+  // that let the node cap overshoot when only emitted nodes were counted,
+  // post hoc, as `makeNode` ran.
+  ctx.emittedCount += 1 + roots.length;
+
   for (const root of roots) {
-    const surfaceId = String(ctx.nextId);
-    ctx.nextId += 1;
-    // `root.current` is walked as a fiber in its own right, not skipped
-    // straight to its child: in production it is a HostRoot fiber, which
-    // `classify` already treats as transparent (falling through to its
-    // child) — but nothing here should assume that, since a root's own
-    // fiber can legitimately be anything (a `HostRoot` normally, but this
-    // function has no reason to special-case it over any other transparent
-    // tag).
-    const children = walkFiber(root.current, ctx, false, VH_MAX_DEPTH);
-    if (children.nodes.length === 0) {
+    if (!isObject(root)) {
       continue;
     }
+    const rootFiber = linkOf((root as { current?: unknown }).current);
+    if (rootFiber === null) {
+      continue;
+    }
+
+    const frame: Frame = { nodes: [], truncated: false };
+    try {
+      // The one call in this function that is not already fully self-
+      // guarded (every `env`/prop access `runWalk` makes is individually
+      // wrapped; this only catches `classify`'s own "should never happen"
+      // exhaustiveness throw) — kept narrow on purpose, so the explicit
+      // checks around it stay meaningfully testable rather than being
+      // absorbed into "well, *something* would have caught it anyway".
+      runWalk(rootFiber, ctx, frame);
+    } catch {
+      frame.truncated = true;
+    }
+
+    if (frame.nodes.length === 0) {
+      if (frame.truncated) {
+        ctx.anyTruncated = true;
+      }
+      continue;
+    }
+
     const surface = makeNode(
-      ctx,
-      surfaceId,
       'ReactSurface',
       'surface',
       unionBounds(
-        children.nodes.map((n) => n.bounds),
+        frame.nodes.map((n) => n.bounds),
         env,
       ),
       false,
       {},
-      children.nodes,
-      children.cutByNodeBudget,
+      frame.nodes,
+      frame.truncated,
+      ctx,
     );
     surfaces.push(surface);
   }
@@ -438,9 +693,7 @@ export function buildViewTree(roots: readonly { current: FiberLike }[], env: Wal
     return null;
   }
 
-  return makeNode(
-    ctx,
-    rootId,
+  const root = makeNode(
     'ReactNative',
     'root',
     unionBounds(
@@ -450,6 +703,9 @@ export function buildViewTree(roots: readonly { current: FiberLike }[], env: Wal
     false,
     {},
     surfaces,
-    ctx.stopped,
+    ctx.stopped || ctx.anyTruncated,
+    ctx,
   );
+  renumberPreorder(root);
+  return root;
 }
