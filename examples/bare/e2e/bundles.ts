@@ -21,7 +21,7 @@
  * The simulator's data container is a host directory, so clearing and
  * pulling are plain file operations.
  *
- * iPhone (`E2E_IOS_TARGET=device`, the default). The same dead endpoint:
+ * iPhone (`E2E_IOS_TARGET=device`, allowlisted in device.ts). The same dead endpoint:
  * `127.0.0.1` is then the phone's own loopback, where nothing listens on
  * port 9, and airplane mode has no command-line switch. The data container
  * is reached through devicectl's file service
@@ -58,7 +58,7 @@ import {
   ANDROID_SERIAL,
   IOS_BUNDLE_ID,
   IOS_SIMULATOR_ID,
-  IOS_TARGET,
+  iosTarget,
 } from './device';
 import { adb, adbStatus, devicePidsOfApp, devicectl } from './scenario';
 
@@ -245,7 +245,10 @@ export async function airplane(on: boolean): Promise<void> {
  */
 export const DEAD_ENDPOINT = 'https://127.0.0.1:9';
 
-const ON_DEVICE = IOS_TARGET !== 'simulator';
+/** Whether iOS means the iPhone; read when used, so Android never asks. */
+function onDevice(): boolean {
+  return iosTarget() === 'device';
+}
 
 /** The SDK's data directory, relative to the app's data container. */
 const IOS_SDK_DATA = 'Library/Caches/com.bugsee.data';
@@ -290,7 +293,7 @@ async function deviceEntries(subdirectory: string): Promise<string[] | undefined
  * clear, as Android's did.
  */
 export async function terminateIosApp(): Promise<void> {
-  if (!ON_DEVICE) {
+  if (!onDevice()) {
     await execFileAsync('xcrun', ['simctl', 'terminate', IOS_SIMULATOR_ID, IOS_BUNDLE_ID]).catch(
       () => {},
     );
@@ -320,7 +323,7 @@ export async function terminateIosApp(): Promise<void> {
  */
 export async function clearIosBundles(): Promise<void> {
   await terminateIosApp();
-  if (!ON_DEVICE) {
+  if (!onDevice()) {
     const data = join(await simulatorContainer(), IOS_SDK_DATA);
     rmSync(data, { recursive: true, force: true });
     if (existsSync(data)) {
@@ -343,7 +346,7 @@ export async function clearIosBundles(): Promise<void> {
 }
 
 export async function listIosBundles(): Promise<string[]> {
-  if (ON_DEVICE) {
+  if (onDevice()) {
     return ((await deviceEntries(IOS_BUNDLES)) ?? []).filter(name => name.endsWith('.bundle.zip'));
   }
   const dir = join(await simulatorContainer(), IOS_BUNDLES);
@@ -357,7 +360,7 @@ export async function listIosBundles(): Promise<string[]> {
 export async function pullIosBundles(): Promise<PulledBundle[]> {
   const root = newPulledRoot();
   const bundles: PulledBundle[] = [];
-  const container = ON_DEVICE ? undefined : await simulatorContainer();
+  const container = onDevice() ? undefined : await simulatorContainer();
   for (const file of await listIosBundles()) {
     const zip = join(root, file);
     if (container === undefined) {

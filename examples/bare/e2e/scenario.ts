@@ -39,9 +39,10 @@ import {
   ANDROID_PACKAGE,
   ANDROID_SERIAL,
   IOS_BUNDLE_ID,
-  IOS_DEVICE_ID,
   IOS_SIMULATOR_ID,
-  IOS_TARGET,
+  iosTarget,
+  requireVerifiedIosDevice,
+  verifyIosDevice,
 } from './device';
 
 const execFileAsync = promisify(execFile);
@@ -284,7 +285,8 @@ export interface IosLaunch {
 
 /**
  * The iOS app's stdout/stderr, across every launch in a test file -- on the
- * simulator or on a physical iPhone (`E2E_IOS_TARGET`, device.ts).
+ * simulator or on a physical iPhone (`E2E_IOS_TARGET`, device.ts; the
+ * iPhone only from device.ts's allowlist, identity-checked first).
  *
  * A console attachment follows one process only, so each launch spawns its
  * own and appends to the same line list; a crashed launch's stream simply
@@ -297,9 +299,17 @@ export interface IosLaunch {
 export abstract class IosConsole extends DeviceLog {
   protected readonly children = new Set<ChildProcess>();
 
-  /** The console for the configured target. */
+  /**
+   * The console for the configured target, which must be stated exactly
+   * (`E2E_IOS_TARGET=simulator|device`): anything else throws here.
+   */
   static start(): IosConsole {
-    return IOS_TARGET === 'simulator' ? new SimulatorConsole() : new DeviceConsole();
+    switch (iosTarget()) {
+      case 'simulator':
+        return new SimulatorConsole();
+      case 'device':
+        return new DeviceConsole();
+    }
   }
 
   /** `2026-09-28 20:36:59.505 BareExample[95747:11510203] ...`, local time. */
@@ -378,6 +388,7 @@ export class SimulatorConsole extends IosConsole {
  * devicectl's own options, so the app's `-bugseeE2e...` arguments reach it.
  */
 export class DeviceConsole extends IosConsole {
+  /** Throws unless `verifyIosDevice()` has passed (harness.ts awaits it). */
   protected spawnLaunch(args: readonly string[]): ChildProcess {
     return spawn('xcrun', [
       'devicectl',
@@ -385,7 +396,7 @@ export class DeviceConsole extends IosConsole {
       'process',
       'launch',
       '--device',
-      IOS_DEVICE_ID,
+      requireVerifiedIosDevice(),
       '--console',
       '--terminate-existing',
       IOS_BUNDLE_ID,
@@ -420,16 +431,18 @@ export function deviceTerminationSignal(output: readonly LogLine[]): number | un
 /**
  * Runs `devicectl device <args> --device <the iPhone>` and returns its JSON
  * result (devicectl's only stable machine interface is `--json-output`).
- * Always the configured iPhone, by id: never a device picked by default.
+ * Always the configured, allowlisted and identity-checked iPhone, by id:
+ * never a device picked by default.
  */
 export async function devicectl(...args: string[]): Promise<Record<string, unknown>> {
+  const device = await verifyIosDevice();
   const dir = mkdtempSync(join(tmpdir(), 'bugsee-devicectl-'));
   const out = join(dir, 'result.json');
   try {
     try {
       await execFileAsync(
         'xcrun',
-        ['devicectl', 'device', ...args, '--device', IOS_DEVICE_ID, '--quiet', '--json-output', out],
+        ['devicectl', 'device', ...args, '--device', device, '--quiet', '--json-output', out],
         { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
       );
     } catch (error) {

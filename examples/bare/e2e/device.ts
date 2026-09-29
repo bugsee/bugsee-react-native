@@ -13,7 +13,13 @@
  *            the launched process's stdout/stderr — RN's default log function
  *            writes there as well as to os_log.
  */
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 export type Platform = 'android' | 'ios';
 
@@ -21,18 +27,151 @@ export type Platform = 'android' | 'ios';
 // be pointed at another handset without editing it.
 export const ANDROID_SERIAL =
   process.env.ANDROID_SERIAL ?? 'AMRJCP4718402860'; // WOD_LX1
-export const IOS_DEVICE_ID =
-  process.env.IOS_DEVICE_ID ?? '345BA7FE-2C29-5722-892A-BFCB1FD34D0C'; // KRSFT, iPhone XS
 
 /**
- * Which iOS target to drive. A simulator is not a substitute for the handset
- * -- it cannot catch a code-signing or embedding fault, and its CPU is the
- * host's -- but it is the only iOS target CI has, and it does run the real
- * SDK. Without it every CI job proves the framework is *present* and none
- * proves it *runs*: gutting `launch` to `resolve(@YES)` keeps them all green.
+ * The only iPhones the e2e may drive, by CoreDevice id. The iOS harness
+ * terminates the app and wipes its whole data container (bundles.ts), so the
+ * pin fails closed: `IOS_DEVICE_ID` can only choose among these, and widening
+ * the list is a code change, never an environment variable. Each entry names
+ * the model and UDID `devicectl list devices` must report for that id.
  */
-export const IOS_TARGET =
-  process.env.E2E_IOS_TARGET === 'simulator' ? 'simulator' : 'device';
+export const IOS_DEVICE_ALLOWLIST: Readonly<
+  Record<string, { readonly productType: string; readonly udid: string; readonly name: string }>
+> = {
+  '345BA7FE-2C29-5722-892A-BFCB1FD34D0C': {
+    productType: 'iPhone11,2',
+    udid: '00008020-000554DC2641002E',
+    name: 'KRSFT, iPhone XS',
+  },
+};
+
+/** A device the e2e must never touch, whatever the allowlist says. */
+const IOS_DEVICE_REFUSED = /^D027034D/i; // the iPhone 16 Pro paired on this Mac
+
+const DEFAULT_IOS_DEVICE_ID = '345BA7FE-2C29-5722-892A-BFCB1FD34D0C';
+
+/**
+ * The iPhone to drive: `raw` (IOS_DEVICE_ID) or the XS, and only if it is on
+ * the allowlist. Throws otherwise.
+ */
+export function resolveIosDeviceId(raw: string | undefined): string {
+  const id = (raw ?? DEFAULT_IOS_DEVICE_ID).trim().toUpperCase();
+  if (IOS_DEVICE_REFUSED.test(id)) {
+    throw new Error(`IOS_DEVICE_ID=${raw}: this device is refused outright; the e2e never touches it`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(IOS_DEVICE_ALLOWLIST, id)) {
+    throw new Error(
+      `IOS_DEVICE_ID=${raw} is not on the e2e allowlist (${Object.keys(IOS_DEVICE_ALLOWLIST).join(', ')}); ` +
+        'add it to IOS_DEVICE_ALLOWLIST in e2e/device.ts to drive it',
+    );
+  }
+  return id;
+}
+
+export type IosTarget = 'simulator' | 'device';
+
+/**
+ * Which iOS target to drive: exactly `simulator` or `device`, stated. A
+ * simulator is not a substitute for the handset -- it cannot catch a
+ * code-signing or embedding fault, and its CPU is the host's -- but it is the
+ * only iOS target CI has, and it does run the real SDK. Anything else,
+ * including unset or a typo, throws: a misspelt `simulator` must not select
+ * hardware.
+ */
+export function parseIosTarget(raw: string | undefined): IosTarget {
+  if (raw === 'simulator' || raw === 'device') {
+    return raw;
+  }
+  throw new Error(
+    `E2E_IOS_TARGET must be "simulator" or "device", got ${JSON.stringify(raw)}`,
+  );
+}
+
+/** The configured iOS target (`E2E_IOS_TARGET`), validated on every read. */
+export function iosTarget(): IosTarget {
+  return parseIosTarget(process.env.E2E_IOS_TARGET);
+}
+
+/** The configured iPhone (`IOS_DEVICE_ID`, allowlisted), validated on every read. */
+export function iosDeviceId(): string {
+  return resolveIosDeviceId(process.env.IOS_DEVICE_ID);
+}
+
+interface ListedDevice {
+  readonly identifier?: string;
+  readonly hardwareProperties?: { readonly productType?: string; readonly udid?: string };
+}
+
+/**
+ * Asserts `devicectl list devices` (its `--json-output` result) shows `id`
+ * as the allowlisted model and UDID. Throws otherwise.
+ */
+export function checkIosDeviceIdentity(result: { devices?: readonly ListedDevice[] }, id: string): void {
+  const expected = IOS_DEVICE_ALLOWLIST[id];
+  if (expected === undefined) {
+    throw new Error(`device ${id} is not on the e2e allowlist`);
+  }
+  const found = (result.devices ?? []).filter(device => device.identifier?.toUpperCase() === id);
+  if (found.length !== 1) {
+    throw new Error(`devicectl list devices shows ${found.length} device(s) with id ${id}; expected the ${expected.name}`);
+  }
+  const actual = found[0]!.hardwareProperties ?? {};
+  if (actual.productType !== expected.productType || actual.udid !== expected.udid) {
+    throw new Error(
+      `device ${id} is ${String(actual.productType)} (UDID ${String(actual.udid)}), ` +
+        `not the allowlisted ${expected.productType} (UDID ${expected.udid})`,
+    );
+  }
+}
+
+let verified: Promise<string> | undefined;
+let verifiedId: string | undefined;
+
+/**
+ * Checks, once per process and before any other devicectl command, that the
+ * configured iPhone is really there and really the allowlisted model. Every
+ * devicectl caller awaits this or `requireVerifiedIosDevice()`.
+ */
+export function verifyIosDevice(): Promise<string> {
+  if (verified !== undefined) {
+    return verified;
+  }
+  const check = (async () => {
+    const id = iosDeviceId();
+    const dir = mkdtempSync(join(tmpdir(), 'bugsee-devicectl-list-'));
+    const out = join(dir, 'devices.json');
+    try {
+      await execFileAsync('xcrun', ['devicectl', 'list', 'devices', '--quiet', '--json-output', out]);
+      const parsed = JSON.parse(readFileSync(out, 'utf8')) as { result?: { devices?: ListedDevice[] } };
+      checkIosDeviceIdentity(parsed.result ?? {}, id);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    verifiedId = id;
+    return id;
+  })();
+  verified = check;
+  // A failed check is not cached, and is retried on the next call.
+  check.catch(() => {
+    if (verified === check) {
+      verified = undefined;
+    }
+  });
+  return check;
+}
+
+/**
+ * The verified iPhone's id, for a caller that cannot await (a synchronous
+ * spawn). Throws unless `verifyIosDevice()` has succeeded for the id now
+ * configured.
+ */
+export function requireVerifiedIosDevice(): string {
+  const id = iosDeviceId();
+  if (verifiedId !== id) {
+    throw new Error(`the iPhone ${id} has not been verified: await verifyIosDevice() before any devicectl command`);
+  }
+  return id;
+}
 
 /** Booted simulator to drive; `booted` is whichever one is already running. */
 export const IOS_SIMULATOR_ID = process.env.IOS_SIMULATOR_ID ?? 'booted';
@@ -90,7 +229,7 @@ export async function launchAndWaitForSequence(
   iosArgs: readonly string[] = [],
 ): Promise<SequenceResult> {
   const child =
-    platform === 'android' ? await spawnAndroid(androidUri) : spawnIos(iosArgs);
+    platform === 'android' ? await spawnAndroid(androidUri) : await spawnIos(iosArgs);
   return collect(child, steps);
 }
 
@@ -139,8 +278,8 @@ async function spawnAndroid(uri?: string): Promise<ChildProcess> {
  * `args` are the app's launch arguments (scenario.ts, `scenarioArgs`): the
  * iOS per-launch scenario channel.
  */
-function spawnIos(args: readonly string[]): ChildProcess {
-  if (IOS_TARGET === 'simulator') {
+async function spawnIos(args: readonly string[]): Promise<ChildProcess> {
+  if (iosTarget() === 'simulator') {
     // --console-pty, not --console: simctl only streams the app's stdout when
     // it allocates a pty, and RN's console.log goes to stdout. With --console
     // the process launches and the log never arrives, which reads exactly
@@ -157,13 +296,14 @@ function spawnIos(args: readonly string[]): ChildProcess {
   }
   // `--` ends devicectl's own options, so the app's `-bugseeE2e...`
   // arguments reach the app.
+  const device = await verifyIosDevice();
   return spawn('xcrun', [
     'devicectl',
     'device',
     'process',
     'launch',
     '--device',
-    IOS_DEVICE_ID,
+    device,
     '--console',
     '--terminate-existing',
     IOS_BUNDLE_ID,

@@ -56,4 +56,4 @@ node ../../scripts/cli-assert-framework-embedded.ts "$APP"
 xcrun devicectl device install app --device "$DEVICE" "$APP"
 
 echo
-echo "Installed on $DEVICE. Now: E2E_PLATFORM=ios yarn e2e"
+echo "Installed on $DEVICE. Now: E2E_PLATFORM=ios E2E_IOS_TARGET=device yarn e2e"
