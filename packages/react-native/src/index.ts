@@ -195,6 +195,10 @@ class Bugsee {
   /**
    * Records a named event, with optional params.
    *
+   * `params` must be a plain object or omitted entirely -- `null` throws
+   * `TypeError`, a change from 6.x, which accepted `null` there as "no
+   * params". Pass no second argument (or `undefined`) instead.
+   *
    * `params` is validated against the accepted value domain
    * (`src/data/validate.ts`) and copied before it crosses -- a value outside
    * that domain throws synchronously, in JS, rather than reaching native in
