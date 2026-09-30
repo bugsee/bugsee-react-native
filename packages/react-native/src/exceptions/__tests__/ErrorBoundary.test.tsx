@@ -8,6 +8,8 @@ import type { ReactElement } from 'react';
 import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 
+import type * as ReportModule from '../report';
+
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
 
@@ -15,7 +17,7 @@ const reportHandled = jest.fn();
 const markReported = jest.fn(() => true);
 
 jest.mock('../report', () => {
-  const actual = jest.requireActual('../report') as typeof import('../report');
+  const actual = jest.requireActual('../report') as typeof ReportModule;
   return {
     ...actual,
     get reportHandled() {

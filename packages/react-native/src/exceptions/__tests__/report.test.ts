@@ -4,6 +4,11 @@ jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMo
 import { buildExceptionPayload } from '../payload';
 import { encodeBridgeObject } from '../../bridge/json';
 import { encodeExceptionOptions } from '../options';
+import type * as NativeModule from '../../__mocks__/native';
+import type * as ReportModule from '../report';
+
+type Report = typeof ReportModule;
+type Native = typeof NativeModule;
 
 beforeEach(() => {
   // Fresh WeakSet / warn-once flag: markReported is module-global.
@@ -16,16 +21,16 @@ beforeEach(() => {
  * same mock instance (resetModules re-evaluates `__mocks__/native`).
  */
 function load(): {
-  reportHandled: typeof import('../report').reportHandled;
-  reportUnhandled: typeof import('../report').reportUnhandled;
-  markReported: typeof import('../report').markReported;
+  reportHandled: Report['reportHandled'];
+  reportUnhandled: Report['reportUnhandled'];
+  markReported: Report['markReported'];
   EXCEPTION_MAX_AGGREGATE: number;
   UNHANDLED_REPORT_WAIT_MS: number;
-  native: typeof import('../../__mocks__/native').native;
+  native: Native['native'];
 } {
-  const { native } = require('../../__mocks__/native') as typeof import('../../__mocks__/native');
+  const { native } = require('../../__mocks__/native') as typeof NativeModule;
   native.reset();
-  const report = require('../report') as typeof import('../report');
+  const report = require('../report') as typeof ReportModule;
   return {
     reportHandled: report.reportHandled,
     reportUnhandled: report.reportUnhandled,
@@ -39,10 +44,10 @@ function load(): {
 /** Claim then report — the shared call-site pattern (facade / handlers). */
 function claimHandled(
   markReported: (error: unknown) => boolean,
-  reportHandled: typeof import('../report').reportHandled,
+  reportHandled: Report['reportHandled'],
   error: unknown,
-  options?: Parameters<typeof import('../report').reportHandled>[1],
-  extras?: Parameters<typeof import('../report').reportHandled>[2],
+  options?: Parameters<Report['reportHandled']>[1],
+  extras?: Parameters<Report['reportHandled']>[2],
 ): void {
   if (!markReported(error)) {
     return;
@@ -52,9 +57,9 @@ function claimHandled(
 
 async function claimUnhandled(
   markReported: (error: unknown) => boolean,
-  reportUnhandled: typeof import('../report').reportUnhandled,
+  reportUnhandled: Report['reportUnhandled'],
   error: unknown,
-  extras?: Parameters<typeof import('../report').reportUnhandled>[1],
+  extras?: Parameters<Report['reportUnhandled']>[1],
 ): Promise<void> {
   if (!markReported(error)) {
     return;
