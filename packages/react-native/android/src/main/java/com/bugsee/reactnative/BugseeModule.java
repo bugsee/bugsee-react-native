@@ -25,6 +25,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /**
  * The Android half of the `Bugsee` TurboModule.
@@ -44,6 +46,36 @@ public class BugseeModule extends NativeBugseeSpec
 
     /** The wrapper's log tag, as ReportHandlerBridge and WrapperEventBus use. */
     private static final String TAG = "BugseeRN";
+
+    /**
+     * Owns every {@code Bugsee.logException} / {@code logUnhandledException}
+     * call. Android 7.3.0 waits on the caller for the view hierarchy; the
+     * React Native modules thread is that caller today, and a blocked
+     * modules thread cannot answer the hierarchy request (deadline, no RN
+     * tree). One dedicated thread, named so a log shows it is neither the
+     * JS thread nor the native-modules thread.
+     */
+    private static final Executor EXCEPTION_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        final Thread t = new Thread(r, "BugseeRN-exceptions");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** Production adapter: the SDK's handled / unhandled entry points. */
+    private static final ExceptionBridge.Sdk PROD_EXCEPTION_SDK = new ExceptionBridge.Sdk() {
+        @Override
+        public void logException(final Throwable t, @Nullable final Map<String, Object> options) {
+            Bugsee.logException(t, options);
+        }
+
+        @Override
+        public void logUnhandledException(
+                final Throwable t,
+                @Nullable final Map<String, Object> options
+        ) {
+            Bugsee.logUnhandledException(t, options);
+        }
+    };
 
     // The stable codes of src/report/errors.ts. An app matches on these.
     private static final String E_REPORT_HANDLE_DEAD = "E_REPORT_HANDLE_DEAD";
@@ -309,16 +341,40 @@ public class BugseeModule extends NativeBugseeSpec
         Bugsee.testCrash();
     }
 
-    // Task 7.1c — real bridge; stub for now so the TurboModule spec is complete.
+    /**
+     * A handled JS exception. Posted onto {@link #EXCEPTION_EXECUTOR}: the
+     * SDK must not run on the native-modules thread (see that field).
+     */
     @Override
     public void logException(final String payloadJson, final @Nullable String optionsJson) {
-        // no-op
+        EXCEPTION_EXECUTOR.execute(() -> {
+            try {
+                ExceptionBridge.logHandled(PROD_EXCEPTION_SDK, payloadJson, optionsJson);
+                Log.i(TAG, "exception handled sent bytes="
+                        + (payloadJson == null ? 0 : payloadJson.length()));
+            } catch (final RuntimeException e) {
+                Log.e(TAG, "logException failed", e);
+            }
+        });
     }
 
-    // Task 7.1c — real bridge; stub resolves at once.
+    /**
+     * An unhandled JS exception. Posted onto {@link #EXCEPTION_EXECUTOR};
+     * the promise resolves {@code null} exactly once in a {@code finally}
+     * after that background call returns, including when the SDK throws.
+     */
     @Override
     public void logUnhandledException(final String payloadJson, final Promise promise) {
-        promise.resolve(null);
+        EXCEPTION_EXECUTOR.execute(() -> {
+            try {
+                ExceptionBridge.logUnhandled(PROD_EXCEPTION_SDK, payloadJson);
+                Log.i(TAG, "exception unhandled sent bytes="
+                        + (payloadJson == null ? 0 : payloadJson.length()));
+                Log.i(TAG, "exception unhandled completed");
+            } finally {
+                promise.resolve(null);
+            }
+        });
     }
 
     // The two-argument overload only -- severity and labels are Phase 8. JS
