@@ -239,6 +239,30 @@ describe('ErrorBoundary', () => {
     );
   });
 
+  it('rejects bad options before claiming, and still reports the error', () => {
+    const error = new Error('boom');
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    render(
+      <ErrorBoundary options={{ domain: '' }}>
+        <ThrowOnce error={error} armed={{ value: true }} />
+      </ErrorBoundary>,
+    );
+
+    expect(warn).toHaveBeenCalledWith(
+      '[Bugsee] ErrorBoundary options rejected; reporting without options',
+      expect.any(RangeError),
+    );
+    expect(markReported).toHaveBeenCalledWith(error);
+    expect(reportHandled).toHaveBeenCalledWith(
+      error,
+      undefined,
+      expect.objectContaining({
+        componentStack: expect.stringContaining('ThrowOnce'),
+      }),
+    );
+    warn.mockRestore();
+  });
+
   it('an error reported once is not reported again by the boundary', () => {
     const error = new Error('already');
     markReported.mockReturnValueOnce(false);

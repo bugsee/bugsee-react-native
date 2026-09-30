@@ -132,6 +132,20 @@ describe('attach', () => {
     await Bugsee.attach();
     expect(installExceptionHandlers).toHaveBeenCalledTimes(1);
     expect(native.getLaunchOptions).toHaveBeenCalled();
+    expect(setExceptionCaptureEnabled).toHaveBeenNthCalledWith(1, false);
+    expect(setExceptionCaptureEnabled).toHaveBeenLastCalledWith(false);
+    const captureOrder = jest.mocked(setExceptionCaptureEnabled).mock.invocationCallOrder[0];
+    const installOrder = jest.mocked(installExceptionHandlers).mock.invocationCallOrder[0];
+    expect(captureOrder).toEqual(expect.any(Number));
+    expect(installOrder).toEqual(expect.any(Number));
+    expect(captureOrder!).toBeLessThan(installOrder!);
+  });
+
+  it('does not install handlers when getLaunchOptions rejects', async () => {
+    native.getLaunchOptions.mockRejectedValue(new Error('options unavailable'));
+    await expect(Bugsee.attach()).rejects.toThrow(/options unavailable/);
+    expect(installExceptionHandlers).not.toHaveBeenCalled();
+    expect(setExceptionCaptureEnabled).toHaveBeenCalledTimes(1);
     expect(setExceptionCaptureEnabled).toHaveBeenCalledWith(false);
   });
 });

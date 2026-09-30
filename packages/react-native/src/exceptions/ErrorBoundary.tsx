@@ -7,6 +7,7 @@
 import React from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import type { ExceptionOptions } from './options';
+import { encodeExceptionOptions } from './options';
 import { markReported, reportHandled } from './report';
 
 export interface ErrorBoundaryFallbackProps {
@@ -45,8 +46,20 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     const componentStack = info.componentStack ?? undefined;
     this.setState({ componentStack });
 
+    // Validate before the claim. reportHandled swallows an encode throw, so a
+    // claim made first would drop this report and block every later route.
+    let options = this.props.options;
+    try {
+      encodeExceptionOptions(options);
+    } catch (cause) {
+      console.warn(
+        '[Bugsee] ErrorBoundary options rejected; reporting without options',
+        cause,
+      );
+      options = undefined;
+    }
     if (markReported(error)) {
-      reportHandled(error, this.props.options, { componentStack });
+      reportHandled(error, options, { componentStack });
     }
     this.props.onError?.(error, componentStack);
   }

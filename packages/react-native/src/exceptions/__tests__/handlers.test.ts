@@ -118,6 +118,31 @@ describe('exception handlers', () => {
     expect(env.enableHermesTracker()!).toHaveBeenCalledTimes(1);
   });
 
+  it('retries ErrorUtils when that half throws, without leaving the install marked done', () => {
+    const { installExceptionHandlers, env } = load();
+    const errorUtils = env.errorUtils()!;
+    jest.mocked(errorUtils.setGlobalHandler).mockImplementationOnce(() => {
+      throw new Error('incomplete');
+    });
+    expect(() => installExceptionHandlers(env)).toThrow(/incomplete/);
+    installExceptionHandlers(env);
+    expect(errorUtils.setGlobalHandler).toHaveBeenCalledTimes(2);
+    expect(env.enableHermesTracker()!).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries only the tracker when ErrorUtils already succeeded', () => {
+    const { installExceptionHandlers, env } = load();
+    const errorUtils = env.errorUtils()!;
+    const hermes = jest.mocked(env.enableHermesTracker()!);
+    hermes.mockImplementationOnce(() => {
+      throw new Error('tracker');
+    });
+    expect(() => installExceptionHandlers(env)).toThrow(/tracker/);
+    installExceptionHandlers(env);
+    expect(errorUtils.setGlobalHandler).toHaveBeenCalledTimes(1);
+    expect(hermes).toHaveBeenCalledTimes(2);
+  });
+
   it('a fatal error is reported as unhandled, then the previous handler runs with the same arguments', async () => {
     const {
       installExceptionHandlers,
