@@ -9,6 +9,21 @@ describe('encodeExceptionOptions', () => {
     expect(encodeExceptionOptions({})).toBeNull();
   });
 
+  it('rejects a non-object options value', () => {
+    expect(() => encodeExceptionOptions(null as unknown as undefined)).toThrow(
+      new TypeError('ExceptionOptions must be a plain object'),
+    );
+    expect(() => encodeExceptionOptions(42 as unknown as undefined)).toThrow(
+      new TypeError('ExceptionOptions must be a plain object'),
+    );
+    expect(() => encodeExceptionOptions('x' as unknown as undefined)).toThrow(
+      new TypeError('ExceptionOptions must be a plain object'),
+    );
+    expect(() => encodeExceptionOptions([] as unknown as undefined)).toThrow(
+      new TypeError('ExceptionOptions must be a plain object'),
+    );
+  });
+
   it('domain, labels and includeVideo encode in that order', () => {
     const encoded = encodeExceptionOptions({
       includeVideo: true,
@@ -20,29 +35,46 @@ describe('encodeExceptionOptions', () => {
     );
   });
 
+  it('accepts a domain of exactly EXCEPTION_DOMAIN_MAX_LENGTH', () => {
+    const domain = 'x'.repeat(EXCEPTION_DOMAIN_MAX_LENGTH);
+    expect(encodeExceptionOptions({ domain })).toBe(
+      JSON.stringify({ domain }),
+    );
+  });
+
   it('rejects an empty domain, a domain over 256 characters and a non-string domain', () => {
-    expect(() => encodeExceptionOptions({ domain: '' })).toThrow(RangeError);
+    expect(() => encodeExceptionOptions({ domain: '' })).toThrow(
+      new RangeError('ExceptionOptions.domain must be non-empty'),
+    );
     expect(() =>
       encodeExceptionOptions({ domain: 'x'.repeat(EXCEPTION_DOMAIN_MAX_LENGTH + 1) }),
-    ).toThrow(RangeError);
+    ).toThrow(
+      new RangeError(
+        `ExceptionOptions.domain must be at most ${EXCEPTION_DOMAIN_MAX_LENGTH} characters`,
+      ),
+    );
     expect(() =>
       encodeExceptionOptions({ domain: 42 as unknown as string }),
-    ).toThrow(TypeError);
+    ).toThrow(new TypeError('ExceptionOptions.domain must be a string'));
   });
 
   it('rejects labels that are not an array of strings', () => {
     expect(() =>
       encodeExceptionOptions({ labels: 'x' as unknown as string[] }),
-    ).toThrow(TypeError);
+    ).toThrow(
+      new TypeError('ExceptionOptions.labels must be an array of strings'),
+    );
     expect(() =>
       encodeExceptionOptions({ labels: [1] as unknown as string[] }),
-    ).toThrow(TypeError);
+    ).toThrow(
+      new TypeError('ExceptionOptions.labels must be an array of strings'),
+    );
   });
 
   it('rejects a non-boolean includeVideo', () => {
     expect(() =>
       encodeExceptionOptions({ includeVideo: 1 as unknown as boolean }),
-    ).toThrow(TypeError);
+    ).toThrow(new TypeError('ExceptionOptions.includeVideo must be a boolean'));
   });
 
   it('rejects an unknown key, naming it', () => {

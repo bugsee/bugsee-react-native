@@ -1256,4 +1256,97 @@ describe('a shared parse budget across the whole tree (review N1)', () => {
 
     expect(payload.cause?.cause?.frames).toEqual([]);
   });
+
+  describe('debug_id join', () => {
+    it('a frame in a registered file carries its debug_id', () => {
+      const error = noStack(new Error('m'));
+      error.stack = 'Error: m\n    at foo (/a.js:1:2)\n    at bar (/b.js:3:4)';
+      const payload = buildExceptionPayload({
+        error,
+        platformOS: 'ios',
+        debugIds: new Map([
+          ['/a.js', 'id-a'],
+          ['/b.js', 'id-b'],
+        ]),
+      });
+
+      expect(payload.frames[0]?.debug_id).toBe('id-a');
+      expect(payload.frames[1]?.debug_id).toBe('id-b');
+    });
+
+    it('a frame in another file carries none', () => {
+      const error = noStack(new Error('m'));
+      error.stack = 'Error: m\n    at foo (/a.js:1:2)\n    at bar (/other.js:3:4)';
+      const payload = buildExceptionPayload({
+        error,
+        platformOS: 'ios',
+        debugIds: new Map([['/a.js', 'id-a']]),
+      });
+
+      expect(payload.frames[0]?.debug_id).toBe('id-a');
+      expect(payload.frames[1]?.debug_id).toBeUndefined();
+      expect('debug_id' in (payload.frames[1] ?? {})).toBe(false);
+    });
+
+    it('debug_ids is the whole map, as an object', () => {
+      const error = noStack(new Error('m'));
+      error.stack = 'Error: m\n    at foo (/a.js:1:2)';
+      const debugIds = new Map([
+        ['/a.js', 'id-a'],
+        ['/b.js', 'id-b'],
+      ]);
+      const payload = buildExceptionPayload({
+        error,
+        platformOS: 'android',
+        debugIds,
+      });
+
+      expect(payload.debug_ids).toEqual({ '/a.js': 'id-a', '/b.js': 'id-b' });
+      expect(Array.isArray(payload.debug_ids)).toBe(false);
+      expect(Object.keys(payload.debug_ids ?? {})).toEqual(['/a.js', '/b.js']);
+    });
+
+    it('no debug_ids key when nothing is registered', () => {
+      const withEmpty = buildExceptionPayload({
+        error: noStack(new Error('m')),
+        platformOS: 'ios',
+        debugIds: new Map(),
+      });
+      const withAbsent = buildExceptionPayload({
+        error: noStack(new Error('m')),
+        platformOS: 'ios',
+      });
+
+      expect('debug_ids' in withEmpty).toBe(false);
+      expect('debug_ids' in withAbsent).toBe(false);
+    });
+
+    it('the join key is the same for a registration stack and a crash stack from one bundle', () => {
+      // A Hermes release registration (`address at …/MyApp.app/…`) and a
+      // crash frame from the same bundle that carries `file://` share
+      // fileKey. cleanSource strips the iOS `.app` prefix, so joining on it
+      // would miss the map entry keyed by the full path (mutate 3).
+      const appBundle =
+        '/private/var/containers/Bundle/Application/ABC-123/MyApp.app/main.jsbundle';
+      const registrationStack =
+        `Error\n    at inject (address at ${appBundle}:1:1)`;
+      const debugIds = new Map([[appBundle, 'ios-bundle-id']]);
+
+      const error = noStack(new Error('m'));
+      error.stack = `Error: m\n    at throwSite (file://${appBundle}:1:20417)`;
+
+      const payload = buildExceptionPayload({
+        error,
+        platformOS: 'ios',
+        debugIds,
+      });
+
+      // Registration's top-frame fileKey is the map key we passed above.
+      expect(registrationStack).toContain('address at ');
+      expect(error.stack).toContain('file://');
+      expect(payload.frames[0]?.data.source).toBe('main.jsbundle');
+      expect(payload.frames[0]?.debug_id).toBe('ios-bundle-id');
+      expect(payload.debug_ids).toEqual({ [appBundle]: 'ios-bundle-id' });
+    });
+  });
 });
