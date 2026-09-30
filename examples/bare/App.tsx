@@ -361,52 +361,41 @@ export default function App() {
         // accepted by launch(). Reading it back through getLaunchOptions is
         // the only thing that shows the difference.
         //
-        // Wrapped, and logging either outcome, because a silent absence is
-        // unreadable: a CI run showed this line simply missing while
-        // execution plainly continued past it, and there was no way to tell a
-        // rejection from a value that never printed.
-        //
-        // Printed on a later turn than the getter's resolution. The lines are
-        // the continuation of that bridge call, and from there they do not
-        // reach the console at all -- not even as the "threw" line -- while
-        // relaunch, which awaits again, logs normally.
-        let durationLine: string;
-        let wifiLine: string | undefined;
-        let endpointLine: string | undefined;
+        // The lines are held until the relaunch continuation below. On the
+        // CI simulator the console.log in this continuation, and the Debug
+        // NSLog inside getLaunchOptions, are both absent from the pty while
+        // this function keeps going and the relaunch continuation is
+        // present. Two runs of the launch job failed on that gap. The
+        // strings are taken before relaunch, so they are still the options
+        // getLaunchOptions returned.
+        let optionLines: string[];
         try {
           const effective = await Bugsee.getLaunchOptions();
-          durationLine = `BUGSEE_E2E effective duration=${String(
-            effective['com.bugsee.option.config.duration'],
-          )} keys=${Object.keys(effective).length}`;
-          // Task 3.7: this app never sets wifi-only-upload (see
-          // launchOptions above -- only endpoint and duration), so an SDK
-          // that could only report options differing from its own defaults
-          // would have no key to answer with here at all. Logged separately
-          // from `effective duration` so a caller can tell "the getter
-          // answered but the key is missing" from "the getter never ran".
-          wifiLine = `BUGSEE_E2E effective wifi-only-upload=${String(
-            effective['com.bugsee.option.config.wifi-only-upload'],
-          )}`;
-          // The endpoint as the SDK itself reports it: the witness that a
-          // placeholder token was not sent to the real server.
-          const endpointKeys = Object.keys(effective).filter(key =>
-            /endpoint/i.test(key),
-          );
-          endpointLine = `BUGSEE_E2E effective endpoint ${JSON.stringify(
-            Object.fromEntries(endpointKeys.map(key => [key, effective[key]])),
-          )}`;
+          optionLines = [
+            `BUGSEE_E2E effective duration=${String(
+              effective['com.bugsee.option.config.duration'],
+            )} keys=${Object.keys(effective).length}`,
+            // Task 3.7: this app never sets wifi-only-upload (see
+            // launchOptions above -- only endpoint and duration), so an SDK
+            // that could only report options differing from its own defaults
+            // would have no key to answer with here at all. Logged separately
+            // from `effective duration` so a caller can tell "the getter
+            // answered but the key is missing" from "the getter never ran".
+            `BUGSEE_E2E effective wifi-only-upload=${String(
+              effective['com.bugsee.option.config.wifi-only-upload'],
+            )}`,
+            // The endpoint as the SDK itself reports it: the witness that a
+            // placeholder token was not sent to the real server.
+            `BUGSEE_E2E effective endpoint ${JSON.stringify(
+              Object.fromEntries(
+                Object.keys(effective)
+                  .filter(key => /endpoint/i.test(key))
+                  .map(key => [key, effective[key]]),
+              ),
+            )}`,
+          ];
         } catch (optionsCause) {
-          durationLine = `BUGSEE_E2E effective threw ${String(optionsCause)}`;
-        }
-        await new Promise<void>(resolve => {
-          setTimeout(resolve, 0);
-        });
-        console.log(durationLine);
-        if (wifiLine !== undefined) {
-          console.log(wifiLine);
-        }
-        if (endpointLine !== undefined) {
-          console.log(endpointLine);
+          optionLines = [`BUGSEE_E2E effective threw ${String(optionsCause)}`];
         }
 
         // relaunch() is the one lifecycle call whose two platforms settle
@@ -415,12 +404,17 @@ export default function App() {
         // to invoke. What the e2e asserts is that the promise SETTLES -- a
         // promise that never settles is indistinguishable from a slow one,
         // and no other check in this repo would notice.
+        let relaunchLine: string;
         try {
           const relaunched = await Bugsee.relaunch(launchOptions(endpoint));
-          console.log(`BUGSEE_E2E relaunch() settled resolved=${String(relaunched)}`);
+          relaunchLine = `BUGSEE_E2E relaunch() settled resolved=${String(relaunched)}`;
         } catch (relaunchCause) {
-          console.log(`BUGSEE_E2E relaunch() settled rejected=${String(relaunchCause)}`);
+          relaunchLine = `BUGSEE_E2E relaunch() settled rejected=${String(relaunchCause)}`;
         }
+        for (const line of optionLines) {
+          console.log(line);
+        }
+        console.log(relaunchLine);
 
         // Asserted separately from the status poll: a successful relaunch
         // completes in about 10ms, so the 100ms poll observes no change and
