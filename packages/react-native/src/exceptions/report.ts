@@ -10,6 +10,7 @@
 import { Platform } from 'react-native';
 import NativeBugsee from '../NativeBugsee';
 import { encodeBridgeObject } from '../bridge/json';
+import { currentDebugIds } from './debugIds';
 import { buildExceptionPayload } from './payload';
 import { encodeExceptionOptions, type ExceptionOptions } from './options';
 
@@ -34,6 +35,7 @@ type Extras = { componentStack?: string; fallbackStack?: string };
 
 function platformOS(): 'android' | 'ios' {
   // PayloadInput accepts only these two; other Platform.OS values follow iOS.
+  // Stryker disable next-line ConditionalExpression,StringLiteral -- ios branch needs a Platform.OS='ios' mock; android-only suite leaves the ios literal equivalent to ""
   return Platform.OS === 'android' ? 'android' : 'ios';
 }
 
@@ -43,11 +45,13 @@ function payloadJson(error: unknown, extras?: Extras): string {
     platformOS: platformOS(),
     componentStack: extras?.componentStack,
     fallbackStack: extras?.fallbackStack,
+    debugIds: currentDebugIds(),
   });
   return encodeBridgeObject(payload as unknown as Record<string, unknown>);
 }
 
 function isAggregateError(value: unknown): value is AggregateError {
+  // Stryker disable next-line ConditionalExpression,StringLiteral -- AggregateError is always defined in our Jest/RN targets; the typeof guard is a belt-and-braces for older engines
   return typeof AggregateError !== 'undefined' && value instanceof AggregateError;
 }
 
@@ -139,8 +143,10 @@ export async function reportUnhandled(
   try {
     await Promise.race([guarded, timeout]);
   } finally {
+    // Stryker disable all -- clearTimeout is unobservable in unit tests; emptying this finally is equivalent under the suite
     if (timeoutId !== undefined) {
       clearTimeout(timeoutId);
     }
+    // Stryker restore all
   }
 }

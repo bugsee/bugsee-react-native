@@ -8,6 +8,7 @@ import { encodeExceptionOptions } from '../options';
 beforeEach(() => {
   // Fresh WeakSet / warn-once flag: markReported is module-global.
   jest.resetModules();
+  delete (globalThis as { _bugseeDebugIds?: unknown })._bugseeDebugIds;
 });
 
 /**
@@ -81,7 +82,25 @@ describe('report', () => {
     report('a');
     report(42);
     report(42);
-    expect(native.logException).toHaveBeenCalledTimes(4);
+    report(null);
+    report(null);
+    expect(native.logException).toHaveBeenCalledTimes(6);
+  });
+
+  it('a handled AggregateError with a non-array errors field reports nothing', () => {
+    const { reportHandled: report, native } = load();
+    const agg = new AggregateError([new Error('x')], 'agg');
+    Object.defineProperty(agg, 'errors', { value: 'not-an-array' });
+    report(agg);
+    expect(native.logException).not.toHaveBeenCalled();
+  });
+
+  it('a function is reported once, like any other object', () => {
+    const { reportHandled: report, native } = load();
+    const fn = function reportedFn() {};
+    report(fn);
+    report(fn);
+    expect(native.logException).toHaveBeenCalledTimes(1);
   });
 
   it('a handled AggregateError is split, first 10 only', () => {
@@ -179,17 +198,48 @@ describe('report', () => {
     }
   });
 
+  it('a function is reported once, like any other object', () => {
+    const { reportHandled: report, native } = load();
+    const fn = function reportedFn() {};
+    report(fn);
+    report(fn);
+    expect(native.logException).toHaveBeenCalledTimes(1);
+  });
+
   it('reportUnhandled resolves, and warns once, when native rejects or throws', async () => {
     const { reportUnhandled: report, native } = load();
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       native.logUnhandledException.mockRejectedValue(new Error('native fail'));
       await expect(report(new Error('a'))).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        '[Bugsee] logUnhandledException native call failed',
+      );
+
+      native.logUnhandledException.mockImplementation(() => {
+        throw new Error('sync throw');
+      });
+      await expect(report(new Error('b'))).resolves.toBeUndefined();
+      // Still only once: the warn-once flag survives across both failure modes.
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reportUnhandled warns when native throws synchronously', async () => {
+    const { reportUnhandled: report, native } = load();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
       native.logUnhandledException.mockImplementation(() => {
         throw new Error('sync throw');
       });
       await expect(report(new Error('b'))).resolves.toBeUndefined();
       expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        '[Bugsee] logUnhandledException native call failed',
+      );
     } finally {
       warn.mockRestore();
     }
