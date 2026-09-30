@@ -53,16 +53,38 @@ const BASE_STEPS: readonly Step[] = [
     timeoutMs: 10_000,
   },
   {
+    // That relaunch SETTLES is the assertion; what it resolves to is
+    // secondary. iOS settles through the SDK's `started:` completion block,
+    // so a path that never invokes it leaves the JS promise pending forever
+    // -- indistinguishable from slowness, and invisible to every other check
+    // in this repo. Android settles from its own callback.
+    //
+    // This step is before the option lines on purpose. App.tsx prints the
+    // relaunch line and then the option lines, in one burst, only after
+    // relaunch() settles. The 45s budget belongs to this wait: a hung
+    // started: callback must fail here, not as a missing duration 15s after
+    // Launched.
+    name: 'relaunch() settled',
+    pattern: /BUGSEE_E2E relaunch\(\) settled (resolved|rejected)=/,
+    // The bridge itself no longer times out (Task 3.7): it resolves straight
+    // from the SDK's `started:` callback, which the fixed SDK is now
+    // guaranteed to invoke. This step's own budget is generous headroom
+    // against a genuinely slow device, not a second copy of a bridge-side
+    // deadline -- a hang here means the callback never arrived at all.
+    timeoutMs: 45_000,
+  },
+  {
     // Task 2.6: the SDK reports back the non-default duration the app set, so
     // the typed options model demonstrably reached it. Asserting the value
     // and not merely the key's presence -- an SDK echoing its own default
-    // would also produce a key.
+    // would also produce a key. Printed in the same burst as relaunch, so
+    // this budget is headroom for that burst, not a second wait for relaunch.
     name: 'option took effect',
     // Matches the value, not merely the key: an SDK echoing its own default
     // would also produce a key. `keys=` rides along so a failure shows
     // whether the SDK reported nothing at all or reported without this one.
     pattern: /BUGSEE_E2E effective duration=90 /,
-    timeoutMs: 15_000,
+    timeoutMs: 5_000,
   },
   {
     // Task 3.7: `com.bugsee.option.config.wifi-only-upload` is a key the app
@@ -76,21 +98,6 @@ const BASE_STEPS: readonly Step[] = [
     name: 'unset option answered',
     pattern: /BUGSEE_E2E effective wifi-only-upload=(true|false)/,
     timeoutMs: 5_000,
-  },
-  {
-    // That relaunch SETTLES is the assertion; what it resolves to is
-    // secondary. iOS settles through the SDK's `started:` completion block,
-    // so a path that never invokes it leaves the JS promise pending forever
-    // -- indistinguishable from slowness, and invisible to every other check
-    // in this repo. Android settles from its own callback.
-    name: 'relaunch() settled',
-    pattern: /BUGSEE_E2E relaunch\(\) settled (resolved|rejected)=/,
-    // The bridge itself no longer times out (Task 3.7): it resolves straight
-    // from the SDK's `started:` callback, which the fixed SDK is now
-    // guaranteed to invoke. This step's own budget is generous headroom
-    // against a genuinely slow device, not a second copy of a bridge-side
-    // deadline -- a hang here means the callback never arrived at all.
-    timeoutMs: 45_000,
   },
   {
     // relaunch stops and starts the SDK, so capture must come back up.
