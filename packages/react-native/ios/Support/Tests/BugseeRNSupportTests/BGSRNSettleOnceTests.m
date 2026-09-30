@@ -1,6 +1,8 @@
 @import XCTest;
 @import BugseeRNSupport;
 
+#import <stdatomic.h>
+
 /// Pins `BGSRNSettleOnce`: a promise-returning native method must settle
 /// exactly once even when the SDK never calls its completion (iOS simulator
 /// verified fact for `logUnhandledException`).
@@ -72,11 +74,15 @@
 /// Two threads share a two-phase barrier around the once-flag load. An atomic
 /// exchange still settles once; a plain `BOOL` lets both through. The barrier
 /// makes that race deterministic rather than relying on luck.
+///
+/// `settle` runs on the caller threads, not the serial deadline queue, so the
+/// counter is atomic: a non-atomic `count += 1` can lose a double-settle and
+/// leave mutate (3) green while settling twice.
 - (void)testTwoConcurrentCallsSettleOnce {
-  __block NSInteger count = 0;
+  __block atomic_int count = 0;
   dispatch_queue_t queue = dispatch_queue_create("com.bugsee.rn.settle-once.race", DISPATCH_QUEUE_SERIAL);
   dispatch_block_t trigger = BGSRNSettleOnce(5000, queue, ^{
-    count += 1;
+    atomic_fetch_add_explicit(&count, 1, memory_order_relaxed);
   });
 
   dispatch_semaphore_t atWindow = dispatch_semaphore_create(0);
@@ -103,7 +109,8 @@
 
   XCTAssertEqual(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC)), 0,
                  @"concurrent callers did not finish");
-  XCTAssertEqual(count, 1, @"two concurrent calls settled more than once");
+  XCTAssertEqual(atomic_load_explicit(&count, memory_order_relaxed), 1,
+                 @"two concurrent calls settled more than once");
 }
 
 @end

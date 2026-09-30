@@ -15,9 +15,11 @@ FOUNDATION_EXPORT dispatch_block_t BGSRNSettleOnce(int64_t deadlineMs,
                                                    dispatch_queue_t queue,
                                                    dispatch_block_t settle);
 
-/// Test-only: runs on every claim attempt, just before the once-flag is
-/// examined. Nil in production. The concurrent settle test parks two threads
-/// here so a non-atomic once-flag loses deterministically rather than by luck.
+/// Test-only: runs twice on every claim attempt — once before the once-flag
+/// load and once after it. Nil in production is a no-op. The concurrent settle
+/// test parks both callers at each phase so a non-atomic once-flag loses
+/// deterministically (both saw unset) while `atomic_exchange` still admits
+/// only one settler.
 FOUNDATION_EXPORT _Nullable dispatch_block_t BGSRNSettleOnceRaceWindow;
 
 NS_ASSUME_NONNULL_END
