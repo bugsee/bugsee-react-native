@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { captureEvents, parseBundle } from '../../examples/bare/e2e/bundles';
+import { captureEvents, crashOf, parseBundle } from '../../examples/bare/e2e/bundles';
 
 /**
  * The device e2e reads a retained bundle's capture files -- `log`,
@@ -58,6 +58,23 @@ describe('bundle capture files', () => {
     expect([...bundle.binaries.keys()]).toEqual(['video']);
     expect(bundle.binaries.get('video')).toEqual([join(dir, 'video.mp4')]);
     expect(bundle.captures.has('video')).toBe(false);
+  });
+
+  it('crashOf parses the crash capture', () => {
+    const crash = '{"handled":true,"exception":{"name":"com.bugsee.reactnative.ReactNativeWebException","reason":"{\\"name\\":\\"TypeError\\"}"}}';
+    writeManifest([{ type: 'crash', filename: 'crash.json' }]);
+    writeFileSync(join(dir, 'crash.json'), crash);
+
+    const bundle = parseBundle('x.bundle.zip', dir);
+
+    expect(crashOf(bundle)).toEqual(JSON.parse(crash));
+  });
+
+  it('crashOf is undefined without a crash capture', () => {
+    writeManifest([{ type: 'log', filename: 'log.json' }]);
+    writeFileSync(join(dir, 'log.json'), '{"version":1,"events":[]}');
+
+    expect(crashOf(parseBundle('x.bundle.zip', dir))).toBeUndefined();
   });
 
   it('captureEvents is empty for a type the manifest lacks', () => {
