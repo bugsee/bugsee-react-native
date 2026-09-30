@@ -239,8 +239,13 @@ describeDevice(`blackout on ${TARGET_NAME}`, () => {
     if (ON_IOS) {
       // The one black frame stays on screen until the next encoded frame,
       // which is after endBlackout, so the hold may run longer than the
-      // blackout — no upper bound. The floor is the early-edge leak only:
-      // the black frame must appear within ~0.25 s of startBlackout.
+      // blackout — no upper bound. darkSeconds is that hold (first dark
+      // frame to the next bright frame). The floor requires the hold to
+      // cover the blackout minus 0.25s. It does not locate the frame: a
+      // later start whose hold runs on past endBlackout still meets it.
+      // When the SDK entered blackout is the capture trace above, on the
+      // device clock. Frame t is presentation time from the start of the
+      // file, and this checkout has no measured offset between those clocks.
       expect(darkSeconds).toBeGreaterThanOrEqual(expected - 0.25);
     } else {
       expect(Math.abs(darkSeconds - expected)).toBeLessThanOrEqual(1.0);
