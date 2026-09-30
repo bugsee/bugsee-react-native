@@ -53,4 +53,14 @@
   XCTAssertNil([BGSRNWrapper wrapperWithIdentity:@{@"type" : @"x"}].context);
 }
 
+/// What module init registers, before JS exists to describe the runtime.
+/// Anything else here would be a second, disagreeing answer.
+- (void)testWithoutJsRuntimeCarriesOnlyTypeAndVersion {
+  BGSRNWrapper *wrapper = [BGSRNWrapper wrapperWithoutJsRuntime];
+  XCTAssertEqualObjects(wrapper.wrapperType, @"react_native");
+  XCTAssertEqualObjects(wrapper.wrapperVersion, @"0.0.0");
+  XCTAssertNil(wrapper.wrapperBuild);
+  XCTAssertEqual(wrapper.context.count, (NSUInteger)0);
+}
+
 @end

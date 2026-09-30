@@ -17,4 +17,16 @@ NS_ASSUME_NONNULL_BEGIN
 /// still passes without it.
 FOUNDATION_EXPORT void BGSRNRunOnMain(dispatch_block_t block);
 
+/// Runs @c block on the main thread and does not return until it has finished.
+///
+/// Same already-on-main inline rule as @c BGSRNRunOnMain (a @c dispatch_sync
+/// from main would deadlock). Off main, hops with @c dispatch_sync so the
+/// caller may rely on side effects the block made on main.
+///
+/// Reserved for work that must be established before the caller continues —
+/// today, the module-init wrapper registration. Ordinary SDK entry points
+/// stay on @c BGSRNRunOnMain (async off main) so they never block a JS
+/// queue waiting on main.
+FOUNDATION_EXPORT void BGSRNRunOnMainSync(dispatch_block_t block);
+
 NS_ASSUME_NONNULL_END

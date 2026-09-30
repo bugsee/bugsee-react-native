@@ -103,6 +103,62 @@ describe('the wrapper type is one value, not two', () => {
     expect(ts).toBeDefined();
     expect(java).toBe(ts);
   });
+
+  it('the iOS pre-JS wrapper matches identity.ts and package.json', () => {
+    const ts = /export const WRAPPER_TYPE = '([^']+)'/
+      .exec(pkg('src', 'wrapper', 'identity.ts'))?.[1];
+    const version = JSON.parse(
+      readFileSync(join(repo, 'packages', 'react-native', 'package.json'), 'utf8'),
+    ).version as string;
+    const method = /wrapperWithoutJsRuntime[\s\S]*?\n\}/
+      .exec(pkg('ios', 'Support', 'Sources', 'BugseeRNSupport', 'BGSRNWrapper.m'))?.[0];
+
+    expect(method).toBeDefined();
+    expect(method).toContain(`@"${ts}"`);
+    expect(method).toContain(`@"${version}"`);
+  });
+});
+
+describe('iOS registers the wrapper at module init', () => {
+  const body = (source: string, signature: RegExp): string => {
+    const start = source.search(signature);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const open = source.indexOf('{', start);
+    let depth = 0;
+    for (let i = open; i < source.length; i += 1) {
+      if (source[i] === '{') depth += 1;
+      else if (source[i] === '}' && --depth === 0) return source.slice(open, i + 1);
+    }
+    throw new Error('unbalanced braces');
+  };
+
+  it('init registers the thin identity only when none is registered yet', () => {
+    const source = pkg('ios', 'BugseeModule.mm');
+    const init = body(source, /- \(instancetype\)init\b/);
+    expect(init).toMatch(/\[BGSRNWrapper wrapperWithoutJsRuntime\]/);
+    expect(init).toMatch(/BGSRNSetWrapper\([\s\S]*YES\)/);
+    expect(init).not.toMatch(/attachToBridges|attach:self/);
+  });
+
+  it('setWrapperInfo replaces that identity', () => {
+    const source = pkg('ios', 'BugseeModule.mm');
+    const setInfo = body(source, /- \(void\)setWrapperInfo:/);
+    expect(setInfo).toMatch(/wrapperWithIdentity:identity/);
+    expect(setInfo).toMatch(/BGSRNSetWrapper\([\s\S]*NO\)/);
+  });
+
+  it('onlyIfAbsent registration waits on main via BGSRNRunOnMainSync', () => {
+    const source = pkg('ios', 'BugseeModule.mm');
+    const setWrapper = body(source, /static void BGSRNSetWrapper\b/);
+    expect(setWrapper).toMatch(/if\s*\(\s*onlyIfAbsent\s*\)/);
+    expect(setWrapper).toMatch(/BGSRNRunOnMainSync\s*\(/);
+    expect(setWrapper).toMatch(/BGSRNRunOnMain\s*\(/);
+    // The sync hop is only the onlyIfAbsent branch; the async hop stays for
+    // setWrapperInfo. A single RunOnMainSync wrapping the whole function
+    // would also satisfy the race fix but would block ordinary JS calls.
+    const syncArm = /if\s*\(\s*onlyIfAbsent\s*\)\s*\{\s*BGSRNRunOnMainSync\s*\(/.test(setWrapper);
+    expect(syncArm).toBe(true);
+  });
 });
 
 // The probe was scaffolding for establishing the contract on a device. It logs
