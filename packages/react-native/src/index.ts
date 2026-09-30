@@ -32,7 +32,21 @@ import {
 import type { AttributeReadValue, AttributeValue } from './attributes/validate';
 import { encodeExceptionOptions } from './exceptions/options';
 import type { ExceptionOptions } from './exceptions/options';
-import { reportHandled, reportUnhandled } from './exceptions/report';
+import {
+  installExceptionHandlers,
+  setExceptionCaptureEnabled,
+} from './exceptions/handlers';
+import {
+  markReported,
+  reportHandled,
+  reportUnhandled,
+} from './exceptions/report';
+
+const DETECT_CRASH_OPTION = 'com.bugsee.option.detect.crash';
+
+function applyExceptionCaptureFromOptions(options: LaunchOptions): void {
+  setExceptionCaptureEnabled(options[DETECT_CRASH_OPTION] !== false);
+}
 
 export { Status } from './status';
 
@@ -70,6 +84,11 @@ class Bugsee {
    * Starts the SDK. Resolves to whether the native side actually launched —
    * it can decline (already running, token rejected) without that being an
    * error the caller should throw on.
+   *
+   * Installs the global JS exception handlers (ErrorUtils and unhandled
+   * promise rejections). On Hermes, the last caller of
+   * `enablePromiseRejectionTracker` wins — Hermes has no getter — so another
+   * SDK that installs a tracker after this call replaces ours.
    */
   async launch(token: string, options: LaunchOptions = {}): Promise<boolean> {
     assertUsableToken(token);
@@ -77,6 +96,8 @@ class Bugsee {
     // composing a report's environment, and a crash during start-up would
     // otherwise produce a report that does not say what wrapper it came from.
     this.registerWrapper();
+    installExceptionHandlers();
+    applyExceptionCaptureFromOptions(options);
     return NativeBugsee.launch(token, options);
   }
 
@@ -95,6 +116,8 @@ class Bugsee {
   /** Restarts an already-launched session with a new set of options. */
   async relaunch(options: LaunchOptions = {}): Promise<boolean> {
     this.registerWrapper();
+    installExceptionHandlers();
+    applyExceptionCaptureFromOptions(options);
     return NativeBugsee.relaunch(options);
   }
 
@@ -431,13 +454,15 @@ class Bugsee {
    * from `com.bugsee.app-token` manifest metadata. Deliberately makes no
    * native launch call; doing so would start a second session.
    *
-   * A no-op today: the JS-side components it will wire (console, exceptions,
-   * network, lifecycle) do not exist yet. It carries no `attached` flag,
-   * because the guard that matters — not registering global handlers twice —
-   * belongs in those components, where the double registration would happen,
-   * not in a facade field nothing reads.
+   * Installs the global JS exception handlers and reads
+   * `com.bugsee.option.detect.crash` from the native launch options (R7).
+   * Handler registration itself is idempotent inside those components.
    */
-  async attach(): Promise<void> {}
+  async attach(): Promise<void> {
+    installExceptionHandlers();
+    const options = await this.getLaunchOptions();
+    applyExceptionCaptureFromOptions(options);
+  }
 
   /**
    * The SDK's current status. An unrecognised native value reports as
@@ -475,6 +500,9 @@ class Bugsee {
    */
   logException(error: unknown, options?: ExceptionOptions): void {
     encodeExceptionOptions(options);
+    if (!markReported(error)) {
+      return;
+    }
     const extras =
       error instanceof Error
         ? undefined
@@ -487,6 +515,9 @@ class Bugsee {
    * iOS surfaces it at the next launch.
    */
   logUnhandledException(error: unknown): Promise<void> {
+    if (!markReported(error)) {
+      return Promise.resolve();
+    }
     const extras =
       error instanceof Error
         ? undefined

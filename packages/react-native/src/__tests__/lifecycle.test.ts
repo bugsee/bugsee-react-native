@@ -2,13 +2,25 @@
 // so importing it loads `react-native` -- which jest cannot parse. Mocked to a
 // known platform; this suite is about lifecycle, not about which one.
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
+jest.mock('../exceptions/handlers', () => ({
+  installExceptionHandlers: jest.fn(),
+  setExceptionCaptureEnabled: jest.fn(),
+}));
 
 import Bugsee, { Status } from '../index';
 import { native } from '../__mocks__/native';
+import {
+  installExceptionHandlers,
+  setExceptionCaptureEnabled,
+} from '../exceptions/handlers';
 
 jest.mock('../NativeBugsee', () => require('../__mocks__/native').nativeMock);
 
-beforeEach(() => native.reset());
+beforeEach(() => {
+  native.reset();
+  jest.mocked(installExceptionHandlers).mockClear();
+  jest.mocked(setExceptionCaptureEnabled).mockClear();
+});
 
 describe('launch', () => {
   // The signature says string, but the call arrives from untyped JS just as
@@ -49,6 +61,17 @@ describe('launch', () => {
     native.launch.mockRejectedValue(new Error('boom'));
     await expect(Bugsee.launch('tok')).rejects.toThrow('boom');
   });
+
+  it('installs exception handlers and enables capture by default', async () => {
+    await Bugsee.launch('tok');
+    expect(installExceptionHandlers).toHaveBeenCalledTimes(1);
+    expect(setExceptionCaptureEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it('disables exception capture when detect.crash is false', async () => {
+    await Bugsee.launch('tok', { 'com.bugsee.option.detect.crash': false });
+    expect(setExceptionCaptureEnabled).toHaveBeenCalledWith(false);
+  });
 });
 
 describe('relaunch and stop', () => {
@@ -56,6 +79,12 @@ describe('relaunch and stop', () => {
     native.relaunch.mockResolvedValue(false);
     await expect(Bugsee.relaunch()).resolves.toBe(false);
     expect(native.relaunch).toHaveBeenCalledWith({});
+  });
+
+  it('relaunch installs handlers and applies detect.crash', async () => {
+    await Bugsee.relaunch({ 'com.bugsee.option.detect.crash': false });
+    expect(installExceptionHandlers).toHaveBeenCalledTimes(1);
+    expect(setExceptionCaptureEnabled).toHaveBeenCalledWith(false);
   });
 
   it('stop returns the native result', async () => {
@@ -94,6 +123,16 @@ describe('attach', () => {
     await Bugsee.attach();
     await expect(Bugsee.attach()).resolves.toBeUndefined();
     expect(native.launch).not.toHaveBeenCalled();
+  });
+
+  it('installs handlers and reads detect.crash from getLaunchOptions', async () => {
+    native.getLaunchOptions.mockResolvedValue({
+      'com.bugsee.option.detect.crash': false,
+    });
+    await Bugsee.attach();
+    expect(installExceptionHandlers).toHaveBeenCalledTimes(1);
+    expect(native.getLaunchOptions).toHaveBeenCalled();
+    expect(setExceptionCaptureEnabled).toHaveBeenCalledWith(false);
   });
 });
 
