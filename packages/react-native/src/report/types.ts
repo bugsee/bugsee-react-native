@@ -111,10 +111,14 @@ export interface BugseeReport {
  * option when the app sets it lower. A report recovered at launch differs:
  * - iOS gives JS 2.5 s, off the main thread and best-effort -- edits land
  *   only until the SDK assembles the bundle;
- * - Android gives the live 25 s when the SDK was launched from JS; the SDK's
- *   own early, bounded recovery path never reaches JS at all.
- * So async I/O in `onAfterReportCreated` can succeed on Android and silently
- * miss on an iOS recovered report. Keep recovery-time work short.
+ * - Android's Java uncaught-exception relaunch, when the SDK was launched
+ *   from JS, runs on `BugseeReportHandlerThread` and gives the live 25 s;
+ * - Android's NDK relaunch (SIGSEGV / SIGABRT), and the SDK's own early
+ *   bounded recovery, run off that thread (`bugsee-report-handler-bounded`
+ *   for an NDK crash) and never reach JS.
+ * So async I/O in `onAfterReportCreated` can succeed on a Java relaunch and
+ * silently miss on an iOS recovered report or an Android NDK relaunch. Keep
+ * recovery-time work short.
  */
 export interface BugseeReportHandler {
   onBeforeReportCreated?(report: BugseeReport): void | Promise<void>;
