@@ -294,6 +294,11 @@ export interface Spec extends TurboModule {
     name: string,
     mimeType: string | null,
   ): Promise<void>;
+
+  /** A handled JS exception. `payloadJson` is the Task 7.1a payload; `optionsJson` is `{domain?, labels?, includeVideo?}` or null. */
+  logException(payloadJson: string, optionsJson: string | null): void;
+  /** An unhandled JS exception. Resolves once the SDK has the report; never rejects. */
+  logUnhandledException(payloadJson: string): Promise<void>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Bugsee');
