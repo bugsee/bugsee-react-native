@@ -8,6 +8,9 @@ import type { ReactElement } from 'react';
 import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 
+import type * as HandlersModule from '../handlers';
+import type * as ReportModule from '../report';
+
 jest.mock('react-native', () => ({
   View: 'View',
   Platform: { OS: 'android' },
@@ -35,7 +38,7 @@ const markReported = jest.fn(() => true);
 const isExceptionCaptureEnabled = jest.fn(() => true);
 
 jest.mock('../report', () => {
-  const actual = jest.requireActual('../report') as typeof import('../report');
+  const actual = jest.requireActual('../report') as typeof ReportModule;
   return {
     ...actual,
     get reportUnhandled() {
@@ -48,7 +51,7 @@ jest.mock('../report', () => {
 });
 
 jest.mock('../handlers', () => {
-  const actual = jest.requireActual('../handlers') as typeof import('../handlers');
+  const actual = jest.requireActual('../handlers') as typeof HandlersModule;
   return {
     ...actual,
     get isExceptionCaptureEnabled() {

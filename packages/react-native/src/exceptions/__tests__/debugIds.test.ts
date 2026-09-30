@@ -1,4 +1,5 @@
-import { DEBUG_IDS_MAX, currentDebugIds, readDebugIdMap } from '../debugIds';
+import { DEBUG_IDS_MAX, readDebugIdMap } from '../debugIds';
+import type * as DebugIdsModule from '../debugIds';
 
 const g = globalThis as unknown as { _bugseeDebugIds?: unknown };
 
@@ -138,7 +139,7 @@ describe('currentDebugIds', () => {
   it('currentDebugIds recomputes when a bundle registers later', () => {
     jest.resetModules();
     const { currentDebugIds: fresh } =
-      require('../debugIds') as typeof import('../debugIds');
+      require('../debugIds') as typeof DebugIdsModule;
 
     g._bugseeDebugIds = {
       ['Error\n    at a (a.js:1:1)']: 'id-a',
@@ -159,7 +160,7 @@ describe('currentDebugIds', () => {
   it('reuses the cached map when the key count is unchanged', () => {
     jest.resetModules();
     const { currentDebugIds: fresh } =
-      require('../debugIds') as typeof import('../debugIds');
+      require('../debugIds') as typeof DebugIdsModule;
 
     g._bugseeDebugIds = {
       ['Error\n    at a (a.js:1:1)']: 'id-a',
@@ -179,7 +180,7 @@ describe('currentDebugIds', () => {
   it('treats a non-object _bugseeDebugIds as empty for the cache key count', () => {
     jest.resetModules();
     const { currentDebugIds: fresh } =
-      require('../debugIds') as typeof import('../debugIds');
+      require('../debugIds') as typeof DebugIdsModule;
 
     g._bugseeDebugIds = {
       ['Error\n    at a (a.js:1:1)']: 'id-a',
@@ -194,7 +195,7 @@ describe('currentDebugIds', () => {
   it('never throws on a hostile registration object', () => {
     jest.resetModules();
     const { currentDebugIds: fresh } =
-      require('../debugIds') as typeof import('../debugIds');
+      require('../debugIds') as typeof DebugIdsModule;
 
     g._bugseeDebugIds = new Proxy(
       {},

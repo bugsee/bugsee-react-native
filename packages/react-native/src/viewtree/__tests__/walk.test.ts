@@ -733,11 +733,9 @@ describe('buildViewTree', () => {
     // Uses requests.ts's real isWrapper (exported for this assertion, like
     // monotonicNow). Dropping RootErrorReporter from that predicate must fail
     // this test (manual mutate 3).
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { RootErrorReporter } = require('../../exceptions/RootErrorReporter') as {
       RootErrorReporter: unknown;
     };
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { isWrapper } = require('../requests') as {
       isWrapper: (fiber: FiberLike) => boolean;
     };

@@ -2,6 +2,9 @@ jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
 
 import type { HandlerEnv, RejectionOptions } from '../handlers';
+import type * as HandlersModule from '../handlers';
+import type * as NativeModule from '../../__mocks__/native';
+import type * as ReportModule from '../report';
 
 beforeEach(() => {
   jest.resetModules();
@@ -9,9 +12,9 @@ beforeEach(() => {
   jest.useRealTimers();
 });
 
-type HandlerMod = typeof import('../handlers');
-type ReportMod = typeof import('../report');
-type NativeMod = typeof import('../../__mocks__/native');
+type HandlerMod = typeof HandlersModule;
+type ReportMod = typeof ReportModule;
+type NativeMod = typeof NativeModule;
 
 function load(envOverrides: Partial<HandlerEnv> = {}): {
   installExceptionHandlers: HandlerMod['installExceptionHandlers'];
