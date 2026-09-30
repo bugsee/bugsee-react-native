@@ -136,7 +136,13 @@ export default function App() {
           // Launched transition on a device without attaching a debugger.
           console.log(`BUGSEE_E2E status=${next} (${STATUS_NAMES[next]})`);
           if (next === Status.Launched) {
-            announceLaunched();
+            // Not announceLaunched() itself. This updater runs inside the
+            // getStatus bridge callback, and resolving here resumes the
+            // launch sequence on that same turn. console.log from that
+            // continuation never reaches the console: CI shows the option
+            // read-back simply absent, then relaunch's own lines. A
+            // macrotask resumes the sequence after the bridge call returns.
+            setTimeout(announceLaunched, 0);
           }
         }
         return next;
@@ -219,26 +225,36 @@ export default function App() {
         // unreadable: a CI run showed this line simply missing while
         // execution plainly continued past it, and there was no way to tell a
         // rejection from a value that never printed.
+        //
+        // Printed on a later turn than the getter's resolution. The lines are
+        // the continuation of that bridge call, and from there they do not
+        // reach the console at all -- not even as the "threw" line -- while
+        // relaunch, which awaits again, logs normally.
+        let durationLine: string;
+        let wifiLine: string | undefined;
         try {
           const effective = await Bugsee.getLaunchOptions();
-          console.log(
-            `BUGSEE_E2E effective duration=${String(
-              effective['com.bugsee.option.config.duration'],
-            )} keys=${Object.keys(effective).length}`,
-          );
+          durationLine = `BUGSEE_E2E effective duration=${String(
+            effective['com.bugsee.option.config.duration'],
+          )} keys=${Object.keys(effective).length}`;
           // Task 3.7: this app never sets wifi-only-upload (see
           // launchOptions above -- only endpoint and duration), so an SDK
           // that could only report options differing from its own defaults
           // would have no key to answer with here at all. Logged separately
           // from `effective duration` so a caller can tell "the getter
           // answered but the key is missing" from "the getter never ran".
-          console.log(
-            `BUGSEE_E2E effective wifi-only-upload=${String(
-              effective['com.bugsee.option.config.wifi-only-upload'],
-            )}`,
-          );
+          wifiLine = `BUGSEE_E2E effective wifi-only-upload=${String(
+            effective['com.bugsee.option.config.wifi-only-upload'],
+          )}`;
         } catch (optionsCause) {
-          console.log(`BUGSEE_E2E effective threw ${String(optionsCause)}`);
+          durationLine = `BUGSEE_E2E effective threw ${String(optionsCause)}`;
+        }
+        await new Promise<void>(resolve => {
+          setTimeout(resolve, 0);
+        });
+        console.log(durationLine);
+        if (wifiLine !== undefined) {
+          console.log(wifiLine);
         }
 
         // relaunch() is the one lifecycle call whose two platforms settle
