@@ -259,7 +259,7 @@ public class BugseeModule extends NativeBugseeSpec
 
     @Override
     public void setViewTreeEnabled(final boolean enabled) {
-        DataRequestBridge.shared().setViewTreeEnabled(enabled);
+        DataRequestBridge.shared().setViewTreeEnabled(dataRequestSink, enabled);
     }
 
     @Override

@@ -189,7 +189,10 @@ interface RendererProxyLike {
  * holds a `ref` to the app's own views. `RendererProxy` (re-exporting
  * `RendererImplementation`, per the compat script's guard) is the supported
  * way to go from an internal instance handle to the public instance that
- * carries `measureInWindow`.
+ * carries `measureInWindow`. The rectangle is the main React root's window,
+ * the same space `<BugseeSecure>` publishes. A host inside a React Native
+ * `<Modal>` (its own window; an Android `Dialog`) does not line up with the
+ * native tree.
  *
  * Required lazily, not imported at module load: React Native ships this
  * module as untranspiled Flow/ESM source, meant to be read by Metro, and

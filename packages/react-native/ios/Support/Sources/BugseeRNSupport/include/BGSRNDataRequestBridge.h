@@ -79,7 +79,16 @@ typedef void (^BGSRNDataRequestOutcomeLog)(NSString *line);
 - (instancetype)init NS_UNAVAILABLE;
 
 /// Whether the attached JS runtime has a mounted `Bugsee.wrap` anchor to walk.
+/// The setter writes the flag directly and does not identity-check; production
+/// goes through `setViewTreeEnabled:forSink:`.
 @property (atomic) BOOL viewTreeEnabled;
+
+/// The attached runtime's anchor mounted (YES) or unmounted (NO). Ignored
+/// when `sink` is not the attached one: the flag is process-wide, and a
+/// reload can still run the old module's last disable after the new module
+/// has attached and enabled. Applying that write would leave the live
+/// runtime at `by=no-js` until its anchor count passed through zero again.
+- (void)setViewTreeEnabled:(BOOL)enabled forSink:(id)sink;
 
 /// Attaches the module of a new JS runtime, replacing whatever was attached,
 /// and disables the view tree: the new runtime has not mounted its anchor

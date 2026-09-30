@@ -90,4 +90,15 @@ describe('an EventEmitter in the spec is wired on both platforms', () => {
     expect(source).toMatch(/public void invalidate\(\)/);
     expect(source).toMatch(/detach\(this\)/);
   });
+
+  it('setViewTreeEnabled is ignored unless the caller is the attached sink', () => {
+    const ios = pkg('ios', 'BugseeModule.mm');
+    expect(ios).toMatch(/setViewTreeEnabled:enabled forSink:self/);
+    expect(ios).not.toMatch(/viewTreeEnabled\s*=/);
+
+    const android = pkg(
+      'android', 'src', 'main', 'java', 'com', 'bugsee', 'reactnative', 'BugseeModule.java',
+    );
+    expect(android).toMatch(/setViewTreeEnabled\(dataRequestSink, enabled\)/);
+  });
 });

@@ -428,6 +428,27 @@
   XCTAssertEqual(_requests.count, 2u);
 }
 
+/// The old module's last disable must not stick. A reload attaches and
+/// enables the new sink, then the old runtime's wrap cleanup still calls
+/// setViewTreeEnabled:NO on the shared flag.
+- (void)testAStaleModuleCannotDisableTheAttachedViewTree {
+  NSObject *stale = [NSObject new];
+  NSMutableArray<NSDictionary *> *staleRequests = [NSMutableArray array];
+  [self attach:stale into:staleRequests];
+  [_bridge setViewTreeEnabled:YES forSink:stale];
+
+  [self attachAndEnable];
+  [_bridge setViewTreeEnabled:NO forSink:stale];
+
+  [self requestVh];
+
+  XCTAssertTrue(_bridge.viewTreeEnabled);
+  XCTAssertEqual(_requests.count, 1u);
+  XCTAssertEqual(_replies.count, 0u);
+  XCTAssertTrue([_bridge complete:[self lastId] payload:@"{}"]);
+  XCTAssertEqualObjects(_replies, (@[ @"{}" ]));
+}
+
 /// Before the new runtime mounts its anchor there is nothing to walk.
 - (void)testAFreshAttachDisablesTheViewTreeEvenBeforeTheOldModuleDetaches {
   [self attachAndEnable];
