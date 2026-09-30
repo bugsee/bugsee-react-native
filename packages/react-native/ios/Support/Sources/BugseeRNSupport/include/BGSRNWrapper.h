@@ -27,6 +27,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// report as "this wrapper has no version".
 + (instancetype)wrapperWithIdentity:(nullable NSDictionary *)identity;
 
+/// Type and version only: the identity knowable before a JS runtime exists.
+///
+/// The same split Android's init provider makes. `setWrapperInfo` replaces
+/// this with the full identity once the bridge can supply the React Native
+/// version, the engine and the build configuration. Context is an empty map,
+/// not nil — the SDK's contract is a non-null string-to-string map.
++ (instancetype)wrapperWithoutJsRuntime;
+
 @end
 
 NS_ASSUME_NONNULL_END

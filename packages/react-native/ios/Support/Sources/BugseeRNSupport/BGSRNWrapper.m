@@ -40,4 +40,15 @@ static NSString *BGSRNStringOr(NSDictionary *source, NSString *key, NSString *fa
   return wrapper;
 }
 
++ (instancetype)wrapperWithoutJsRuntime {
+  // Duplicated from WRAPPER_TYPE in src/wrapper/identity.ts and from
+  // package.json "version": this runs before JS can hand either down, and a
+  // test compares the three so they cannot drift.
+  return [self wrapperWithIdentity:@{
+    @"type" : @"react_native",
+    @"version" : @"0.0.0",
+    @"context" : @{},
+  }];
+}
+
 @end

@@ -149,15 +149,40 @@
 /// clearing on every call would wipe a channel the instant it arrived.
 ///
 /// Registrations must never overlap (the wrapper-channel contract). Main is
-/// the lock: every call goes through `BGSRNRunOnMain`, so another call site
+/// the lock: every call goes through a main-thread hop, so another call site
 /// needs no lock of its own as long as it comes through here.
-static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper) {
-  BGSRNRunOnMain(^{
+///
+/// `onlyIfAbsent` is the module-init registration. A reload constructs a new
+/// module while the previous runtime's full identity is still what the SDK
+/// should report, and replacing it with the thin pre-JS wrapper would drop
+/// that identity until JS called `setWrapperInfo` again. The flag is read
+/// and written on main, beside `setWrapper:`.
+///
+/// Init uses `BGSRNRunOnMainSync`: `BGSRNRunOnMain` is async off main, so
+/// `-init` could return with `+[Bugsee setWrapper:]` only queued. A later
+/// `startBlackout` delivered on main would then run inline before that
+/// registration and the SDK would drop `BlackoutStarted`. Ordinary
+/// `setWrapperInfo` stays on the async hop.
+static BOOL BGSRNWrapperIsRegistered = NO;
+
+static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper, BOOL onlyIfAbsent) {
+  void (^body)(void) = ^{
+    if (onlyIfAbsent && BGSRNWrapperIsRegistered) {
+      return;
+    }
     [Bugsee setWrapper:wrapper];
     if (wrapper == nil) {
       BGSRNWrapperChannelHolder.shared.channel = nil;
+      BGSRNWrapperIsRegistered = NO;
+    } else {
+      BGSRNWrapperIsRegistered = YES;
     }
-  });
+  };
+  if (onlyIfAbsent) {
+    BGSRNRunOnMainSync(body);
+  } else {
+    BGSRNRunOnMain(body);
+  }
 }
 
 /// The `vh` origin: the `frame.origin` (points) of the window hosting the
@@ -262,6 +287,18 @@ static void BGSRNSetAttribute(NSString *name,
 @implementation BugseeModule
 
 RCT_EXPORT_MODULE(Bugsee)
+
+/// Design §6.1: this wrapper registers at module init, the iOS counterpart of
+/// Android's ContentProvider. Early enough that a `startBlackout()` made
+/// before `launch()` has a wrapper to deliver `BlackoutStarted` to. Not
+/// `attachToBridges` — that waits until `getTurboModule:` because the codegen
+/// emitter is unset before then, and this call does not emit.
+- (instancetype)init {
+  if ((self = [super init])) {
+    BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithoutJsRuntime], YES);
+  }
+  return self;
+}
 
 /// Attaches this module to the lifecycle bus and the report handler bridge.
 ///
@@ -429,8 +466,9 @@ RCT_EXPORT_MODULE(Bugsee)
   // The SDK holds the wrapper for the process's lifetime and reads it while
   // composing a report's environment, so this must be registered before
   // launch rather than alongside it. Through BGSRNSetWrapper, the one route
-  // to `+setWrapper:` in this module.
-  BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithIdentity:identity]);
+  // to `+setWrapper:` in this module. Not onlyIfAbsent: this is the
+  // replacement of the thin identity `init` registered.
+  BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithIdentity:identity], NO);
 }
 
 - (void)launch:(NSString *)token

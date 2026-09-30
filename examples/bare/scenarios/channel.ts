@@ -7,13 +7,10 @@
  * must capture as source `Custom` and which the test then finds in the
  * retained bundle's log file.
  *
- * What drops the pre-launch line differs by platform. On Android the init
- * provider registered the wrapper at process start, so a channel exists and
- * the SDK itself drops the line (nothing is buffered before it is running).
- * On iOS nothing is registered until `launch()` calls `setWrapperInfo`, so the
- * line stops at the wrapper's own channel holder, whose channel is still nil,
- * and never reaches the SDK -- the iOS run does not exercise the SDK's
- * pre-launch drop.
+ * Both platforms have a wrapper before this line. Android's init provider
+ * registers one at process start, and iOS registers one at module init.
+ * A channel therefore exists, and the SDK itself drops the line: nothing is
+ * buffered before it is running.
  *
  * `forwardLog` is deep-imported from `@bugsee/react-native/src/wrapper/channel`
  * rather than from the package's public entry: Task 3.5a built the channel
