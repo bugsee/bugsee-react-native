@@ -344,7 +344,24 @@ RCT_EXPORT_MODULE(Bugsee)
 - (void)getLaunchOptions:(RCTPromiseResolveBlock)resolve
                   reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
-    resolve([Bugsee getLaunchOptions] ?: @{});
+    NSDictionary *options = [Bugsee getLaunchOptions] ?: @{};
+#if DEBUG
+    // The example's e2e reads these off the simulator console. Logging them
+    // from the JS continuation of this call does not arrive there: the lines
+    // on either side do, and these two do not. NSLog is what `simctl` streams.
+    id duration = options[@"com.bugsee.option.config.duration"];
+    id wifi = options[@"com.bugsee.option.config.wifi-only-upload"];
+    NSString *wifiText = @"undefined";
+    if ([wifi isKindOfClass:[NSNumber class]]) {
+      wifiText = [(NSNumber *)wifi boolValue] ? @"true" : @"false";
+    } else if ([wifi isKindOfClass:[NSString class]]) {
+      wifiText = wifi;
+    }
+    NSLog(@"BUGSEE_E2E effective duration=%@ keys=%lu",
+          duration ?: @"undefined", (unsigned long)options.count);
+    NSLog(@"BUGSEE_E2E effective wifi-only-upload=%@", wifiText);
+#endif
+    resolve(options);
   });
 }
 
