@@ -18,6 +18,7 @@ beforeEach(() => {
 function load(): {
   reportHandled: typeof import('../report').reportHandled;
   reportUnhandled: typeof import('../report').reportUnhandled;
+  markReported: typeof import('../report').markReported;
   EXCEPTION_MAX_AGGREGATE: number;
   UNHANDLED_REPORT_WAIT_MS: number;
   native: typeof import('../../__mocks__/native').native;
@@ -28,10 +29,37 @@ function load(): {
   return {
     reportHandled: report.reportHandled,
     reportUnhandled: report.reportUnhandled,
+    markReported: report.markReported,
     EXCEPTION_MAX_AGGREGATE: report.EXCEPTION_MAX_AGGREGATE,
     UNHANDLED_REPORT_WAIT_MS: report.UNHANDLED_REPORT_WAIT_MS,
     native,
   };
+}
+
+/** Claim then report — the shared call-site pattern (facade / handlers). */
+function claimHandled(
+  markReported: (error: unknown) => boolean,
+  reportHandled: typeof import('../report').reportHandled,
+  error: unknown,
+  options?: Parameters<typeof import('../report').reportHandled>[1],
+  extras?: Parameters<typeof import('../report').reportHandled>[2],
+): void {
+  if (!markReported(error)) {
+    return;
+  }
+  reportHandled(error, options, extras);
+}
+
+async function claimUnhandled(
+  markReported: (error: unknown) => boolean,
+  reportUnhandled: typeof import('../report').reportUnhandled,
+  error: unknown,
+  extras?: Parameters<typeof import('../report').reportUnhandled>[1],
+): Promise<void> {
+  if (!markReported(error)) {
+    return;
+  }
+  await reportUnhandled(error, extras);
 }
 
 describe('report', () => {
@@ -65,53 +93,55 @@ describe('report', () => {
     const {
       reportHandled: handled,
       reportUnhandled: unhandled,
+      markReported,
       native,
     } = load();
     const error = new Error('once');
-    handled(error);
+    claimHandled(markReported, handled, error);
     expect(native.logException).toHaveBeenCalledTimes(1);
-    handled(error);
+    claimHandled(markReported, handled, error);
     expect(native.logException).toHaveBeenCalledTimes(1);
-    await unhandled(error);
+    await claimUnhandled(markReported, unhandled, error);
     expect(native.logUnhandledException).not.toHaveBeenCalled();
   });
 
   it('a primitive is reported every time', () => {
-    const { reportHandled: report, native } = load();
-    report('a');
-    report('a');
-    report(42);
-    report(42);
-    report(null);
-    report(null);
+    const { reportHandled: report, markReported, native } = load();
+    claimHandled(markReported, report, 'a');
+    claimHandled(markReported, report, 'a');
+    claimHandled(markReported, report, 42);
+    claimHandled(markReported, report, 42);
+    claimHandled(markReported, report, null);
+    claimHandled(markReported, report, null);
     expect(native.logException).toHaveBeenCalledTimes(6);
   });
 
   it('a handled AggregateError with a non-array errors field reports nothing', () => {
-    const { reportHandled: report, native } = load();
+    const { reportHandled: report, markReported, native } = load();
     const agg = new AggregateError([new Error('x')], 'agg');
     Object.defineProperty(agg, 'errors', { value: 'not-an-array' });
-    report(agg);
+    claimHandled(markReported, report, agg);
     expect(native.logException).not.toHaveBeenCalled();
   });
 
   it('a function is reported once, like any other object', () => {
-    const { reportHandled: report, native } = load();
+    const { reportHandled: report, markReported, native } = load();
     const fn = function reportedFn() {};
-    report(fn);
-    report(fn);
+    claimHandled(markReported, report, fn);
+    claimHandled(markReported, report, fn);
     expect(native.logException).toHaveBeenCalledTimes(1);
   });
 
   it('a handled AggregateError is split, first 10 only', () => {
     const {
       reportHandled: report,
+      markReported,
       EXCEPTION_MAX_AGGREGATE: cap,
       native,
     } = load();
     expect(cap).toBe(10);
     const inners = Array.from({ length: 12 }, (_, i) => new Error(`inner-${i}`));
-    report(new AggregateError(inners, 'agg'));
+    claimHandled(markReported, report, new AggregateError(inners, 'agg'));
     expect(native.logException).toHaveBeenCalledTimes(10);
     for (let i = 0; i < 10; i += 1) {
       const payload = buildExceptionPayload({
@@ -127,20 +157,20 @@ describe('report', () => {
   });
 
   it('a shared Error crosses once when reported as an inner then as an AggregateError', () => {
-    const { reportHandled: report, native } = load();
+    const { reportHandled: report, markReported, native } = load();
     const inner = new Error('shared');
-    report(inner);
+    claimHandled(markReported, report, inner);
     expect(native.logException).toHaveBeenCalledTimes(1);
-    report(new AggregateError([inner], 'agg'));
+    claimHandled(markReported, report, new AggregateError([inner], 'agg'));
     expect(native.logException).toHaveBeenCalledTimes(1);
   });
 
   it('a shared Error crosses once when reported as an AggregateError then as an inner', () => {
-    const { reportHandled: report, native } = load();
+    const { reportHandled: report, markReported, native } = load();
     const inner = new Error('shared');
-    report(new AggregateError([inner], 'agg'));
+    claimHandled(markReported, report, new AggregateError([inner], 'agg'));
     expect(native.logException).toHaveBeenCalledTimes(1);
-    report(inner);
+    claimHandled(markReported, report, inner);
     expect(native.logException).toHaveBeenCalledTimes(1);
   });
 
@@ -196,14 +226,6 @@ describe('report', () => {
     } finally {
       jest.useRealTimers();
     }
-  });
-
-  it('a function is reported once, like any other object', () => {
-    const { reportHandled: report, native } = load();
-    const fn = function reportedFn() {};
-    report(fn);
-    report(fn);
-    expect(native.logException).toHaveBeenCalledTimes(1);
   });
 
   it('reportUnhandled resolves, and warns once, when native rejects or throws', async () => {

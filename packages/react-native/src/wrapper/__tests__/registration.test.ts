@@ -4,6 +4,10 @@ jest.mock('react-native', () => ({
   Platform: { OS: 'ios', constants: { reactNativeVersion: { major: 0, minor: 87, patch: 1 } } },
 }));
 jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
+jest.mock('../../exceptions/handlers', () => ({
+  installExceptionHandlers: jest.fn(),
+  setExceptionCaptureEnabled: jest.fn(),
+}));
 
 import Bugsee, { PACKAGE_VERSION, WRAPPER_TYPE } from '../../index';
 

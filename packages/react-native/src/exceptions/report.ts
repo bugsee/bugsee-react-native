@@ -67,6 +67,11 @@ function sendHandled(
 /**
  * Reports `error` as handled. Never throws; R14 splits an AggregateError into
  * at most {@link EXCEPTION_MAX_AGGREGATE} inner reports.
+ *
+ * Callers claim the value with {@link markReported} first. This function does
+ * not re-claim the top-level `error` (handlers and the facade share one
+ * WeakSet); it still marks AggregateError inners so a shared Error crosses
+ * once whichever route saw it first.
  */
 export function reportHandled(
   error: unknown,
@@ -74,9 +79,6 @@ export function reportHandled(
   extras?: Extras,
 ): void {
   try {
-    if (!markReported(error)) {
-      return;
-    }
     if (isAggregateError(error)) {
       const inners = Array.isArray(error.errors) ? error.errors : [];
       const limit = Math.min(inners.length, EXCEPTION_MAX_AGGREGATE);
@@ -111,15 +113,14 @@ function warnUnhandledNativeFailureOnce(): void {
 /**
  * Reports `error` as unhandled. Resolves when native resolves or after
  * {@link UNHANDLED_REPORT_WAIT_MS}, whichever is first; never rejects.
+ *
+ * Callers claim the value with {@link markReported} first (same shared
+ * WeakSet as {@link reportHandled}).
  */
 export async function reportUnhandled(
   error: unknown,
   extras?: Extras,
 ): Promise<void> {
-  if (!markReported(error)) {
-    return;
-  }
-
   let nativePromise: Promise<void>;
   try {
     nativePromise = Promise.resolve(NativeBugsee.logUnhandledException(payloadJson(error, extras)));

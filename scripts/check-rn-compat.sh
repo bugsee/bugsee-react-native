@@ -232,6 +232,63 @@ do
 done
 echo "    Offscreen's hidden signal (memoizedState) and the SimpleMemo/Offscreen tag numbers are unchanged in both renderer bundles"
 
+echo "--- exception-handler internals guard"
+# Task 7.2: global ErrorUtils / promise-rejection capture depends on these
+# React Native surfaces staying put. Fail with a named reason the day any of
+# them move, rather than silently stopping to report uncaught JS errors.
+# Every check matches an actual call/definition, not a comment or import.
+
+SET_UP_ERROR="$RN_SRC/Libraries/Core/setUpErrorHandling.js"
+[ -f "$SET_UP_ERROR" ] \
+  || { echo "FAIL: setUpErrorHandling.js not found"; exit 1; }
+grep -qF 'ErrorUtils.setGlobalHandler(' "$SET_UP_ERROR" \
+  || { echo "FAIL: setUpErrorHandling.js no longer calls ErrorUtils.setGlobalHandler("; exit 1; }
+echo "    setUpErrorHandling.js calls ErrorUtils.setGlobalHandler("
+
+POLYFILL_PROMISE="$RN_SRC/Libraries/Core/polyfillPromise.js"
+[ -f "$POLYFILL_PROMISE" ] \
+  || { echo "FAIL: polyfillPromise.js not found"; exit 1; }
+grep -qF 'enablePromiseRejectionTracker' "$POLYFILL_PROMISE" \
+  || { echo "FAIL: polyfillPromise.js no longer calls enablePromiseRejectionTracker"; exit 1; }
+echo "    polyfillPromise.js calls enablePromiseRejectionTracker"
+
+REJECTION_OPTS="$RN_SRC/Libraries/promiseRejectionTrackingOptions.js"
+[ -f "$REJECTION_OPTS" ] \
+  || { echo "FAIL: promiseRejectionTrackingOptions.js not found"; exit 1; }
+grep -qE 'onUnhandled[[:space:]]*:' "$REJECTION_OPTS" \
+  || { echo "FAIL: promiseRejectionTrackingOptions.js no longer defines onUnhandled"; exit 1; }
+echo "    promiseRejectionTrackingOptions.js defines onUnhandled"
+
+grep -qE '"promise"[[:space:]]*:' "$RN_SRC/package.json" \
+  || { echo "FAIL: react-native/package.json no longer depends on promise"; exit 1; }
+echo "    react-native depends on the promise package"
+
+ERROR_HANDLERS="$RN_SRC/src/private/renderer/errorhandling/ErrorHandlers.js"
+[ -f "$ERROR_HANDLERS" ] \
+  || { echo "FAIL: ErrorHandlers.js not found"; exit 1; }
+# R8 premise (Task 7.4): onUncaughtError must still call handleException(error, true).
+# A Node check, not a one-line grep: the call can sit a few lines below the
+# function name, and a comment mentioning handleException must not satisfy it.
+node -e '
+  const fs = require("fs");
+  const src = fs.readFileSync(process.argv[1], "utf8");
+  const marker = "export function onUncaughtError";
+  const start = src.indexOf(marker);
+  if (start === -1) {
+    console.error("FAIL: onUncaughtError is not exported from ErrorHandlers.js");
+    process.exit(1);
+  }
+  const nextExport = src.indexOf("\nexport ", start + marker.length);
+  const body = src.slice(start, nextExport === -1 ? undefined : nextExport);
+  if (!/handleException\s*\(\s*error\s*,\s*true\s*\)/.test(body)) {
+    console.error(
+      "FAIL: onUncaughtError no longer calls handleException(error, true) — Task 7.4 root reporter premise (R8) is broken",
+    );
+    process.exit(1);
+  }
+' "$ERROR_HANDLERS"
+echo "    onUncaughtError calls handleException(error, true) (R8 premise)"
+
 # A package shaped like ours, carrying the real codegenConfig and the real spec.
 mkdir -p pkg/src
 # -R, not src/*.ts: the source tree has subdirectories (options/, wrapper/),
