@@ -563,9 +563,19 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       expect(redBox.text).toMatch(/\sE\s+ReactNativeJS\s*:/);
       report('root red-box', redBox.text.trim());
 
-      // Root uses logUnhandledException: 7.3.0 also files an error (case 10).
-      // Wait for both so the crash assertion is not racing a late second write.
-      bundles = await awaitBundles(2, 30_000);
+      // Poll until a crash with this reason exists (error twin may appear first
+      // or never). Do not require a second bundle.
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        bundles = await pullAndroidBundles();
+        const crashMatch = bundlesWithReason(bundles, `E2E boundary ${nonce}`).find(
+          b => b.request.type === 'crash',
+        );
+        if (crashMatch !== undefined || Date.now() >= deadline) {
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 1_000));
+      }
       report(
         'root bundles',
         bundles.map(b => ({
@@ -704,7 +714,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
           return false;
         }
       });
-      expect(ours.length).toBeGreaterThanOrEqual(1);
+      expect(ours).toHaveLength(1);
       report('R1 ours', ours.map(b => b.file));
     });
 

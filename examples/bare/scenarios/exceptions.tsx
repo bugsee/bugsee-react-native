@@ -121,9 +121,8 @@ export function ExceptionStage({
   scenario: 'exc-boundary' | 'exc-root';
   nonce: string;
 }) {
-  useEffect(() => {
-    registerDebugIds(nonce);
-  }, [nonce]);
+  // Before BugseeE2EThrower's first render throw — useEffect would never run.
+  registerDebugIds(nonce);
 
   if (scenario === 'exc-boundary') {
     return (
