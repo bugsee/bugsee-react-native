@@ -75,6 +75,14 @@ export function platformUnderTest(): Platform {
 }
 
 /**
+ * How long a simulator console may stay completely silent before the launch
+ * is abandoned. A live app prints before the bundle is fetched; a
+ * `simctl launch --console-pty` that stays at zero bytes for this long has
+ * not attached, and waiting out the step budget does not make it attach.
+ */
+const SIMULATOR_CONSOLE_SILENCE_MS = 20_000;
+
+/**
  * Launches the app and matches `steps` against its log in order, each step
  * timed from the moment the one before it matched. Never rejects on a miss:
  * the caller asserts on the result, so the captured log is reportable.
@@ -88,9 +96,24 @@ export async function launchAndWaitForSequence(
   steps: readonly Step[],
   androidUri?: string,
 ): Promise<SequenceResult> {
-  const child =
-    platform === 'android' ? await spawnAndroid(androidUri) : spawnIos();
-  return collect(child, steps);
+  if (platform === 'android') {
+    return collect(await spawnAndroid(androidUri), steps);
+  }
+  if (IOS_TARGET !== 'simulator') {
+    return collect(spawnIos(), steps);
+  }
+  const first = await collect(spawnIos(), steps, SIMULATOR_CONSOLE_SILENCE_MS);
+  if (first.sawOutput) {
+    return first;
+  }
+  // The console attach is flaky on a freshly erased simulator: the process
+  // stays up and writes nothing, so the app's own log never arrives. Kill
+  // it and attach once more. A second silent console is a real failure.
+  console.error(
+    'simctl console produced no output; terminating the app and launching once more',
+  );
+  await run('xcrun', ['simctl', 'terminate', IOS_SIMULATOR_ID, IOS_BUNDLE_ID]);
+  return collect(spawnIos(), steps);
 }
 
 /**
@@ -162,18 +185,30 @@ function spawnIos(): ChildProcess {
   ]);
 }
 
+interface CollectResult extends SequenceResult {
+  /** False when the process exited, or the silence budget ran out, with no bytes. */
+  readonly sawOutput: boolean;
+}
+
 function collect(
   child: ChildProcess,
   steps: readonly Step[],
-): Promise<SequenceResult> {
+  silenceMs?: number,
+): Promise<CollectResult> {
   return new Promise(resolve => {
     const lines: string[] = [];
     const results: StepResult[] = [];
-    let buffer = '';
+    // stdout and stderr are separate pipes. One shared buffer splices a
+    // line from one into a partial line from the other, and the marker the
+    // test is waiting on is no longer a contiguous string.
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
     let index = 0;
     let since = Date.now();
     let settled = false;
+    let sawOutput = false;
     let timer: NodeJS.Timeout;
+    let silenceTimer: NodeJS.Timeout | undefined;
 
     const finish = () => {
       if (settled) {
@@ -181,11 +216,12 @@ function collect(
       }
       settled = true;
       clearTimeout(timer);
+      clearTimeout(silenceTimer);
       child.kill('SIGKILL');
       for (let i = index; i < steps.length; i += 1) {
         results.push({ name: steps[i]!.name });
       }
-      resolve({ steps: results, lines });
+      resolve({ steps: results, lines, sawOutput });
     };
 
     const arm = () => {
@@ -198,10 +234,16 @@ function collect(
       timer = setTimeout(finish, step.timeoutMs);
     };
 
-    const onChunk = (chunk: Buffer) => {
-      buffer += chunk.toString('utf8');
-      const parts = buffer.split('\n');
-      buffer = parts.pop() ?? '';
+    const take = (buffer: string, chunk: Buffer): string => {
+      if (settled) {
+        return buffer;
+      }
+      if (chunk.length > 0) {
+        sawOutput = true;
+        clearTimeout(silenceTimer);
+      }
+      const parts = (buffer + chunk.toString('utf8')).split('\n');
+      const rest = parts.pop() ?? '';
       for (const line of parts) {
         lines.push(line);
         const step = steps[index];
@@ -212,16 +254,28 @@ function collect(
           index += 1;
           if (index === steps.length) {
             finish();
-            return;
+            return rest;
           }
           arm();
         }
       }
+      return rest;
     };
 
     arm();
-    child.stdout?.on('data', onChunk);
-    child.stderr?.on('data', onChunk);
+    if (silenceMs !== undefined) {
+      silenceTimer = setTimeout(() => {
+        if (!sawOutput) {
+          finish();
+        }
+      }, silenceMs);
+    }
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdoutBuffer = take(stdoutBuffer, chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrBuffer = take(stderrBuffer, chunk);
+    });
     child.on('error', error => {
       lines.push(`spawn error: ${String(error)}`);
       finish();
