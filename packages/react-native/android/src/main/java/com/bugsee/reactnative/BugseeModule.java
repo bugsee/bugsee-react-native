@@ -309,6 +309,18 @@ public class BugseeModule extends NativeBugseeSpec
         Bugsee.testCrash();
     }
 
+    // Task 7.1c — real bridge; stub for now so the TurboModule spec is complete.
+    @Override
+    public void logException(final String payloadJson, final @Nullable String optionsJson) {
+        // no-op
+    }
+
+    // Task 7.1c — real bridge; stub resolves at once.
+    @Override
+    public void logUnhandledException(final String payloadJson, final Promise promise) {
+        promise.resolve(null);
+    }
+
     // The two-argument overload only -- severity and labels are Phase 8. JS
     // has already checked both arguments are strings, so nothing is
     // re-validated here.

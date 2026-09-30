@@ -559,6 +559,19 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
+/// Task 7.1d — real bridge; stub for now so the TurboModule spec is complete.
+- (void)logException:(NSString *)payloadJson
+         optionsJson:(NSString * _Nullable)optionsJson {
+  // no-op
+}
+
+/// Task 7.1d — real bridge; stub resolves at once.
+- (void)logUnhandledException:(NSString *)payloadJson
+                      resolve:(RCTPromiseResolveBlock)resolve
+                       reject:(RCTPromiseRejectBlock)reject {
+  resolve(nil);
+}
+
 /// The two-argument form only -- severity and labels are Phase 8. JS has
 /// already checked both arguments are strings. On main, like every other SDK
 /// entry point; the report it creates is a LIVE one, so its handlers run on

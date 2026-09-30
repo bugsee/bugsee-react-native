@@ -30,6 +30,9 @@ import {
   validateAttributeValue,
 } from './attributes/validate';
 import type { AttributeReadValue, AttributeValue } from './attributes/validate';
+import { encodeExceptionOptions } from './exceptions/options';
+import type { ExceptionOptions } from './exceptions/options';
+import { reportHandled, reportUnhandled } from './exceptions/report';
 
 export { Status } from './status';
 
@@ -451,7 +454,11 @@ class Bugsee {
     return (await NativeBugsee.getLaunchOptions()) as Record<string, unknown>;
   }
 
-  /** Crashes natively, to verify crash reporting is wired up. */
+  /**
+   * The SDK's own test crash: a Java `RuntimeException` on Android, an
+   * `NSException` on iOS. For a real native (signal) crash, see the bare
+   * example's native helper package.
+   */
   testNativeCrash(): void {
     NativeBugsee.testCrash();
   }
@@ -460,6 +467,60 @@ class Bugsee {
   testJsCrash(): never {
     throw new Error('Bugsee test JS crash');
   }
+
+  /**
+   * Reports `error` as a handled error. Before launch() the SDKs drop it.
+   * Validates `options` first: a bad option throws synchronously and nothing
+   * crosses.
+   */
+  logException(error: unknown, options?: ExceptionOptions): void {
+    encodeExceptionOptions(options);
+    const extras =
+      error instanceof Error
+        ? undefined
+        : { fallbackStack: dropFirstStackFrame(new Error().stack) };
+    reportHandled(error, options, extras);
+  }
+
+  /**
+   * Reports `error` as a crash; resolves once the SDK has it (at most 1.5 s).
+   * iOS surfaces it at the next launch.
+   */
+  logUnhandledException(error: unknown): Promise<void> {
+    const extras =
+      error instanceof Error
+        ? undefined
+        : { fallbackStack: dropFirstStackFrame(new Error().stack) };
+    return reportUnhandled(error, extras);
+  }
+}
+
+/**
+ * `stack` with its first frame line removed, so a non-Error logged through the
+ * facade has frames that start at the caller rather than at `logException`.
+ */
+function dropFirstStackFrame(stack: string | undefined): string | undefined {
+  if (typeof stack !== 'string' || stack.length === 0) {
+    return stack;
+  }
+  const lines = stack.split('\n');
+  let firstFrame = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i]!.trimStart();
+    if (
+      trimmed.startsWith('at ') ||
+      trimmed.startsWith('@') ||
+      /^[^\s@]+@/.test(trimmed)
+    ) {
+      firstFrame = i;
+      break;
+    }
+  }
+  if (firstFrame === -1) {
+    return stack;
+  }
+  lines.splice(firstFrame, 1);
+  return lines.join('\n');
 }
 
 function assertUsableToken(token: string): void {
@@ -504,3 +565,5 @@ export type { EventParams, EventParamValue, TraceValue } from './data/validate';
 
 export { AttributeErrorCode, BugseeAttributeError } from './attributes/errors';
 export type { AttributeReadValue, AttributeValue } from './attributes/validate';
+
+export type { ExceptionOptions } from './exceptions/options';

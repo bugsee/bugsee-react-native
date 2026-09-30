@@ -25,6 +25,8 @@ const DEFAULTS: Record<string, unknown> = {
   getAttribute: {},
   getAllAttributes: {},
   getUserIdentifier: {},
+  // logUnhandledException resolves by default (undefined / void).
+  logUnhandledException: undefined,
 };
 
 const lifecycleListeners = new Set<(event: { name: string; reportId?: string }) => void>();
@@ -186,6 +188,11 @@ export const native = {
     jest.fn<Promise<void>, [string, string, string, string | null, boolean]>(),
   reportAddDataAttachment:
     jest.fn<Promise<void>, [string, string, string, string | null]>(),
+
+  /** `payloadJson` / `optionsJson` are JSON text (`encodeBridgeObject` / `encodeExceptionOptions`). */
+  logException: jest.fn<void, [string, string | null]>(),
+  /** Resolves by default; tests that hang native replace the implementation. */
+  logUnhandledException: jest.fn<Promise<void>, [string]>(),
 
   /**
    * Resets every mock on this object, found rather than listed.
