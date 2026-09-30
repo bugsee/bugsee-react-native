@@ -22,8 +22,11 @@
  * retained by the dead endpoint every iOS launch carries. Where iOS differs,
  * each case states the iOS value: the bridge's lines are `NSLog`
  * (`bridgeLine`); the video holds one black frame for the whole blackout
- * rather than a run of them (media.ts `heldBlackout`); and a pre-launch
- * `startBlackout()` is honoured (`isBlackout=true` once Launched).
+ * rather than a run of them (media.ts `heldBlackout`), and that held span is
+ * a lower bound on the blackout, not a two-sided match; and a pre-launch
+ * `startBlackout()` is honoured (`isBlackout=true` once Launched, plus one
+ * `BlackoutStarted` and one `BlackoutEnded`, because the wrapper is
+ * registered at module init).
  */
 import {
   type PulledBundle,
@@ -233,7 +236,15 @@ describeDevice(`blackout on ${TARGET_NAME}`, () => {
     const expected = (endedT - startedT) / 1000;
     const darkSeconds = (pattern as { darkSeconds: number }).darkSeconds;
     report('after: darkSeconds vs ended-started', { darkSeconds, expected });
-    expect(Math.abs(darkSeconds - expected)).toBeLessThanOrEqual(1.0);
+    if (ON_IOS) {
+      // The one black frame stays on screen until the next encoded frame,
+      // which is after endBlackout, so the hold may run longer than the
+      // blackout — no upper bound. The floor is the early-edge leak only:
+      // the black frame must appear within ~0.25 s of startBlackout.
+      expect(darkSeconds).toBeGreaterThanOrEqual(expected - 0.25);
+    } else {
+      expect(Math.abs(darkSeconds - expected)).toBeLessThanOrEqual(1.0);
+    }
 
     // Only for it: that is the one dark stretch with recording on both
     // sides. (Every Android bundle video, blacked out or not, also opens
@@ -280,12 +291,13 @@ describeDevice(`blackout on ${TARGET_NAME}`, () => {
       // out once Launched, until endBlackout().
       expect(state.text).toMatch(/ isBlackout=true /);
       expect(cleared.text).toMatch(/ isBlackout=false /);
-      // The lifecycle listener, subscribed before the call, hears no
-      // BlackoutStarted for it, and exactly one BlackoutEnded, after
-      // endBlackout() (as measured on the simulator; see the task report).
-      expect(lifecycle('BlackoutStarted')).toEqual([]);
+      // The wrapper is registered at module init, so the listener subscribed
+      // before the call hears the same pair the post-launch case does.
+      const startedEvents = lifecycle('BlackoutStarted');
       const ended = lifecycle('BlackoutEnded');
+      expect(startedEvents).toHaveLength(1);
       expect(ended).toHaveLength(1);
+      expect(startedEvents[0]!.index).toBeLessThan(prelaunchRun.launched.index);
       expect(ended[0]!.index).toBeGreaterThan(state.index);
     } else {
       // Android: the SDK drops a startBlackout() before launch (a logged no-op).

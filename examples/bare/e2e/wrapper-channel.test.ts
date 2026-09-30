@@ -7,9 +7,9 @@
  * only a device can show is that a line sent through it after `Launched`
  * really reaches the bundle the SDK writes, attributed as source `Custom`
  * (98), and that a line sent before `launch()` is really dropped rather than
- * merely untested. (On iOS that drop is the channel holder's -- no wrapper is
- * registered before `launch()` calls `setWrapperInfo` -- not the SDK's; see
- * scenarios/channel.ts.)
+ * merely untested. (Both platforms register a wrapper before this line —
+ * Android at process start, iOS at module init — so the SDK itself drops
+ * it; see scenarios/channel.ts.)
  *
  * Android preconditions, as for report-handler.test.ts: the app is installed
  * on the handset named in device.ts, and for a debug build Metro is running
@@ -200,11 +200,8 @@ describeDevice(`wrapper channel on ${TARGET_NAME}`, () => {
     const postLaunch = events.filter(event => messageOf(event).includes(`channel ${nonce}`));
     expect(postLaunch.length).toBeGreaterThan(0);
 
-    // What this proves differs by platform. Android: the init provider's
-    // channel exists, so the SDK itself dropped the line. iOS: no wrapper is
-    // registered until launch() calls setWrapperInfo, so the line stopped at
-    // BGSRNWrapperChannelHolder's nil channel and never reached the SDK --
-    // this case says nothing about the SDK's own pre-launch drop there.
+    // Both platforms have a wrapper before this line (Android init provider;
+    // iOS module init), so a channel exists and the SDK itself dropped it.
     const dropped = events.filter(event => messageOf(event).includes(`pre-${nonce}`));
     report('case B dropped-message matches', dropped);
     expect(dropped).toEqual([]);

@@ -54,4 +54,44 @@
   XCTAssertNoThrow(BGSRNRunOnMain(nil));
 }
 
+/// The init registration must not return until `+[Bugsee setWrapper:]` has
+/// run. Off main that means the hop waits; an async queue leaves a race with
+/// a later main-thread `startBlackout`.
+- (void)testSyncWaitsForBlockWhenCalledOffMain {
+  XCTestExpectation *done = [self expectationWithDescription:@"off-main call returned"];
+
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+    XCTAssertFalse([NSThread isMainThread], @"the probe must start off-main");
+
+    __block BOOL finished = NO;
+    BGSRNRunOnMainSync(^{
+      // A real main-queue turn so an async hop cannot finish the block before
+      // the caller checks `finished` by accident of scheduling luck.
+      XCTAssertTrue([NSThread isMainThread]);
+      finished = YES;
+    });
+    XCTAssertTrue(finished,
+                  @"BGSRNRunOnMainSync returned before the block finished; "
+                  @"off-main registration would still be pending");
+    [done fulfill];
+  });
+
+  [self waitForExpectations:@[ done ] timeout:5];
+}
+
+/// Same deadlock rule as BGSRNRunOnMain: sync onto main from main hangs.
+- (void)testSyncDoesNotDeadlockWhenAlreadyOnMain {
+  XCTAssertTrue([NSThread isMainThread], @"XCTest runs -test methods on main");
+
+  __block BOOL ran = NO;
+  BGSRNRunOnMainSync(^{
+    ran = YES;
+  });
+  XCTAssertTrue(ran, @"block was deferred instead of run inline");
+}
+
+- (void)testSyncToleratesANilBlock {
+  XCTAssertNoThrow(BGSRNRunOnMainSync(nil));
+}
+
 @end
