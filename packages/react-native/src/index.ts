@@ -234,10 +234,12 @@ class Bugsee {
    * raised above that; on Android it follows a lower
    * `report-handler-callback-timeout`). A report recovered at launch gets
    * 2.5 s on iOS (off main, best-effort, edits land only until the bundle is
-   * assembled) but the live 25 s on Android when the SDK was launched from
-   * JS; Android's early bounded recovery never reaches JS. So async I/O in
-   * `onAfterReportCreated` can succeed on Android and silently miss on iOS
-   * recovery. Details on `BugseeReportHandler`.
+   * assembled). On Android, a Java uncaught-exception relaunch launched from
+   * JS gets the live 25 s on `BugseeReportHandlerThread`. An NDK relaunch,
+   * and Android's early bounded recovery, never reach JS. So async I/O in
+   * `onAfterReportCreated` can succeed on a Java relaunch and silently miss
+   * on iOS recovery or an Android NDK relaunch. Details on
+   * `BugseeReportHandler`.
    */
   setReportHandler(handler: BugseeReportHandler | null): void {
     installReportHandler(handler);

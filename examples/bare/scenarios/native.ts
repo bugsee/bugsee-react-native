@@ -80,8 +80,10 @@ async function runSmoke(nonce: string): Promise<void> {
 }
 
 /**
- * Registers the crash scenarios' report handler before `launch()`, so a
- * crash recovered at the next launch reaches JS.
+ * Registers a report handler before `launch()` for the crash scenarios.
+ * On an NDK relaunch it is a negative probe: recovery runs on the bounded
+ * thread, so the handler must not log `after type=crash`. It is not how an
+ * NDK crash is delivered to JS.
  */
 export function installNativeHandler(scenario: NativeScenario): void {
   if (!needsHandler(scenario)) {
