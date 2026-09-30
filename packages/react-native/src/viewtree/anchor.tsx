@@ -6,6 +6,7 @@
 import { useLayoutEffect, useRef } from 'react';
 import type { ComponentRef, ComponentType, ReactElement } from 'react';
 import { View } from 'react-native';
+import { RootErrorReporter } from '../exceptions/RootErrorReporter';
 import { VH_ANCHOR_NATIVE_ID } from './constants';
 import { markWrapComponent, registerAnchor, unregisterAnchor } from './requests';
 
@@ -53,11 +54,12 @@ function nameOf(component: unknown): string {
  * answers with nothing: there is no registered root for the walk to start
  * from.
  *
- * Renders `Root` completely unchanged, alongside an invisible, zero-size
- * anchor view that is never drawn and never intercepts a touch. Mounting the
- * wrapped tree registers that anchor with the view-tree walk; unmounting it
- * unregisters it -- see `./requests.ts`'s `registerAnchor`/`unregisterAnchor`,
- * which is what turns the native request on and off.
+ * Renders `Root` inside `<RootErrorReporter>` (uncaught render errors),
+ * alongside an invisible, zero-size anchor view that is never drawn and never
+ * intercepts a touch. Mounting the wrapped tree registers that anchor with the
+ * view-tree walk; unmounting it unregisters it -- see `./requests.ts`'s
+ * `registerAnchor`/`unregisterAnchor`, which is what turns the native request
+ * on and off.
  *
  * Usage: `AppRegistry.registerComponent(appName, () => Bugsee.wrap(App))`.
  */
@@ -82,7 +84,9 @@ export function wrap<P extends object>(Root: ComponentType<P>): ComponentType<P>
 
     return (
       <>
-        <Root {...props} />
+        <RootErrorReporter>
+          <Root {...props} />
+        </RootErrorReporter>
         <View
           ref={anchorRef}
           nativeID={VH_ANCHOR_NATIVE_ID}

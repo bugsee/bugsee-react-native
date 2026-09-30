@@ -16,6 +16,7 @@ type NativeMod = typeof import('../../__mocks__/native');
 function load(envOverrides: Partial<HandlerEnv> = {}): {
   installExceptionHandlers: HandlerMod['installExceptionHandlers'];
   setExceptionCaptureEnabled: HandlerMod['setExceptionCaptureEnabled'];
+  isExceptionCaptureEnabled: HandlerMod['isExceptionCaptureEnabled'];
   markReported: ReportMod['markReported'];
   reportHandled: jest.Mock;
   reportUnhandled: jest.Mock;
@@ -77,6 +78,7 @@ function load(envOverrides: Partial<HandlerEnv> = {}): {
   return {
     installExceptionHandlers: handlers.installExceptionHandlers,
     setExceptionCaptureEnabled: handlers.setExceptionCaptureEnabled,
+    isExceptionCaptureEnabled: handlers.isExceptionCaptureEnabled,
     markReported: report.markReported,
     reportHandled,
     reportUnhandled,
@@ -94,6 +96,15 @@ async function flush(): Promise<void> {
 }
 
 describe('exception handlers', () => {
+  it('isExceptionCaptureEnabled tracks setExceptionCaptureEnabled', () => {
+    const { setExceptionCaptureEnabled, isExceptionCaptureEnabled } = load();
+    expect(isExceptionCaptureEnabled()).toBe(true);
+    setExceptionCaptureEnabled(false);
+    expect(isExceptionCaptureEnabled()).toBe(false);
+    setExceptionCaptureEnabled(true);
+    expect(isExceptionCaptureEnabled()).toBe(true);
+  });
+
   it('installs once however often launch runs', () => {
     const { installExceptionHandlers, env } = load();
     const errorUtils = env.errorUtils()!;

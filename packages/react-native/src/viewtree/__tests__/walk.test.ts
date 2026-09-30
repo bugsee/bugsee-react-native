@@ -5,7 +5,17 @@
  * and its contract is entirely about what it does with the `FiberLike` shape
  * and the `WalkEnv` it is given. `realFiberNaming.test.ts` cross-checks the
  * naming-sensitive fixtures (ForwardRef/Memo/SimpleMemo) against real fibers.
+ *
+ * `react-native` / `NativeBugsee` are mocked only so the one test that pulls
+ * `requests.ts`'s real `isWrapper` (RootErrorReporter identity) can load that
+ * module; `walk.ts` itself still never touches them.
  */
+jest.mock('react-native', () => ({
+  Platform: { OS: 'ios' },
+  PixelRatio: { get: () => 2 },
+}));
+jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
+
 import { FiberTag } from '../fiber';
 import type { FiberLike, WindowRect } from '../fiber';
 import type { ManagedNode, WalkEnv } from '../walk';
@@ -713,6 +723,28 @@ describe('buildViewTree', () => {
     const tree = buildViewTree(
       [fiberRoot(fn(Wrap, [host(Anchor as unknown as string, null), host('RealApp', RECT)]))],
       makeEnv({ isWrapper: (fiber) => fiber.type === Wrap || fiber.type === Anchor }),
+    );
+
+    const names = tree?.subitems?.[0]?.subitems?.map((n) => n.class_name);
+    expect(names).toEqual(['RealApp']);
+  });
+
+  it('the root reporter is not emitted, and its children are', () => {
+    // Uses requests.ts's real isWrapper (exported for this assertion, like
+    // monotonicNow). Dropping RootErrorReporter from that predicate must fail
+    // this test (manual mutate 3).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { RootErrorReporter } = require('../../exceptions/RootErrorReporter') as {
+      RootErrorReporter: unknown;
+    };
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { isWrapper } = require('../requests') as {
+      isWrapper: (fiber: FiberLike) => boolean;
+    };
+
+    const tree = buildViewTree(
+      [fiberRoot(classComponent(RootErrorReporter, [host('RealApp', RECT)]))],
+      makeEnv({ isWrapper }),
     );
 
     const names = tree?.subitems?.[0]?.subitems?.map((n) => n.class_name);
