@@ -12,9 +12,9 @@
  * `rh-*` scenarios are the report-handler cases in scenarios/report-handler.ts;
  * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts, `secure`
  * is scenarios/secure.tsx, `attributes`/`attributes-persist` are
- * scenarios/attributes.ts, `e2e-native-smoke` is scenarios/native.ts, and
- * `blackout`, `blackout-prelaunch`, `secure-component` and `view-tree` are
- * scenarios/privacy.tsx.
+ * scenarios/attributes.ts, `e2e-native-smoke` / `native-crash-*` are
+ * scenarios/native.ts, and `blackout`, `blackout-prelaunch`,
+ * `secure-component` and `view-tree` are scenarios/privacy.tsx.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -58,7 +58,11 @@ import {
   isAttributeScenario,
   runAttributeScenario,
 } from './scenarios/attributes';
-import { isNativeScenario, runNativeScenario } from './scenarios/native';
+import {
+  installNativeHandler,
+  isNativeScenario,
+  runNativeScenario,
+} from './scenarios/native';
 import {
   PrivacyStage,
   type PrivacyScenario,
@@ -298,6 +302,11 @@ export default function App() {
       // blackout lifecycle subscription.
       if (privacyScenario !== undefined) {
         preLaunchPrivacyProbe(privacyScenario, choice.nonce);
+      }
+      // Before launch(): a crash recovered at the next launch only reaches a
+      // handler that is already registered (Task 7.6b).
+      if (isNativeScenario(choice.scenario)) {
+        installNativeHandler(choice.scenario);
       }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings

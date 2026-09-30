@@ -3334,7 +3334,7 @@ export function fileExists(path: string): Promise<boolean>;
    - `crash.json` `ndkCrash === true`;
    - `exception_type === 'native'`;
    - `signal.name === 'SIGSEGV'` and `signal.number === 11`.
-3. `the report handler sees it` — `BUGSEE_E2E native after type=crash` appears in the relaunch.
+3. `the NDK relaunch recovers on the bounded path, not JS` — the relaunch log has `report handler - completed by=recovery` (NDK early recovery on `bugsee-report-handler-bounded`; Task 3.4d's Java recovery was the live `BugseeReportHandlerThread`, this one is not), and `BUGSEE_E2E native after type=crash` is absent for that run.
 4. `crashNative('abort') is SIGABRT` — cases 1–2 again with `kind=abort`: `Fatal signal 6 (SIGABRT)`, and `signal.name === 'SIGABRT'`.
 
 - [ ] **Red/Green** — all four cases pass on the WOD_LX1.
