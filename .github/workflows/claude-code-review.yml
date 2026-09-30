@@ -9,7 +9,12 @@ on:
     # stacked onto other feature branches, and a review is worth having there too.
 
 jobs:
-  claude-review:
+  # The action runs here, and a failure of the action does not fail this job.
+  # `claude-review` below is the check the pull request shows. It runs only
+  # when the review actually finished, so a review that cannot run (API limit,
+  # auth, the action erroring) is skipped instead of red.
+  review:
+    name: Run Claude Code Review
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -19,6 +24,8 @@ jobs:
       # gh pr view reads statusCheckRollup, which 403s without this.
       checks: read
       id-token: write
+    outputs:
+      outcome: ${{ steps.claude-review.outcome }}
 
     steps:
       - name: Checkout repository
@@ -28,6 +35,7 @@ jobs:
 
       - name: Run Claude Code Review
         id: claude-review
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -135,3 +143,12 @@ jobs:
           # acceptable while this repository is private and its Actions logs are
           # collaborator-only. Drop it if the repository is ever made public.
           show_full_output: true
+
+  claude-review:
+    name: claude-review
+    needs: review
+    if: needs.review.outputs.outcome == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Review completed
+        run: echo "Claude Code Review finished."
