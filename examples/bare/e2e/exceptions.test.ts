@@ -16,8 +16,9 @@
  * Cases 7 and 10 are `it.failing` on Android for documented 7.3.0 gaps
  * (labels ignored; unhandled also files an error report). Do not weaken them.
  *
- * Predictions that must not be loosened: case 12's red-box line, and gated
- * R2's JavascriptException bundle. If either is wrong, stop and report.
+ * Case 12's red-box line must stay. Gated release R2/R3 (controller ruling):
+ * R13's second Bugsee crash was not retained on SDK 7.3.0; logcat still shows
+ * RN's JavascriptException, but exactly one Bugsee bundle is filed.
  */
 import { writeFileSync } from 'node:fs';
 
@@ -664,9 +665,10 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
 
       observe = await startRun('exc-observe');
       report('observe banner', observe.banner.text.trim());
-      // Wait for recovery / bundling.
+      // Wait for recovery / bundling. One retained Bugsee bundle (R13's second
+      // Bugsee crash is not retained on SDK 7.3.0 — controller ruling).
       await new Promise(resolve => setTimeout(resolve, 5_000));
-      bundles = await awaitBundles(2, 60_000);
+      bundles = await awaitBundles(1, 60_000);
       report(
         'R1–R3 bundles',
         bundles.map(b => {
@@ -706,54 +708,33 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       report('R1 ours', ours.map(b => b.file));
     });
 
-    itAndroid("RN's own crash is the second report", () => {
-      const rn = bundles.filter(b => {
-        if (b.request.type !== 'crash') {
-          return false;
-        }
+    // Controller ruling (task 7.5a): R13's second Bugsee crash was not retained
+    // on SDK 7.3.0. Logcat still shows RN's JavascriptException and the process
+    // dies; Bugsee keeps exactly one crash — ReactNativeWebException.
+    itAndroid('RN JavascriptException is not a second Bugsee bundle', () => {
+      const rnNamed = bundles.filter(b => {
         const crash = crashOf(b);
         if (crash === undefined) {
           return false;
         }
-        const name = String(exceptionOf(crash).name ?? '');
-        const reason = String(exceptionOf(crash).reason ?? '');
-        return name.includes('JavascriptException') && reason.includes(`E2E fatal ${nonce}`);
+        return String(exceptionOf(crash).name ?? '').includes('JavascriptException');
       });
-      expect(rn).toHaveLength(1);
-      report('R2 JavascriptException', {
-        file: rn[0]!.file,
-        name: exceptionOf(crashOf(rn[0]!)!).name,
-      });
+      expect(rnNamed).toHaveLength(0);
+      expect(bundles).toHaveLength(1);
+      const only = bundles[0]!;
+      expect(only.request.type).toBe('crash');
+      expect(exceptionOf(crashOf(only)!).name).toBe(
+        'com.bugsee.reactnative.ReactNativeWebException',
+      );
+      report('R2 single bundle', { file: only.file, type: only.request.type });
     });
 
-    itAndroid.failing(
-      'the fatal error files no second report for the incident (release)',
-      () => {
-        const ours = bundles.find(b => {
-          const crash = crashOf(b);
-          return (
-            crash !== undefined &&
-            exceptionOf(crash).name === 'com.bugsee.reactnative.ReactNativeWebException' &&
-            b.request.type === 'crash'
-          );
-        });
-        expect(ours).toBeDefined();
-        const others = bundles.filter(b => {
-          if (ours !== undefined && b.file === ours.file) {
-            return false;
-          }
-          return rawCrashContains(b, `E2E fatal ${nonce}`);
-        });
-        report(
-          'R3 extra bundles',
-          others.map(b => ({
-            file: b.file,
-            type: b.request.type,
-            name: crashOf(b) !== undefined ? exceptionOf(crashOf(b)!).name : undefined,
-          })),
-        );
-        expect(others).toHaveLength(0);
-      },
-    );
+    // Not it.failing on release: debug case 10 stays it.failing for the
+    // crash+error double-file; release retains one bundle for the incident.
+    itAndroid('exactly one bundle contains the fatal reason', () => {
+      const withFatal = bundles.filter(b => rawCrashContains(b, `E2E fatal ${nonce}`));
+      expect(withFatal).toHaveLength(1);
+      report('R3 fatal bundles', withFatal.map(b => b.file));
+    });
   });
 });
