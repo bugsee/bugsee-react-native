@@ -14,6 +14,7 @@
  */
 import { Platform } from 'react-native';
 import NativeBugsee from '../NativeBugsee';
+import { RootErrorReporter } from '../exceptions/RootErrorReporter';
 import { BugseeSecure } from '../secure/BugseeSecure';
 import { secureRectangleScale } from '../secure/unit';
 import { VH_ANCHOR_NATIVE_ID } from './constants';
@@ -68,11 +69,12 @@ export function markWrapComponent(component: object): void {
 }
 
 /**
- * True for the fiber `wrap()` itself renders as, or for the anchor view it
- * renders alongside the wrapped root -- neither is real app content, and
- * `walk.ts` flattens both away (their children, if any, are promoted to
- * whatever ancestor node IS emitted) rather than showing a synthetic
- * "BugseeRoot" node or the invisible anchor in the captured tree.
+ * True for the fiber `wrap()` itself renders as, the `RootErrorReporter`
+ * it mounts around the app root, or for the anchor view it renders alongside
+ * -- none of those are real app content, and `walk.ts` flattens them away
+ * (their children, if any, are promoted to whatever ancestor node IS
+ * emitted) rather than showing a synthetic "BugseeRoot" / reporter node or
+ * the invisible anchor in the captured tree.
  *
  * The anchor is recognised by its `nativeID`, not by fiber identity: the
  * fiber `wrap()`'s `<View>` element resolves to is rebuilt on every render,
@@ -80,9 +82,16 @@ export function markWrapComponent(component: object): void {
  * Reading `nativeID` off a host fiber is exactly what `walk.ts`'s own privacy
  * rule already allows (`tagOptions`), so this reads nothing the walk itself
  * could not have read anyway.
+ *
+ * Exported only so `walk.test.ts` can assert the RootErrorReporter identity
+ * check against the same predicate production uses (manual mutate 3); not
+ * part of this module's public contract with the rest of the package.
  */
-function isWrapper(fiber: FiberLike): boolean {
+export function isWrapper(fiber: FiberLike): boolean {
   const type = fiber.type;
+  if (type === RootErrorReporter) {
+    return true;
+  }
   if (typeof type === 'function' && wrapComponents.has(type)) {
     return true;
   }

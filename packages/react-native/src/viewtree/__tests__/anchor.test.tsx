@@ -10,6 +10,7 @@ import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 
 jest.mock('react-native', () => ({ View: 'View' }));
+jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
 jest.mock('../requests', () => ({
   __esModule: true,
   registerAnchor: jest.fn(),

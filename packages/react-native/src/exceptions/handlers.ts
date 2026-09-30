@@ -222,3 +222,8 @@ export function installExceptionHandlers(env: HandlerEnv = defaultEnv()): void {
 export function setExceptionCaptureEnabled(enabled: boolean): void {
   captureEnabled = enabled;
 }
+
+/** Current R7 capture flag; `RootErrorReporter` reads this rather than copying it. */
+export function isExceptionCaptureEnabled(): boolean {
+  return captureEnabled;
+}

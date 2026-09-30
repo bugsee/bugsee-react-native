@@ -598,3 +598,8 @@ export { AttributeErrorCode, BugseeAttributeError } from './attributes/errors';
 export type { AttributeReadValue, AttributeValue } from './attributes/validate';
 
 export type { ExceptionOptions } from './exceptions/options';
+export { ErrorBoundary } from './exceptions/ErrorBoundary';
+export type {
+  ErrorBoundaryFallbackProps,
+  ErrorBoundaryProps,
+} from './exceptions/ErrorBoundary';
