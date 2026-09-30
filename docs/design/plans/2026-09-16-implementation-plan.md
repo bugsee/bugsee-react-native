@@ -889,11 +889,26 @@ Identical to 3.5b on the iPhone XS with 3.4f's retention and pull recipe: one lo
 
 Runs as soon as 7.3.0 is on Maven Central — before the review gate if possible.
 
-- [ ] **Precondition** — `curl -sfI https://repo1.maven.org/maven2/com/bugsee/bugsee-android/7.3.0/bugsee-android-7.3.0.pom` and the same for `bugsee-android-ndk` both answer 200.
-- [ ] **Change** — `native-versions.json`: `"sdk": "7.3.0"` and delete `snapshotCommit`; delete the two guarded `mavenLocal` blocks (root `settings.gradle`, `examples/bare/android/build.gradle`); update `native-versions.test.ts`; regenerate `packages/react-native/src/options/android-options-manifest.json` against the 7.3.0 sources (`node scripts/cli-extract-option-keys.ts <iosRoot> <androidRoot at v7.3.0>`), because `option-manifest-parity.test.ts` requires `manifest.sdkVersion === android.sdk` and fails the moment the pin flips (final-review fix A3). The CLI also rewrites `option-keys.json`: restore that file here and leave it to 3.P4. Nothing else.
-- [ ] **Verify** — `yarn test` (the maven-local test branches on the pin: for a released pin it asserts no `mavenLocal` in any tracked Gradle file; `option-manifest-parity.test.ts` asserts the regenerated manifest's `sdkVersion` is `7.3.0`); `BUGSEE_RELEASE=1 yarn test` passes for Android (iOS may still block if 3.P2 is on its placeholder); CI's android job green. Device: the harness's `SDK build` step shows `Bugsee Android SDK 7.3.0 [<sha>]`; compare `<sha>` with `git -C "$CLONE" rev-parse --short v7.3.0` after fetching tags. If the release commit differs from `snapshotCommit`, rerun 3.4d and 3.5b before closing this task.
-- [ ] **Mutate** — re-add an unconditional `mavenLocal()` to the example: the maven-local test must fail. Revert.
-- [ ] **Commit** — `build(android): pin the released 7.3.0`. Body: the banner line and both SHAs.
+- [x] **Precondition** — `curl -sfI https://repo1.maven.org/maven2/com/bugsee/bugsee-android/7.3.0/bugsee-android-7.3.0.pom` and the same for `bugsee-android-ndk` both answer 200.
+- [x] **Change** — `native-versions.json`: `"sdk": "7.3.0"` and delete `snapshotCommit`; delete the two guarded `mavenLocal` blocks (root `settings.gradle`, `examples/bare/android/build.gradle`); update `native-versions.test.ts`; regenerate `packages/react-native/src/options/android-options-manifest.json` against the 7.3.0 sources (`node scripts/cli-extract-option-keys.ts <iosRoot> <androidRoot at v7.3.0>`), because `option-manifest-parity.test.ts` requires `manifest.sdkVersion === android.sdk` and fails the moment the pin flips (final-review fix A3). The CLI also rewrites `option-keys.json`: restore that file here and leave it to 3.P4. Nothing else.
+- [x] **Verify** — `yarn test` (the maven-local test branches on the pin: for a released pin it asserts no `mavenLocal` in any tracked Gradle file; `option-manifest-parity.test.ts` asserts the regenerated manifest's `sdkVersion` is `7.3.0`); `BUGSEE_RELEASE=1 yarn test` passes for Android (iOS may still block if 3.P2 is on its placeholder); CI's android job green. Device: the harness's `SDK build` step shows `Bugsee Android SDK 7.3.0 [<sha>]`; compare `<sha>` with `git -C "$CLONE" rev-parse --short v7.3.0` after fetching tags. If the release commit differs from `snapshotCommit`, rerun 3.4d and 3.5b before closing this task.
+- [x] **Mutate** — re-add an unconditional `mavenLocal()` to the example: the maven-local test must fail. Revert.
+- [x] **Commit** — `build(android): pin the released 7.3.0`. Body: the banner line and both SHAs.
+
+**As run (2026-09-29).**
+- **Precondition:** `bugsee-android`, `bugsee-android-ndk` and `bugsee-android-okhttp` 7.3.0 all answer 200 on Maven Central.
+- **SHAs:** `v7.3.0` = `beb390dc02bae24d43fc6addd83c33ace4406087`; the old `snapshotCommit` `234dcddfcb972da008eeeb0e3ad8757e27ba3e50` is an ancestor, 15 commits behind. They differ, so every Android suite was rerun.
+- **Resolution:** Gradle resolves `bugsee-android:7.3.0` from Maven Central. The cached AAR's SHA-1 `666674c7…` matches Central's `.sha1`. The stale `~/.m2` 7.3.0 AAR (`ce189836…`, 2026-09-20) is no longer consulted.
+- **Manifest:** regenerated from `v7.3.0` and iOS `0d9c9d0a3`. The only change is the new `com.bugsee.option.detect.exit.bg_low_memory_as_error` (#190), plus `sdkVersion` and `generatedAt`.
+- **Checks:**
+  - `yarn test`: 1155 passed, 1 skipped.
+  - `BUGSEE_RELEASE=1 yarn test`: 1156 passed, with no blockers on either platform.
+  - Lint, typecheck, root `./gradlew test`, and the example's `:bugsee_react-native:testDebugUnitTest :app:assembleDebug` are all green.
+  - CI was not run because nothing was pushed. Its SNAPSHOT guard passes locally.
+- **Mutation:** an unconditional `mavenLocal()` in the example fails `maven-local.test.ts` (Expected 0, Received 1). Reverted.
+- **WOD_LX1 (`AMRJCP4718402860`):** the banner reads `Bugsee Android SDK 7.3.0 [beb390dc0]`, which matches `v7.3.0`. Every Android suite passes:
+  - debug build: `launch`, `data` 4/4, `attributes` 6/6, `wrapper-channel` (3.5b) 2/2, `secure-rectangles` (`E2E_EDGE_TO_EDGE=true`) 1/1, and `report-handler` cases 1–5 and 7;
+  - debuggable release build: `report-handler` (3.4d) 7/7 with the iOS-only case skipped, then case 6 again twice, 3/3 in total. In every case-6 run the onAfter dispatch completed `by=js` in +9–13 ms, and the crash bundle carried the nonce labels. Four `libbugsee*.so` files loaded.
 
 ---
 
@@ -903,10 +918,28 @@ Added by controller ruling. Pending — runs after 3.P3, against the flipped, re
 
 **Why:** `option-keys.json` (`scripts/cli-extract-option-keys.ts`) is a committed fixture generated from the Android and iOS SDK sources. It was last regenerated against Android 7.2.0. 7.3.0 is the release the wrapper channel, the report-contract methods and `com.bugsee.option.$$WRAPPER` shipped in (Phase 3's rulings); Android's option surface has moved since, and the fixture has not been asked to notice.
 
-- [ ] Regenerate `option-keys.json` (and the `shared`/`android`-only/`iOS`-only split it derives) from the `7.3.0` Android sources and the pinned iOS `7.0.0-beta3` sources.
-- [ ] Expose any option `7.3.0` added that Android carries and this wrapper does not yet surface as a first-class accessor — at minimum, confirm none of the new keys are silently dropped the way `19a034a` fixed for deprecated-but-registered options.
-- [ ] `option-manifest-parity.test.ts` and `option-keys.test.ts` stay green against the regenerated fixture.
-- [ ] **Commit** — `build(options): regenerate option-keys.json against 7.3.0`.
+- [x] Regenerate `option-keys.json` (and the `shared`/`android`-only/`iOS`-only split it derives) from the `7.3.0` Android sources and the pinned iOS `7.0.0-beta3` sources.
+- [x] Expose any option `7.3.0` added that Android carries and this wrapper does not yet surface as a first-class accessor — at minimum, confirm none of the new keys are silently dropped the way `19a034a` fixed for deprecated-but-registered options.
+- [x] `option-manifest-parity.test.ts` and `option-keys.test.ts` stay green against the regenerated fixture.
+- [x] **Commit** — `build(options): regenerate option-keys.json against 7.3.0`.
+
+**As run (2026-09-29).**
+- **Sources:** regenerated from Android `v7.3.0` (`beb390dc0`) and iOS `7.0.0-beta3` (`0d9c9d0a3`).
+- **Key surface against the 7.2.0 fixture:** shared goes from 47 to 48, iOS-only from 22 to 21, Android-only from 27 to 30. Nothing was removed.
+  - **Moved:** `config.max-data-size`, from iOS-only to shared. Both SDKs read it in megabytes; the defaults are iOS 50 and Android 150.
+  - **Added, Android-only:** `config.max-pending-reports`, `config.max-pending-report-age`, and `detect.exit.bg_low_memory_as_error` (#190).
+  - These four keys are exactly what `v7.2.0..v7.3.0` added to `Options.java`.
+- **Surfaced:**
+  - `maxDataSize` moves from `IOSLaunchOptions` to `BugseeLaunchOptions`.
+  - `AndroidLaunchOptions` gains `detectAndReportExitLowMemoryBackgroundAsError`, `maxPendingReports` and `maxPendingReportAge`.
+- **Guard against silently dropped keys:** `option-manifest-parity.test.ts` now requires the key fixture and the manifest to agree in both directions. The only exceptions are the named hidden internals `$$DEBUG`, `$$ENDPOINT` and `$$WRAPPER`.
+- **Mutations:**
+  - Putting the 7.2.0 fixture back fails 7 tests, including `writes only keys its own platform accepts` for Android.
+  - Dropping `bg_low_memory_as_error` from the manifest fails 3 tests.
+- **Checks:**
+  - `yarn test`: 1177 passed, 1 skipped.
+  - `BUGSEE_RELEASE=1 yarn test`: 1178 passed.
+  - Lint and typecheck are clean.
 
 ---
 

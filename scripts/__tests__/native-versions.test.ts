@@ -8,9 +8,10 @@ const valid: NativeVersions = {
 describe('readNativeVersions', () => {
   it('exposes the pinned native versions', () => {
     const v = readNativeVersions();
-    expect(v.android.sdk).toBe('7.3.0-SNAPSHOT');
+    expect(v.android.sdk).toBe('7.3.0');
     expect(v.android.gradlePlugin).toBe('4.0.7');
-    expect(v.android.snapshotCommit).toBe('234dcddfcb972da008eeeb0e3ad8757e27ba3e50');
+    // A released pin carries no snapshot provenance.
+    expect(v.android).not.toHaveProperty('snapshotCommit');
     expect(v.ios.sdk).toBe('7.0.0-beta3');
     expect(v.ios.spmUrl).toBe('https://github.com/bugsee/spm');
   });

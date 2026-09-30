@@ -210,12 +210,14 @@ BugseeLaunchOptions (abstract)
   $set / $get   (protected)
   setCustomOption(key, value)          (public)
   static serialize(opts)
-  accessors for options shared by both platforms
+  accessors for options shared by both platforms (maxDataSize among them
+  since Android 7.3.0 registered it)
 
 AndroidLaunchOptions extends …   videoMode, logsUseAllSources, the detect.exit*
-                                 family, triggerByNotification/Broadcast, ndk, …
+                                 family, triggerByNotification/Broadcast, ndk,
+                                 maxPendingReports/ReportAge, …
 IOSLaunchOptions     extends …   captureAVPlayer, machExceptions, bluetoothStatus,
-                                 diskSpace, killDetection, maxDataSize, style, …
+                                 diskSpace, killDetection, style, …
 ```
 
 `createDefaultLaunchOptions()` selects by `Platform.OS`, unchanged.

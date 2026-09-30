@@ -137,6 +137,19 @@ export abstract class BugseeLaunchOptions {
   set duration(value: number | undefined) {
     this.$set('com.bugsee.option.config.duration', value);
   }
+
+  /**
+   * Disk space, in megabytes, that reports waiting to be sent may occupy.
+   * iOS-only until Android 7.3.0 registered the same key in the same unit;
+   * the SDKs' defaults differ (iOS 50, Android 150), and the wrapper sets
+   * neither.
+   */
+  get maxDataSize(): number | undefined {
+    return this.$get('com.bugsee.option.config.max-data-size');
+  }
+  set maxDataSize(value: number | undefined) {
+    this.$set('com.bugsee.option.config.max-data-size', value);
+  }
   /**
    * Sets any option by its real `com.bugsee.option.*` key, surfaced or not.
    * `undefined` deletes, exactly as a first-class accessor does.
