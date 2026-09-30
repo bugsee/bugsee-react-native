@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const path = require('node:path');
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 
@@ -5,6 +6,15 @@ const workspaceRoot = path.resolve(__dirname, '..', '..');
 const library = path.resolve(workspaceRoot, 'packages', 'react-native');
 // The example-only native test helpers (Task 7.6a), a workspace sibling.
 const e2eNative = path.resolve(workspaceRoot, 'examples', 'e2e-native');
+
+/**
+ * Real paths of the node_modules trees. A git worktree may symlink them at
+ * the main clone (so yarn does not reinstall); Metro refuses to serve a file
+ * whose realpath is outside projectRoot/watchFolders, so the resolved
+ * destinations must be listed explicitly.
+ */
+const appNodeModules = fs.realpathSync(path.resolve(__dirname, 'node_modules'));
+const rootNodeModules = fs.realpathSync(path.resolve(workspaceRoot, 'node_modules'));
 
 /**
  * The app's own copies. The library's `react` and `react-native` imports must
@@ -28,7 +38,7 @@ const appOrigin = path.resolve(__dirname, 'index.js');
  * @type {import('@react-native/metro-config').MetroConfig}
  */
 const config = {
-  watchFolders: [library, e2eNative, path.resolve(workspaceRoot, 'node_modules')],
+  watchFolders: [library, e2eNative, rootNodeModules, appNodeModules],
   resolver: {
     // extraNodeModules below is only a FALLBACK: Metro tries the hierarchical
     // node_modules lookup first. From the library's sources that lookup finds
@@ -48,17 +58,14 @@ const config = {
       }
       return context.resolveRequest(context, moduleName, platform);
     },
-    nodeModulesPaths: [
-      path.resolve(__dirname, 'node_modules'),
-      path.resolve(workspaceRoot, 'node_modules'),
-    ],
+    nodeModulesPaths: [appNodeModules, rootNodeModules],
     extraNodeModules: {
       '@bugsee/react-native': library,
       'bugsee-e2e-native': e2eNative,
       // The library declares react and react-native as peers; point them at
       // the app's single copy so there are never two Reacts in the bundle.
-      react: path.resolve(__dirname, 'node_modules', 'react'),
-      'react-native': path.resolve(__dirname, 'node_modules', 'react-native'),
+      react: path.join(appNodeModules, 'react'),
+      'react-native': path.join(appNodeModules, 'react-native'),
     },
   },
 };
