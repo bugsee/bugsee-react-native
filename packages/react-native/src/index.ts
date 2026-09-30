@@ -454,14 +454,17 @@ class Bugsee {
    * from `com.bugsee.app-token` manifest metadata. Deliberately makes no
    * native launch call; doing so would start a second session.
    *
-   * Installs the global JS exception handlers and reads
-   * `com.bugsee.option.detect.crash` from the native launch options (R7).
-   * Handler registration itself is idempotent inside those components.
+   * Reads `com.bugsee.option.detect.crash` from the native launch options and
+   * applies it before the global handlers are installed (R7). Capture is held
+   * off during that read: the default is on, and the read yields, so a render
+   * error in the gap would otherwise be reported when the option is false.
+   * If the read rejects, capture stays off and the handlers are not installed.
    */
   async attach(): Promise<void> {
-    installExceptionHandlers();
+    setExceptionCaptureEnabled(false);
     const options = await this.getLaunchOptions();
     applyExceptionCaptureFromOptions(options);
+    installExceptionHandlers();
   }
 
   /**

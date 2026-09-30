@@ -39,7 +39,8 @@ export interface HandlerEnv {
   isDev: boolean;
 }
 
-let installed = false;
+let errorUtilsInstalled = false;
+let rejectionTrackerInstalled = false;
 let captureEnabled = true;
 let warnedNoErrorUtils = false;
 let warnedHandlerFailure = false;
@@ -208,14 +209,20 @@ function installErrorUtils(env: HandlerEnv): void {
   utils.setGlobalHandler(onError);
 }
 
-/** Idempotent per JS runtime. */
+/**
+ * Idempotent per JS runtime. Each half is marked installed only after it
+ * returns, so a throw leaves that half retryable and does not re-wrap the
+ * half that already succeeded.
+ */
 export function installExceptionHandlers(env: HandlerEnv = defaultEnv()): void {
-  if (installed) {
-    return;
+  if (!errorUtilsInstalled) {
+    installErrorUtils(env);
+    errorUtilsInstalled = true;
   }
-  installed = true;
-  installErrorUtils(env);
-  installRejectionTracker(env);
+  if (!rejectionTrackerInstalled) {
+    installRejectionTracker(env);
+    rejectionTrackerInstalled = true;
+  }
 }
 
 /** R7: false only when the launch options set com.bugsee.option.detect.crash to false. */
