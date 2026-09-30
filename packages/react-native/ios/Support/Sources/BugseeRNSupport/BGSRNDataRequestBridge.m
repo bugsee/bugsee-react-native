@@ -211,6 +211,14 @@ static id _Nullable CallOrigin(BGSRNDataRequestOriginBlock _Nullable block, BOOL
   os_unfair_lock_unlock(&_lock);
 }
 
+- (void)setViewTreeEnabled:(BOOL)enabled forSink:(id)sink {
+  os_unfair_lock_lock(&_lock);
+  if (_sink == sink) {
+    _viewTreeEnabled = enabled;
+  }
+  os_unfair_lock_unlock(&_lock);
+}
+
 - (NSUInteger)outstanding {
   os_unfair_lock_lock(&_lock);
   const NSUInteger count = _requests.count;

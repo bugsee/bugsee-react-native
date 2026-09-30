@@ -141,8 +141,19 @@ final class DataRequestBridge {
         this.outcomes = outcomes;
     }
 
-    void setViewTreeEnabled(final boolean enabled) {
-        viewTreeEnabled = enabled;
+    /**
+     * The attached runtime's anchor mounted ({@code true}) or unmounted
+     * ({@code false}). A caller that is not the attached sink is ignored.
+     * The flag is process-wide, and a reload can still run the old module's
+     * last {@code setViewTreeEnabled(false)} after the new module has
+     * attached and enabled — the same window {@link #detach} already
+     * identity-checks. Applying that write would leave the live runtime at
+     * {@code by=no-js} until its anchor count passed through zero again.
+     */
+    void setViewTreeEnabled(@NonNull final Sink caller, final boolean enabled) {
+        if (sink.get() == caller) {
+            viewTreeEnabled = enabled;
+        }
     }
 
     /**

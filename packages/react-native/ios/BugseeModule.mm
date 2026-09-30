@@ -449,7 +449,7 @@ RCT_EXPORT_MODULE(Bugsee)
 /// JS mounted its first `Bugsee.wrap` anchor (YES) or unmounted its last (NO).
 /// Until YES, the bridge answers the SDK nil without asking JS.
 - (void)setViewTreeEnabled:(BOOL)enabled {
-  BGSRNDataRequestBridge.shared.viewTreeEnabled = enabled;
+  [BGSRNDataRequestBridge.shared setViewTreeEnabled:enabled forSink:self];
 }
 
 /// JS's one synchronous answer to `onDataRequest`: the view tree as JSON

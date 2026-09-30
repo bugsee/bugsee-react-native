@@ -1972,7 +1972,7 @@ export function BugseeSecure(props: BugseeSecureProps): React.ReactElement;
 
 `BugseeSecure` is a plain function component: no `memo`, no `forwardRef`. The view-tree walk identifies it by identity. It behaves as follows:
 - It renders `<View {...rest} ref={ref} collapsable={false} onLayout={…}>`, calling the caller's `onLayout` too.
-- While `enabled` (default `true`) and mounted, it measures on mount, on layout and on every loop tick, with `ref.current.measureInWindow((x, y, width, height) => setOwnerRectangles(token, 0, [{ x, y, width, height }]))`.
+- While `enabled` (default `true`) and mounted, it measures on mount, on layout and on every loop tick, with `ref.current.measureInWindow((x, y, width, height) => setOwnerRectangles(token, 0, [{ x, y, width, height }]))`. That space is the main React root's window: Android adds that root's display origin. A React Native `<Modal>` is its own window (an Android `Dialog`), so a `<BugseeSecure>` or a `managed` node inside one is not placed on the sheet. Follow-up, not a Phase 6 fix: measure in the view's own window.
 - If `measureInWindow` throws, the last rectangle stands and the error is logged once (`console.warn('[Bugsee] BugseeSecure could not measure', e)`).
 - On unmount, or on `enabled` becoming `false`, it calls `clearOwner(token)` and removes its measurer.
 

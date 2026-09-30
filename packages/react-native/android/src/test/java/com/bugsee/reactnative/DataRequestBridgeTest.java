@@ -144,7 +144,7 @@ public class DataRequestBridgeTest {
 
     private void attachAndEnable() {
         bridge.attach(sink, origin);
-        bridge.setViewTreeEnabled(true);
+        bridge.setViewTreeEnabled(sink, true);
     }
 
     @Test
@@ -279,10 +279,11 @@ public class DataRequestBridgeTest {
 
     @Test
     public void aThrowingSinkRepliesNull() {
-        bridge.attach((requestId, type, originX, originY) -> {
+        final DataRequestBridge.Sink throwing = (requestId, type, originX, originY) -> {
             throw new IllegalStateException("sink is gone");
-        }, origin);
-        bridge.setViewTreeEnabled(true);
+        };
+        bridge.attach(throwing, origin);
+        bridge.setViewTreeEnabled(throwing, true);
         final Reply reply = new Reply();
 
         bridge.request(DataRequestBridge.VIEW_HIERARCHY, reply::onResult);
@@ -357,7 +358,7 @@ public class DataRequestBridgeTest {
 
         final Recorder current = new Recorder();
         bridge.attach(current, origin);
-        bridge.setViewTreeEnabled(true);
+        bridge.setViewTreeEnabled(current, true);
         final Reply currentReply = new Reply();
         bridge.request(DataRequestBridge.VIEW_HIERARCHY, currentReply::onResult);
         final String currentId = current.last().requestId;
@@ -466,7 +467,7 @@ public class DataRequestBridgeTest {
             return origin.origin;
         };
         bridge.attach(sink, delayed);
-        bridge.setViewTreeEnabled(true);
+        bridge.setViewTreeEnabled(sink, true);
 
         bridge.request(DataRequestBridge.VIEW_HIERARCHY, data -> { });
         final String id = sink.last().requestId;
@@ -536,10 +537,11 @@ public class DataRequestBridgeTest {
 
     @Test
     public void outstandingReturnsToZeroAfterASinkThrows() {
-        bridge.attach((requestId, type, originX, originY) -> {
+        final DataRequestBridge.Sink throwing = (requestId, type, originX, originY) -> {
             throw new IllegalStateException("sink is gone");
-        }, origin);
-        bridge.setViewTreeEnabled(true);
+        };
+        bridge.attach(throwing, origin);
+        bridge.setViewTreeEnabled(throwing, true);
 
         bridge.request(DataRequestBridge.VIEW_HIERARCHY, data -> { });
 
@@ -565,13 +567,40 @@ public class DataRequestBridgeTest {
         assertTrue(next.requests.isEmpty());
     }
 
+    /**
+     * The old module's last disable must not stick. A reload attaches and
+     * enables the new sink, then the old runtime's wrap cleanup still calls
+     * {@code setViewTreeEnabled(false)} on the shared flag.
+     */
+    @Test
+    public void aStaleModuleCannotDisableTheAttachedViewTree() {
+        final Recorder stale = new Recorder();
+        bridge.attach(stale, origin);
+        bridge.setViewTreeEnabled(stale, true);
+
+        final Recorder current = new Recorder();
+        bridge.attach(current, origin);
+        bridge.setViewTreeEnabled(current, true);
+
+        bridge.setViewTreeEnabled(stale, false);
+
+        final Reply reply = new Reply();
+        bridge.request(DataRequestBridge.VIEW_HIERARCHY, reply::onResult);
+
+        assertEquals(0, reply.calls);
+        assertEquals(1, current.requests.size());
+        assertTrue(bridge.complete(current.last().requestId, "{}"));
+        assertEquals(1, reply.calls);
+        assertEquals("{}", reply.results.get(0));
+    }
+
     // --- The outer catch does not leak an entry or double-reply (review M3) --
 
     @Test
     public void aSchedulerFailureAfterMintingStillCompletesExactlyOnceAndLeavesNothingOutstanding() {
         final DataRequestBridge failing = new DataRequestBridge(new ThrowingScheduler(), () -> now, lines::add);
         failing.attach(sink, origin);
-        failing.setViewTreeEnabled(true);
+        failing.setViewTreeEnabled(sink, true);
         final Reply reply = new Reply();
 
         failing.request(DataRequestBridge.VIEW_HIERARCHY, reply::onResult);
