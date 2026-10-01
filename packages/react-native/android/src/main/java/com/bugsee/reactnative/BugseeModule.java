@@ -27,13 +27,14 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
 
 /**
  * The Android half of the `Bugsee` TurboModule.
  *
  * <p>Thin on purpose. Everything that translates between the JS wire shape and
  * the SDK's types lives in {@link BugseeTokens}, {@link BugseeStatusMapper},
- * {@link ReportOps} and {@link ReportHandlerBridge}, which are plain Java and
+ * {@link ReportOps}, {@link ReportHandlerBridge} and {@link CreatedReports}, which are plain Java and
  * unit-tested without React Native or a device; what is left here is the part
  * that can only be exercised by running the app, and is covered by the example
  * app's e2e instead.
@@ -67,6 +68,7 @@ public class BugseeModule extends NativeBugseeSpec
     private static final String E_REPORT_HANDLE_DEAD = "E_REPORT_HANDLE_DEAD";
     private static final String E_REPORT_ATTACHMENT_REJECTED = "E_REPORT_ATTACHMENT_REJECTED";
     private static final String E_REPORT_BAD_ARGUMENT = "E_REPORT_BAD_ARGUMENT";
+    private static final String E_REPORT_CREATE_BUSY = "E_REPORT_CREATE_BUSY";
     // The stable code of src/attributes/errors.ts's AttributeErrorCode.Rejected.
     private static final String E_ATTRIBUTE_REJECTED = "E_ATTRIBUTE_REJECTED";
 
@@ -118,6 +120,9 @@ public class BugseeModule extends NativeBugseeSpec
         // next runtime cannot know them, so the reports must not wait out
         // their deadlines.
         ReportHandlerBridge.shared().detach(this);
+        // The next runtime cannot know a created-report handle. Drop it and
+        // free the one slot before that runtime reserves its own.
+        CreatedReports.shared().clear();
         // Same for any outstanding vh request, and disables the view tree:
         // the next runtime's anchor has not mounted yet.
         DataRequestBridge.shared().detach(dataRequestSink);
@@ -763,29 +768,99 @@ public class BugseeModule extends NativeBugseeSpec
         }
     }
 
-    // Task 8.2b. No registry yet, so this does not call the SDK: the SDK made none.
+    /**
+     * One created report at a time. The slot is reserved before the SDK is
+     * asked, because {@code onCreated} arrives later, on the main thread.
+     * A throw from that call ends the reservation; otherwise the listener does,
+     * with {@code cr-<n>} or null.
+     */
     @Override
     public void createReport(final Promise promise) {
-        promise.resolve(null);
+        final CreatedReports registry = CreatedReports.shared();
+        final int stamp = registry.tryReserve();
+        if (stamp == 0) {
+            Log.i(TAG, "created report - busy");
+            promise.reject(
+                    E_REPORT_CREATE_BUSY,
+                    "A created report is already outstanding.");
+            return;
+        }
+        try {
+            Bugsee.createReport(created -> deliverCreatedReport(registry, stamp, created, promise));
+        } catch (final Throwable thrown) {
+            // The SDK threw before the listener ran. The stamp no-ops once
+            // this reservation has been cleared and another one opened.
+            registry.fulfil(stamp, null);
+            promise.reject(thrown);
+        }
     }
 
-    // Task 8.2b. No created-report handle exists until the registry lands.
+    /**
+     * Runs on the SDK's listener thread. A throw here would escape onto that
+     * thread, so it is caught, the reservation is ended, and the promise rejects.
+     * The stamp is the one captured at reserve time: a listener that arrives
+     * after {@code invalidate} cleared that reservation cannot end a newer one.
+     */
+    private static void deliverCreatedReport(
+            final CreatedReports registry,
+            final int stamp,
+            @Nullable final Report created,
+            final Promise promise
+    ) {
+        String handle = null;
+        try {
+            handle = registry.fulfil(stamp, created);
+            if (handle == null) {
+                Log.i(TAG, "created report - none");
+            } else {
+                Log.i(TAG, "created report " + handle + " created");
+            }
+            promise.resolve(handle);
+        } catch (final Throwable thrown) {
+            if (handle != null) {
+                registry.take(handle);
+            } else {
+                registry.fulfil(stamp, null);
+            }
+            promise.reject(thrown);
+        }
+    }
+
     @Override
     public void createdReportRead(final String handleId, final Promise promise) {
-        rejectHandleDead(promise);
+        final Report report = CreatedReports.shared().get(handleId);
+        if (report == null) {
+            rejectHandleDead(promise);
+            return;
+        }
+        try {
+            promise.resolve(snapshotToWritableMap(ReportOps.read(report)));
+        } catch (final Throwable e) {
+            promise.reject(e);
+        }
     }
 
-    // Task 8.2b. No created-report handle exists until the registry lands.
     @Override
     public void createdReportUpdate(
             final String handleId,
             final String patchJson,
             final Promise promise
     ) {
-        rejectHandleDead(promise);
+        final Report report = CreatedReports.shared().get(handleId);
+        if (report == null) {
+            rejectHandleDead(promise);
+            return;
+        }
+        try {
+            ReportOps.applyJson(report, patchJson);
+            promise.resolve(null);
+        } catch (final ReportOps.BadArgument e) {
+            promise.reject(E_REPORT_BAD_ARGUMENT, e.getMessage());
+        } catch (final Throwable e) {
+            promise.reject(e);
+        }
     }
 
-    // Task 8.2b. No created-report handle exists until the registry lands.
     @Override
     public void createdReportAddDataAttachment(
             final String handleId,
@@ -794,10 +869,27 @@ public class BugseeModule extends NativeBugseeSpec
             @Nullable final String mimeType,
             final Promise promise
     ) {
-        rejectHandleDead(promise);
+        final Report report = CreatedReports.shared().get(handleId);
+        if (report == null) {
+            rejectHandleDead(promise);
+            return;
+        }
+        final byte[] data;
+        try {
+            data = Base64.decode(base64, Base64.NO_WRAP);
+        } catch (final IllegalArgumentException e) {
+            promise.reject(E_REPORT_BAD_ARGUMENT, "data must be base64-encoded");
+            return;
+        }
+        try {
+            settleCreatedAttachment(
+                    handleId, ReportOps.addData(report, data, name, mimeType), promise);
+        } catch (final Throwable e) {
+            promise.reject(e);
+        }
     }
 
-    // Task 8.2b. No created-report handle exists until the registry lands. No move argument.
+    /** Copied, not moved: a created report has no {@code move} argument. */
     @Override
     public void createdReportAddFileAttachment(
             final String handleId,
@@ -806,13 +898,44 @@ public class BugseeModule extends NativeBugseeSpec
             @Nullable final String mimeType,
             final Promise promise
     ) {
-        rejectHandleDead(promise);
+        final Report report = CreatedReports.shared().get(handleId);
+        if (report == null) {
+            rejectHandleDead(promise);
+            return;
+        }
+        try {
+            settleCreatedAttachment(
+                    handleId,
+                    ReportOps.addFile(report, path, name, mimeType, false),
+                    promise);
+        } catch (final Throwable e) {
+            promise.reject(e);
+        }
     }
 
-    // Task 8.2b. No created-report handle exists until the registry lands.
+    /**
+     * Takes the report first, so the slot is free whether or not the upload
+     * succeeds. The handle is dead afterwards.
+     */
     @Override
     public void createdReportUpload(final String handleId, final Promise promise) {
-        rejectHandleDead(promise);
+        final Report report = CreatedReports.shared().take(handleId);
+        if (report == null) {
+            rejectHandleDead(promise);
+            return;
+        }
+        try {
+            Bugsee.upload(report, ok -> {
+                try {
+                    Log.i(TAG, "created report " + handleId + " uploaded ok=" + ok);
+                    promise.resolve(ok);
+                } catch (final Throwable thrown) {
+                    promise.reject(thrown);
+                }
+            });
+        } catch (final Throwable thrown) {
+            promise.reject(thrown);
+        }
     }
 
     /**
@@ -828,6 +951,21 @@ public class BugseeModule extends NativeBugseeSpec
         if (added) {
             promise.resolve(null);
         } else if (ReportHandlerBridge.shared().reportFor(handleId) == null) {
+            rejectHandleDead(promise);
+        } else {
+            promise.reject(E_REPORT_ATTACHMENT_REJECTED, "The SDK declined the attachment");
+        }
+    }
+
+    /** Same decision as {@link #settleAttachment}, against the created-report registry. */
+    private static void settleCreatedAttachment(
+            final String handleId,
+            final boolean added,
+            final Promise promise
+    ) {
+        if (added) {
+            promise.resolve(null);
+        } else if (CreatedReports.shared().get(handleId) == null) {
             rejectHandleDead(promise);
         } else {
             promise.reject(E_REPORT_ATTACHMENT_REJECTED, "The SDK declined the attachment");
