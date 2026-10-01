@@ -27,6 +27,8 @@
 #import <BugseeRNSupport/BGSRNAttributes.h>
 #import <BugseeRNSupport/BGSRNDataRequestBridge.h>
 #import <BugseeRNSupport/BGSRNReactWindow.h>
+#import <BugseeRNSupport/BGSRNExceptions.h>
+#import <BugseeRNSupport/BGSRNSettleOnce.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -43,6 +45,8 @@
 #import "BGSRNAttributes.h"
 #import "BGSRNDataRequestBridge.h"
 #import "BGSRNReactWindow.h"
+#import "BGSRNExceptions.h"
+#import "BGSRNSettleOnce.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -559,17 +563,49 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
-/// Task 7.1d — real bridge; stub for now so the TurboModule spec is complete.
+/// A handled JS exception. `payloadJson` is the Task 7.1a payload, forwarded
+/// verbatim as the reason; `optionsJson` is `{domain?, labels?, includeVideo?}`
+/// or null. Unparseable options are logged and the exception is still sent
+/// with nil options — a void method has no promise to reject.
 - (void)logException:(NSString *)payloadJson
          optionsJson:(NSString * _Nullable)optionsJson {
-  // no-op
+  BGSRNRunOnMain(^{
+    NSError *error = nil;
+    BugseeExceptionLoggingOptions *opts =
+        [BGSRNExceptions loggingOptionsFromJSON:optionsJson error:&error];
+    if (optionsJson != nil && opts == nil) {
+      NSLog(@"BugseeRN exception options unparseable: %@", error.localizedDescription);
+    }
+    [Bugsee logException:BGSRNReactNativeExceptionName
+                  reason:payloadJson
+                 options:opts
+              completion:nil];
+    NSUInteger bytes = [payloadJson lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    NSLog(@"BugseeRN exception handled sent bytes=%lu", (unsigned long)bytes);
+  });
 }
 
-/// Task 7.1d — real bridge; stub resolves at once.
+/// An unhandled JS exception. The call stores `override_report.plcrash`.
+/// iOS SDK 7.0.0-beta3 `0d9c9d0a-9` claims only `live_report.plcrash` on the
+/// next launch, so that report is not recovered. Do not copy one file onto
+/// the other. The completion is wrapped in `BGSRNSettleOnce`: on the
+/// simulator the SDK compiles `logUnhandledException` out and never calls
+/// this completion (verified facts), and a promise must still settle.
 - (void)logUnhandledException:(NSString *)payloadJson
                       resolve:(RCTPromiseResolveBlock)resolve
                        reject:(RCTPromiseRejectBlock)reject {
-  resolve(nil);
+  BGSRNRunOnMain(^{
+    NSUInteger bytes = [payloadJson lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    NSLog(@"BugseeRN exception unhandled sent bytes=%lu", (unsigned long)bytes);
+    dispatch_block_t done =
+        BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs, dispatch_get_main_queue(), ^{
+          NSLog(@"BugseeRN exception unhandled completed");
+          resolve(nil);
+        });
+    [Bugsee logUnhandledException:BGSRNReactNativeExceptionName
+                           reason:payloadJson
+                       completion:done];
+  });
 }
 
 /// The two-argument form only -- severity and labels are Phase 8. JS has

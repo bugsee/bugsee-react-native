@@ -80,6 +80,10 @@ android {
         // Read by ReactNativeWrapperInitProvider, which registers the wrapper
         // before any JS exists and so cannot be handed this from the bridge.
         buildConfigField 'String', 'WRAPPER_VERSION', "\"${wrapperVersion}\""
+
+        // The backend routes RN exceptions on ReactNativeWebException's FQCN;
+        // keep the name through the app's R8 pass (Task 7.1c / 7.5a).
+        consumerProguardFiles 'consumer-rules.pro'
     }
 
     buildFeatures {

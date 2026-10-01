@@ -34,6 +34,8 @@ Each task: **red → green → mutate → commit.** The mutation step deliberate
 
 Commits are small and single-purpose. A phase ends with a reviewer subagent; its findings are addressed and it re-reviews until satisfied.
 
+When a task's review passes, check its boxes here in the same session. If a device run changes a prediction, write the ruling under that task. Do not leave the boxes stale.
+
 **Test layers.** Unit tests (Jest, mocked bridge) for JS logic. Native unit tests (JUnit / XCTest) for marshalling and coercion. **Integration tests on real hardware** for anything crossing the bridge — an iPhone XS and a WOD_LX1 Android device are attached, plus six AVDs and iOS simulators. Anything with a filter callback, an event, or a native→JS round trip needs a device test; unit tests mock precisely the seam where the spike found every real failure.
 
 **CI gate:** lint, typecheck, unit, mutation threshold, both platforms building the example app, **and an assertion that `Bugsee.framework` is embedded in the built `.app`**. A build that succeeds without it crashes at launch — the false pass the spike caught.
@@ -61,6 +63,10 @@ Ordered so each phase is independently shippable and so the riskiest work lands 
 | 13 | Build tooling | Source maps, dSYM upload, Expo config plugin |
 
 Phases 4 and 5 are deliberately small — they settle how values cross the bridge, the pattern 7–11 reuse, so the hard parts arrive after the pattern is proven. Phase 6 carries the first native→JS round trip on the capture path (the `vh` data request), so it is the largest of the three.
+
+### Progress
+
+Updated 2026-10-01. Phases 1–6 are on `main` (`7b40eb6`), except the Phase 6 Modal follow-up, which is not merged (iOS blackout still sees each `console.log` twice). Phase 7 is complete through its review gate on `feat/phase-7-5b` at `fb9449b`. Task 8.1 is complete and reviewed on `feat/phase-8-1` at `c437703`. Task 8.2a is complete and reviewed at `cd79431` on `feat/phase-8-2a`. Task 8.2b is complete and re-reviewed at `0542501` on `feat/phase-8-2b`. Task 8.2c is complete and re-reviewed at `a05df5a` on `feat/phase-8-2c`. Task 8.3a stopped at Step 0: the send control has no stable `resource-id`. The two bridges are still on separate branches. Task 8.3b has not started. Older unchecked boxes in Phases 1–6 were not backfilled in this pass.
 
 ---
 
@@ -2879,7 +2885,7 @@ logUnhandledException(error: unknown): Promise<void>;
 
 **Stubs:** Android and iOS `logException` are no-ops, and `logUnhandledException` resolves at once. Each is commented `Task 7.1c` or `Task 7.1d`.
 
-- [ ] **Red**
+- [x] **Red**
   - `options.test.ts`:
     - `undefined and {} encode to null`;
     - `domain, labels and includeVideo encode in that order`;
@@ -2906,15 +2912,15 @@ logUnhandledException(error: unknown): Promise<void>;
     - `logUnhandledException returns reportUnhandled's promise`;
     - `ExceptionOptions is exported`.
   - Run → FAIL.
-- [ ] **Green**
+- [x] **Green**
   - The modules, the facade, the mock (`logException` and `logUnhandledException` `jest.fn`s; `logUnhandledException` resolves by default) and the stubs.
   - `ios-spec-coverage`, `check-rn-compat.sh 0.81` and both example builds are green.
-- [ ] **Mutate**
+- [x] **Mutate**
   - (1) Drop `markReported` from `reportHandled`. `an object is reported once…` must fail.
   - (2) Race against a 5000 ms timer instead. `…after 1500 ms when native never does` must fail.
   - (3) Keep the facade's first frame. `a non-Error logged from a named function…` must fail.
   - Revert and record.
-- [ ] **Commit** — `feat(exceptions): logException and logUnhandledException, bridge stubbed`.
+- [x] **Commit** — `feat(exceptions): logException and logUnhandledException, bridge stubbed`.
 
 ---
 
@@ -2963,7 +2969,7 @@ final class ExceptionBridge {
 - `logException(payloadJson, optionsJson)` → `ExceptionBridge.logHandled(PROD_SDK, …)`, then logs `exception handled sent bytes=<payload length>`. It catches `RuntimeException`, like every void method.
 - `logUnhandledException(payloadJson, promise)` → `ExceptionBridge.logUnhandled(PROD_SDK, …)`, which is synchronous in the SDK. It logs `exception unhandled sent bytes=<n>` and then `exception unhandled completed`, and resolves `null` in a `finally`, so it settles exactly once even if the SDK throws.
 
-- [ ] **Red**
+- [x] **Red**
   - `ExceptionBridgeTest`:
     - `theClassNameIsTheBackendContract` (`ReactNativeWebException.class.getName()` equals `"com.bugsee.reactnative.ReactNativeWebException"`, and the simple name contains `"ReactNativeWebException"`);
     - `theReasonIsThePayloadVerbatim` (`getMessage()` equals the input, byte for byte, including a non-BMP character);
@@ -2980,16 +2986,16 @@ final class ExceptionBridge {
     - `the library's build.gradle declares consumer-rules.pro`;
     - `ReactNativeWebException is a top-level class in com.bugsee.reactnative` (not nested; the file and the package line are read).
   - Run → FAIL.
-- [ ] **Green**
+- [x] **Green**
   - As specified.
   - `./gradlew :bugsee-android-bridge:testDebugUnitTest` and the example `assembleDebug` are green.
   - `assembleRelease -PbugseeE2eMinify=true` builds, and `apkanalyzer dex packages` (or `unzip -p … classes*.dex | strings`) of the release APK shows `com/bugsee/reactnative/ReactNativeWebException`. Record the command and its output.
-- [ ] **Mutate**
+- [x] **Mutate**
   - (1) Delete the keep line. The keep-rules test must fail. By hand, the minified APK must no longer contain the name. Record it.
   - (2) Pass `getLocalizedMessage` through a wrapper that trims the payload. `theReasonIsThePayloadVerbatim` must fail.
   - (3) Drop the `finally` resolve and let a throwing SDK escape. `aThrowingSdkDoesNotEscape` must fail.
   - Revert and record.
-- [ ] **Commit** — `feat(android): report JS exceptions as ReactNativeWebException, kept through R8`.
+- [x] **Commit** — `feat(android): report JS exceptions as ReactNativeWebException, kept through R8`.
 
 ---
 
@@ -3028,7 +3034,7 @@ FOUNDATION_EXPORT dispatch_block_t BGSRNSettleOnce(int64_t deadlineMs, dispatch_
   - `done = BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs, main, ^{ log "exception unhandled completed"; resolve(nil); })`.
   - A comment states why the deadline exists: on the simulator the SDK never calls this completion (verified facts), and a promise must still settle.
 
-- [ ] **Red** — `BGSRNSettleOnceTests`: `testSettlesOnceWhenCalled`; `testSettlesAtTheDeadlineWhenNeverCalled`; `testACallAfterTheDeadlineDoesNothing`; `testTwoConcurrentCallsSettleOnce` (two threads). `BGSRNExceptionsTests`:
+- [x] **Red** — `BGSRNSettleOnceTests`: `testSettlesOnceWhenCalled`; `testSettlesAtTheDeadlineWhenNeverCalled`; `testACallAfterTheDeadlineDoesNothing`; `testTwoConcurrentCallsSettleOnce` (two threads). `BGSRNExceptionsTests`:
   - `testTheNameIsTheBackendContract`;
   - `testDomainBecomesExceptionDomain`;
   - `testIncludeVideoDefaultsToYes`;
@@ -3039,13 +3045,13 @@ FOUNDATION_EXPORT dispatch_block_t BGSRNSettleOnce(int64_t deadlineMs, dispatch_
   - `testANonStringLabelIsAnError`;
   - `testUnknownKeysAreIgnored`.
   - Run → FAIL.
-- [ ] **Green** — as specified. The iOS example builds on both delivery paths.
-- [ ] **Mutate**
+- [x] **Green** — as specified. The iOS example builds on both delivery paths.
+- [x] **Mutate**
   - (1) Remove the `includeVideo = YES` default. `testIncludeVideoDefaultsToYes` must fail.
   - (2) Change the name constant's value. `testTheNameIsTheBackendContract` must fail.
   - (3) Make the once-flag a plain `BOOL`. `testTwoConcurrentCallsSettleOnce` must fail, or be flaky; if it is only flaky, the test is wrong and gets a barrier that makes the race deterministic.
   - Revert and record.
-- [ ] **Commit** — `feat(ios): report JS exceptions as ReactNativeWebException`.
+- [x] **Commit** — `feat(ios): report JS exceptions as ReactNativeWebException`.
 
 ---
 
@@ -3073,7 +3079,7 @@ In `buildExceptionPayload`:
 - the root gets `debug_ids` as a plain object of the **whole** map, entries in insertion order, when it is non-empty;
 - no key when it is empty.
 
-- [ ] **Red**
+- [x] **Red**
   - `debugIds.test.ts`:
     - `an absent or non-object registration is an empty map`;
     - `a Hermes registration stack keys its id by the top frame's file`;
@@ -3090,13 +3096,13 @@ In `buildExceptionPayload`:
     - `no debug_ids key when nothing is registered`;
     - `the join key is the same for a registration stack and a crash stack from one bundle` (both Hermes `address at` lines, one with `file://`).
   - Run → FAIL.
-- [ ] **Green** — as specified. `yarn test` and `yarn mutate:src` are green.
-- [ ] **Mutate**
+- [x] **Green** — as specified. `yarn test` and `yarn mutate:src` are green.
+- [x] **Mutate**
   - (1) Key by the whole stack string instead of the top frame's file. `a Hermes registration stack keys…` must fail.
   - (2) Send `debug_ids` as an array of ids. `debug_ids is the whole map, as an object` must fail.
   - (3) Join on `cleanSource` instead of `fileKey`. `the join key is the same…` must fail, because the iOS `.app` case diverges.
   - Revert and record.
-- [ ] **Commit** — `feat(exceptions): attach source-map debug IDs to JS frames`.
+- [x] **Commit** — `feat(exceptions): attach source-map debug IDs to JS frames`.
 
 ---
 
@@ -3151,7 +3157,7 @@ export function setExceptionCaptureEnabled(enabled: boolean): void;
 - `react-native/package.json` depends on `promise`;
 - `src/private/renderer/errorhandling/ErrorHandlers.js` has `onUncaughtError` calling `handleException(error, true)`. This is R8's premise: if it stops being true, Task 7.4's root reporter must be revisited.
 
-- [ ] **Red** — `handlers.test.ts` (fake `ErrorUtils`, a fake Hermes tracker, fake timers):
+- [x] **Red** — `handlers.test.ts` (fake `ErrorUtils`, a fake Hermes tracker, fake timers):
   - `installs once however often launch runs`;
   - `a fatal error is reported as unhandled, then the previous handler runs with the same arguments`;
   - `the previous handler waits for the report, at most 1500 ms`;
@@ -3167,17 +3173,17 @@ export function setExceptionCaptureEnabled(enabled: boolean): void;
   - `onHandled reports nothing`;
   - `without ErrorUtils, only the rejection tracker is installed, with one warning`.
   - Run → FAIL.
-- [ ] **Green**
+- [x] **Green**
   - As specified.
   - The guard passes for 0.81 and 0.87 (`./scripts/check-rn-compat.sh 0.81`, `… 0.87`).
   - `yarn test` and `yarn mutate:src` are green.
-- [ ] **Mutate**
+- [x] **Mutate**
   - (1) Call `previous` before the report settles. `the previous handler waits for the report…` must fail.
   - (2) Report a non-fatal error as unhandled. `a non-fatal error is reported as handled…` must fail.
   - (3) Skip the dev chain. `in dev, RN's own rejection handlers still run` must fail.
   - (4) Point the guard at a copy of 0.87 whose `ErrorHandlers.js` calls `handleException(error, false)`. The guard must fail (run by hand; record it).
   - Revert and record.
-- [ ] **Commit** — `feat(exceptions): report uncaught JS errors and unhandled rejections`.
+- [x] **Commit** — `feat(exceptions): report uncaught JS errors and unhandled rejections`.
 
 ---
 
@@ -3223,7 +3229,7 @@ export class RootErrorReporter extends React.Component<{ children?: React.ReactN
 - In the `rethrow` phase, `render()` throws `state.error`. React finds no boundary above, so its `onUncaughtError` runs RN's fatal path.
 - Document in the file header the soft-then-fatal sequence R8 records.
 
-- [ ] **Red**
+- [x] **Red**
   - `ErrorBoundary.test.tsx` (react-test-renderer; native mock):
     - `a render error below it is reported as handled, with its component stack`;
     - `renders the fallback element`;
@@ -3243,13 +3249,13 @@ export class RootErrorReporter extends React.Component<{ children?: React.ReactN
     - `an error already reported is rethrown without a second report`.
   - `walk.test.ts`: `the root reporter is not emitted, and its children are`.
   - Run → FAIL.
-- [ ] **Green** — as specified. `yarn test` and `yarn mutate:src` (with `.tsx`) are green.
-- [ ] **Mutate**
+- [x] **Green** — as specified. `yarn test` and `yarn mutate:src` (with `.tsx`) are green.
+- [x] **Mutate**
   - (1) Report from `RootErrorReporter` without rethrowing. `…is reported as unhandled, then rethrown` must fail.
   - (2) Assign `error.cause = …` in `ErrorBoundary`. `the caught error is not mutated` must fail.
   - (3) Drop `RootErrorReporter` from `isWrapper`. The walk test must fail.
   - Revert and record.
-- [ ] **Commit** — `feat(exceptions): ErrorBoundary, and a root reporter for uncaught render errors`.
+- [x] **Commit** — `feat(exceptions): ErrorBoundary, and a root reporter for uncaught render errors`.
 
 ---
 
@@ -3344,9 +3350,9 @@ export function fileExists(path: string): Promise<boolean>;
 3. `the NDK relaunch recovers on the bounded path, not JS` — the relaunch log has `report handler - completed by=recovery` (NDK early recovery on `bugsee-report-handler-bounded`; Task 3.4d's Java recovery was the live `BugseeReportHandlerThread`, this one is not), and `BUGSEE_E2E native after type=crash` is absent for that run.
 4. `crashNative('abort') is SIGABRT` — cases 1–2 again with `kind=abort`: `Fatal signal 6 (SIGABRT)`, and `signal.name === 'SIGABRT'`.
 
-- [ ] **Red/Green** — all four cases pass on the WOD_LX1.
-- [ ] **Mutate** — make `crashNative` throw a Java `RuntimeException` instead. Case 2 must fail on `ndkCrash`. Revert and record.
-- [ ] **Commit** — `test(e2e): a native crash from JS reaches an Android report`. The body records the banner, both signals, and each bundle's `signal` object.
+- [x] **Red/Green** — all four cases pass on the WOD_LX1.
+- [x] **Mutate** — make `crashNative` throw a Java `RuntimeException` instead. Case 2 must fail on `ndkCrash`. Revert and record.
+- [x] **Commit** — `test(e2e): a native crash from JS reaches an Android report`. The body records the banner, both signals, and each bundle's `signal` object.
 
 Task 3.4d's external `adb shell run-as … kill -11 <pid>` stays in place. This task gives the NDK path its own coverage and leaves 3.4d alone.
 
@@ -3429,19 +3435,21 @@ Task 3.4d's external `adb shell run-as … kill -11 <pid>` stays in place. This 
   - R2 `RN's own crash is the second report` — exactly one crash bundle whose `exception.name` contains `JavascriptException` and whose raw reason contains `E2E fatal <n>`. This pins R13;
   - R3 = case 10's `it.failing`, on this build too.
 
-- [ ] **Red** — write the test and the scenarios. Run once before wiring `App.tsx` → FAIL at the first marker.
-- [ ] **Green**
+- [x] **Red** — write the test and the scenarios. Run once before wiring `App.tsx` → FAIL at the first marker.
+- [x] **Green**
   - Cases 1–13 pass on the WOD_LX1, with the two documented `it.failing` cases failing for the right reason (record the labels array and the extra error bundle).
   - The gated R1–R3 pass on the release build.
-- [ ] **Mutate**
+- [x] **Mutate**
   - (1) Delete the keep rule and rebuild the release APK. R1 must fail on `exception.name`.
   - (2) Skip `previous` in the global handler. Case 9 must fail: there is no `app-handler` marker.
   - (3) Send `debug_ids` as a list. Case 3 must fail.
   - (4) Make `RootErrorReporter` swallow instead of rethrow. Case 12's red-box line must be missing.
   - Revert and record.
-- [ ] **Commit** — `test(e2e): JS exceptions in Android bundles, handled, unhandled and from render`. The body records the banner, one payload verbatim (its nonce values are synthetic), and the full list of bundles R1–R3 produced.
+- [x] **Commit** — `test(e2e): JS exceptions in Android bundles, handled, unhandled and from render`. The body records the banner, one payload verbatim (its nonce values are synthetic), and the full list of bundles R1–R3 produced.
 
 **If a prediction is wrong**, stop and report rather than loosening the assertion. The predictions are: case 12's red box, and R2's `JavascriptException` bundle. The controller rules on the change.
+
+**Ruling (2026-10-01, WOD_LX1, Android SDK 7.3.0 `beb390dc0`).** Case 12's red box was present. R2's second Bugsee crash was not: the release run retains one `com.bugsee.reactnative.ReactNativeWebException` bundle, logcat still shows `JavascriptException`, and the process dies. R2 and R3 are plain assertions of that single bundle. Debug case 10 stays `it.failing`. Do not raise a double-report. Mutation 1 (delete the keep rule) did not rename the class: this example's R8 renames nothing. The keep rule stays. The keep-rules unit test is the lock.
 
 ---
 
@@ -3467,9 +3475,11 @@ Task 3.4d's external `adb shell run-as … kill -11 <pid>` stays in place. This 
 
 **Gated `E2E_RELEASE=1` on the iPhone** (`IOS_CONFIGURATION=Release`): `exc-fatal` kills the process (the console stream ends). Relaunch `exc-observe`. **Exactly one** crash bundle for the incident, named `ReactNativeWebException`: the overriding report replaces `RCTFatalException`'s. If a second, `RCTFatalException` bundle arrives, stop and report.
 
-- [ ] **Red/Green** — the simulator case passes on the iOS 26.5 simulator. Cases 1–13 pass on the iPhone XS.
-- [ ] **Mutate** — make `BGSRNReactNativeExceptionName` `@"ReactNativeException"`. Case 1 must fail on the iPhone. Revert and record.
-- [ ] **Commit** — `test(e2e): JS exceptions in iOS bundles, on the iPhone`.
+- [x] **Red/Green** — the simulator case passes on the iOS 26.5 simulator. Cases 1–13 pass on the iPhone XS.
+- [x] **Mutate** — make `BGSRNReactNativeExceptionName` `@"ReactNativeException"`. Case 1 must fail on the iPhone. Revert and record.
+- [x] **Commit** — `test(e2e): JS exceptions in iOS bundles, on the iPhone` (`5667fa5`), then `test(e2e): pin iOS unhandled recovery as failing on beta3` (`fb9449b`).
+
+**Ruling (2026-10-01, KRSFT, iOS SDK 7.0.0-beta3 `0d9c9d0a-9`).** The live list is empty before terminate. `terminateIosApp()` then `exc-observe` recovers zero bundles. Release dies and also recovers zero bundles, with no `RCTFatalException`. beta3 claims `live_report.plcrash` and does not claim `override_report.plcrash`. The harness must not copy one onto the other. The one-crash assertions for cases 9 and 12 and the Release gate are `it.failing`. Case 1's name mutation failed as required and was reverted.
 
 **Hardware pass: add to Task 3.H:**
 - Task 7.5b whole on the iPhone, including the gated Release case;
@@ -3493,6 +3503,8 @@ Spawn a reviewer subagent. It must independently:
 Record, for the controller:
 - R13 (the second Android crash report per fatal JS error);
 - the four SDK gaps this phase adds to "To raise".
+
+- [x] **Gate (2026-10-01, `fb9449b`).** Passed. `yarn test` 1609, mutation 95.15, JVM 207, XCTest 183 on simulator `6FA9B3E8`, compat 0.81.6 and 0.87.1. WOD_LX1 `AMRJCP4718402860`: 7.5a debug and release, 7.6b 4/4. Simulator 7.5b: handled-sent line, then zero bundles. R13 stays the ruling above. `includeVideo` is documented and not pinned by a test.
 
 ---
 
@@ -3656,7 +3668,7 @@ Both methods run inside `BGSRNRunOnMain`.
 - `upload:description:severity:labels:` → `[Bugsee uploadWithSummary:… description:… severity:(BugseeSeverityLevel)BGSRNUploadSeverity(severity, [Bugsee getLaunchOptions]) labels:BGSRNStringArray(labels)]`.
 - `showReportDialog:…` → `[Bugsee showReportDialog]` when every argument is absent (`nil`, `nil`, `0`, `nil`). Otherwise → `showReportDialogWithSummary:(summary ?: @"") description:(description ?: @"") severity:(BugseeSeverityLevel)severity labels:BGSRNStringArray(labels)`.
 
-- [ ] **Red**
+- [x] **Red**
   - `upload.test.ts`:
     - `the two-argument form crosses severity 0 and null labels`;
     - `severity crosses by value`;
@@ -3686,15 +3698,15 @@ Both methods run inside `BGSRNRunOnMain`.
     - `testStringArrayKeepsStrings`;
     - `testStringArrayOfNilIsNil`.
   - Run → FAIL.
-- [ ] **Green**
+- [x] **Green**
   - As specified.
   - `ios-spec-coverage`, `check-rn-compat.sh 0.81` (its java-signatures step sees the changed `upload`), both example builds and every existing `upload` call site (scenarios) are green. The existing call sites still compile unchanged.
-- [ ] **Mutate**
+- [x] **Mutate**
   - (1) Map the Android severity with `IssueSeverity.values()[n]`. `severityIsByValueNotOrdinal` must fail.
   - (2) Drop the `arguments.length` guard. `a fifth argument throws…` must fail.
   - (3) Make `BGSRNUploadSeverity` return `requested` unconditionally. `testZeroTakesTheLaunchOption` must fail.
   - Revert and record.
-- [ ] **Commit** — `feat(report): upload with severity and labels, and showReportDialog`.
+- [x] **Commit** — `feat(report): upload with severity and labels, and showReportDialog` (`c437703`). Reviewed: no findings. No device e2e in this task.
 
 ---
 
@@ -3744,7 +3756,7 @@ createReport(): Promise<BugseeCreatedReport | null>;
 
 **Stubs:** `createReport` resolves `null`, and the five `createdReport*` methods reject `E_REPORT_HANDLE_DEAD`, which is truthful since no stub mints a handle. Each is commented `Task 8.2b` or `Task 8.2c`.
 
-- [ ] **Red** — `created-report.test.ts` (native mock):
+- [x] **Red** — `created-report.test.ts` (native mock):
   - `createReport resolves null when native made none`;
   - `createReport wraps a handle`;
   - `E_REPORT_CREATE_BUSY surfaces as BugseeReportError with its code`;
@@ -3758,12 +3770,12 @@ createReport(): Promise<BugseeCreatedReport | null>;
   - `read normalises the snapshot as the handler proxy does`.
 
   `validate.test.ts`: `ReportErrorCode values are exactly the four stable strings`. Run → FAIL.
-- [ ] **Green** — the module, the mock (the six `jest.fn`s; `createReport` resolves `null` by default) and the stubs. Every gate is green.
-- [ ] **Mutate**
+- [x] **Green** — the module, the mock (the six `jest.fn`s; `createReport` resolves `null` by default) and the stubs. Every gate is green.
+- [x] **Mutate**
   - (1) Mark dead after the native upload resolves. `two concurrent upload calls cross once` must fail.
   - (2) Pass `move: true` for files. `addFileAttachment … sends no move` must fail.
   - Revert and record.
-- [ ] **Commit** — `feat(report): createReport, a report the app fills and uploads, bridge stubbed`.
+- [x] **Commit** — `feat(report): createReport, a report the app fills and uploads, bridge stubbed` (`cd79431`). Reviewed: no findings. Stubs only. No device e2e.
 
 ---
 
@@ -3800,7 +3812,7 @@ final class CreatedReports {
   - `take(h)`; `null` → `E_REPORT_HANDLE_DEAD`;
   - otherwise `Bugsee.upload(report, ok -> promise.resolve(ok))`, logging `uploaded ok=`.
 
-- [ ] **Red** — `CreatedReportsTest`:
+- [x] **Red** — `CreatedReportsTest`:
   - `oneOutstandingAtATime`;
   - `aNullReportFreesTheSlot`;
   - `takeFreesTheSlot`;
@@ -3809,9 +3821,9 @@ final class CreatedReports {
   - `clearFreesEverything`;
   - `concurrentReservationsAdmitOne` (eight threads through a start barrier).
   - Run → FAIL.
-- [ ] **Green** — as specified. The example builds.
-- [ ] **Mutate** — make `reserve()` return `true` always. `oneOutstandingAtATime` must fail. Revert and record.
-- [ ] **Commit** — `feat(android): createReport through a one-slot registry`.
+- [x] **Green** — as specified. The example builds.
+- [x] **Mutate** — make `reserve()` return `true` always. `oneOutstandingAtATime` must fail. Revert and record.
+- [x] **Commit** — `feat(android): createReport through a one-slot registry` (`6179794`), then `fix(android): ignore a created-report callback after its reservation ended` (`0542501`). A late listener carries the reservation stamp and cannot fill the next runtime's slot. `invalidate` still clears the registry. Not a device pass.
 
 ---
 
@@ -3857,7 +3869,7 @@ FOUNDATION_EXPORT const NSUInteger BGSRNCreatedReportAttachmentMaxBytes;   // 31
 - `createReport`: `reserve` else reject busy. Then `[Bugsee createReportWithCompletion:^(r){ resolve([registry fulfil:r]); }]`. The completion is called on every path (`nil` when not launched).
 - `createdReportUpload`: `take`, else dead. Then `[Bugsee uploadReport:r completion:^{ resolve(@YES); }]`.
 
-- [ ] **Red**
+- [x] **Red**
   - `BGSRNCreatedReportsTests`: mirror 8.2b's seven, by name, with a `test` prefix.
   - `BGSRNCreatedReportOpsTests` (a real `BugseeExtendedReport`):
     - `testReadsTheFields`;
@@ -3875,12 +3887,12 @@ FOUNDATION_EXPORT const NSUInteger BGSRNCreatedReportAttachmentMaxBytes;   // 31
     - `testTheSdkSharesAttributesAcrossExtendedReports`. This pins the SDK bug behind P5: create A, set an attribute, create B, and A's attribute is gone. When this test fails, the SDK is fixed and P5 can be lifted; the test's message says so.
   - `BGSRNReportOpsTests` stay green unchanged.
   - Run → FAIL.
-- [ ] **Green** — as specified. The iOS example builds on both delivery paths.
-- [ ] **Mutate**
+- [x] **Green** — as specified. The iOS example builds on both delivery paths.
+- [x] **Mutate**
   - (1) Drop the count check. `testAFourthAttachmentIsRejected` must fail.
   - (2) Read the file lazily, keeping the path. `testAFileIsCapturedWhenAdded` must fail.
   - Revert and record.
-- [ ] **Commit** — `feat(ios): createReport, with the SDK's attachment limits enforced up front`.
+- [x] **Commit** — `feat(ios): createReport, with the SDK's attachment limits enforced up front` (`38bfadc`), then `fix(ios): ignore a created-report callback after its reservation ended` (`a05df5a`). A late listener carries a generation token. Simulator XCTests only, not an iPhone pass.
 
 ---
 
@@ -3953,7 +3965,7 @@ FOUNDATION_EXPORT const NSUInteger BGSRNCreatedReportAttachmentMaxBytes;   // 31
 10. `created-report attachment limits` — **Android:** `extra1 ok` and `extra2 ok`, and case 7's bundle has 4 attachments.
 11. `a handler attaches a file by copy and by move` — `exists copy=true move=false`. Exactly one bundle with summary `att-<n>`, whose `attachmentsOf` has both names with contents `copy <n>` and `move <n>`, and `mimeType === 'text/plain'` on both.
 
-- [ ] **Step 0** — as above. Record the result.
+- [ ] **Step 0** — as above. Record the result. *2026-10-01, WOD_LX1 `AMRJCP4718402860`, nonce `cae20c890381`: the dialog was on screen (`BeforeReportShown`, fields pre-filled). The submit control is a clickable `TextView`, text `Отправить` (`bugsee_send`), `resource-id=""`, bounds `[464,51][656,163]`. The only ids in the dump are `android:id/content` and `android:id/statusBarBackground`. Android SDK 7.3.0 builds that button with `ResourceIdentifiers.POSITIVE_BUTTON = View.generateViewId()`, so uiautomator has no stable resource name to pin. Stopped. Nothing was tapped. Cases 1–11 were not run. No commit.*
 - [ ] **Red** — write the tests and scenarios. Run once before wiring `App.tsx` → FAIL at the first marker.
 - [ ] **Green** — cases 1–11 pass on the WOD_LX1.
 - [ ] **Mutate**

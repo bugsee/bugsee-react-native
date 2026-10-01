@@ -60,8 +60,9 @@ react {
 
 /**
  * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
+ * Task 7.5a (and 7.1c's keep-rule check) turn it on with -PbugseeE2eMinify=true.
  */
-def enableProguardInReleaseBuilds = false
+def enableProguardInReleaseBuilds = findProperty('bugseeE2eMinify') == 'true'
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)

@@ -13,8 +13,9 @@
  * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts, `secure`
  * is scenarios/secure.tsx, `attributes`/`attributes-persist` are
  * scenarios/attributes.ts, `e2e-native-smoke` / `native-crash-*` are
- * scenarios/native.ts, and `blackout`, `blackout-prelaunch`,
- * `secure-component` and `view-tree` are scenarios/privacy.tsx.
+ * scenarios/native.ts, `blackout`, `blackout-prelaunch`,
+ * `secure-component` and `view-tree` are scenarios/privacy.tsx, and
+ * `exc-*` are scenarios/exceptions.tsx.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -70,6 +71,14 @@ import {
   preLaunchPrivacyProbe,
   runPrivacyScenario,
 } from './scenarios/privacy';
+import {
+  ExceptionStage,
+  installExceptionAppHandler,
+  isExceptionRenderScenario,
+  isExceptionScenario,
+  preLaunchExceptionProbe,
+  runExceptionScenario,
+} from './scenarios/exceptions';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -204,6 +213,13 @@ export default function App() {
   const [privacy, setPrivacy] = useState<
     { scenario: PrivacyScenario; nonce: string; launched: boolean } | undefined
   >();
+  /**
+   * Set once Launched for `exc-boundary` / `exc-root`: mounts the thrower
+   * (with or without an app ErrorBoundary).
+   */
+  const [exceptionRender, setExceptionRender] = useState<
+    { scenario: 'exc-boundary' | 'exc-root'; nonce: string } | undefined
+  >();
 
   useEffect(() => {
     let cancelled = false;
@@ -308,6 +324,14 @@ export default function App() {
       if (isNativeScenario(choice.scenario)) {
         installNativeHandler(choice.scenario);
       }
+      // Before launch(): app ErrorUtils handler (so Bugsee chains to it), and
+      // the pre-launch exception probe (must not reach a bundle).
+      if (isExceptionScenario(choice.scenario)) {
+        installExceptionAppHandler();
+        if (choice.scenario === 'exc-prelaunch') {
+          preLaunchExceptionProbe(choice.nonce);
+        }
+      }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
       // capture up off the main thread, so by the time the promise resolves the
@@ -363,6 +387,20 @@ export default function App() {
           if (!cancelled) {
             setSecureNonce(choice.nonce);
           }
+          return;
+        }
+
+        if (isExceptionScenario(choice.scenario)) {
+          if (isExceptionRenderScenario(choice.scenario)) {
+            if (!cancelled) {
+              setExceptionRender({
+                scenario: choice.scenario,
+                nonce: choice.nonce,
+              });
+            }
+            return;
+          }
+          runExceptionScenario(choice.scenario, choice.nonce);
           return;
         }
 
@@ -466,6 +504,12 @@ export default function App() {
           scenario={privacy.scenario}
           nonce={privacy.nonce}
           launched={privacy.launched}
+        />
+      )}
+      {exceptionRender !== undefined && (
+        <ExceptionStage
+          scenario={exceptionRender.scenario}
+          nonce={exceptionRender.nonce}
         />
       )}
     </View>

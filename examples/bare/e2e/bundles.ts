@@ -212,6 +212,19 @@ export function parseBundle(file: string, dir: string): PulledBundle {
 }
 
 /**
+ * The parsed `crash` capture (`crash.json`), or `undefined` when the
+ * manifest has none. Task 7.5a: exception payloads live in
+ * `exception.reason` as JSON text with no prefix.
+ */
+export function crashOf(bundle: PulledBundle): Record<string, unknown> | undefined {
+  const text = bundle.captures.get('crash');
+  if (text === undefined) {
+    return undefined;
+  }
+  return JSON.parse(text) as Record<string, unknown>;
+}
+
+/**
  * The `events` array of the capture file of manifest `type` (`log`,
  * `events.user`, `traces.user`), or `[]` when the bundle has none.
  */

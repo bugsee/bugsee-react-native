@@ -127,13 +127,21 @@ export function metroPort(): number {
 }
 
 /**
- * `-RCT_jsLocation localhost:<port>`, which `RCTBundleURLProvider` reads from
+ * `-RCT_jsLocation <host>:<port>`, which `RCTBundleURLProvider` reads from
  * NSUserDefaults (the launch arguments' volatile domain), when a port is
  * configured; nothing when it is unset, so a default run launches exactly as
  * before. A bad value throws, as `parseMetroPort` says.
+ *
+ * The host is `localhost` unless `E2E_METRO_HOST` is set. A simulator reaches
+ * the host's ports as localhost. A physical iPhone does not: `localhost` is
+ * the phone, so a non-default port also needs this Mac's LAN address.
  */
 export function metroArgs(raw: string | undefined = process.env.E2E_METRO_PORT): string[] {
-  return raw === undefined ? [] : ['-RCT_jsLocation', `localhost:${parseMetroPort(raw)}`];
+  if (raw === undefined) {
+    return [];
+  }
+  const host = process.env.E2E_METRO_HOST?.trim() || 'localhost';
+  return ['-RCT_jsLocation', `${host}:${parseMetroPort(raw)}`];
 }
 
 /** Runs adb against the handset under test, returning stdout. */
