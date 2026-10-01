@@ -309,6 +309,35 @@ export interface Spec extends TurboModule {
     mimeType: string | null,
   ): Promise<void>;
 
+  /**
+   * Opens a report the app fills and then uploads. Resolves `'cr-<n>'`, or
+   * `null` when the SDK made none. Rejects `E_REPORT_CREATE_BUSY` when one
+   * created report is already outstanding.
+   */
+  createReport(): Promise<string | null>;
+  /** The live state of the created report behind `handleId`, the `BugseeReportSnapshot` wire shape. */
+  createdReportRead(handleId: string): Promise<UnsafeObject>;
+  /**
+   * Applies a validated patch, as JSON text, the same transport as
+   * {@link reportUpdate}.
+   */
+  createdReportUpdate(handleId: string, patchJson: string): Promise<void>;
+  createdReportAddDataAttachment(
+    handleId: string,
+    base64: string,
+    name: string,
+    mimeType: string | null,
+  ): Promise<void>;
+  /** No `move`: a created-report file attachment is copied. */
+  createdReportAddFileAttachment(
+    handleId: string,
+    path: string,
+    name: string,
+    mimeType: string | null,
+  ): Promise<void>;
+  /** Uploads the created report. The handle is dead afterwards, whatever the result. */
+  createdReportUpload(handleId: string): Promise<boolean>;
+
   /** A handled JS exception. `payloadJson` is the Task 7.1a payload; `optionsJson` is `{domain?, labels?, includeVideo?}` or null. */
   logException(payloadJson: string, optionsJson: string | null): void;
   /** An unhandled JS exception. Resolves once the SDK has the report; never rejects. */

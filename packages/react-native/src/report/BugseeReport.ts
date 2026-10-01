@@ -26,7 +26,7 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set(
  * Anything else -- a rejection with no recognised code -- passes through
  * unchanged rather than being reinterpreted as something it is not.
  */
-function toReportError(error: unknown): unknown {
+export function toReportError(error: unknown): unknown {
   if (error instanceof BugseeReportError) {
     return error;
   }
@@ -53,7 +53,7 @@ function emptySnapshot(): BugseeReportSnapshot {
   };
 }
 
-function normalizeSnapshot(raw: unknown): BugseeReportSnapshot {
+export function normalizeSnapshot(raw: unknown): BugseeReportSnapshot {
   if (typeof raw !== 'object' || raw === null) {
     return emptySnapshot();
   }

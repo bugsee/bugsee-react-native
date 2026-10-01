@@ -925,6 +925,72 @@ RCT_EXPORT_MODULE(Bugsee)
   }
 }
 
+// Task 8.2c. No registry yet, so this does not call the SDK: the SDK made none.
+- (void)createReport:(RCTPromiseResolveBlock)resolve
+              reject:(RCTPromiseRejectBlock)reject {
+  (void)reject;
+  resolve(nil);
+}
+
+// Task 8.2c. No created-report handle exists until the registry lands.
+- (void)createdReportRead:(NSString *)handleId
+                   resolve:(RCTPromiseResolveBlock)resolve
+                    reject:(RCTPromiseRejectBlock)reject {
+  (void)handleId;
+  (void)resolve;
+  BGSRNRejectHandleDead(reject);
+}
+
+// Task 8.2c. No created-report handle exists until the registry lands.
+- (void)createdReportUpdate:(NSString *)handleId
+                  patchJson:(NSString *)patchJson
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject {
+  (void)handleId;
+  (void)patchJson;
+  (void)resolve;
+  BGSRNRejectHandleDead(reject);
+}
+
+// Task 8.2c. No created-report handle exists until the registry lands.
+- (void)createdReportAddDataAttachment:(NSString *)handleId
+                                base64:(NSString *)base64
+                                  name:(NSString *)name
+                              mimeType:(NSString * _Nullable)mimeType
+                               resolve:(RCTPromiseResolveBlock)resolve
+                                reject:(RCTPromiseRejectBlock)reject {
+  (void)handleId;
+  (void)base64;
+  (void)name;
+  (void)mimeType;
+  (void)resolve;
+  BGSRNRejectHandleDead(reject);
+}
+
+// Task 8.2c. No created-report handle exists until the registry lands. No move argument.
+- (void)createdReportAddFileAttachment:(NSString *)handleId
+                                  path:(NSString *)path
+                                  name:(NSString *)name
+                              mimeType:(NSString * _Nullable)mimeType
+                               resolve:(RCTPromiseResolveBlock)resolve
+                                reject:(RCTPromiseRejectBlock)reject {
+  (void)handleId;
+  (void)path;
+  (void)name;
+  (void)mimeType;
+  (void)resolve;
+  BGSRNRejectHandleDead(reject);
+}
+
+// Task 8.2c. No created-report handle exists until the registry lands.
+- (void)createdReportUpload:(NSString *)handleId
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject {
+  (void)handleId;
+  (void)resolve;
+  BGSRNRejectHandleDead(reject);
+}
+
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams &)params {
   auto module = std::make_shared<facebook::react::NativeBugseeSpecJSI>(params);

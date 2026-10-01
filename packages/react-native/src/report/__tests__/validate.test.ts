@@ -1,11 +1,12 @@
 import { BugseeReportError, ReportErrorCode } from '../errors';
 
 describe('ReportErrorCode', () => {
-  it('is exactly the three stable strings', () => {
+  it('ReportErrorCode values are exactly the four stable strings', () => {
     expect(Object.values(ReportErrorCode).sort()).toEqual(
       [
         'E_REPORT_ATTACHMENT_REJECTED',
         'E_REPORT_BAD_ARGUMENT',
+        'E_REPORT_CREATE_BUSY',
         'E_REPORT_HANDLE_DEAD',
       ].sort(),
     );

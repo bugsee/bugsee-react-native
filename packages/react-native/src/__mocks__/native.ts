@@ -22,6 +22,7 @@ const DEFAULTS: Record<string, unknown> = {
   getStatus: 0,
   getLaunchOptions: {},
   reportRead: EMPTY_REPORT_SNAPSHOT,
+  createReport: null,
   getAttribute: {},
   getAllAttributes: {},
   getUserIdentifier: {},
@@ -190,6 +191,18 @@ export const native = {
     jest.fn<Promise<void>, [string, string, string, string | null, boolean]>(),
   reportAddDataAttachment:
     jest.fn<Promise<void>, [string, string, string, string | null]>(),
+
+  /** Resolves `null` by default: native made none. */
+  createReport: jest.fn<Promise<string | null>, []>(),
+  createdReportRead: jest.fn<Promise<unknown>, [string]>(),
+  /** `patchJson` is the validated patch as JSON text (`encodeBridgeObject`). */
+  createdReportUpdate: jest.fn<Promise<void>, [string, string]>(),
+  createdReportAddDataAttachment:
+    jest.fn<Promise<void>, [string, string, string, string | null]>(),
+  /** No `move` argument: a created-report file is copied. */
+  createdReportAddFileAttachment:
+    jest.fn<Promise<void>, [string, string, string, string | null]>(),
+  createdReportUpload: jest.fn<Promise<boolean>, [string]>(),
 
   /** `payloadJson` / `optionsJson` are JSON text (`encodeBridgeObject` / `encodeExceptionOptions`). */
   logException: jest.fn<void, [string, string | null]>(),
