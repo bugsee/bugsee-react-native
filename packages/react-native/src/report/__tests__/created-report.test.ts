@@ -95,6 +95,38 @@ describe('CreatedReport', () => {
     expect(native.createdReportUpdate).not.toHaveBeenCalled();
   });
 
+  it('addFileAttachment without a mime type sends null', async () => {
+    const report = await opened();
+    native.createdReportAddFileAttachment.mockResolvedValueOnce(undefined);
+
+    await report.addFileAttachment('/plain.png', { name: 'shot' });
+
+    expect(native.createdReportAddFileAttachment).toHaveBeenCalledWith(
+      'cr-1',
+      '/plain.png',
+      'shot',
+      null,
+    );
+  });
+
+  it('addFileAttachment rejects an empty path and an empty name before crossing', async () => {
+    const report = await opened();
+
+    await expect(
+      report.addFileAttachment('file://', { name: 'shot' }),
+    ).rejects.toMatchObject({
+      code: ReportErrorCode.BadArgument,
+      message: 'path must be a non-empty string',
+    });
+    await expect(
+      report.addFileAttachment('/plain.png', { name: '' }),
+    ).rejects.toMatchObject({
+      code: ReportErrorCode.BadArgument,
+      message: 'name must be a non-empty string',
+    });
+    expect(native.createdReportAddFileAttachment).not.toHaveBeenCalled();
+  });
+
   it('addFileAttachment strips file:// and sends no move', async () => {
     const report = await opened();
     native.createdReportAddFileAttachment.mockResolvedValueOnce(undefined);
@@ -125,6 +157,55 @@ describe('CreatedReport', () => {
       message: expect.stringMatching(/base64-encoded/),
     });
     expect(native.createdReportAddDataAttachment).not.toHaveBeenCalled();
+  });
+
+  it('addDataAttachment sends the bytes, and null when mime type is omitted', async () => {
+    const report = await opened();
+    native.createdReportAddDataAttachment.mockResolvedValueOnce(undefined);
+
+    await report.addDataAttachment('YWJj', { name: 'blob' });
+    await report.addDataAttachment('YWJj', {
+      name: 'blob',
+      mimeType: 'application/octet-stream',
+    });
+
+    expect(native.createdReportAddDataAttachment).toHaveBeenNthCalledWith(
+      1,
+      'cr-1',
+      'YWJj',
+      'blob',
+      null,
+    );
+    expect(native.createdReportAddDataAttachment).toHaveBeenNthCalledWith(
+      2,
+      'cr-1',
+      'YWJj',
+      'blob',
+      'application/octet-stream',
+    );
+  });
+
+  it('a native rejection comes back as BugseeReportError', async () => {
+    const report = await opened();
+    native.createdReportRead.mockRejectedValueOnce({
+      code: 'E_REPORT_ATTACHMENT_REJECTED',
+      message: 'too big',
+    });
+
+    await expect(report.read()).rejects.toMatchObject({
+      code: ReportErrorCode.AttachmentRejected,
+      message: 'too big',
+    });
+  });
+
+  it('a dead handle names the reason', async () => {
+    const report = await opened();
+    native.createdReportUpload.mockResolvedValueOnce(true);
+    await report.upload();
+
+    await expect(report.read()).rejects.toThrow(
+      'This created report handle is no longer valid: upload() has already been called.',
+    );
   });
 
   it("upload resolves native's result", async () => {
