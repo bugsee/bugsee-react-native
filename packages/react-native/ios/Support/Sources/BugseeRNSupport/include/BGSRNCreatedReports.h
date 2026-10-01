@@ -13,8 +13,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// it because a reload's JS cannot know the handle.
 ///
 /// `os_unfair_lock`: `createReport` can overlap an `invalidate` from another
-/// queue. The report object itself is unsynchronised and is only touched on
-/// main; this lock guards the slot, not the report.
+/// queue. The caller reserves before any hop `invalidate` cannot cancel.
+/// A reserve that ran after `clear` would hold the slot for a handle the
+/// torn-down JS never uploads. The report object itself is unsynchronised
+/// and is only touched on main; this lock guards the slot, not the report.
 @interface BGSRNCreatedReports : NSObject
 
 @property (class, readonly) BGSRNCreatedReports *shared;
@@ -24,6 +26,11 @@ NS_ASSUME_NONNULL_BEGIN
 /// an admission, which is what the existing tests assert. `clear` makes every
 /// token issued so far fail that check: the SDK's completion is not cancelled.
 - (NSUInteger)reserve;
+
+/// YES when `reservation` is still the open one. `clear` makes it NO.
+/// Does not take or free the slot. The main-queue hop checks this before
+/// constructing a `BugseeExtendedReport`, which `clear` cannot cancel.
+- (BOOL)reservationIsOpen:(NSUInteger)reservation;
 
 /// Ends the reservation `reservation` names. A report gets `cr-<n>` (fresh for
 /// this registry, never reused after a take) and holds the slot. nil frees the

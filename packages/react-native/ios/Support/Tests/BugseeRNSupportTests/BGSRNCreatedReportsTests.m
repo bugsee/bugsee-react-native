@@ -164,6 +164,32 @@
   XCTAssertFalse([registry reserve]);
 }
 
+/// The module reserves before the main hop. `clear` on another queue ends
+/// that token. The hop must see it closed, the stale report must not hold
+/// the slot, and a later reserve must admit.
+- (void)testClearBeforeTheHopClosesTheReservation {
+  BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
+  XCTAssertTrue([registry reservationIsOpen:reservation]);
+
+  dispatch_group_t done = dispatch_group_create();
+  dispatch_group_enter(done);
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    [registry clear];
+    dispatch_group_leave(done);
+  });
+  dispatch_group_wait(done, DISPATCH_TIME_FOREVER);
+
+  XCTAssertFalse([registry reservationIsOpen:reservation]);
+  XCTAssertNil([registry fulfil:[self newReport] reservation:reservation]);
+  const NSUInteger next = [registry reserve];
+  XCTAssertTrue(next);
+  XCTAssertNotEqual(next, reservation);
+  XCTAssertTrue([registry reservationIsOpen:next]);
+  XCTAssertFalse([registry reservationIsOpen:reservation]);
+}
+
 /// Eight threads pass one start barrier and call `reserve`. The lock admits
 /// one. A plain check-then-set lets more than one through.
 - (void)testConcurrentReservationsAdmitOne {

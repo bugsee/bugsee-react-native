@@ -939,20 +939,34 @@ RCT_EXPORT_MODULE(Bugsee)
 
 /// On main, unlike the handler's report ops. `BugseeExtendedReport` is
 /// unsynchronised, and the SDK hands it out and takes it back on main.
+///
+/// `reserve` runs before that hop. `invalidate` calls `clear` on another
+/// queue and cannot cancel a block already queued. Reserving inside the
+/// block would run after that clear and hold the slot for a handle the
+/// torn-down JS will never upload.
 - (void)createReport:(RCTPromiseResolveBlock)resolve
               reject:(RCTPromiseRejectBlock)reject {
+  BGSRNCreatedReports *registry = BGSRNCreatedReports.shared;
+  const NSUInteger reservation = [registry reserve];
+  if (reservation == 0) {
+    NSLog(@"BugseeRN created report - busy");
+    reject(kCreateBusyCode, @"a created report is already outstanding", nil);
+    return;
+  }
   BGSRNRunOnMain(^{
-    BGSRNCreatedReports *registry = BGSRNCreatedReports.shared;
-    // Captured here. `invalidate` clears the registry without cancelling this
-    // completion, and a token from a reservation that has ended must not mint
-    // a handle on the next runtime's slot or nil one it already holds.
-    const NSUInteger reservation = [registry reserve];
-    if (reservation == 0) {
-      NSLog(@"BugseeRN created report - busy");
-      reject(kCreateBusyCode, @"a created report is already outstanding", nil);
+    // `clear` already dropped this token. Do not call
+    // `createReportWithCompletion:`: that `-init`s a `BugseeExtendedReport`,
+    // and beta3 keeps those attributes in a file-scope global.
+    if (![registry reservationIsOpen:reservation]) {
+      NSLog(@"BugseeRN created report - reservation ended");
+      resolve(nil);
       return;
     }
     @try {
+      // Captured above, before the hop. `invalidate` clears the registry
+      // without cancelling this completion, and a token from a reservation
+      // that has ended must not mint a handle on the next runtime's slot
+      // or nil one it already holds.
       // The completion runs on every path, with nil when the SDK is not launched.
       [Bugsee createReportWithCompletion:^(BugseeExtendedReport *report) {
         NSString *handle = [registry fulfil:report reservation:reservation];

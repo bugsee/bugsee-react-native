@@ -61,6 +61,13 @@
   return token;
 }
 
+- (BOOL)reservationIsOpen:(NSUInteger)reservation {
+  os_unfair_lock_lock(&_lock);
+  const BOOL open = _creating && reservation != 0 && reservation == _reservation;
+  os_unfair_lock_unlock(&_lock);
+  return open;
+}
+
 - (nullable NSString *)fulfil:(nullable BugseeExtendedReport *)report
                  reservation:(NSUInteger)reservation {
   os_unfair_lock_lock(&_lock);
