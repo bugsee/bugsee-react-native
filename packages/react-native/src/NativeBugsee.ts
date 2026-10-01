@@ -129,15 +129,29 @@ export interface Spec extends TurboModule {
   /**
    * Creates and uploads a bug report immediately, without showing any UI.
    *
-   * Pulled forward from Phase 8 (Task 3.4c): the report-handler device tests
-   * need a LIVE report that JS can trigger, and nothing else in the facade
-   * creates one this early. The two-argument form only, matching
-   * `Bugsee.upload(summary, description)` on Android; severity and labels
-   * are Phase 8. Fire-and-forget like `setSecureRectangles` -- the SDK
-   * assembles and uploads the report from its own capture buffer in the
-   * background, so there is nothing to await.
+   * `severity` `0` is the SDK default (Android passes null; iOS resolves the
+   * launch option, or High). `labels` `null` means none were given.
+   * Fire-and-forget like `setSecureRectangles` -- the SDK assembles and
+   * uploads the report from its own capture buffer in the background, so
+   * there is nothing to await. Does nothing before `launch()`.
    */
-  upload(summary: string, description: string): void;
+  upload(
+    summary: string,
+    description: string,
+    severity: number,
+    labels: string[] | null,
+  ): void;
+  /**
+   * Shows the bug-report dialog. Null summary and description, severity `0`
+   * and null labels mean every argument was absent. Does nothing before
+   * `launch()`. The dialog runs `onBeforeReportCreated` before it opens.
+   */
+  showReportDialog(
+    summary: string | null,
+    description: string | null,
+    severity: number,
+    labels: string[] | null,
+  ): void;
 
   /**
    * Records a named event, with optional params.

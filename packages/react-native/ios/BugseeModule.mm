@@ -29,6 +29,7 @@
 #import <BugseeRNSupport/BGSRNReactWindow.h>
 #import <BugseeRNSupport/BGSRNExceptions.h>
 #import <BugseeRNSupport/BGSRNSettleOnce.h>
+#import <BugseeRNSupport/BGSRNReportArgs.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -47,6 +48,7 @@
 #import "BGSRNReactWindow.h"
 #import "BGSRNExceptions.h"
 #import "BGSRNSettleOnce.h"
+#import "BGSRNReportArgs.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -608,14 +610,44 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
-/// The two-argument form only -- severity and labels are Phase 8. JS has
-/// already checked both arguments are strings. On main, like every other SDK
-/// entry point; the report it creates is a LIVE one, so its handlers run on
-/// main too, after this returns.
+/// JS has already checked both strings, the severity range and the labels.
+/// Severity 0 is resolved here: the requested value, else the launch option
+/// `BugseeOptionReportingDefaultBugPriority`, else High. On main, like every
+/// other SDK entry point. Does nothing before launch -- the SDK returns.
+/// The report it creates is a LIVE one, so its handlers run on main too,
+/// after this returns.
 - (void)upload:(NSString *)summary
-    description:(NSString *)description {
+    description:(NSString *)description
+       severity:(double)severity
+         labels:(NSArray *)labels {
   BGSRNRunOnMain(^{
-    [Bugsee uploadWithSummary:summary description:description];
+    [Bugsee uploadWithSummary:summary
+                  description:description
+                     severity:(BugseeSeverityLevel)BGSRNUploadSeverity((NSInteger)severity,
+                                                                       [Bugsee getLaunchOptions])
+                       labels:BGSRNStringArray(labels)];
+  });
+}
+
+/// Every argument absent (`nil`, `nil`, `0`, `nil`) calls the no-argument
+/// dialog. Otherwise an omitted summary or description stays `nil`: beta3
+/// writes the field only when the pointer is non-nil, and `@""` would
+/// pre-fill an empty string. A 0 severity is left for the SDK to skip.
+/// On main. Does nothing before launch. The dialog runs
+/// `onBeforeReportCreated` before it opens.
+- (void)showReportDialog:(NSString *)summary
+             description:(NSString *)description
+                severity:(double)severity
+                  labels:(NSArray *)labels {
+  BGSRNRunOnMain(^{
+    if (summary == nil && description == nil && severity == 0.0 && labels == nil) {
+      [Bugsee showReportDialog];
+      return;
+    }
+    [Bugsee showReportDialogWithSummary:summary
+                            description:description
+                               severity:(BugseeSeverityLevel)severity
+                                 labels:BGSRNStringArray(labels)];
   });
 }
 

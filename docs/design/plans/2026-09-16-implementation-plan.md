@@ -3666,7 +3666,7 @@ FOUNDATION_EXPORT NSArray<NSString *> *_Nullable BGSRNStringArray(NSArray *_Null
 
 Both methods run inside `BGSRNRunOnMain`.
 - `upload:description:severity:labels:` → `[Bugsee uploadWithSummary:… description:… severity:(BugseeSeverityLevel)BGSRNUploadSeverity(severity, [Bugsee getLaunchOptions]) labels:BGSRNStringArray(labels)]`.
-- `showReportDialog:…` → `[Bugsee showReportDialog]` when every argument is absent (`nil`, `nil`, `0`, `nil`). Otherwise → `showReportDialogWithSummary:(summary ?: @"") description:(description ?: @"") severity:(BugseeSeverityLevel)severity labels:BGSRNStringArray(labels)`.
+- `showReportDialog:…` → `[Bugsee showReportDialog]` when every argument is absent (`nil`, `nil`, `0`, `nil`). Otherwise → `showReportDialogWithSummary:summary description:description severity:(BugseeSeverityLevel)severity labels:BGSRNStringArray(labels)`. An omitted summary or description stays `nil`. beta3 writes the field only when the pointer is non-nil, and `@""` would pre-fill an empty string.
 
 - [x] **Red**
   - `upload.test.ts`:

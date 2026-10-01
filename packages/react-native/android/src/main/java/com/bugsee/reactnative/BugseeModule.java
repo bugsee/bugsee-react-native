@@ -7,6 +7,7 @@ import android.util.Base64;
 import android.util.Log;
 
 import com.bugsee.library.Bugsee;
+import com.bugsee.library.contracts.options.IssueSeverity;
 import com.bugsee.library.contracts.reporting.Report;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
@@ -16,6 +17,7 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableMapKeySetIterator;
 import com.facebook.react.bridge.ReadableType;
 import com.facebook.react.bridge.WritableArray;
+import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.module.annotations.ReactModule;
 
@@ -362,12 +364,56 @@ public class BugseeModule extends NativeBugseeSpec
         });
     }
 
-    // The two-argument overload only -- severity and labels are Phase 8. JS
-    // has already checked both arguments are strings, so nothing is
-    // re-validated here.
+    /**
+     * JS has already checked the strings, the severity range and the labels.
+     * {@code severity} 0 and a null label list are the SDK default. A throw
+     * from the SDK must not escape a void method.
+     */
     @Override
-    public void upload(final String summary, final String description) {
-        Bugsee.upload(summary, description);
+    public void upload(
+            final String summary,
+            final String description,
+            final double severity,
+            @Nullable final ReadableArray labels
+    ) {
+        try {
+            Bugsee.upload(
+                    summary,
+                    description,
+                    ReportArgs.severity((int) severity),
+                    ReportArgs.labels(labels == null ? null : labels.toArrayList()));
+        } catch (final RuntimeException e) {
+            Log.e(TAG, "upload failed", e);
+        }
+    }
+
+    /**
+     * On the UI thread: the dialog presents from there. Same argument
+     * mapping as {@link #upload}. Does nothing before launch -- the SDK
+     * logs and returns. The dialog runs {@code onBeforeReportCreated}
+     * before it opens.
+     */
+    @Override
+    public void showReportDialog(
+            @Nullable final String summary,
+            @Nullable final String description,
+            final double severity,
+            @Nullable final ReadableArray labels
+    ) {
+        try {
+            final IssueSeverity sev = ReportArgs.severity((int) severity);
+            final ArrayList<String> labelList =
+                    ReportArgs.labels(labels == null ? null : labels.toArrayList());
+            UiThreadUtil.runOnUiThread(() -> {
+                try {
+                    Bugsee.showReportDialog(summary, description, sev, labelList);
+                } catch (final RuntimeException e) {
+                    Log.e(TAG, "showReportDialog failed", e);
+                }
+            });
+        } catch (final RuntimeException e) {
+            Log.e(TAG, "showReportDialog failed", e);
+        }
     }
 
     /**

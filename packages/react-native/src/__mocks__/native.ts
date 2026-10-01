@@ -130,7 +130,9 @@ export const native = {
   getStatus: jest.fn<Promise<number>, []>(),
   getLaunchOptions: jest.fn<Promise<Record<string, unknown>>, []>(),
   testCrash: jest.fn<void, []>(),
-  upload: jest.fn<void, [string, string]>(),
+  upload: jest.fn<void, [string, string, number, string[] | null]>(),
+  showReportDialog:
+    jest.fn<void, [string | null, string | null, number, string[] | null]>(),
   wrapperLog: jest.fn<void, [string, number]>(),
   /** `paramsJson` is JSON text (`encodeBridgeObject`), or null for no params. */
   event: jest.fn<void, [string, string | null]>(),

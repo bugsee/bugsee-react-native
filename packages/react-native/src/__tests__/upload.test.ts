@@ -3,7 +3,7 @@
 // known platform; this suite is about `upload`, not about which one.
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 
-import Bugsee from '../index';
+import Bugsee, { IssueSeverity } from '../index';
 import { native } from '../__mocks__/native';
 
 jest.mock('../NativeBugsee', () => require('../__mocks__/native').nativeMock);
@@ -11,9 +11,142 @@ jest.mock('../NativeBugsee', () => require('../__mocks__/native').nativeMock);
 beforeEach(() => native.reset());
 
 describe('upload', () => {
-  it('forwards summary and description', () => {
+  it('the two-argument form crosses severity 0 and null labels', () => {
     Bugsee.upload('the summary', 'the description');
-    expect(native.upload).toHaveBeenCalledWith('the summary', 'the description');
+    expect(native.upload).toHaveBeenCalledWith(
+      'the summary',
+      'the description',
+      0,
+      null,
+    );
+  });
+
+  it('severity crosses by value', () => {
+    Bugsee.upload('s', 'd', IssueSeverity.Critical);
+    expect(native.upload).toHaveBeenCalledWith('s', 'd', 4, null);
+    native.reset();
+    Bugsee.upload('s', 'd', IssueSeverity.VeryLow);
+    expect(native.upload).toHaveBeenCalledWith('s', 'd', 1, null);
+    native.reset();
+    Bugsee.upload('s', 'd', IssueSeverity.Blocker);
+    expect(native.upload).toHaveBeenCalledWith('s', 'd', 5, null);
+  });
+
+  it('labels cross as a copy', () => {
+    const labels = ['alpha', 'beta'];
+    Bugsee.upload('s', 'd', IssueSeverity.High, labels);
+    const crossed = native.upload.mock.calls[0]?.[3];
+    expect(crossed).toEqual(['alpha', 'beta']);
+    expect(crossed).not.toBe(labels);
+    labels.push('gamma');
+    expect(crossed).toEqual(['alpha', 'beta']);
+  });
+
+  it('rejects severity 0, 6, 2.5 and a string before crossing', () => {
+    const message = 'Bugsee.upload severity must be an integer 1..5';
+    expect(() =>
+      Bugsee.upload('s', 'd', 0 as unknown as IssueSeverity),
+    ).toThrow(new RangeError(message));
+    expect(() =>
+      Bugsee.upload('s', 'd', 6 as unknown as IssueSeverity),
+    ).toThrow(new RangeError(message));
+    expect(() =>
+      Bugsee.upload('s', 'd', 2.5 as unknown as IssueSeverity),
+    ).toThrow(new RangeError(message));
+    expect(() =>
+      Bugsee.upload('s', 'd', 'high' as unknown as IssueSeverity),
+    ).toThrow(new TypeError(message));
+    expect(native.upload).not.toHaveBeenCalled();
+  });
+
+  it('rejects labels that are not strings before crossing', () => {
+    const message = 'Bugsee.upload labels must be an array of strings';
+    expect(() =>
+      Bugsee.upload('s', 'd', undefined, 'nope' as unknown as string[]),
+    ).toThrow(new TypeError(message));
+    expect(() =>
+      Bugsee.upload('s', 'd', undefined, [1] as unknown as string[]),
+    ).toThrow(new TypeError(message));
+    expect(() =>
+      Bugsee.upload('s', 'd', undefined, null as unknown as string[]),
+    ).toThrow(new TypeError(message));
+    expect(native.upload).not.toHaveBeenCalled();
+  });
+
+  it('a fifth argument throws TypeError and crosses nothing', () => {
+    expect(() =>
+      (Bugsee.upload as (...args: unknown[]) => void)(
+        'summary',
+        'description',
+        IssueSeverity.High,
+        ['a'],
+        true,
+      ),
+    ).toThrow(
+      new TypeError(
+        'Bugsee.upload takes at most four arguments; 7.x has no includeVideo',
+      ),
+    );
+    expect(native.upload).not.toHaveBeenCalled();
+  });
+
+  it('upload has no fifth parameter', () => {
+    Bugsee.upload('summary', 'description', IssueSeverity.High, ['label']);
+    expect(() => {
+      // @ts-expect-error upload has no fifth parameter
+      Bugsee.upload('summary', 'description', IssueSeverity.High, ['label'], true);
+    }).toThrow(TypeError);
+  });
+
+  it('no message contains the rejected value', () => {
+    const severitySecret = 'SECRET_SEVERITY_VALUE';
+    expect(() =>
+      Bugsee.upload('summary', 'description', severitySecret as never),
+    ).toThrow(TypeError);
+    try {
+      Bugsee.upload('summary', 'description', severitySecret as never);
+    } catch (error) {
+      expect((error as Error).message).not.toContain(severitySecret);
+    }
+
+    const labelSecret = 'SECRET_LABEL_VALUE';
+    expect(() =>
+      Bugsee.upload('summary', 'description', IssueSeverity.High, [
+        labelSecret,
+        1,
+      ] as never),
+    ).toThrow(TypeError);
+    try {
+      Bugsee.upload('summary', 'description', IssueSeverity.High, [
+        labelSecret,
+        1,
+      ] as never);
+    } catch (error) {
+      expect((error as Error).message).not.toContain(labelSecret);
+    }
+
+    const fifth = 'SECRET_FIFTH_ARGUMENT';
+    expect(() =>
+      (Bugsee.upload as (...args: unknown[]) => void)(
+        'summary',
+        'description',
+        1,
+        ['a'],
+        fifth,
+      ),
+    ).toThrow(TypeError);
+    try {
+      (Bugsee.upload as (...args: unknown[]) => void)(
+        'summary',
+        'description',
+        1,
+        ['a'],
+        fifth,
+      );
+    } catch (error) {
+      expect((error as Error).message).not.toContain(fifth);
+    }
+    expect(native.upload).not.toHaveBeenCalled();
   });
 
   // The signature says string, but the call arrives from untyped JS just as
@@ -39,8 +172,4 @@ describe('upload', () => {
     },
   );
 
-  // The two-argument form only -- severity and labels are Phase 8.
-  it('is called with exactly two arguments', () => {
-    expect(Bugsee.upload.length).toBe(2);
-  });
 });
