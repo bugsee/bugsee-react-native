@@ -92,6 +92,31 @@ export interface BugseeReport {
 }
 
 /**
+ * A report the app fills and then uploads, from `createReport()`.
+ *
+ * Unlike a handler `BugseeReport`, this has no id, no type and no deadline.
+ * `upload()` ends it: every later call rejects `E_REPORT_HANDLE_DEAD`.
+ */
+export interface BugseeCreatedReport {
+  read(): Promise<BugseeReportSnapshot>;
+  update(patch: ReportPatch): Promise<void>;
+  /**
+   * The file is copied when it is added. There is no `move`: a created report
+   * does not take the file away from the app.
+   */
+  addFileAttachment(
+    path: string,
+    options: { name: string; mimeType?: string },
+  ): Promise<void>;
+  addDataAttachment(
+    base64: string,
+    options: { name: string; mimeType?: string },
+  ): Promise<void>;
+  /** Uploads; resolves the SDK's result. Every later call rejects E_REPORT_HANDLE_DEAD. */
+  upload(): Promise<boolean>;
+}
+
+/**
  * Registered through `setReportHandler`. Register before `launch()` to see
  * reports the SDK recovers at launch.
  *
@@ -100,7 +125,13 @@ export interface BugseeReport {
  * to `onAfterReportCreated`. `onAfterReportCreated` is at-least-once and MUST
  * be idempotent: prefer `setLabels`/`setAttribute` over appending, and check
  * `getAttachmentNames()` before adding an attachment a previous delivery may
- * already have added. A mutation made after the callback settles, or after
+ * already have added.
+ *
+ * **Attachments.** A handler report takes up to 1000 attachments on both
+ * platforms. A file is captured when it is added, and `move` is honoured.
+ * `onAfterReportCreated` must check `getAttachmentNames()` before adding.
+ *
+ * A mutation made after the callback settles, or after
  * its handle's deadline passes, does not reach the report -- the deadline is
  * the SDK's own, not something the app negotiates.
  *

@@ -10,7 +10,8 @@ import { Status } from './status';
 import { statusForEvent } from './wrapper/events';
 import type { LifecycleEvent } from './wrapper/events';
 import { setReportHandler as installReportHandler } from './report/dispatcher';
-import type { BugseeReportHandler } from './report/types';
+import { createReport as openCreatedReport } from './report/CreatedReport';
+import type { BugseeCreatedReport, BugseeReportHandler } from './report/types';
 import { forwardLog } from './wrapper/channel';
 import { type IssueSeverity, LogLevel } from './options/enums';
 import { labelsArgument, severityArgument } from './report/fields';
@@ -253,7 +254,13 @@ class Bugsee {
    * `onBeforeReportCreated` is at-most-once and may be skipped for a given
    * report; `onAfterReportCreated` is at-least-once and MUST be idempotent
    * (`setLabels`/`setAttribute`, not appending; check `getAttachmentNames()`
-   * before adding one). A mutation made after the callback settles, or after
+   * before adding one).
+   *
+   * **Attachments.** A handler report takes up to 1000 attachments on both
+   * platforms. A file is captured when it is added, and `move` is honoured.
+   * `onAfterReportCreated` must check `getAttachmentNames()` before adding.
+   *
+   * A mutation made after the callback settles, or after
    * its handle's deadline passes -- the SDK's deadline, not one the app
    * negotiates -- does not reach the report.
    *
@@ -336,6 +343,28 @@ class Bugsee {
       severityArgument(severity, 'showReportDialog'),
       labelsArgument(labels, 'showReportDialog'),
     );
+  }
+
+  /**
+   * A report to fill and upload. Resolves `null` when the SDK made none
+   * (not launched).
+   *
+   * One outstanding created report at a time. A second `createReport()`
+   * before that one is uploaded rejects with `E_REPORT_CREATE_BUSY`. iOS
+   * beta3 keeps created-report attributes in file-scope globals, so a second
+   * create wipes the first.
+   *
+   * Android runs `onBeforeReportCreated` inside `createReport` and
+   * `onAfterReportCreated` at upload. iOS runs both at upload, after copying
+   * the created report's fields, so a handler `setLabels` there replaces the
+   * app's labels.
+   *
+   * iOS created-report attachments: at most 3, each at most 3 MiB. The bridge
+   * rejects a further or larger one with `E_REPORT_ATTACHMENT_REJECTED`. iOS
+   * ignores `mimeType`. Android's cap is 1000.
+   */
+  async createReport(): Promise<BugseeCreatedReport | null> {
+    return openCreatedReport();
   }
 
   /**
@@ -646,6 +675,7 @@ export type { LifecycleEvent } from './wrapper/events';
 
 export { ReportErrorCode, BugseeReportError } from './report/errors';
 export type {
+  BugseeCreatedReport,
   BugseeReport,
   BugseeReportHandler,
   BugseeReportSnapshot,

@@ -1,5 +1,5 @@
 /**
- * The three stable codes a `BugseeReport` operation can fail with.
+ * The four stable codes a report operation can fail with.
  *
  * Stable, and worth stating: an app matches on `.code`, so these strings are
  * part of the public contract, not an implementation detail free to change
@@ -8,15 +8,21 @@
 export const ReportErrorCode = {
   /**
    * The handle's callback has already settled, or its deadline already
-   * passed. Raised locally -- without crossing the bridge -- for every
-   * operation after that point, and reproduced with the same code when a
-   * native rejection reports it instead.
+   * passed, or a created report has already been uploaded. Raised locally --
+   * without crossing the bridge -- for every operation after that point, and
+   * reproduced with the same code when a native rejection reports it instead.
    */
   HandleDead: 'E_REPORT_HANDLE_DEAD',
   /** Native declined an attachment (`addFileAttachment`/`addDataAttachment`). */
   AttachmentRejected: 'E_REPORT_ATTACHMENT_REJECTED',
   /** JS-side validation rejected the argument before it crossed the bridge. */
   BadArgument: 'E_REPORT_BAD_ARGUMENT',
+  /**
+   * A created report is already outstanding. A second `createReport()` rejects
+   * with this until that report is uploaded. iOS beta3 keeps created-report
+   * attributes in file-scope globals, so a second create would wipe the first.
+   */
+  CreateBusy: 'E_REPORT_CREATE_BUSY',
 } as const;
 
 export type ReportErrorCode =
