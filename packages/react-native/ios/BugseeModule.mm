@@ -585,8 +585,10 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
-/// An unhandled JS exception. Stores a crash report the SDK surfaces at the
-/// next launch. The completion is wrapped in `BGSRNSettleOnce`: on the
+/// An unhandled JS exception. The call stores `override_report.plcrash`.
+/// iOS SDK 7.0.0-beta3 `0d9c9d0a-9` claims only `live_report.plcrash` on the
+/// next launch, so that report is not recovered. Do not copy one file onto
+/// the other. The completion is wrapped in `BGSRNSettleOnce`: on the
 /// simulator the SDK compiles `logUnhandledException` out and never calls
 /// this completion (verified facts), and a promise must still settle.
 - (void)logUnhandledException:(NSString *)payloadJson
