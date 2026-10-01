@@ -138,11 +138,11 @@
   _reservation = 0;
   _report = nil;
   _handle = nil;
-  _uploading = NO;
-  _uploadGeneration += 1;
-  if (_uploadGeneration == 0) {
-    _uploadGeneration = 1;
-  }
+  // An upload still in flight keeps the slot. `uploadReport:` copies attributes
+  // after it returns, and beta3 keeps those in a file-scope global. Clearing
+  // `_uploading` here would let the next runtime `-init` another
+  // `BugseeExtendedReport` and wipe the report being uploaded. `endUpload:`
+  // for this generation is what frees the slot.
   os_unfair_lock_unlock(&_lock);
 }
 

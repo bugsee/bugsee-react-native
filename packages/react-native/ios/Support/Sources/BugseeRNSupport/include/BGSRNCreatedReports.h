@@ -47,12 +47,15 @@ NS_ASSUME_NONNULL_BEGIN
                                         generation:(NSUInteger *)generationOut;
 
 /// Frees the slot when `generation` is still the upload `detachForUpload:`
-/// started. A generation `clear` has already moved does nothing.
+/// started. A later upload's generation does not match, so this does not free
+/// that one. `clear` does not move the generation: the in-flight upload keeps
+/// the slot until this runs.
 - (void)endUpload:(NSUInteger)generation;
 
-/// Drops the handle and frees the slot, including a reservation the SDK has
-/// not fulfilled yet and an upload still in flight. An `endUpload:` for that
-/// abandoned upload does not free a slot opened afterwards.
+/// Drops the handle and a reservation the SDK has not fulfilled yet. An upload
+/// already detached keeps the slot until `endUpload:` for its generation, so a
+/// reload cannot construct another `BugseeExtendedReport` while that upload is
+/// still copying attributes.
 - (void)clear;
 
 @end

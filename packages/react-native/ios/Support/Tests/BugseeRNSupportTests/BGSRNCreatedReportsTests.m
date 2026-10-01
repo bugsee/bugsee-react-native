@@ -126,9 +126,10 @@
   XCTAssertTrue([registry reserve]);
 }
 
-/// `clear` abandons the in-flight upload. Its `endUpload:` must not free a
-/// report the next runtime already holds.
-- (void)testAStaleUploadEndLeavesTheNextReport {
+/// `clear` drops the handle and still holds the slot while the upload copies.
+/// `endUpload:` then opens it. A repeat of that generation does not drop the
+/// report reserved afterwards.
+- (void)testClearDuringUploadKeepsTheSlotUntilEnd {
   BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
   const NSUInteger reservation = [registry reserve];
   XCTAssertTrue(reservation);
@@ -136,7 +137,9 @@
   NSUInteger generation = 0;
   XCTAssertNotNil([registry detachForUpload:handle generation:&generation]);
   [registry clear];
+  XCTAssertFalse([registry reserve]);
 
+  [registry endUpload:generation];
   const NSUInteger next = [registry reserve];
   XCTAssertTrue(next);
   BugseeExtendedReport *created = [self newReport];
