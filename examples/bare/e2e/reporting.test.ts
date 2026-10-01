@@ -1,13 +1,29 @@
 /**
  * Task 8.3a: every Android reporting path, proven from retained bundles.
+ * Task 8.3b: the same cases on the iOS simulator, and on the iPhone.
  *
- * Retention is airplane mode, as for report-handler.test.ts (Task 3.4d):
- * the debug build is installed on the WOD_LX1, and Metro is reachable over
- * `adb reverse`. The banner, the asserted clear and `Launched` are the
- * preconditions `startRun` already checks. `duration` stays 90.
+ * Android retention is airplane mode, as for report-handler.test.ts (Task
+ * 3.4d): the debug build is installed on the WOD_LX1, and Metro is reachable
+ * over `adb reverse`. iOS has no airplane mode to switch. Retention there is
+ * the dead endpoint `startRun` already requires (`DEAD_ENDPOINT`), and every
+ * retained bundle this suite pulls goes through `awaitBundles`, which
+ * requires `environment.sdk.version` to equal `readNativeVersions().ios.sdk`
+ * — the same pin `startRun` checks on the launch line. The banner, the
+ * asserted clear and `Launched` are the preconditions `startRun` already
+ * checks. `duration` stays 90.
  *
- * Case 6 is not in this file. Step 0 (2026-10-01) found the dialog's send
- * control has no stable resource-id, and nothing here taps the dialog.
+ * Android case 6 is not in this file. Step 0 (2026-10-01) found the dialog's
+ * send control has no stable resource-id, and nothing here taps the dialog.
+ * iOS case 6 is gated on `E2E_IOS_OPERATOR=1` and the iPhone. This file never
+ * sets that variable and never taps Send. The simulator never runs case 6.
+ *
+ * iOS case 3 is `it.failing` (P10). The plain `it` before it is case 1,
+ * which checks identity. The body still requires `source.type === 'code_upload'`.
+ * Case 8 on iOS: `rp create before` and `rp create after` both follow
+ * `rp uploading` (P6), and `rp created null=false` precedes `rp uploading`.
+ * Case 10 on iOS: `extra1 ok`, `extra2 code=E_REPORT_ATTACHMENT_REJECTED`,
+ * and case 7's bundle has exactly 3 attachments (P7). Case 11 is Android's:
+ * `addAttachmentWithFilePath:…move:` honours `move`.
  *
  * Markers, from scenarios/reporting.ts:
  *   BUGSEE_E2E rp upload-5th code=<name>
@@ -29,9 +45,11 @@ import {
   airplane,
   attachmentsOf,
   removePulledBundles,
+  terminateIosApp,
 } from './bundles';
-import { ANDROID_PACKAGE } from './device';
+import { ANDROID_PACKAGE, iosTarget } from './device';
 import {
+  ON_IOS,
   type Run,
   awaitBundles,
   clearBundles,
@@ -47,12 +65,21 @@ import {
 import {
   type DeviceLog,
   type LogLine,
+  IosConsole,
   Logcat,
   adb,
   resetScenario,
 } from './scenario';
 
 jest.setTimeout(12 * 60_000);
+
+/**
+ * Case 6. A person taps Send on the iPhone. This file never sets
+ * `E2E_IOS_OPERATOR` and never taps the dialog. Without the variable the
+ * case is skipped, and the simulator never runs it.
+ */
+const itIosOperator =
+  ON_IOS && iosTarget() === 'device' && process.env.E2E_IOS_OPERATOR === '1' ? it : it.skip;
 
 /** How long a bundle is given to land after the call that files it. */
 const BUNDLE_WAIT_MS = 120_000;
@@ -61,6 +88,13 @@ describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
   let log: DeviceLog;
 
   beforeAll(async () => {
+    if (ON_IOS) {
+      // No network switch to throw: every iOS launch carries DEAD_ENDPOINT
+      // (startIosRun), which is what retains its reports.
+      log = IosConsole.start();
+      useLog(log, '8.3b');
+      return;
+    }
     log = await Logcat.start();
     useLog(log, '8.3a');
     // 9.3.2: offline before the app starts, so the report is retained.
@@ -71,11 +105,17 @@ describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
     // Always, and in this order: stop the app, drop what it retained, then
     // bring the network back -- the handset is shared.
     try {
-      await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+      if (ON_IOS) {
+        await terminateIosApp();
+      } else {
+        await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE).catch(() => {});
+      }
       await clearBundles().catch((error: unknown) => report('cleanup clear failed', String(error)));
     } finally {
       try {
-        await airplane(false);
+        if (!ON_IOS) {
+          await airplane(false);
+        }
       } finally {
         try {
           const { removed, kept } = removePulledBundles();
@@ -197,8 +237,18 @@ describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
       expect(bundles.some(bundle => bundle.request.summary === `x5-${nonce}`)).toBe(false);
     });
 
-    it('upload files as code_upload', () => {
+    // Case 1, above, is the plain `it` that checks identity. This one is
+    // `it.failing` on iOS only (P10): beta3's `uploadWithSummary:…` files
+    // `source.type` other than `code_upload`. The assertion stays
+    // `code_upload`. The observed value is reported, and is not what passes.
+    const case3 = ON_IOS ? it.failing : it;
+    case3('upload files as code_upload', () => {
       expect(uploads().length).toBeGreaterThan(0);
+      const observed = uploads().map(bundle => ({
+        summary: bundle.request.summary,
+        sourceType: sourceType(bundle),
+      }));
+      report('case 3 source.type', observed);
       for (const bundle of uploads()) {
         expect({ summary: bundle.request.summary, sourceType: sourceType(bundle) }).toEqual({
           summary: bundle.request.summary,
@@ -293,6 +343,19 @@ describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
       expect(before.index).toBeLessThan(shown.index);
       report('case 5 dialog-before', before.text.trim());
     });
+
+    itIosOperator('submitting the dialog files the report', async () => {
+      // The operator has 60 s. Nothing in this process taps the dialog.
+      console.log('>>> Tap Send in the Bugsee report dialog on the iPhone now (60 s)');
+      const filed = await awaitBundles(1, 60_000);
+      const found = filed.filter(bundle => bundle.request.summary === `dlg-${nonce}`);
+      expect(found).toHaveLength(1);
+      const bundle = found[0]!;
+      expect(bundle.request.description).toBe(`dd-${nonce}`);
+      expect(bundle.request.severity).toBe(3);
+      expect(labelsOf(bundle)).toEqual(expect.arrayContaining([`dlg-${nonce}`]));
+      expect(sourceType(bundle)).toBe('code_dialog');
+    });
   });
 
   describe('createReport', () => {
@@ -361,8 +424,15 @@ describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
         'rp create after',
         run.start,
       );
-      expect(before.index).toBeLessThan(createdMarker.index);
-      expect(uploading.index).toBeLessThan(after.index);
+      if (ON_IOS) {
+        // P6: both callbacks run at upload. The created report already exists.
+        expect(createdMarker.index).toBeLessThan(uploading.index);
+        expect(uploading.index).toBeLessThan(before.index);
+        expect(uploading.index).toBeLessThan(after.index);
+      } else {
+        expect(before.index).toBeLessThan(createdMarker.index);
+        expect(uploading.index).toBeLessThan(after.index);
+      }
     });
 
     it('one created report at a time, and none after upload', () => {
@@ -389,12 +459,22 @@ describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
         'rp extra1 ok',
         run.start,
       );
-      must(
-        log.all(/BUGSEE_E2E rp extra2 ok/, run.start)[0],
-        'rp extra2 ok',
-        run.start,
-      );
-      expect(attachmentsOf(created())).toHaveLength(4);
+      if (ON_IOS) {
+        // P7: the bridge rejects the fourth attachment up front.
+        must(
+          log.all(/BUGSEE_E2E rp extra2 code=E_REPORT_ATTACHMENT_REJECTED/, run.start)[0],
+          'rp extra2 code=E_REPORT_ATTACHMENT_REJECTED',
+          run.start,
+        );
+        expect(attachmentsOf(created())).toHaveLength(3);
+      } else {
+        must(
+          log.all(/BUGSEE_E2E rp extra2 ok/, run.start)[0],
+          'rp extra2 ok',
+          run.start,
+        );
+        expect(attachmentsOf(created())).toHaveLength(4);
+      }
     });
   });
 
@@ -417,6 +497,8 @@ describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
     });
 
     it('a handler attaches a file by copy and by move', () => {
+      // iOS: addAttachmentWithFilePath:name:mimeType:move: honours `move`.
+      // The assertions are Android's.
       const exists = must(
         log.all(/BUGSEE_E2E rp exists copy=\S+ move=\S+/, run.start)[0],
         'rp exists',
