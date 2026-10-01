@@ -345,32 +345,6 @@ export async function terminateIosApp(): Promise<void> {
 }
 
 /**
- * beta3 stores an unhandled JS exception as `override_report.plcrash` and the
- * next launch only claims `live_report.plcrash`. A SIGTERM leaves the
- * override unclaimed ("Could not claim pending crash report: errno 2") and
- * files nothing. A SIGABRT writes a separate native crash that is not the
- * stored JS exception. After the process is gone, copy the override onto the
- * path the next launch claims, so the recovered bundle is that stored report.
- */
-export async function promoteStoredIosCrash(): Promise<void> {
-  if (!onDevice()) {
-    return;
-  }
-  const dir = mkdtempSync(join(tmpdir(), 'bugsee-override-'));
-  const local = join(dir, 'override.plcrash');
-  const remote =
-    'Library/Caches/com.bugsee.crashreporter/org.reactjs.native.example.BareExample/override_report.plcrash';
-  const live =
-    'Library/Caches/com.bugsee.crashreporter/org.reactjs.native.example.BareExample/live_report.plcrash';
-  try {
-    await devicectl('copy', 'from', ...CONTAINER, '--source', remote, '--destination', local);
-    await devicectl('copy', 'to', ...CONTAINER, '--source', local, '--destination', live);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-/**
  * The iOS counterpart of `clearAndroidBundles`, and as wide, for the same
  * reasons: stop the app first, then remove the SDK's whole data directory
  * (pending reports and crash state included), and assert it is gone. On an

@@ -35,10 +35,14 @@
  * Case 12's red-box line must stay on Android. Gated release R2/R3 (controller
  * ruling): R13's second Bugsee crash was not retained on SDK 7.3.0; logcat
  * still shows RN's JavascriptException, but exactly one Bugsee bundle is filed.
- * On iOS cases 9 and 12 recover after `terminateIosApp()`, then copying the
- * stored `override_report.plcrash` onto `live_report.plcrash` (the only file
- * beta3 claims at the next launch), then `exc-observe`. A SIGTERM alone
- * leaves the override unclaimed. A SIGABRT files a different native crash.
+ * On iOS cases 9 and 12 the unhandled report is stored, not sent: a plain
+ * `it` asserts the bundle list is empty, then `terminateIosApp()` and
+ * `exc-observe`. Exactly one recovered crash is `it.failing` on beta3
+ * `0d9c9d0a-9`, which does not claim `override_report.plcrash` on the next
+ * launch. The harness must not copy that file onto `live_report.plcrash`.
+ * The Release gate is the same split: the console ended and no
+ * `RCTFatalException` bundle on a plain `it`; exactly one
+ * `ReactNativeWebException` crash is `it.failing`.
  */
 import { writeFileSync } from 'node:fs';
 
@@ -50,7 +54,6 @@ import {
   pullAndroidBundles,
   removePulledBundles,
   terminateIosApp,
-  promoteStoredIosCrash,
 } from './bundles';
 import { ANDROID_PACKAGE, iosTarget } from './device';
 import {
@@ -161,26 +164,6 @@ function bundlesWithReason(
 function rawCrashContains(bundle: PulledBundle, needle: string): boolean {
   const text = bundle.captures.get('crash');
   return text !== undefined && text.includes(needle);
-}
-
-async function recoverStoredCrash(): Promise<{ observe: Run; bundles: PulledBundle[] }> {
-  await terminateIosApp();
-  await promoteStoredIosCrash();
-  let observe = await startRun('exc-observe');
-  let bundles = await awaitBundles(1, 20_000);
-  if (bundles.length === 0) {
-    // The first launch sometimes claims nothing after an earlier crash in the
-    // same install. Promote again when the override is still on disk.
-    await terminateIosApp();
-    try {
-      await promoteStoredIosCrash();
-    } catch {
-      return { observe, bundles };
-    }
-    observe = await startRun('exc-observe');
-    bundles = await awaitBundles(1, 45_000);
-  }
-  return { observe, bundles };
 }
 
 function innermost(payload: JsPayload): JsPayload {
@@ -909,6 +892,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
         expect(exceptionOf(handledCrash).name).toBe('ReactNativeWebException');
         expect(handledCrash.managed).toBe(true);
         expect(handledCrash.type).toBe('ios');
+        expect(handledCrash.handled).toBe(true);
       },
     );
 
@@ -1004,10 +988,9 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
 
   describeIosDevice('exc-fatal (iPhone)', () => {
     let run: Run;
-    let observe: Run;
     let nonce: string;
     let bundles: PulledBundle[];
-    let crashBundle: PulledBundle;
+    let stored: string[];
     let sent: LogLine;
     let completed: LogLine;
     let appHandler: LogLine;
@@ -1047,15 +1030,16 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
         completed: completed.text.trim(),
         appHandler: appHandler.text.trim(),
       });
-      expect(sent.index).toBeLessThan(completed.index);
-      expect(completed.index).toBeLessThan(appHandler.index);
 
-      // Stored, not sent. Terminate, then put the stored override where the
-      // next launch claims it (`live_report.plcrash`).
-      await recoverStoredCrash().then(recovered => {
-        observe = recovered.observe;
-        bundles = recovered.bundles;
-      });
+      // Stored, not sent. The empty-list assertion is a plain `it` below,
+      // so a hook does not fail the suite. The next launch is the files the
+      // process left; the harness does not copy override_report.plcrash.
+      stored = await listBundles();
+      report('fatal bundles before terminate', stored);
+      await terminateIosApp();
+      const observe = await startRun('exc-observe');
+      report('observe banner', observe.banner.text.trim());
+      bundles = await awaitBundles(1);
       report(
         'fatal recovered bundles',
         bundles.map(b => {
@@ -1078,29 +1062,32 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
           };
         }),
       );
-
-      const crashes = bundlesWithReason(bundles, `E2E fatal ${nonce}`).filter(
-        b => b.request.type === 'crash',
-      );
-      expect(crashes).toHaveLength(1);
-      crashBundle = crashes[0]!;
     });
 
-    itIosDevice(
+    itIosDevice('the unhandled fatal is stored, not sent', () => {
+      expect(stored).toEqual([]);
+      expect(sent.index).toBeLessThan(completed.index);
+      expect(completed.index).toBeLessThan(appHandler.index);
+    });
+
+    // beta3 0d9c9d0a-9 does not claim override_report.plcrash on the next
+    // launch, so this list is empty. The harness must not copy that file
+    // onto live_report.plcrash. The body asserts the correct outcome;
+    // remove .failing when a beta recovers the stored report.
+    itIosDevice.failing(
       'a fatal JS error is reported as a crash, then RN\'s handler runs',
       () => {
-        expect(crashBundle.request.type).toBe('crash');
-        expect(payloadOf(crashBundle).reason).toBe(`E2E fatal ${nonce}`);
-        expect(sent.index).toBeLessThan(completed.index);
-        expect(completed.index).toBeLessThan(appHandler.index);
+        const crashes = bundlesWithReason(bundles, `E2E fatal ${nonce}`).filter(
+          b => b.request.type === 'crash',
+        );
+        expect(crashes).toHaveLength(1);
+        expect(crashes[0]!.request.type).toBe('crash');
+        expect(payloadOf(crashes[0]!).reason).toBe(`E2E fatal ${nonce}`);
       },
     );
 
     itIosDevice('the fatal error files no second report for the incident', () => {
       const others = bundles.filter(b => {
-        if (b.file === crashBundle.file) {
-          return false;
-        }
         try {
           return (
             payloadOf(b).reason === `E2E fatal ${nonce}` ||
@@ -1118,8 +1105,9 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
           name: crashOf(b) !== undefined ? exceptionOf(crashOf(b)!).name : undefined,
         })),
       );
-      expect(others).toHaveLength(0);
-      expect(bundles).toHaveLength(1);
+      // The one recovered crash, when the SDK starts producing it, is case 9.
+      // Zero bundles is not a second report. More than one is.
+      expect(others.length).toBeLessThanOrEqual(1);
     });
   });
 
@@ -1169,9 +1157,9 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
 
   describeIosDevice('exc-root (iPhone)', () => {
     let run: Run;
-    let observe: Run;
     let nonce: string;
     let bundles: PulledBundle[];
+    let stored: string[];
     let sent: LogLine;
 
     beforeAll(async () => {
@@ -1196,9 +1184,12 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       );
       report('root unhandled sent', sent.text.trim());
 
-      const recovered = await recoverStoredCrash();
-      observe = recovered.observe;
-      bundles = recovered.bundles;
+      stored = await listBundles();
+      report('root bundles before terminate', stored);
+      await terminateIosApp();
+      const observe = await startRun('exc-observe');
+      report('root observe banner', observe.banner.text.trim());
+      bundles = await awaitBundles(1);
       report(
         'root recovered bundles',
         bundles.map(b => ({
@@ -1209,13 +1200,23 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       );
     });
 
-    itIosDevice(
+    itIosDevice('the unhandled root error is stored, not sent', () => {
+      expect(stored).toEqual([]);
+    });
+
+    // beta3 0d9c9d0a-9 does not claim override_report.plcrash on the next
+    // launch, so this list is empty. The harness must not copy that file
+    // onto live_report.plcrash. The body asserts the correct outcome;
+    // remove .failing when a beta recovers the stored report.
+    itIosDevice.failing(
       'a render error with no boundary is reported once, as a crash, by the root reporter',
       () => {
         const crashes = bundlesWithReason(bundles, `E2E boundary ${nonce}`).filter(
           b => b.request.type === 'crash',
         );
         expect(crashes).toHaveLength(1);
+        expect(crashes[0]!.request.type).toBe('crash');
+        expect(payloadOf(crashes[0]!).reason).toBe(`E2E boundary ${nonce}`);
         expect(bundles).toHaveLength(1);
       },
     );
@@ -1291,12 +1292,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       ]);
       consoleEnded = race === 'ended';
       report('release console ended', consoleEnded);
-      expect(consoleEnded).toBe(true);
 
-      // The process died on RCTFatal. beta3 still only claims
-      // live_report.plcrash at the next launch; the stored JS exception is
-      // override_report.plcrash until it is copied there.
-      await promoteStoredIosCrash().catch(error => report('release promote', String(error).slice(0, 180)));
       observe = await startRun('exc-observe');
       report('release observe banner', observe.banner.text.trim());
       await new Promise(resolve => setTimeout(resolve, 5_000));
@@ -1318,7 +1314,27 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       );
     });
 
-    itIosDevice('exactly one ReactNativeWebException crash for the fatal', () => {
+    itIosDevice('the process died and no RCTFatalException bundle was exported', () => {
+      expect(consoleEnded).toBe(true);
+      const rctFatal = bundles.filter(b => {
+        const crash = crashOf(b);
+        if (crash === undefined) {
+          return false;
+        }
+        return String(exceptionOf(crash).name ?? '').includes('RCTFatalException');
+      });
+      if (rctFatal.length > 0) {
+        throw new Error(
+          `RCTFatalException bundle arrived: ${rctFatal.map(b => b.file).join(', ')}`,
+        );
+      }
+    });
+
+    // beta3 0d9c9d0a-9 does not claim override_report.plcrash on the next
+    // launch, so this list is empty. The harness must not copy that file
+    // onto live_report.plcrash. The body asserts the correct outcome;
+    // remove .failing when a beta recovers the stored report.
+    itIosDevice.failing('exactly one ReactNativeWebException crash for the fatal', () => {
       const ours = bundles.filter(b => {
         if (b.request.type !== 'crash') {
           return false;
@@ -1337,19 +1353,6 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
         }
       });
       expect(ours).toHaveLength(1);
-
-      const rctFatal = bundles.filter(b => {
-        const crash = crashOf(b);
-        if (crash === undefined) {
-          return false;
-        }
-        return String(exceptionOf(crash).name ?? '').includes('RCTFatalException');
-      });
-      if (rctFatal.length > 0) {
-        throw new Error(
-          `second RCTFatalException bundle arrived: ${rctFatal.map(b => b.file).join(', ')}`,
-        );
-      }
       expect(bundles).toHaveLength(1);
       report('iOS release single bundle', { file: ours[0]!.file });
     });
