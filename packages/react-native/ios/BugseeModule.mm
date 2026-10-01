@@ -943,7 +943,11 @@ RCT_EXPORT_MODULE(Bugsee)
               reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
     BGSRNCreatedReports *registry = BGSRNCreatedReports.shared;
-    if (![registry reserve]) {
+    // Captured here. `invalidate` clears the registry without cancelling this
+    // completion, and a token from a reservation that has ended must not mint
+    // a handle on the next runtime's slot or nil one it already holds.
+    const NSUInteger reservation = [registry reserve];
+    if (reservation == 0) {
       NSLog(@"BugseeRN created report - busy");
       reject(kCreateBusyCode, @"a created report is already outstanding", nil);
       return;
@@ -951,7 +955,7 @@ RCT_EXPORT_MODULE(Bugsee)
     @try {
       // The completion runs on every path, with nil when the SDK is not launched.
       [Bugsee createReportWithCompletion:^(BugseeExtendedReport *report) {
-        NSString *handle = [registry fulfil:report];
+        NSString *handle = [registry fulfil:report reservation:reservation];
         if (handle == nil) {
           NSLog(@"BugseeRN created report - none");
           resolve(nil);
@@ -961,7 +965,7 @@ RCT_EXPORT_MODULE(Bugsee)
         }
       }];
     } @catch (NSException *exception) {
-      [registry fulfil:nil];
+      [registry fulfil:nil reservation:reservation];
       BGSRNRejectException(reject, exception);
     }
   });

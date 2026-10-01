@@ -19,12 +19,20 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (class, readonly) BGSRNCreatedReports *shared;
 
-/// NO while a created report is outstanding or being created.
-- (BOOL)reserve;
+/// 0 while a created report is outstanding or being created. Otherwise the
+/// generation token `fulfil:reservation:` must present. A non-zero token is
+/// an admission, which is what the existing tests assert. `clear` makes every
+/// token issued so far fail that check: the SDK's completion is not cancelled.
+- (NSUInteger)reserve;
 
-/// Ends a reservation. A report gets `cr-<n>` (fresh for this registry, never
-/// reused after a take) and holds the slot. nil frees the slot and returns nil.
-- (nullable NSString *)fulfil:(nullable BugseeExtendedReport *)report;
+/// Ends the reservation `reservation` names. A report gets `cr-<n>` (fresh for
+/// this registry, never reused after a take) and holds the slot. nil frees the
+/// slot and returns nil. A token that is not the current one — including every
+/// token issued before `clear`, and the token of a reservation that has
+/// already been fulfilled — returns nil and does not store a report or clear
+/// the slot.
+- (nullable NSString *)fulfil:(nullable BugseeExtendedReport *)report
+                 reservation:(NSUInteger)reservation;
 
 - (nullable BugseeExtendedReport *)reportFor:(NSString *)handleId;
 

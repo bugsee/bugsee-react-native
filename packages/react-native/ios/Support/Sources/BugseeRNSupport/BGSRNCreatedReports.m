@@ -4,17 +4,23 @@
 
 @implementation BGSRNCreatedReports {
   os_unfair_lock _lock;
-  /// Set by `reserve`, cleared by a nil `fulfil`, `take` or `clear`.
-  BOOL _reserved;
+  /// Set by `reserve`, cleared when that reservation is fulfilled or cleared.
+  /// A held report keeps the slot on its own: this flag is only "the SDK has
+  /// not answered yet".
+  BOOL _creating;
+  /// Token of the open reservation. 0 is never live.
+  NSUInteger _reservation;
+  NSUInteger _nextReservation;
   NSString *_handle;
   BugseeExtendedReport *_report;
-  NSUInteger _next;
+  NSUInteger _nextHandle;
 }
 
 - (instancetype)init {
   if ((self = [super init])) {
     _lock = OS_UNFAIR_LOCK_INIT;
-    _next = 1;
+    _nextReservation = 1;
+    _nextHandle = 1;
   }
   return self;
 }
@@ -28,28 +34,38 @@
   return shared;
 }
 
-- (BOOL)reserve {
+- (NSUInteger)reserve {
   os_unfair_lock_lock(&_lock);
-  const BOOL admitted = !_reserved;
-  if (admitted) {
-    _reserved = YES;
+  NSUInteger token = 0;
+  if (!_creating && _report == nil) {
+    _creating = YES;
+    if (_nextReservation == 0) {
+      _nextReservation = 1;
+    }
+    token = _nextReservation;
+    _reservation = token;
+    _nextReservation += 1;
+    if (_nextReservation == 0) {
+      _nextReservation = 1;
+    }
   }
   os_unfair_lock_unlock(&_lock);
-  return admitted;
+  return token;
 }
 
-- (nullable NSString *)fulfil:(nullable BugseeExtendedReport *)report {
+- (nullable NSString *)fulfil:(nullable BugseeExtendedReport *)report
+                 reservation:(NSUInteger)reservation {
   os_unfair_lock_lock(&_lock);
   NSString *handle = nil;
-  // A clear that won the race (reload) must not be undone by a late report.
-  if (_reserved) {
-    if (report == nil) {
-      _reserved = NO;
-      _handle = nil;
-      _report = nil;
-    } else if (_handle == nil) {
-      handle = [NSString stringWithFormat:@"cr-%lu", (unsigned long)_next];
-      _next += 1;
+  // A late completion still runs after `clear` or after this reservation
+  // already ended. It must not mint a handle on the next runtime's slot, and
+  // a nil must not drop a report that slot already holds.
+  if (_creating && reservation != 0 && reservation == _reservation) {
+    _creating = NO;
+    _reservation = 0;
+    if (report != nil) {
+      handle = [NSString stringWithFormat:@"cr-%lu", (unsigned long)_nextHandle];
+      _nextHandle += 1;
       _handle = handle;
       _report = report;
     }
@@ -72,7 +88,6 @@
     report = _report;
     _report = nil;
     _handle = nil;
-    _reserved = NO;
   }
   os_unfair_lock_unlock(&_lock);
   return report;
@@ -80,9 +95,10 @@
 
 - (void)clear {
   os_unfair_lock_lock(&_lock);
+  _creating = NO;
+  _reservation = 0;
   _report = nil;
   _handle = nil;
-  _reserved = NO;
   os_unfair_lock_unlock(&_lock);
 }
 

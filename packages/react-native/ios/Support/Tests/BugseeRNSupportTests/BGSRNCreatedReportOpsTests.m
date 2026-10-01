@@ -89,6 +89,12 @@
   XCTAssertEqualObjects(_report.reportDescription, @"d");
   XCTAssertNil(_report.attributes[@"gone"]);
   XCTAssertEqualObjects(_report.attributes[@"kept"], @"v");
+
+  [_report setSummary:@"kept"];
+  error = nil;
+  XCTAssertTrue([self apply:@"{\"description\":null}" error:&error], @"%@", error);
+  XCTAssertNil(_report.reportDescription);
+  XCTAssertEqualObjects(_report.summary, @"kept");
 }
 
 /// Clear runs before the attributes of the same patch, whatever key order
@@ -173,6 +179,53 @@
   XCTAssertEqualObjects(_report.attachments.lastObject.data, original);
   XCTAssertEqualObjects(_report.attachments.lastObject.name, @"note.txt");
   XCTAssertEqualObjects(_report.attachments.lastObject.filename, @"note.txt");
+}
+
+/// The size check follows the link. A symlink's own length is the target path,
+/// so measuring that would admit a short link to a file over 3 MiB.
+- (void)testASymlinkIsSizedByTheFileItNames {
+  NSString *dir = NSTemporaryDirectory();
+  NSString *target = [dir stringByAppendingPathComponent:
+                               [NSString stringWithFormat:@"target-%@.bin", NSUUID.UUID.UUIDString]];
+  NSString *link = [dir stringByAppendingPathComponent:
+                             [NSString stringWithFormat:@"link-%@.txt", NSUUID.UUID.UUIDString]];
+  NSData *original = [@"through-the-link" dataUsingEncoding:NSUTF8StringEncoding];
+  XCTAssertTrue([original writeToFile:target atomically:YES]);
+  NSError *linkError = nil;
+  XCTAssertTrue([NSFileManager.defaultManager createSymbolicLinkAtPath:link
+                                                   withDestinationPath:target
+                                                                 error:&linkError],
+                @"%@", linkError);
+  [self addTeardownBlock:^{
+    [NSFileManager.defaultManager removeItemAtPath:link error:nil];
+    [NSFileManager.defaultManager removeItemAtPath:target error:nil];
+  }];
+
+  NSError *error = nil;
+  XCTAssertTrue([BGSRNCreatedReportOps addFileAtPath:link name:@"note.txt" toReport:_report error:&error],
+                @"%@", error);
+  XCTAssertEqualObjects(_report.attachments.lastObject.data, original);
+
+  NSString *big = [dir stringByAppendingPathComponent:
+                            [NSString stringWithFormat:@"big-%@.bin", NSUUID.UUID.UUIDString]];
+  NSString *bigLink = [dir stringByAppendingPathComponent:
+                                [NSString stringWithFormat:@"biglink-%@", NSUUID.UUID.UUIDString]];
+  XCTAssertTrue([[NSFileManager defaultManager] createFileAtPath:big contents:nil attributes:nil]);
+  NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:big];
+  XCTAssertNotNil(handle);
+  [handle truncateFileAtOffset:BGSRNCreatedReportAttachmentMaxBytes + 1];
+  [handle closeFile];
+  XCTAssertTrue([NSFileManager.defaultManager createSymbolicLinkAtPath:bigLink
+                                                   withDestinationPath:big
+                                                                 error:nil]);
+  [self addTeardownBlock:^{
+    [NSFileManager.defaultManager removeItemAtPath:bigLink error:nil];
+    [NSFileManager.defaultManager removeItemAtPath:big error:nil];
+  }];
+  error = nil;
+  XCTAssertFalse([BGSRNCreatedReportOps addFileAtPath:bigLink name:@"big.bin" toReport:_report error:&error]);
+  XCTAssertEqual(error.code, BGSRNReportErrorAttachmentRejected);
+  XCTAssertEqual(_report.attachments.count, 1u);
 }
 
 - (void)testInvalidBase64IsABadArgument {

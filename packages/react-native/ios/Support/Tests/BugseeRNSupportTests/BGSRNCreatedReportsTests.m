@@ -18,48 +18,54 @@
 
 - (void)testOneOutstandingAtATime {
   BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
-  XCTAssertTrue([registry reserve]);
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
   XCTAssertFalse([registry reserve]);
 
-  NSString *handle = [registry fulfil:[self newReport]];
+  NSString *handle = [registry fulfil:[self newReport] reservation:reservation];
   XCTAssertNotNil(handle);
   XCTAssertFalse([registry reserve], @"a fulfilled report still holds the slot");
 }
 
 - (void)testANullReportFreesTheSlot {
   BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
-  XCTAssertTrue([registry reserve]);
-  XCTAssertNil([registry fulfil:nil]);
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
+  XCTAssertNil([registry fulfil:nil reservation:reservation]);
   XCTAssertTrue([registry reserve], @"a nil report is the SDK making none, and the slot must open");
 }
 
 - (void)testTakeFreesTheSlot {
   BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
-  XCTAssertTrue([registry reserve]);
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
   BugseeExtendedReport *report = [self newReport];
-  NSString *handle = [registry fulfil:report];
+  NSString *handle = [registry fulfil:report reservation:reservation];
   XCTAssertEqual([registry take:handle], report);
   XCTAssertTrue([registry reserve]);
 }
 
 - (void)testHandlesAreFreshAndPrefixed {
   BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
-  XCTAssertTrue([registry reserve]);
-  NSString *first = [registry fulfil:[self newReport]];
+  const NSUInteger firstReservation = [registry reserve];
+  XCTAssertTrue(firstReservation);
+  NSString *first = [registry fulfil:[self newReport] reservation:firstReservation];
   XCTAssertEqualObjects(first, @"cr-1");
 
   XCTAssertNotNil([registry take:first]);
-  XCTAssertTrue([registry reserve]);
-  NSString *second = [registry fulfil:[self newReport]];
+  const NSUInteger secondReservation = [registry reserve];
+  XCTAssertTrue(secondReservation);
+  NSString *second = [registry fulfil:[self newReport] reservation:secondReservation];
   XCTAssertEqualObjects(second, @"cr-2");
   XCTAssertNotEqualObjects(first, second, @"a taken handle is never reused");
 }
 
 - (void)testATakenHandleIsGone {
   BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
-  XCTAssertTrue([registry reserve]);
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
   BugseeExtendedReport *report = [self newReport];
-  NSString *handle = [registry fulfil:report];
+  NSString *handle = [registry fulfil:report reservation:reservation];
   XCTAssertEqual([registry reportFor:handle], report);
   XCTAssertEqual([registry take:handle], report);
   XCTAssertNil([registry reportFor:handle]);
@@ -68,8 +74,9 @@
 
 - (void)testClearFreesEverything {
   BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
-  XCTAssertTrue([registry reserve]);
-  NSString *handle = [registry fulfil:[self newReport]];
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
+  NSString *handle = [registry fulfil:[self newReport] reservation:reservation];
   [registry clear];
   XCTAssertNil([registry reportFor:handle]);
   XCTAssertNil([registry take:handle]);
@@ -78,6 +85,43 @@
   // A reservation the SDK has not answered yet is still a held slot.
   [registry clear];
   XCTAssertTrue([registry reserve]);
+}
+
+/// `clear` does not cancel the SDK completion. That completion's token must
+/// not store its report into the reservation a later runtime already opened.
+- (void)testAStaleReportLeavesTheNextReservationEmpty {
+  BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
+  const NSUInteger stale = [registry reserve];
+  XCTAssertTrue(stale);
+  [registry clear];
+
+  const NSUInteger live = [registry reserve];
+  XCTAssertTrue(live);
+  XCTAssertNotEqual(live, stale);
+
+  BugseeExtendedReport *abandoned = [self newReport];
+  XCTAssertNil([registry fulfil:abandoned reservation:stale]);
+  XCTAssertFalse([registry reserve], @"the new reservation is still open");
+  XCTAssertNil([registry reportFor:@"cr-1"]);
+
+  BugseeExtendedReport *created = [self newReport];
+  XCTAssertEqualObjects([registry fulfil:created reservation:live], @"cr-1");
+  XCTAssertEqual([registry reportFor:@"cr-1"], created);
+}
+
+/// A nil completion for a reservation that already stored its report must not
+/// drop that report. The token was consumed when the report was published.
+- (void)testAStaleNilLeavesThePublishedHandle {
+  BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
+  BugseeExtendedReport *report = [self newReport];
+  NSString *handle = [registry fulfil:report reservation:reservation];
+  XCTAssertEqualObjects(handle, @"cr-1");
+
+  XCTAssertNil([registry fulfil:nil reservation:reservation]);
+  XCTAssertEqual([registry reportFor:handle], report);
+  XCTAssertFalse([registry reserve]);
 }
 
 /// Eight threads pass one start barrier and call `reserve`. The lock admits

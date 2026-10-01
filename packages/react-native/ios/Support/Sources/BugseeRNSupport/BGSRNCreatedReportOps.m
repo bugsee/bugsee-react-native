@@ -164,9 +164,15 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
                                            (unsigned long)BGSRNCreatedReportAttachmentMaxCount]);
   }
 
-  // Attributes first, so a multi-megabyte file is refused before it is read.
+  // The link's own length is the target path, not the file. Resolve first,
+  // then take that size, so a short symlink cannot admit a target over 3 MiB
+  // and the bytes we then read are the file we measured.
+  NSString *resolved = path.stringByResolvingSymlinksInPath;
+  if (resolved.length == 0) {
+    resolved = path;
+  }
   NSError *attrError = nil;
-  NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:&attrError];
+  NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:resolved error:&attrError];
   if (attributes == nil) {
     return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
   }
@@ -177,7 +183,7 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
   }
 
   NSError *readError = nil;
-  NSData *read = [NSData dataWithContentsOfFile:path options:0 error:&readError];
+  NSData *read = [NSData dataWithContentsOfFile:resolved options:0 error:&readError];
   if (read == nil) {
     return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
   }
