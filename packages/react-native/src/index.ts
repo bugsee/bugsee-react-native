@@ -12,7 +12,8 @@ import type { LifecycleEvent } from './wrapper/events';
 import { setReportHandler as installReportHandler } from './report/dispatcher';
 import type { BugseeReportHandler } from './report/types';
 import { forwardLog } from './wrapper/channel';
-import { LogLevel } from './options/enums';
+import { type IssueSeverity, LogLevel } from './options/enums';
+import { labelsArgument, severityArgument } from './report/fields';
 import {
   assertEventOrTraceName,
   assertTraceValue,
@@ -274,14 +275,25 @@ class Bugsee {
   /**
    * Creates and uploads a bug report immediately, without showing any UI.
    *
-   * Pulled forward from Phase 8 (Task 3.4c) as the live-report trigger the
-   * report-handler tests need. The two-argument form only -- severity and
-   * labels are Phase 8. `summary` and `description` must both be strings
-   * (an empty string is fine; only the type is checked) since a call this
-   * unstructured arrives from untyped JS as often as from TypeScript, and a
-   * non-string reaching the bridge would fail as something less legible.
+   * Does nothing before `launch()`. `showReportDialog` runs
+   * `onBeforeReportCreated` before the dialog opens.
+   *
+   * `summary` and `description` must both be strings (an empty string is
+   * fine; only the type is checked). Omitted `severity` crosses as `0`,
+   * which is the SDK's default. Omitted `labels` cross as `null`. There is
+   * no `includeVideo`: a fifth argument throws `TypeError`.
    */
-  upload(summary: string, description: string): void {
+  upload(
+    summary: string,
+    description: string,
+    severity?: IssueSeverity,
+    labels?: readonly string[],
+  ): void {
+    if (arguments.length > 4) {
+      throw new TypeError(
+        'Bugsee.upload takes at most four arguments; 7.x has no includeVideo',
+      );
+    }
     if (typeof summary !== 'string') {
       throw new TypeError(
         `Bugsee.upload requires summary to be a string, got ${typeof summary}`,
@@ -292,7 +304,38 @@ class Bugsee {
         `Bugsee.upload requires description to be a string, got ${typeof description}`,
       );
     }
-    NativeBugsee.upload(summary, description);
+    NativeBugsee.upload(
+      summary,
+      description,
+      severityArgument(severity, 'upload'),
+      labelsArgument(labels, 'upload'),
+    );
+  }
+
+  /**
+   * Shows the bug-report dialog.
+   *
+   * Does nothing before `launch()`. The dialog runs `onBeforeReportCreated`
+   * before it opens.
+   *
+   * `summary` and `description` are omitted or a string, and cross as `null`
+   * when absent. Severity and labels follow `upload`: omitted severity is
+   * the SDK default (`0`), omitted labels cross as `null`.
+   */
+  showReportDialog(
+    summary?: string,
+    description?: string,
+    severity?: IssueSeverity,
+    labels?: readonly string[],
+  ): void {
+    const summaryText = optionalReportText(summary, 'summary');
+    const descriptionText = optionalReportText(description, 'description');
+    NativeBugsee.showReportDialog(
+      summaryText,
+      descriptionText,
+      severityArgument(severity, 'showReportDialog'),
+      labelsArgument(labels, 'showReportDialog'),
+    );
   }
 
   /**
@@ -555,6 +598,21 @@ function dropFirstStackFrame(stack: string | undefined): string | undefined {
   }
   lines.splice(firstFrame, 1);
   return lines.join('\n');
+}
+
+function optionalReportText(
+  value: unknown,
+  name: 'summary' | 'description',
+): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new TypeError(
+      `Bugsee.showReportDialog requires ${name} to be a string, got ${typeof value}`,
+    );
+  }
+  return value;
 }
 
 function assertUsableToken(token: string): void {
