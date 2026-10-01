@@ -81,7 +81,10 @@
 - (void)testTwoConcurrentCallsSettleOnce {
   __block atomic_int count = 0;
   dispatch_queue_t queue = dispatch_queue_create("com.bugsee.rn.settle-once.race", DISPATCH_QUEUE_SERIAL);
-  dispatch_block_t trigger = BGSRNSettleOnce(5000, queue, ^{
+  // No deadline. A positive deadline is a third caller into this two-party
+  // barrier, and on a slow CI runner it fires while the two threads are still
+  // parked and steals a `go` signal. The threads then never leave the group.
+  dispatch_block_t trigger = BGSRNSettleOnce(0, queue, ^{
     atomic_fetch_add_explicit(&count, 1, memory_order_relaxed);
   });
 
@@ -100,9 +103,14 @@
   }
 
   // Phase 1: both arrive before the load. Phase 2: both have loaded.
+  // A finite wait: DISPATCH_TIME_FOREVER here never returns if a caller fails
+  // to arrive, and xcodebuild then sits until the job is killed.
+  const dispatch_time_t arrived = dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC);
   for (int phase = 0; phase < 2; phase++) {
-    dispatch_semaphore_wait(atWindow, DISPATCH_TIME_FOREVER);
-    dispatch_semaphore_wait(atWindow, DISPATCH_TIME_FOREVER);
+    XCTAssertEqual(dispatch_semaphore_wait(atWindow, arrived), 0,
+                   @"caller %d did not reach the race window", phase * 2);
+    XCTAssertEqual(dispatch_semaphore_wait(atWindow, arrived), 0,
+                   @"caller %d did not reach the race window", phase * 2 + 1);
     dispatch_semaphore_signal(go);
     dispatch_semaphore_signal(go);
   }
