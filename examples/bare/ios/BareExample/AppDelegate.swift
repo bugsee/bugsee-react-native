@@ -59,26 +59,23 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 /// Without this the e2e sees the app start and then nothing at all, which
 /// looks exactly like the SDK failing to launch.
 ///
-/// Debug only, and only in the example app. Nothing in the SDK depends on it.
-///
-/// The e2e markers also go out through `NSLog`. Once the SDK is launched it
-/// points stderr at a pipe and drops whatever is still unread when capture
-/// stops, which is the window where the app logs the option it just read
-/// back. `simctl launch --console-pty` still streams unified logging, so the
-/// marker arrives even when that pipe is discarded.
+/// Debug mirrors every React Native log to stderr. Release only `NSLog`s
+/// lines that contain `BUGSEE_E2E`: a Release build does not compile the
+/// stderr mirror, and `console.log` otherwise stays in `os_log`, which
+/// `devicectl` console cannot stream. The native `BugseeRN` lines are already
+/// `NSLog`.
 private func mirrorReactNativeLogToStandardError() {
-#if DEBUG
   let osLog = RCTDefaultLogFunction
   RCTSetLogFunction { level, source, fileName, lineNumber, message in
     osLog?(level, source, fileName, lineNumber, message)
-    if let message {
-      if message.contains("BUGSEE_E2E") {
-        NSLog("%@", message)
-      }
-      if let data = (message + "\n").data(using: .utf8) {
-        FileHandle.standardError.write(data)
-      }
+    guard let message else { return }
+    if message.contains("BUGSEE_E2E") {
+      NSLog("%@", message)
     }
-  }
+#if DEBUG
+    if let data = (message + "\n").data(using: .utf8) {
+      FileHandle.standardError.write(data)
+    }
 #endif
+  }
 }

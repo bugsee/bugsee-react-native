@@ -17,7 +17,9 @@ cd "$(dirname "$0")/.."
 
 DEVICE="${IOS_DEVICE_ID:-345BA7FE-2C29-5722-892A-BFCB1FD34D0C}"
 : "${IOS_DEVELOPMENT_TEAM:?set IOS_DEVELOPMENT_TEAM to your Apple Developer team id}"
-APP="ios/build/Build/Products/Debug-iphoneos/BareExample.app"
+# Debug by default; Release for the gated E2E_RELEASE=1 device cases (Task 7.5b).
+CONFIGURATION="${IOS_CONFIGURATION:-Debug}"
+APP="ios/build/Build/Products/${CONFIGURATION}-iphoneos/BareExample.app"
 
 node scripts/write-credentials.mjs
 
@@ -26,7 +28,7 @@ node scripts/write-credentials.mjs
 xcodebuild \
   -workspace ios/BareExample.xcworkspace \
   -scheme BareExample \
-  -configuration Debug \
+  -configuration "$CONFIGURATION" \
   -destination "id=$DEVICE" \
   -derivedDataPath ios/build \
   DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \

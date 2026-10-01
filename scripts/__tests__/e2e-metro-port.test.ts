@@ -33,7 +33,31 @@ describe('E2E_METRO_PORT', () => {
   });
 
   it("tells the simulator app the port through React Native's RCT_jsLocation", () => {
-    expect(metroArgs('8082')).toEqual(['-RCT_jsLocation', 'localhost:8082']);
+    const saved = process.env.E2E_METRO_HOST;
+    delete process.env.E2E_METRO_HOST;
+    try {
+      expect(metroArgs('8082')).toEqual(['-RCT_jsLocation', 'localhost:8082']);
+    } finally {
+      if (saved === undefined) {
+        delete process.env.E2E_METRO_HOST;
+      } else {
+        process.env.E2E_METRO_HOST = saved;
+      }
+    }
+  });
+
+  it('a physical iPhone is told E2E_METRO_HOST with the port', () => {
+    const saved = process.env.E2E_METRO_HOST;
+    process.env.E2E_METRO_HOST = '10.1.2.3';
+    try {
+      expect(metroArgs('8082')).toEqual(['-RCT_jsLocation', '10.1.2.3:8082']);
+    } finally {
+      if (saved === undefined) {
+        delete process.env.E2E_METRO_HOST;
+      } else {
+        process.env.E2E_METRO_HOST = saved;
+      }
+    }
   });
 
   it('refuses a bad port rather than launching against it', () => {
