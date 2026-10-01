@@ -88,11 +88,18 @@
     atomic_fetch_add_explicit(&count, 1, memory_order_relaxed);
   });
 
-  dispatch_semaphore_t atWindow = dispatch_semaphore_create(0);
-  dispatch_semaphore_t go = dispatch_semaphore_create(0);
+  // One pair per window. A shared `go` lets the faster caller leave the
+  // first window, enter the second, and consume the other caller's release.
+  // That caller then never reaches the second window (CI: caller 3 timed out).
+  dispatch_semaphore_t entered0 = dispatch_semaphore_create(0);
+  dispatch_semaphore_t entered1 = dispatch_semaphore_create(0);
+  dispatch_semaphore_t release0 = dispatch_semaphore_create(0);
+  dispatch_semaphore_t release1 = dispatch_semaphore_create(0);
   BGSRNSettleOnceRaceWindow = ^{
-    dispatch_semaphore_signal(atWindow);
-    dispatch_semaphore_wait(go, DISPATCH_TIME_FOREVER);
+    static _Thread_local int phase = 0;
+    const int step = phase++;
+    dispatch_semaphore_signal(step == 0 ? entered0 : entered1);
+    dispatch_semaphore_wait(step == 0 ? release0 : release1, DISPATCH_TIME_FOREVER);
   };
 
   dispatch_group_t group = dispatch_group_create();
@@ -102,17 +109,20 @@
     });
   }
 
-  // Phase 1: both arrive before the load. Phase 2: both have loaded.
+  // Window 0: both arrive before the load. Window 1: both have loaded.
   // A finite wait: DISPATCH_TIME_FOREVER here never returns if a caller fails
-  // to arrive, and xcodebuild then sits until the job is killed.
-  const dispatch_time_t arrived = dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC);
+  // to arrive, and xcodebuild then sits until the job is killed. The deadline
+  // is per window so the first window cannot consume the second's budget.
+  dispatch_semaphore_t entered[2] = {entered0, entered1};
+  dispatch_semaphore_t release[2] = {release0, release1};
   for (int phase = 0; phase < 2; phase++) {
-    XCTAssertEqual(dispatch_semaphore_wait(atWindow, arrived), 0,
-                   @"caller %d did not reach the race window", phase * 2);
-    XCTAssertEqual(dispatch_semaphore_wait(atWindow, arrived), 0,
-                   @"caller %d did not reach the race window", phase * 2 + 1);
-    dispatch_semaphore_signal(go);
-    dispatch_semaphore_signal(go);
+    const dispatch_time_t arrived = dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC);
+    XCTAssertEqual(dispatch_semaphore_wait(entered[phase], arrived), 0,
+                   @"caller 0 did not reach window %d", phase);
+    XCTAssertEqual(dispatch_semaphore_wait(entered[phase], arrived), 0,
+                   @"caller 1 did not reach window %d", phase);
+    dispatch_semaphore_signal(release[phase]);
+    dispatch_semaphore_signal(release[phase]);
   }
 
   XCTAssertEqual(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC)), 0,
