@@ -252,6 +252,76 @@ export function displayNameOf(entry: ManifestFile): string | undefined {
   return typeof candidate === 'string' ? candidate : undefined;
 }
 
+/**
+ * One attachment the manifest names, joined to the file the bundle stored.
+ *
+ * Android 7.3.0 writes the stored blob as `filename` and the SDK's
+ * `{name, fileName, mimeType}` inside `attrs`. A top-level `mimeType` or
+ * `fileName` is accepted as well.
+ */
+export interface BundleAttachment {
+  readonly name: string;
+  readonly mimeType?: string;
+  readonly path: string;
+}
+
+/** `mimeType` on the entry, or inside `attrs`, where Android 7.3.0 puts it. */
+function mimeTypeOf(entry: ManifestFile): string | undefined {
+  if (typeof entry.mimeType === 'string') {
+    return entry.mimeType;
+  }
+  const attrs = entry.attrs;
+  if (attrs !== null && typeof attrs === 'object') {
+    const mime = (attrs as { mimeType?: unknown }).mimeType;
+    if (typeof mime === 'string') {
+      return mime;
+    }
+  }
+  return undefined;
+}
+
+/** The stored file a manifest entry points at, including the SDK's `fileName`. */
+function storedFileName(entry: ManifestFile): string | undefined {
+  const fileName = entry.fileName;
+  if (typeof fileName === 'string' && fileName !== '') {
+    return fileName;
+  }
+  return fileNameOf(entry);
+}
+
+/**
+ * The manifest's `attachment` entries, in manifest order, each joined to its
+ * stored file. An entry with no name, or whose file is not in the bundle, is
+ * left out: the caller asserting on that attachment is where its absence fails.
+ */
+export function attachmentsOf(bundle: PulledBundle): BundleAttachment[] {
+  const attachments: BundleAttachment[] = [];
+  for (const entry of bundle.manifest.files) {
+    if (entry.type !== 'attachment') {
+      continue;
+    }
+    const name = displayNameOf(entry);
+    const stored = storedFileName(entry);
+    if (name === undefined || stored === undefined) {
+      continue;
+    }
+    if (stored.includes('..') || stored.startsWith('/') || stored.startsWith('\\')) {
+      continue;
+    }
+    const path = join(bundle.dir, stored);
+    if (!existsSync(path)) {
+      continue;
+    }
+    const mime = mimeTypeOf(entry);
+    if (mime !== undefined) {
+      attachments.push({ name, mimeType: mime, path });
+    } else {
+      attachments.push({ name, path });
+    }
+  }
+  return attachments;
+}
+
 /** Switches airplane mode and asserts the device reports the new state. */
 export async function airplane(on: boolean): Promise<void> {
   const verb = on ? 'enable' : 'disable';

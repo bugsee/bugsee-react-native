@@ -15,7 +15,8 @@
  * scenarios/attributes.ts, `e2e-native-smoke` / `native-crash-*` are
  * scenarios/native.ts, `blackout`, `blackout-prelaunch`,
  * `secure-component` and `view-tree` are scenarios/privacy.tsx, and
- * `exc-*` are scenarios/exceptions.tsx.
+ * `exc-*` are scenarios/exceptions.tsx, and `rp-*` are
+ * scenarios/reporting.ts.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -79,6 +80,11 @@ import {
   preLaunchExceptionProbe,
   runExceptionScenario,
 } from './scenarios/exceptions';
+import {
+  installReporting,
+  isReportingScenario,
+  runReportingScenario,
+} from './scenarios/reporting';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -332,6 +338,11 @@ export default function App() {
           preLaunchExceptionProbe(choice.nonce);
         }
       }
+      // Before launch(): rp-prelaunch's upload and dialog, and the handlers
+      // the other reporting scenarios need already registered.
+      if (isReportingScenario(choice.scenario)) {
+        installReporting(choice.scenario, choice.nonce);
+      }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
       // capture up off the main thread, so by the time the promise resolves the
@@ -387,6 +398,11 @@ export default function App() {
           if (!cancelled) {
             setSecureNonce(choice.nonce);
           }
+          return;
+        }
+
+        if (isReportingScenario(choice.scenario)) {
+          runReportingScenario(choice.scenario, choice.nonce);
           return;
         }
 

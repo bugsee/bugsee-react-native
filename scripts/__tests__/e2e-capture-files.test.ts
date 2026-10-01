@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { captureEvents, crashOf, parseBundle } from '../../examples/bare/e2e/bundles';
+import { attachmentsOf, captureEvents, crashOf, parseBundle } from '../../examples/bare/e2e/bundles';
 
 /**
  * The device e2e reads a retained bundle's capture files -- `log`,
@@ -158,5 +158,37 @@ describe('bundle capture files', () => {
 
       expect(bundle.binaries.size).toBe(0);
     });
+  });
+
+  it('attachmentsOf joins names to files', () => {
+    writeManifest([
+      { type: 'log', filename: 'log.json' },
+      { type: 'attachment', name: 'notes.txt', mimeType: 'text/plain', fileName: 'a.bin' },
+      { type: 'video', filename: 'video.mp4' },
+      {
+        type: 'attachment',
+        filename: 'b.bgsfile',
+        name: 'shot.png',
+        attrs: { name: 'shot.png', fileName: 'shot.png', mimeType: 'image/png' },
+      },
+    ]);
+    writeFileSync(join(dir, 'log.json'), '{"version":1,"events":[]}');
+    writeFileSync(join(dir, 'a.bin'), 'notes');
+    writeFileSync(join(dir, 'video.mp4'), 'video-bytes');
+    writeFileSync(join(dir, 'b.bgsfile'), 'png');
+
+    const bundle = parseBundle('x.bundle.zip', dir);
+
+    expect(attachmentsOf(bundle)).toEqual([
+      { name: 'notes.txt', mimeType: 'text/plain', path: join(dir, 'a.bin') },
+      { name: 'shot.png', mimeType: 'image/png', path: join(dir, 'b.bgsfile') },
+    ]);
+  });
+
+  it('attachmentsOf is empty without attachments', () => {
+    writeManifest([{ type: 'log', filename: 'log.json' }]);
+    writeFileSync(join(dir, 'log.json'), '{"version":1,"events":[]}');
+
+    expect(attachmentsOf(parseBundle('x.bundle.zip', dir))).toEqual([]);
   });
 });
