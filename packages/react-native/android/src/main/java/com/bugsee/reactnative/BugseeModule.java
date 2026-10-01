@@ -791,7 +791,8 @@ public class BugseeModule extends NativeBugseeSpec
     @Override
     public void createReport(final Promise promise) {
         final CreatedReports registry = CreatedReports.shared();
-        if (!registry.reserve()) {
+        final int stamp = registry.tryReserve();
+        if (stamp == 0) {
             Log.i(TAG, "created report - busy");
             promise.reject(
                     E_REPORT_CREATE_BUSY,
@@ -799,11 +800,11 @@ public class BugseeModule extends NativeBugseeSpec
             return;
         }
         try {
-            Bugsee.createReport(created -> deliverCreatedReport(registry, created, promise));
+            Bugsee.createReport(created -> deliverCreatedReport(registry, stamp, created, promise));
         } catch (final Throwable thrown) {
-            // The SDK threw before the listener ran. This ends that reservation
-            // and does nothing when one is not open.
-            registry.fulfil(null);
+            // The SDK threw before the listener ran. The stamp no-ops once
+            // this reservation has been cleared and another one opened.
+            registry.fulfil(stamp, null);
             promise.reject(thrown);
         }
     }
@@ -811,15 +812,18 @@ public class BugseeModule extends NativeBugseeSpec
     /**
      * Runs on the SDK's listener thread. A throw here would escape onto that
      * thread, so it is caught, the reservation is ended, and the promise rejects.
+     * The stamp is the one captured at reserve time: a listener that arrives
+     * after {@code invalidate} cleared that reservation cannot end a newer one.
      */
     private static void deliverCreatedReport(
             final CreatedReports registry,
+            final int stamp,
             @Nullable final Report created,
             final Promise promise
     ) {
         String handle = null;
         try {
-            handle = registry.fulfil(created);
+            handle = registry.fulfil(stamp, created);
             if (handle == null) {
                 Log.i(TAG, "created report - none");
             } else {
@@ -830,7 +834,7 @@ public class BugseeModule extends NativeBugseeSpec
             if (handle != null) {
                 registry.take(handle);
             } else {
-                registry.fulfil(null);
+                registry.fulfil(stamp, null);
             }
             promise.reject(thrown);
         }

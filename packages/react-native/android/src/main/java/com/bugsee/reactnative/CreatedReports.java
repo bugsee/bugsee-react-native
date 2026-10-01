@@ -7,19 +7,34 @@ import com.bugsee.library.contracts.reporting.Report;
 /**
  * The one created report this process may have outstanding.
  *
- * <p>A slot is taken by {@link #reserve()} and held until {@link #fulfil}
- * stores a report, {@link #fulfil} is given null, {@link #take} removes the
- * report, or {@link #clear} drops whatever is there. A second {@code
- * reserve()} while the slot is taken returns false. Handles are {@code
- * cr-<n>}, numbered from 1 for the life of the process, and are not reused
- * after a take or a clear.
+ * <p>A slot is taken by {@link #reserve()} or {@link #tryReserve()} and held
+ * until {@link #fulfil} stores a report, {@link #fulfil} is given null,
+ * {@link #take} removes the report, or {@link #clear} drops whatever is
+ * there. A second reserve while the slot is taken returns false. Handles are
+ * {@code cr-<n>}, numbered from 1 for the life of the process, and are not
+ * reused after a take or a clear.
+ *
+ * <p>{@link #clear()} does not cancel an SDK listener that is already in
+ * flight. Each reservation carries a stamp, and {@link #fulfil} ignores any
+ * stamp that is not the current one, so that listener cannot store its report
+ * into a reservation opened afterwards or free that reservation.
  */
 final class CreatedReports {
 
     private static final CreatedReports SHARED = new CreatedReports();
 
-    /** True from {@link #reserve()} until that reservation is ended. */
+    /** True from a successful reserve until that reservation is ended. */
     private boolean creating;
+
+    /**
+     * Stamp of the open reservation. {@code 0} is never a live stamp: it is
+     * what {@link #tryReserve()} returns when busy, and what {@link #clear()}
+     * and a finished {@link #fulfil} leave behind so every earlier stamp misses.
+     */
+    private int currentStamp;
+
+    /** Next stamp to issue. Skips {@code 0}, which means "not admitted". */
+    private int nextStamp = 1;
 
     @Nullable
     private Report report;
@@ -40,25 +55,39 @@ final class CreatedReports {
 
     /** False while a created report is outstanding or being created. */
     synchronized boolean reserve() {
-        if (creating || report != null) {
-            return false;
-        }
-        creating = true;
-        return true;
+        return tryReserve() != 0;
     }
 
     /**
-     * Ends a reservation. A report gets {@code cr-<n>} and holds the slot.
-     * Null frees the slot and mints nothing. A call that does not end a
-     * reservation (there is none, or the report is already held) changes
-     * nothing and returns null.
+     * {@code 0} when a report is outstanding or being created. Otherwise the
+     * stamp {@link #fulfil} must present to end this reservation.
+     */
+    synchronized int tryReserve() {
+        if (creating || report != null) {
+            return 0;
+        }
+        creating = true;
+        currentStamp = nextStamp;
+        nextStamp += 1;
+        if (nextStamp == 0) {
+            nextStamp = 1;
+        }
+        return currentStamp;
+    }
+
+    /**
+     * Ends the reservation {@code stamp} names. A report gets {@code cr-<n>}
+     * and holds the slot. Null frees the slot and mints nothing. A stamp that
+     * is not the current one, including every stamp issued before
+     * {@link #clear()}, changes nothing and returns null.
      */
     @Nullable
-    synchronized String fulfil(@Nullable final Report created) {
-        if (!creating) {
+    synchronized String fulfil(final int stamp, @Nullable final Report created) {
+        if (!creating || stamp == 0 || stamp != currentStamp) {
             return null;
         }
         creating = false;
+        currentStamp = 0;
         if (created == null) {
             return null;
         }
@@ -88,9 +117,11 @@ final class CreatedReports {
         return created;
     }
 
+    /** Drops the slot and makes every stamp issued so far fail {@link #fulfil}. */
     synchronized void clear() {
         creating = false;
         report = null;
         handle = null;
+        currentStamp = 0;
     }
 }

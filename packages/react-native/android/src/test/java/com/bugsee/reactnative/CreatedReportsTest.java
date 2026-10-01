@@ -31,10 +31,11 @@ public class CreatedReportsTest {
     public void oneOutstandingAtATime() {
         final CreatedReports reports = new CreatedReports();
 
-        assertTrue(reports.reserve());
+        final int stamp = reports.tryReserve();
+        assertTrue(stamp != 0);
         assertFalse(reports.reserve());
 
-        reports.fulfil(report());
+        reports.fulfil(stamp, report());
         assertFalse(reports.reserve());
     }
 
@@ -43,8 +44,9 @@ public class CreatedReportsTest {
     public void aNullReportFreesTheSlot() {
         final CreatedReports reports = new CreatedReports();
 
-        assertTrue(reports.reserve());
-        assertNull(reports.fulfil(null));
+        final int stamp = reports.tryReserve();
+        assertTrue(stamp != 0);
+        assertNull(reports.fulfil(stamp, null));
         assertTrue(reports.reserve());
     }
 
@@ -54,8 +56,9 @@ public class CreatedReportsTest {
         final CreatedReports reports = new CreatedReports();
         final Report created = report();
 
-        assertTrue(reports.reserve());
-        final String handle = reports.fulfil(created);
+        final int stamp = reports.tryReserve();
+        assertTrue(stamp != 0);
+        final String handle = reports.fulfil(stamp, created);
         assertFalse(reports.reserve());
 
         assertSame(created, reports.take(handle));
@@ -72,12 +75,14 @@ public class CreatedReportsTest {
         final Report first = report();
         final Report second = report();
 
-        assertTrue(reports.reserve());
-        assertEquals("cr-1", reports.fulfil(first));
+        final int firstStamp = reports.tryReserve();
+        assertTrue(firstStamp != 0);
+        assertEquals("cr-1", reports.fulfil(firstStamp, first));
         assertSame(first, reports.take("cr-1"));
 
-        assertTrue(reports.reserve());
-        assertEquals("cr-2", reports.fulfil(second));
+        final int secondStamp = reports.tryReserve();
+        assertTrue(secondStamp != 0);
+        assertEquals("cr-2", reports.fulfil(secondStamp, second));
         assertNull(reports.get("cr-1"));
         assertSame(second, reports.get("cr-2"));
     }
@@ -88,8 +93,9 @@ public class CreatedReportsTest {
         final CreatedReports reports = new CreatedReports();
         final Report created = report();
 
-        assertTrue(reports.reserve());
-        final String handle = reports.fulfil(created);
+        final int stamp = reports.tryReserve();
+        assertTrue(stamp != 0);
+        final String handle = reports.fulfil(stamp, created);
         assertSame(created, reports.take(handle));
 
         assertNull(reports.get(handle));
@@ -101,8 +107,9 @@ public class CreatedReportsTest {
     public void clearFreesEverything() {
         final CreatedReports reports = new CreatedReports();
 
-        assertTrue(reports.reserve());
-        final String handle = reports.fulfil(report());
+        final int stamp = reports.tryReserve();
+        assertTrue(stamp != 0);
+        final String handle = reports.fulfil(stamp, report());
         reports.clear();
         assertNull(reports.get(handle));
         assertNull(reports.take(handle));
@@ -142,5 +149,33 @@ public class CreatedReportsTest {
 
         assertNull(failure.get());
         assertEquals(1, admitted.get());
+    }
+
+    /**
+     * {@code clear} ends a reservation without cancelling the SDK listener.
+     * That listener's stamp must not store its report into, or free, the
+     * reservation a later runtime has already opened. A null fulfil with the
+     * same stale stamp (the listener's failure path) must not either.
+     */
+    @Test
+    public void aStaleStampDoesNotConsumeANewerReservation() {
+        final CreatedReports reports = new CreatedReports();
+        final int stale = reports.tryReserve();
+        assertTrue(stale != 0);
+        reports.clear();
+
+        final int live = reports.tryReserve();
+        assertTrue(live != 0);
+        assertTrue(live != stale);
+
+        final Report abandoned = report();
+        final Report created = report();
+        assertNull(reports.fulfil(stale, abandoned));
+        assertNull(reports.fulfil(stale, null));
+        assertFalse(reports.reserve());
+
+        assertEquals("cr-1", reports.fulfil(live, created));
+        assertSame(created, reports.get("cr-1"));
+        assertFalse(reports.reserve());
     }
 }
