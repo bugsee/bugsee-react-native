@@ -30,6 +30,8 @@
 #import <BugseeRNSupport/BGSRNExceptions.h>
 #import <BugseeRNSupport/BGSRNSettleOnce.h>
 #import <BugseeRNSupport/BGSRNReportArgs.h>
+#import <BugseeRNSupport/BGSRNCreatedReports.h>
+#import <BugseeRNSupport/BGSRNCreatedReportOps.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -49,6 +51,8 @@
 #import "BGSRNExceptions.h"
 #import "BGSRNSettleOnce.h"
 #import "BGSRNReportArgs.h"
+#import "BGSRNCreatedReports.h"
+#import "BGSRNCreatedReportOps.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -220,12 +224,17 @@ static NSValue *_Nullable BGSRNReactOrigin(void) {
 }
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
+static NSString *const kCreateBusyCode = @"E_REPORT_CREATE_BUSY";
 
 static void BGSRNRejectHandleDead(RCTPromiseRejectBlock reject) {
   reject(kHandleDeadCode,
          @"This BugseeReport handle is no longer valid: its handler has "
          @"already settled, or its deadline has passed.",
          nil);
+}
+
+static void BGSRNRejectCreatedHandleDead(RCTPromiseRejectBlock reject) {
+  reject(kHandleDeadCode, @"This created report handle is no longer valid.", nil);
 }
 
 /// No code of our own (React Native fills in `EUNSPECIFIED`, as Android's
@@ -388,6 +397,9 @@ RCT_EXPORT_MODULE(Bugsee)
   // And answers nil to every data request this module's JS was given, and
   // disables the view tree until the next runtime mounts its anchor.
   [BGSRNDataRequestBridge.shared detach:self];
+  // The next runtime cannot know a created-report handle, and a slot left
+  // reserved would make every later createReport reject busy.
+  [BGSRNCreatedReports.shared clear];
 }
 
 /// The SDK touches UIKit during start-up, so it must not be constructed on a
@@ -928,70 +940,175 @@ RCT_EXPORT_MODULE(Bugsee)
   }
 }
 
-// Task 8.2c. No registry yet, so this does not call the SDK: the SDK made none.
+/// On main, unlike the handler's report ops. `BugseeExtendedReport` is
+/// unsynchronised, and the SDK hands it out and takes it back on main.
+///
+/// `reserve` runs before that hop. `invalidate` calls `clear` on another
+/// queue and cannot cancel a block already queued. Reserving inside the
+/// block would run after that clear and hold the slot for a handle the
+/// torn-down JS will never upload.
 - (void)createReport:(RCTPromiseResolveBlock)resolve
               reject:(RCTPromiseRejectBlock)reject {
-  (void)reject;
-  resolve(nil);
+  BGSRNCreatedReports *registry = BGSRNCreatedReports.shared;
+  const NSUInteger reservation = [registry reserve];
+  if (reservation == 0) {
+    NSLog(@"BugseeRN created report - busy");
+    reject(kCreateBusyCode, @"a created report is already outstanding", nil);
+    return;
+  }
+  BGSRNRunOnMain(^{
+    // One check with the mark. `clear` between an open test and the SDK call
+    // would still `-init` a `BugseeExtendedReport`. NO means `clear` already
+    // dropped this token and freed the slot. YES means `clear` from here on
+    // keeps the slot until `fulfil`, and that fulfil does not publish.
+    if (![registry beginCreate:reservation]) {
+      NSLog(@"BugseeRN created report - reservation ended");
+      resolve(nil);
+      return;
+    }
+    @try {
+      // Captured above, before the hop. `invalidate` clears the registry
+      // without cancelling this completion. Once `beginCreate:` has run, that
+      // clear keeps the slot and this fulfil must not mint a handle.
+      // The completion runs on every path, with nil when the SDK is not launched.
+      [Bugsee createReportWithCompletion:^(BugseeExtendedReport *report) {
+        NSString *handle = [registry fulfil:report reservation:reservation];
+        if (handle == nil) {
+          NSLog(@"BugseeRN created report - none");
+          resolve(nil);
+        } else {
+          NSLog(@"BugseeRN created report %@ created", handle);
+          resolve(handle);
+        }
+      }];
+    } @catch (NSException *exception) {
+      [registry fulfil:nil reservation:reservation];
+      BGSRNRejectException(reject, exception);
+    }
+  });
 }
 
-// Task 8.2c. No created-report handle exists until the registry lands.
 - (void)createdReportRead:(NSString *)handleId
                    resolve:(RCTPromiseResolveBlock)resolve
                     reject:(RCTPromiseRejectBlock)reject {
-  (void)handleId;
-  (void)resolve;
-  BGSRNRejectHandleDead(reject);
+  BGSRNRunOnMain(^{
+    @try {
+      BugseeExtendedReport *report = [BGSRNCreatedReports.shared reportFor:handleId];
+      if (report == nil) {
+        BGSRNRejectCreatedHandleDead(reject);
+        return;
+      }
+      resolve([BGSRNCreatedReportOps readReport:report]);
+    } @catch (NSException *exception) {
+      BGSRNRejectException(reject, exception);
+    }
+  });
 }
-
-// Task 8.2c. No created-report handle exists until the registry lands.
 - (void)createdReportUpdate:(NSString *)handleId
                   patchJson:(NSString *)patchJson
                     resolve:(RCTPromiseResolveBlock)resolve
                      reject:(RCTPromiseRejectBlock)reject {
-  (void)handleId;
-  (void)patchJson;
-  (void)resolve;
-  BGSRNRejectHandleDead(reject);
+  BGSRNRunOnMain(^{
+    @try {
+      BugseeExtendedReport *report = [BGSRNCreatedReports.shared reportFor:handleId];
+      if (report == nil) {
+        BGSRNRejectCreatedHandleDead(reject);
+        return;
+      }
+      NSError *error = nil;
+      if ([BGSRNCreatedReportOps applyPatchJSON:patchJson toReport:report error:&error]) {
+        resolve(nil);
+      } else {
+        reject(BGSRNReportErrorWireCode(error), error.localizedDescription, nil);
+      }
+    } @catch (NSException *exception) {
+      BGSRNRejectException(reject, exception);
+    }
+  });
 }
 
-// Task 8.2c. No created-report handle exists until the registry lands.
+/// `mimeType` is accepted because JS sends it. `BugseeAttachment` has no type,
+/// and iOS drops it (P7).
 - (void)createdReportAddDataAttachment:(NSString *)handleId
                                 base64:(NSString *)base64
                                   name:(NSString *)name
                               mimeType:(NSString * _Nullable)mimeType
                                resolve:(RCTPromiseResolveBlock)resolve
                                 reject:(RCTPromiseRejectBlock)reject {
-  (void)handleId;
-  (void)base64;
-  (void)name;
   (void)mimeType;
-  (void)resolve;
-  BGSRNRejectHandleDead(reject);
+  BGSRNRunOnMain(^{
+    @try {
+      BugseeExtendedReport *report = [BGSRNCreatedReports.shared reportFor:handleId];
+      if (report == nil) {
+        BGSRNRejectCreatedHandleDead(reject);
+        return;
+      }
+      NSError *error = nil;
+      if ([BGSRNCreatedReportOps addData:base64 name:name toReport:report error:&error]) {
+        resolve(nil);
+      } else {
+        reject(BGSRNReportErrorWireCode(error), error.localizedDescription, nil);
+      }
+    } @catch (NSException *exception) {
+      BGSRNRejectException(reject, exception);
+    }
+  });
 }
 
-// Task 8.2c. No created-report handle exists until the registry lands. No move argument.
+/// No `move`: the bytes are copied at add time. `mimeType` is ignored (P7).
 - (void)createdReportAddFileAttachment:(NSString *)handleId
                                   path:(NSString *)path
                                   name:(NSString *)name
                               mimeType:(NSString * _Nullable)mimeType
                                resolve:(RCTPromiseResolveBlock)resolve
                                 reject:(RCTPromiseRejectBlock)reject {
-  (void)handleId;
-  (void)path;
-  (void)name;
   (void)mimeType;
-  (void)resolve;
-  BGSRNRejectHandleDead(reject);
+  BGSRNRunOnMain(^{
+    @try {
+      BugseeExtendedReport *report = [BGSRNCreatedReports.shared reportFor:handleId];
+      if (report == nil) {
+        BGSRNRejectCreatedHandleDead(reject);
+        return;
+      }
+      NSError *error = nil;
+      if ([BGSRNCreatedReportOps addFileAtPath:path name:name toReport:report error:&error]) {
+        resolve(nil);
+      } else {
+        reject(BGSRNReportErrorWireCode(error), error.localizedDescription, nil);
+      }
+    } @catch (NSException *exception) {
+      BGSRNRejectException(reject, exception);
+    }
+  });
 }
 
-// Task 8.2c. No created-report handle exists until the registry lands.
 - (void)createdReportUpload:(NSString *)handleId
                     resolve:(RCTPromiseResolveBlock)resolve
                      reject:(RCTPromiseRejectBlock)reject {
-  (void)handleId;
-  (void)resolve;
-  BGSRNRejectHandleDead(reject);
+  BGSRNRunOnMain(^{
+    NSUInteger generation = 0;
+    @try {
+      BugseeExtendedReport *report =
+          [BGSRNCreatedReports.shared detachForUpload:handleId generation:&generation];
+      if (report == nil) {
+        BGSRNRejectCreatedHandleDead(reject);
+        return;
+      }
+      // The handle is already dead. The slot stays taken until this upload
+      // ends: a second created report would reset beta3's file-scope attributes
+      // before `uploadReport:` copies them. The completion carries no success
+      // flag. It runs once the report is handed off, including when the SDK
+      // was not launched (it calls back immediately). `ok` is YES on that path.
+      [Bugsee uploadReport:report completion:^{
+        [BGSRNCreatedReports.shared endUpload:generation];
+        NSLog(@"BugseeRN created report %@ uploaded ok=%@", handleId, @YES);
+        resolve(@YES);
+      }];
+    } @catch (NSException *exception) {
+      [BGSRNCreatedReports.shared endUpload:generation];
+      BGSRNRejectException(reject, exception);
+    }
+  });
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

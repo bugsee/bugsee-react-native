@@ -41,6 +41,14 @@ FOUNDATION_EXPORT NSString *_Nullable BGSRNReportErrorWireCode(NSError *error);
           toReport:(id<BGSReportContract>)report
              error:(NSError **)error;
 
+/// The validation half of `applyPatch:toReport:error:`. nil, with `error`,
+/// when any field is invalid — the caller applies nothing. Otherwise the
+/// patch, with attribute numbers already in the form the SDK should store
+/// (an exact integer as an integer). `BGSRNCreatedReportOps` applies the
+/// same dictionary through `BugseeExtendedReport`'s own setters.
++ (nullable NSDictionary<NSString *, id> *)validatedPatch:(NSDictionary *)patch
+                                                     error:(NSError **)error;
+
 /// `applyPatch:toReport:error:` on the JSON text `reportUpdate` receives
 /// (`BGSRNJSONObject`), which is how a `null` -- clear the summary or
 /// description, remove an attribute -- survives the bridge. Text that is not

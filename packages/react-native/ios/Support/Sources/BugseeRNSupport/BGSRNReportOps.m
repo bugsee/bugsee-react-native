@@ -109,9 +109,8 @@ static NSNumber *WireNumber(NSNumber *number) {
   return result;
 }
 
-+ (BOOL)applyPatch:(NSDictionary *)patch
-          toReport:(id<BGSReportContract>)report
-             error:(NSError **)error {
++ (nullable NSDictionary<NSString *, id> *)validatedPatch:(NSDictionary *)patch
+                                                     error:(NSError **)error {
   static NSSet<NSString *> *knownKeys;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
@@ -120,19 +119,22 @@ static NSNumber *WireNumber(NSNumber *number) {
   });
   for (id key in patch) {
     if (![knownKeys containsObject:key]) {
-      return Fail(error, BGSRNReportErrorBadArgument,
-                  [NSString stringWithFormat:@"update() received an unknown key \"%@\"", key]);
+      Fail(error, BGSRNReportErrorBadArgument,
+           [NSString stringWithFormat:@"update() received an unknown key \"%@\"", key]);
+      return nil;
     }
   }
 
   // Validate everything first. Nothing below the next comment can reject.
   id summary = patch[@"summary"];
   if (summary != nil && summary != NSNull.null && ![summary isKindOfClass:NSString.class]) {
-    return Fail(error, BGSRNReportErrorBadArgument, @"summary must be a string or null");
+    Fail(error, BGSRNReportErrorBadArgument, @"summary must be a string or null");
+    return nil;
   }
   id description = patch[@"description"];
   if (description != nil && description != NSNull.null && ![description isKindOfClass:NSString.class]) {
-    return Fail(error, BGSRNReportErrorBadArgument, @"description must be a string or null");
+    Fail(error, BGSRNReportErrorBadArgument, @"description must be a string or null");
+    return nil;
   }
 
   // Checked 1..5 HERE: the SDK setter ignores anything else and keeps the
@@ -142,33 +144,38 @@ static NSNumber *WireNumber(NSNumber *number) {
   if (severity != nil) {
     const double value = IsFiniteNumber(severity) ? [severity doubleValue] : NAN;
     if (!(value == floor(value) && value >= BugseeSeverityLow && value <= BugseeSeverityBlocker)) {
-      return Fail(error, BGSRNReportErrorBadArgument,
-                  [NSString stringWithFormat:@"severity must be an integer 1..5, got %@", severity]);
+      Fail(error, BGSRNReportErrorBadArgument,
+           [NSString stringWithFormat:@"severity must be an integer 1..5, got %@", severity]);
+      return nil;
     }
   }
 
   id labels = patch[@"labels"];
   if (labels != nil) {
     if (![labels isKindOfClass:NSArray.class]) {
-      return Fail(error, BGSRNReportErrorBadArgument, @"labels must be an array of strings");
+      Fail(error, BGSRNReportErrorBadArgument, @"labels must be an array of strings");
+      return nil;
     }
     for (id label in (NSArray *)labels) {
       if (![label isKindOfClass:NSString.class]) {
-        return Fail(error, BGSRNReportErrorBadArgument, @"labels must all be strings");
+        Fail(error, BGSRNReportErrorBadArgument, @"labels must all be strings");
+        return nil;
       }
     }
   }
 
   id clearAttributes = patch[@"clearAttributes"];
   if (clearAttributes != nil && !(IsBoolean(clearAttributes) && [clearAttributes boolValue])) {
-    return Fail(error, BGSRNReportErrorBadArgument, @"clearAttributes must be true when present");
+    Fail(error, BGSRNReportErrorBadArgument, @"clearAttributes must be true when present");
+    return nil;
   }
 
   id rawAttributes = patch[@"attributes"];
   NSMutableDictionary<NSString *, id> *attributes = nil;
   if (rawAttributes != nil) {
     if (![rawAttributes isKindOfClass:NSDictionary.class]) {
-      return Fail(error, BGSRNReportErrorBadArgument, @"attributes must be a plain object");
+      Fail(error, BGSRNReportErrorBadArgument, @"attributes must be a plain object");
+      return nil;
     }
     attributes = [NSMutableDictionary dictionary];
     for (id key in (NSDictionary *)rawAttributes) {
@@ -176,39 +183,75 @@ static NSNumber *WireNumber(NSNumber *number) {
       const BOOL valid = value == NSNull.null || [value isKindOfClass:NSString.class] ||
                          IsBoolean(value) || IsFiniteNumber(value);
       if (![key isKindOfClass:NSString.class] || !valid) {
-        return Fail(error, BGSRNReportErrorBadArgument,
-                    [NSString stringWithFormat:@"attribute \"%@\" must be a string, boolean, "
-                                               @"finite number or null",
-                                               key]);
+        Fail(error, BGSRNReportErrorBadArgument,
+             [NSString stringWithFormat:@"attribute \"%@\" must be a string, boolean, "
+                                        @"finite number or null",
+                                        key]);
+        return nil;
       }
       // Parity with the JS proxy, which rejects it before crossing.
       if ([(NSString *)key length] == 0) {
-        return Fail(error, BGSRNReportErrorBadArgument, @"attribute name must be a non-empty string");
+        Fail(error, BGSRNReportErrorBadArgument, @"attribute name must be a non-empty string");
+        return nil;
       }
       attributes[key] = IsFiniteNumber(value) ? WireNumber(value) : value;
     }
   }
 
+  NSMutableDictionary<NSString *, id> *valid = [NSMutableDictionary dictionary];
+  if (summary != nil) {
+    valid[@"summary"] = summary;
+  }
+  if (description != nil) {
+    valid[@"description"] = description;
+  }
+  if (severity != nil) {
+    valid[@"severity"] = severity;
+  }
+  if (labels != nil) {
+    valid[@"labels"] = labels;
+  }
+  if (clearAttributes != nil) {
+    valid[@"clearAttributes"] = clearAttributes;
+  }
+  if (attributes != nil) {
+    valid[@"attributes"] = attributes;
+  }
+  return valid;
+}
+
++ (BOOL)applyPatch:(NSDictionary *)patch
+          toReport:(id<BGSReportContract>)report
+             error:(NSError **)error {
+  NSDictionary<NSString *, id> *valid = [self validatedPatch:patch error:error];
+  if (valid == nil) {
+    return NO;
+  }
+
   // Everything is valid; apply.
+  id summary = valid[@"summary"];
   if (summary != nil) {
     report.summary = summary == NSNull.null ? nil : summary;
   }
+  id description = valid[@"description"];
   if (description != nil) {
     report.reportDescription = description == NSNull.null ? nil : description;
   }
+  id severity = valid[@"severity"];
   if (severity != nil) {
     report.severity = (BugseeSeverityLevel)[severity integerValue];
   }
+  id labels = valid[@"labels"];
   if (labels != nil) {
     // One atomic call: clear-then-add would expose a label-less report between the two.
     [report replaceLabels:labels];
   }
-  if (clearAttributes != nil) {
+  if (valid[@"clearAttributes"] != nil) {
     // Before the attributes, so clear-then-set holds whatever order the patch
     // was written in.
     [report clearAllAttributes];
   }
-  [attributes enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
+  [valid[@"attributes"] enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
     if (value == NSNull.null) {
       [report removeAttributeForName:key];
     } else {
