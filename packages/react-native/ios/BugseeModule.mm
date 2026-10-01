@@ -628,10 +628,11 @@ RCT_EXPORT_MODULE(Bugsee)
 }
 
 /// Every argument absent (`nil`, `nil`, `0`, `nil`) calls the no-argument
-/// dialog. Otherwise summary and description cross as empty strings when
-/// absent, and a 0 severity is left for the SDK to skip. On main. Does
-/// nothing before launch. The dialog runs `onBeforeReportCreated` before
-/// it opens.
+/// dialog. Otherwise an omitted summary or description stays `nil`: beta3
+/// writes the field only when the pointer is non-nil, and `@""` would
+/// pre-fill an empty string. A 0 severity is left for the SDK to skip.
+/// On main. Does nothing before launch. The dialog runs
+/// `onBeforeReportCreated` before it opens.
 - (void)showReportDialog:(NSString *)summary
              description:(NSString *)description
                 severity:(double)severity
@@ -641,8 +642,8 @@ RCT_EXPORT_MODULE(Bugsee)
       [Bugsee showReportDialog];
       return;
     }
-    [Bugsee showReportDialogWithSummary:(summary ?: @"")
-                            description:(description ?: @"")
+    [Bugsee showReportDialogWithSummary:summary
+                            description:description
                                severity:(BugseeSeverityLevel)severity
                                  labels:BGSRNStringArray(labels)];
   });
