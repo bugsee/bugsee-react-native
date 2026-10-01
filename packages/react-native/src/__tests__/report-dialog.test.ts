@@ -28,7 +28,17 @@ describe('showReportDialog', () => {
   });
 
   it('a non-string summary or description throws before crossing', () => {
-    for (const bad of [null, 42, {}, []]) {
+    expect(() => Bugsee.showReportDialog(42 as never)).toThrow(
+      new TypeError(
+        'Bugsee.showReportDialog requires summary to be a string, got number',
+      ),
+    );
+    expect(() => Bugsee.showReportDialog('ok', 42 as never)).toThrow(
+      new TypeError(
+        'Bugsee.showReportDialog requires description to be a string, got number',
+      ),
+    );
+    for (const bad of [null, {}, []]) {
       expect(() => Bugsee.showReportDialog(bad as never)).toThrow(TypeError);
       expect(() => Bugsee.showReportDialog('ok', bad as never)).toThrow(
         TypeError,
