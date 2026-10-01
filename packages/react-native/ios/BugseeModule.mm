@@ -599,8 +599,10 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
-/// An unhandled JS exception. Stores a crash report the SDK surfaces at the
-/// next launch. The completion is wrapped in `BGSRNSettleOnce`: on the
+/// An unhandled JS exception. The call stores `override_report.plcrash`.
+/// iOS SDK 7.0.0-beta3 `0d9c9d0a-9` claims only `live_report.plcrash` on the
+/// next launch, so that report is not recovered. Do not copy one file onto
+/// the other. The completion is wrapped in `BGSRNSettleOnce`: on the
 /// simulator the SDK compiles `logUnhandledException` out and never calls
 /// this completion (verified facts), and a promise must still settle.
 - (void)logUnhandledException:(NSString *)payloadJson
@@ -640,10 +642,11 @@ RCT_EXPORT_MODULE(Bugsee)
 }
 
 /// Every argument absent (`nil`, `nil`, `0`, `nil`) calls the no-argument
-/// dialog. Otherwise summary and description cross as empty strings when
-/// absent, and a 0 severity is left for the SDK to skip. On main. Does
-/// nothing before launch. The dialog runs `onBeforeReportCreated` before
-/// it opens.
+/// dialog. Otherwise an omitted summary or description stays `nil`: beta3
+/// writes the field only when the pointer is non-nil, and `@""` would
+/// pre-fill an empty string. A 0 severity is left for the SDK to skip.
+/// On main. Does nothing before launch. The dialog runs
+/// `onBeforeReportCreated` before it opens.
 - (void)showReportDialog:(NSString *)summary
              description:(NSString *)description
                 severity:(double)severity
@@ -653,8 +656,8 @@ RCT_EXPORT_MODULE(Bugsee)
       [Bugsee showReportDialog];
       return;
     }
-    [Bugsee showReportDialogWithSummary:(summary ?: @"")
-                            description:(description ?: @"")
+    [Bugsee showReportDialogWithSummary:summary
+                            description:description
                                severity:(BugseeSeverityLevel)severity
                                  labels:BGSRNStringArray(labels)];
   });
@@ -1001,7 +1004,6 @@ RCT_EXPORT_MODULE(Bugsee)
     }
   });
 }
-
 - (void)createdReportUpdate:(NSString *)handleId
                   patchJson:(NSString *)patchJson
                     resolve:(RCTPromiseResolveBlock)resolve
