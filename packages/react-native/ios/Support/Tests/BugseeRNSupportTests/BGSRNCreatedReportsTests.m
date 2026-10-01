@@ -190,6 +190,27 @@
   XCTAssertFalse([registry reservationIsOpen:reservation]);
 }
 
+/// Once `createReportWithCompletion:` has been called, `clear` must not free
+/// the slot. A second `-init` would wipe the file-scope attributes beta3
+/// shares. The stale fulfil frees the slot and does not publish a handle.
+- (void)testClearDuringCreateKeepsTheSlotUntilFulfil {
+  BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
+  XCTAssertTrue([registry beginCreate:reservation]);
+  XCTAssertFalse([registry beginCreate:reservation], @"the SDK call is started once");
+
+  [registry clear];
+  XCTAssertFalse([registry reservationIsOpen:reservation]);
+  XCTAssertFalse([registry reserve], @"the in-flight create still holds the slot");
+  XCTAssertNil([registry fulfil:[self newReport] reservation:reservation]);
+  XCTAssertNil([registry reportFor:@"cr-1"]);
+
+  const NSUInteger next = [registry reserve];
+  XCTAssertTrue(next);
+  XCTAssertNotEqual(next, reservation);
+}
+
 /// Eight threads pass one start barrier and call `reserve`. The lock admits
 /// one. A plain check-then-set lets more than one through.
 - (void)testConcurrentReservationsAdmitOne {

@@ -954,19 +954,19 @@ RCT_EXPORT_MODULE(Bugsee)
     return;
   }
   BGSRNRunOnMain(^{
-    // `clear` already dropped this token. Do not call
-    // `createReportWithCompletion:`: that `-init`s a `BugseeExtendedReport`,
-    // and beta3 keeps those attributes in a file-scope global.
-    if (![registry reservationIsOpen:reservation]) {
+    // One check with the mark. `clear` between an open test and the SDK call
+    // would still `-init` a `BugseeExtendedReport`. NO means `clear` already
+    // dropped this token and freed the slot. YES means `clear` from here on
+    // keeps the slot until `fulfil`, and that fulfil does not publish.
+    if (![registry beginCreate:reservation]) {
       NSLog(@"BugseeRN created report - reservation ended");
       resolve(nil);
       return;
     }
     @try {
       // Captured above, before the hop. `invalidate` clears the registry
-      // without cancelling this completion, and a token from a reservation
-      // that has ended must not mint a handle on the next runtime's slot
-      // or nil one it already holds.
+      // without cancelling this completion. Once `beginCreate:` has run, that
+      // clear keeps the slot and this fulfil must not mint a handle.
       // The completion runs on every path, with nil when the SDK is not launched.
       [Bugsee createReportWithCompletion:^(BugseeExtendedReport *report) {
         NSString *handle = [registry fulfil:report reservation:reservation];

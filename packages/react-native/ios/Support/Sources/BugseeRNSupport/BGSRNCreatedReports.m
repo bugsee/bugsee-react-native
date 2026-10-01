@@ -4,12 +4,18 @@
 
 @implementation BGSRNCreatedReports {
   os_unfair_lock _lock;
-  /// Set by `reserve`, cleared when that reservation is fulfilled or cleared.
-  /// A held report keeps the slot on its own: this flag is only "the SDK has
-  /// not answered yet".
+  /// Set by `reserve`, cleared when that reservation is fulfilled or when
+  /// `clear` runs before `beginCreate:`. A held report keeps the slot on its
+  /// own. After `beginCreate:`, `clear` leaves this set until `fulfil`.
   BOOL _creating;
-  /// Token of the open reservation. 0 is never live.
+  /// Token of the open reservation. 0 is never live. Stays set across `clear`
+  /// once `beginCreate:` has run, so that completion can still free the slot.
   NSUInteger _reservation;
+  /// Set by `beginCreate:`. `clear` then keeps the slot until `fulfil`.
+  BOOL _createStarted;
+  /// Set by `clear` after `beginCreate:`. `fulfil` frees the slot and does
+  /// not publish a handle.
+  BOOL _abandoned;
   NSUInteger _nextReservation;
   NSString *_handle;
   BugseeExtendedReport *_report;
@@ -63,9 +69,20 @@
 
 - (BOOL)reservationIsOpen:(NSUInteger)reservation {
   os_unfair_lock_lock(&_lock);
-  const BOOL open = _creating && reservation != 0 && reservation == _reservation;
+  const BOOL open = _creating && !_abandoned && reservation != 0 && reservation == _reservation;
   os_unfair_lock_unlock(&_lock);
   return open;
+}
+
+- (BOOL)beginCreate:(NSUInteger)reservation {
+  os_unfair_lock_lock(&_lock);
+  const BOOL started = _creating && !_abandoned && !_createStarted && reservation != 0 &&
+                       reservation == _reservation;
+  if (started) {
+    _createStarted = YES;
+  }
+  os_unfair_lock_unlock(&_lock);
+  return started;
 }
 
 - (nullable NSString *)fulfil:(nullable BugseeExtendedReport *)report
@@ -76,9 +93,12 @@
   // already ended. It must not mint a handle on the next runtime's slot, and
   // a nil must not drop a report that slot already holds.
   if (_creating && reservation != 0 && reservation == _reservation) {
+    const BOOL publish = !_abandoned && report != nil;
     _creating = NO;
     _reservation = 0;
-    if (report != nil) {
+    _createStarted = NO;
+    _abandoned = NO;
+    if (publish) {
       handle = [NSString stringWithFormat:@"cr-%lu", (unsigned long)_nextHandle];
       _nextHandle += 1;
       _handle = handle;
@@ -141,10 +161,18 @@
 
 - (void)clear {
   os_unfair_lock_lock(&_lock);
-  _creating = NO;
-  _reservation = 0;
   _report = nil;
   _handle = nil;
+  if (_createStarted) {
+    // `createReportWithCompletion:` already started. Its `-init` resets the
+    // file-scope attributes beta3 shares, so the slot stays taken until that
+    // completion's `fulfil`. The handle is not published: this runtime's JS
+    // is gone.
+    _abandoned = YES;
+  } else {
+    _creating = NO;
+    _reservation = 0;
+  }
   // An upload still in flight keeps the slot. `uploadReport:` copies attributes
   // after it returns, and beta3 keeps those in a file-scope global. Clearing
   // `_uploading` here would let the next runtime `-init` another
