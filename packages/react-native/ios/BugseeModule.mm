@@ -1070,20 +1070,26 @@ RCT_EXPORT_MODULE(Bugsee)
                     resolve:(RCTPromiseResolveBlock)resolve
                      reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
+    NSUInteger generation = 0;
     @try {
-      BugseeExtendedReport *report = [BGSRNCreatedReports.shared take:handleId];
+      BugseeExtendedReport *report =
+          [BGSRNCreatedReports.shared detachForUpload:handleId generation:&generation];
       if (report == nil) {
         BGSRNRejectCreatedHandleDead(reject);
         return;
       }
-      // The completion carries no success flag. It runs once the report is
-      // handed off, including when the SDK was not launched (it calls back
-      // immediately). `ok` is YES on that path.
+      // The handle is already dead. The slot stays taken until this upload
+      // ends: a second created report would reset beta3's file-scope attributes
+      // before `uploadReport:` copies them. The completion carries no success
+      // flag. It runs once the report is handed off, including when the SDK
+      // was not launched (it calls back immediately). `ok` is YES on that path.
       [Bugsee uploadReport:report completion:^{
+        [BGSRNCreatedReports.shared endUpload:generation];
         NSLog(@"BugseeRN created report %@ uploaded ok=%@", handleId, @YES);
         resolve(@YES);
       }];
     } @catch (NSException *exception) {
+      [BGSRNCreatedReports.shared endUpload:generation];
       BGSRNRejectException(reject, exception);
     }
   });

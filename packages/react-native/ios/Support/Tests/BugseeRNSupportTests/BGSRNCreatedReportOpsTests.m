@@ -124,6 +124,17 @@
   XCTAssertFalse([names containsObject:@"fourth"]);
 }
 
+/// Longer than the 4/3 cap, and not a multiple of 4, so a decode would fail
+/// as bad base64. The cap rejects it first.
+- (void)testAnOverlongBase64StringIsRejectedBeforeDecoding {
+  const NSUInteger cap = (BGSRNCreatedReportAttachmentMaxBytes / 3) * 4;
+  NSString *over = [@"" stringByPaddingToLength:cap + 1 withString:@"A" startingAtIndex:0];
+  NSError *error = nil;
+  XCTAssertFalse([BGSRNCreatedReportOps addData:over name:@"big.bin" toReport:_report error:&error]);
+  XCTAssertEqual(error.code, BGSRNReportErrorAttachmentRejected);
+  XCTAssertEqual(_report.attachments.count, 0u);
+}
+
 - (void)testAnAttachmentOver3MiBIsRejected {
   NSMutableData *data = [NSMutableData dataWithLength:BGSRNCreatedReportAttachmentMaxBytes + 1];
   NSString *base64 = [data base64EncodedStringWithOptions:0];

@@ -109,6 +109,43 @@
   XCTAssertEqual([registry reportFor:@"cr-1"], created);
 }
 
+/// The handle dies at detach. The slot stays taken until `endUpload:` so a
+/// second `createReport` cannot run while `uploadReport:` is still copying.
+- (void)testAnUploadInFlightKeepsTheSlot {
+  BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
+  BugseeExtendedReport *report = [self newReport];
+  NSString *handle = [registry fulfil:report reservation:reservation];
+  NSUInteger generation = 0;
+  XCTAssertEqual([registry detachForUpload:handle generation:&generation], report);
+  XCTAssertNotEqual(generation, 0u);
+  XCTAssertNil([registry reportFor:handle]);
+  XCTAssertFalse([registry reserve]);
+  [registry endUpload:generation];
+  XCTAssertTrue([registry reserve]);
+}
+
+/// `clear` abandons the in-flight upload. Its `endUpload:` must not free a
+/// report the next runtime already holds.
+- (void)testAStaleUploadEndLeavesTheNextReport {
+  BGSRNCreatedReports *registry = [BGSRNCreatedReports new];
+  const NSUInteger reservation = [registry reserve];
+  XCTAssertTrue(reservation);
+  NSString *handle = [registry fulfil:[self newReport] reservation:reservation];
+  NSUInteger generation = 0;
+  XCTAssertNotNil([registry detachForUpload:handle generation:&generation]);
+  [registry clear];
+
+  const NSUInteger next = [registry reserve];
+  XCTAssertTrue(next);
+  BugseeExtendedReport *created = [self newReport];
+  XCTAssertEqualObjects([registry fulfil:created reservation:next], @"cr-2");
+  [registry endUpload:generation];
+  XCTAssertEqual([registry reportFor:@"cr-2"], created);
+  XCTAssertFalse([registry reserve]);
+}
+
 /// A nil completion for a reservation that already stored its report must not
 /// drop that report. The token was consumed when the report was published.
 - (void)testAStaleNilLeavesThePublishedHandle {

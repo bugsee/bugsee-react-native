@@ -147,6 +147,14 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
     return Fail(error, BGSRNReportErrorAttachmentRejected,
                 @"a created-report attachment must be non-empty and at most 3 MiB");
   }
+  // 3145728 is divisible by 3, so its base64 form is exactly 4/3 with no
+  // padding. Reject a longer string before decoding it: this runs on the main
+  // thread, and the decoded bytes are checked again in `attachData`.
+  const NSUInteger maxBase64Chars = (BGSRNCreatedReportAttachmentMaxBytes / 3) * 4;
+  if (base64.length > maxBase64Chars) {
+    return Fail(error, BGSRNReportErrorAttachmentRejected,
+                @"a created-report attachment must be non-empty and at most 3 MiB");
+  }
   NSData *data = [[NSData alloc] initWithBase64EncodedString:base64 options:0];
   if (data == nil) {
     return Fail(error, BGSRNReportErrorBadArgument, @"data must be base64-encoded");
@@ -176,14 +184,23 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
   if (attributes == nil) {
     return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
   }
+  if (![attributes[NSFileType] isEqualToString:NSFileTypeRegular]) {
+    return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
+  }
   const unsigned long long size = [attributes[NSFileSize] unsignedLongLongValue];
   if (size == 0 || size > (unsigned long long)BGSRNCreatedReportAttachmentMaxBytes) {
     return Fail(error, BGSRNReportErrorAttachmentRejected,
                 @"a created-report attachment must be non-empty and at most 3 MiB");
   }
 
-  NSError *readError = nil;
-  NSData *read = [NSData dataWithContentsOfFile:resolved options:0 error:&readError];
+  // Cap the read. The size above can grow between the stat and this read, and
+  // `dataWithContentsOfFile:` would then take the whole file on the main thread.
+  NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:resolved];
+  if (file == nil) {
+    return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
+  }
+  NSData *read = [file readDataOfLength:BGSRNCreatedReportAttachmentMaxBytes + 1];
+  [file closeFile];
   if (read == nil) {
     return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
   }

@@ -39,8 +39,20 @@ NS_ASSUME_NONNULL_BEGIN
 /// Removes the report and frees the slot. nil when `handleId` is not the one held.
 - (nullable BugseeExtendedReport *)take:(NSString *)handleId;
 
+/// Drops the handle so later reads are dead, and keeps the slot until
+/// `endUpload:` for `generationOut`. nil when `handleId` is not the one held;
+/// `generationOut` is then 0. The slot stays taken because a second
+/// `BugseeExtendedReport` resets the file-scope attributes beta3 shares.
+- (nullable BugseeExtendedReport *)detachForUpload:(NSString *)handleId
+                                        generation:(NSUInteger *)generationOut;
+
+/// Frees the slot when `generation` is still the upload `detachForUpload:`
+/// started. A generation `clear` has already moved does nothing.
+- (void)endUpload:(NSUInteger)generation;
+
 /// Drops the handle and frees the slot, including a reservation the SDK has
-/// not fulfilled yet.
+/// not fulfilled yet and an upload still in flight. An `endUpload:` for that
+/// abandoned upload does not free a slot opened afterwards.
 - (void)clear;
 
 @end
