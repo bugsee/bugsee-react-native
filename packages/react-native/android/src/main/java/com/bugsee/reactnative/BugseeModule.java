@@ -27,7 +27,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
 /**
@@ -48,20 +47,6 @@ public class BugseeModule extends NativeBugseeSpec
 
     /** The wrapper's log tag, as ReportHandlerBridge and WrapperEventBus use. */
     private static final String TAG = "BugseeRN";
-
-    /**
-     * Owns every {@code Bugsee.logException} / {@code logUnhandledException}
-     * call. Android 7.3.0 waits on the caller for the view hierarchy; the
-     * React Native modules thread is that caller today, and a blocked
-     * modules thread cannot answer the hierarchy request (deadline, no RN
-     * tree). One dedicated thread, named so a log shows it is neither the
-     * JS thread nor the native-modules thread.
-     */
-    private static final Executor EXCEPTION_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
-        final Thread t = new Thread(r, "BugseeRN-exceptions");
-        t.setDaemon(true);
-        return t;
-    });
 
     /** Production adapter: the SDK's handled / unhandled entry points. */
     private static final ExceptionBridge.Sdk PROD_EXCEPTION_SDK = new ExceptionBridge.Sdk() {
@@ -348,12 +333,12 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     /**
-     * A handled JS exception. Posted onto {@link #EXCEPTION_EXECUTOR}: the
-     * SDK must not run on the native-modules thread (see that field).
+     * A handled JS exception. Posted onto {@link ExceptionExecutors#HANDLED}:
+     * the SDK must not run on the native-modules thread.
      */
     @Override
     public void logException(final String payloadJson, final @Nullable String optionsJson) {
-        EXCEPTION_EXECUTOR.execute(() -> {
+        ExceptionExecutors.HANDLED.execute(() -> {
             try {
                 ExceptionBridge.logHandled(PROD_EXCEPTION_SDK, payloadJson, optionsJson);
                 Log.i(TAG, "exception handled sent bytes="
@@ -365,13 +350,14 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     /**
-     * An unhandled JS exception. Posted onto {@link #EXCEPTION_EXECUTOR};
-     * the promise resolves {@code null} exactly once in a {@code finally}
-     * after that background call returns, including when the SDK throws.
+     * An unhandled JS exception. Posted onto {@link ExceptionExecutors#UNHANDLED},
+     * not behind handled reports: JS waits at most 1500 ms. The promise
+     * resolves {@code null} exactly once in a {@code finally} after that
+     * background call returns, including when the SDK throws.
      */
     @Override
     public void logUnhandledException(final String payloadJson, final Promise promise) {
-        EXCEPTION_EXECUTOR.execute(() -> {
+        ExceptionExecutors.UNHANDLED.execute(() -> {
             try {
                 ExceptionBridge.logUnhandled(PROD_EXCEPTION_SDK, payloadJson);
                 Log.i(TAG, "exception unhandled sent bytes="
@@ -780,6 +766,58 @@ public class BugseeModule extends NativeBugseeSpec
         } catch (final Throwable e) {
             promise.reject(e);
         }
+    }
+
+    // Task 8.2b. No registry yet, so this does not call the SDK: the SDK made none.
+    @Override
+    public void createReport(final Promise promise) {
+        promise.resolve(null);
+    }
+
+    // Task 8.2b. No created-report handle exists until the registry lands.
+    @Override
+    public void createdReportRead(final String handleId, final Promise promise) {
+        rejectHandleDead(promise);
+    }
+
+    // Task 8.2b. No created-report handle exists until the registry lands.
+    @Override
+    public void createdReportUpdate(
+            final String handleId,
+            final String patchJson,
+            final Promise promise
+    ) {
+        rejectHandleDead(promise);
+    }
+
+    // Task 8.2b. No created-report handle exists until the registry lands.
+    @Override
+    public void createdReportAddDataAttachment(
+            final String handleId,
+            final String base64,
+            final String name,
+            @Nullable final String mimeType,
+            final Promise promise
+    ) {
+        rejectHandleDead(promise);
+    }
+
+    // Task 8.2b. No created-report handle exists until the registry lands. No move argument.
+    @Override
+    public void createdReportAddFileAttachment(
+            final String handleId,
+            final String path,
+            final String name,
+            @Nullable final String mimeType,
+            final Promise promise
+    ) {
+        rejectHandleDead(promise);
+    }
+
+    // Task 8.2b. No created-report handle exists until the registry lands.
+    @Override
+    public void createdReportUpload(final String handleId, final Promise promise) {
+        rejectHandleDead(promise);
     }
 
     /**
