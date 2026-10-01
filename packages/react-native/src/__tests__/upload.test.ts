@@ -27,6 +27,9 @@ describe('upload', () => {
     native.reset();
     Bugsee.upload('s', 'd', IssueSeverity.VeryLow);
     expect(native.upload).toHaveBeenCalledWith('s', 'd', 1, null);
+    native.reset();
+    Bugsee.upload('s', 'd', IssueSeverity.Blocker);
+    expect(native.upload).toHaveBeenCalledWith('s', 'd', 5, null);
   });
 
   it('labels cross as a copy', () => {
@@ -40,31 +43,33 @@ describe('upload', () => {
   });
 
   it('rejects severity 0, 6, 2.5 and a string before crossing', () => {
+    const message = 'Bugsee.upload severity must be an integer 1..5';
     expect(() =>
       Bugsee.upload('s', 'd', 0 as unknown as IssueSeverity),
-    ).toThrow(RangeError);
+    ).toThrow(new RangeError(message));
     expect(() =>
       Bugsee.upload('s', 'd', 6 as unknown as IssueSeverity),
-    ).toThrow(RangeError);
+    ).toThrow(new RangeError(message));
     expect(() =>
       Bugsee.upload('s', 'd', 2.5 as unknown as IssueSeverity),
-    ).toThrow(RangeError);
+    ).toThrow(new RangeError(message));
     expect(() =>
       Bugsee.upload('s', 'd', 'high' as unknown as IssueSeverity),
-    ).toThrow(TypeError);
+    ).toThrow(new TypeError(message));
     expect(native.upload).not.toHaveBeenCalled();
   });
 
   it('rejects labels that are not strings before crossing', () => {
+    const message = 'Bugsee.upload labels must be an array of strings';
     expect(() =>
       Bugsee.upload('s', 'd', undefined, 'nope' as unknown as string[]),
-    ).toThrow(TypeError);
+    ).toThrow(new TypeError(message));
     expect(() =>
       Bugsee.upload('s', 'd', undefined, [1] as unknown as string[]),
-    ).toThrow(TypeError);
+    ).toThrow(new TypeError(message));
     expect(() =>
       Bugsee.upload('s', 'd', undefined, null as unknown as string[]),
-    ).toThrow(TypeError);
+    ).toThrow(new TypeError(message));
     expect(native.upload).not.toHaveBeenCalled();
   });
 
