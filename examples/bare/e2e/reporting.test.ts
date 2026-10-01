@@ -9,6 +9,10 @@
  * Case 6 is not in this file. Step 0 (2026-10-01) found the dialog's send
  * control has no stable resource-id, and nothing here taps the dialog.
  *
+ * The suite is Android-only until Task 8.3b. `E2E_PLATFORM=ios` skips it,
+ * so a full iOS run does not start logcat, enable airplane mode, or
+ * force-stop the Android example.
+ *
  * Markers, from scenarios/reporting.ts:
  *   BUGSEE_E2E rp upload-5th code=<name>
  *   BUGSEE_E2E rp prelaunch-sent
@@ -38,11 +42,10 @@ import {
   escape,
   listBundles,
   must,
+  ON_ANDROID,
   report,
   startRun,
   useLog,
-  TARGET_NAME,
-  describeDevice,
 } from './harness';
 import {
   type DeviceLog,
@@ -52,12 +55,14 @@ import {
   resetScenario,
 } from './scenario';
 
+const describeAndroid = ON_ANDROID ? describe : describe.skip;
+
 jest.setTimeout(12 * 60_000);
 
 /** How long a bundle is given to land after the call that files it. */
 const BUNDLE_WAIT_MS = 120_000;
 
-describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
+describeAndroid('reporting paths in a retained bundle on an Android handset', () => {
   let log: DeviceLog;
 
   beforeAll(async () => {
