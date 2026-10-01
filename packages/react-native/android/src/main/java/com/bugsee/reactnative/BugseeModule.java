@@ -768,58 +768,6 @@ public class BugseeModule extends NativeBugseeSpec
         }
     }
 
-    // Task 8.2b. No registry yet, so this does not call the SDK: the SDK made none.
-    @Override
-    public void createReport(final Promise promise) {
-        promise.resolve(null);
-    }
-
-    // Task 8.2b. No created-report handle exists until the registry lands.
-    @Override
-    public void createdReportRead(final String handleId, final Promise promise) {
-        rejectHandleDead(promise);
-    }
-
-    // Task 8.2b. No created-report handle exists until the registry lands.
-    @Override
-    public void createdReportUpdate(
-            final String handleId,
-            final String patchJson,
-            final Promise promise
-    ) {
-        rejectHandleDead(promise);
-    }
-
-    // Task 8.2b. No created-report handle exists until the registry lands.
-    @Override
-    public void createdReportAddDataAttachment(
-            final String handleId,
-            final String base64,
-            final String name,
-            @Nullable final String mimeType,
-            final Promise promise
-    ) {
-        rejectHandleDead(promise);
-    }
-
-    // Task 8.2b. No created-report handle exists until the registry lands. No move argument.
-    @Override
-    public void createdReportAddFileAttachment(
-            final String handleId,
-            final String path,
-            final String name,
-            @Nullable final String mimeType,
-            final Promise promise
-    ) {
-        rejectHandleDead(promise);
-    }
-
-    // Task 8.2b. No created-report handle exists until the registry lands.
-    @Override
-    public void createdReportUpload(final String handleId, final Promise promise) {
-        rejectHandleDead(promise);
-    }
-
     /**
      * One created report at a time. The slot is reserved before the SDK is
      * asked, because {@code onCreated} arrives later, on the main thread.
