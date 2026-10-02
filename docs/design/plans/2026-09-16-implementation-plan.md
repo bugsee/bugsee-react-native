@@ -66,7 +66,7 @@ Phases 4 and 5 are deliberately small — they settle how values cross the bridg
 
 ### Progress
 
-Updated 2026-10-02. Tasks 8.1–8.2c are on `main` at `06eea6d`. Task 8.3a is in progress with case 6 blocked: the dialog send control has no stable `resource-id`, so cases 1–5 and 7–11 were run on the WOD_LX1 and case 6 was not. Task 8.3b has not started. Older unchecked boxes in Phases 1–6 were not backfilled in this pass.
+Updated 2026-10-02. Tasks 8.1–8.3a are on `main` at `6499cb8`. Task 8.3a cases 1–5 and 7–11 passed on the WOD_LX1; case 6 and its Green checkbox stay open because the send control has no stable `resource-id`. Task 8.3b passed on the iOS 26.5 simulator and on the iPhone XS, with case 3 `it.failing` on `source.type` `unknown` and case 6 skipped. Older unchecked boxes in Phases 1–6 were not backfilled in this pass.
 
 ---
 
@@ -969,6 +969,7 @@ Added by controller ruling. Run it once a physical iPhone (the XS) is attached, 
   - Task 4.4;
   - Task 5.5, including across a real process restart, and clearing the Keychain identity first and last;
 - [ ] **iOS, Phase 6:** Task 6.9, plus any cases gated during Phase 6 (not yet written when the pass above ran).
+- [ ] **iOS, Phase 8:** Task 8.3b case 6, gated `E2E_IOS_OPERATOR=1`. The rest of 8.3b ran on KRSFT on 2026-10-02 (10 passed, 1 skipped). The operator did not tap Send.
 - [x] **Android on the WOD_LX1:**
   - 3.4d case 6 (the native-crash recovery case; it flakes on the emulator);
   - the B1 secure-rectangle check with `edgeToEdgeEnabled=false`, run as an e2e assertion rather than the one-off manual numbers.
@@ -3992,9 +3993,9 @@ The cases of 8.3a apply, run under `E2E_PLATFORM=ios` on the simulator, and on t
 - **Case 11:** as Android. iOS's `addAttachmentWithFilePath:…move:` honours `move`.
 - **Every case:** retention is by `DEAD_ENDPOINT`, and `environment.sdk.version` is the pin.
 
-- [ ] **Red/Green** — every case except case 6 passes on the iOS 26.5 simulator, with case 3 failing for the right reason (record `source.type`).
-- [ ] **Mutate** — drop the count check in `BGSRNCreatedReportOps`. Case 10 must fail on the simulator. Revert and record.
-- [ ] **Commit** — `test(e2e): upload, the dialog, createReport and attachments in iOS bundles`.
+- [x] **Red/Green** — every case except case 6 passes on the iOS 26.5 simulator, with case 3 failing for the right reason (record `source.type`). *2026-10-02, simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957`: 10 passed, 1 skipped. Case 3 logged `source.type` `unknown` on all four `up*` bundles (nonce `8c3771a12c38`) while still expecting `code_upload`. Banner `Bugsee IOS SDK ver:7.0.0-beta3 build:0d9c9d0a-9`. `environment.sdk.version` is `7.0.0-beta3`. `config.duration` is 90. The same suite on KRSFT (`345BA7FE-2C29-5722-892A-BFCB1FD34D0C`, iPhone11,2, iOS 18.7.9): 10 passed, 1 skipped, same `unknown` (nonce `9a41125b8a8e`).*
+- [x] **Mutate** — drop the count check in `BGSRNCreatedReportOps`. Case 10 must fail on the simulator. Revert and record. *The mutant logged `rp extra2 ok` and failed `never saw rp extra2 code=E_REPORT_ATTACHMENT_REJECTED` on that simulator. `AtAttachmentLimit` is restored.*
+- [x] **Commit** — `test(e2e): upload, the dialog, createReport and attachments in iOS bundles`.
 
 **Hardware pass: add to Task 3.H** — Task 8.3b whole on the iPhone, including the gated operator case 6.
 
@@ -4023,7 +4024,7 @@ Record, for the controller:
 
 The phase with the most native↔JS round-tripping, hence the most device testing.
 
-- [ ] **9.1** Console capture with the JS patch.
+- [x] **9.1** Console capture with the JS patch. A `console.log` was retained as source 98 (`LogSource.Custom`) at level 3 on the WOD_LX1, the iOS simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957`, and iPhone XS KRSFT.
 - [x] **9.2** Log filter — the native→JS round trip. **A filter callback that cannot complete must drop the line, not pass it through**; failing open at a redaction boundary leaks exactly what the callback existed to remove. Device: WOD_LX1 `AMRJCP4718402860` retained `log-filter rewrite 1ac247198f48 REDACTED` (source 98, level 2) and omitted the unsettled hang line, and simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957` did the same for nonce `fcdfade08169`; the iPhone XS (KRSFT) was already running BareExample after a 10-minute wait, so that run was not taken.
 - [ ] **9.3** Network: keep the WebSocket patch; `patchXhr` stays disabled. **Do not assume native capture covers `fetch`/XHR on Android** (found 2026-09-29, from the Android SDK source):
   - RN's `NetworkingModule` runs on OkHttp, and Bugsee instruments OkHttp only when `bugsee-android-okhttp` is on the classpath.
