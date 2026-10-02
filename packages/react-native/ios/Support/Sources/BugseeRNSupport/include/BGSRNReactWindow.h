@@ -21,17 +21,25 @@ NS_ASSUME_NONNULL_BEGIN
 /// only keeps a pathological native hierarchy from costing the main thread.
 FOUNDATION_EXPORT const NSUInteger BGSRNReactRootSearchBudget;
 
-/// The key window exactly as the SDK picks it (`BGSTrackerApplication.m:
-/// 219-264`): among window scenes with a key window, the foreground-active
-/// one whose key window `isKeyWindow`, else the first foreground-active one,
-/// else the last scene's key window seen, else the application's own. Not unit
+/// The key window exactly as the SDK picks it (`+[BGSTrackerApplication
+/// resolveKeyWindow]`): the application's key window while its scene is in the
+/// foreground -- the window the user brought forward last, when several of the
+/// app's scenes are on screen -- else, among window scenes with a key window,
+/// the foreground-active one whose key window `isKeyWindow`, else the first
+/// foreground-active one, else the last scene's key window seen. Not unit
 /// tested: it needs connected scenes.
 FOUNDATION_EXPORT UIWindow *_Nullable BGSRNSdkKeyWindow(void);
 
-/// The windows the SDK walks for that key window (`BGSTrackerApplication.m:
-/// 185-210, 295-320`): its scene's windows when the app declares a
-/// `UIApplicationSceneManifest`, else `-[UIApplication windows]` -- which is
-/// the React Native template's case: it declares no manifest.
+/// The windows the SDK records and walks for that key window
+/// (`BGSWindowsToRecord`, `+[BGSTrackerApplication captureWindows]`). Where
+/// the SDK composes the app's windows on the screen -- iOS, not on a Mac --
+/// and the app declares a `UIApplicationSceneManifest` and has more than one
+/// scene connected: the windows of every foreground window scene on the key
+/// window's screen. Else its scene's windows with a manifest, or
+/// `-[UIApplication windows]` without one -- which is the React Native
+/// template's case. The SDK orders the scenes back to front; this list is for
+/// finding a window, so it keeps `connectedScenes` order. Not unit tested
+/// either: the test runner has no application and no scenes.
 FOUNDATION_EXPORT NSArray<UIWindow *> *BGSRNSdkWalkedWindows(UIWindow *_Nullable keyWindow);
 
 /// The first view `isReactRoot` accepts, searching each window's tree

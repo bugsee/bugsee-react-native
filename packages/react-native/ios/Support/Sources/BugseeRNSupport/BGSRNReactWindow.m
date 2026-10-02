@@ -2,10 +2,38 @@
 
 const NSUInteger BGSRNReactRootSearchBudget = 2000;
 
+/// Whether the SDK composes the app's windows on the screen: iOS, and not an
+/// iPhone or iPad app running on a Mac (`+[BGSTrackerApplication
+/// capturesAppScreen]`).
+static BOOL BGSRNSdkComposesScreen(void) {
+#if TARGET_OS_MACCATALYST
+  return NO;
+#else
+  return !NSProcessInfo.processInfo.isiOSAppOnMac;
+#endif
+}
+
+/// A window scene the user can see: the SDK leaves background scenes out, as
+/// they keep reporting their last place on a screen.
+static BOOL BGSRNIsForeground(UIScene *scene) {
+  return scene.activationState == UISceneActivationStateForegroundActive ||
+         scene.activationState == UISceneActivationStateForegroundInactive;
+}
+
 UIWindow *BGSRNSdkKeyWindow(void) {
   UIApplication *application = UIApplication.sharedApplication;
   if (application == nil) {
     return nil;
+  }
+  // Since the iOS 15 SDK every scene's key window reports isKeyWindow, so with
+  // two of the app's scenes on screen the loop below cannot tell which one the
+  // user is in; the application's key window follows the one brought forward.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  UIWindow *applicationKeyWindow = application.keyWindow;
+#pragma clang diagnostic pop
+  if (applicationKeyWindow.windowScene != nil && BGSRNIsForeground(applicationKeyWindow.windowScene)) {
+    return applicationKeyWindow;
   }
   UIWindow *fallback = nil;
   UIWindow *stableForeground = nil;
@@ -49,27 +77,31 @@ NSArray<UIWindow *> *BGSRNSdkWalkedWindows(UIWindow *keyWindow) {
     NSDictionary *manifest = [NSBundle.mainBundle objectForInfoDictionaryKey:@"UIApplicationSceneManifest"];
     hasSceneManifest = [manifest isKindOfClass:NSDictionary.class] && manifest.count > 0;
   });
+  UIApplication *application = UIApplication.sharedApplication;
+  UIScreen *screen = keyWindow.windowScene.screen;
+  if (hasSceneManifest && BGSRNSdkComposesScreen() && application.connectedScenes.count > 1 &&
+      screen != nil) {
+    NSMutableArray<UIWindow *> *composed = [NSMutableArray array];
+    for (UIScene *scene in application.connectedScenes) {
+      if ([scene isKindOfClass:UIWindowScene.class] && BGSRNIsForeground(scene) &&
+          ((UIWindowScene *)scene).screen == screen) {
+        [composed addObjectsFromArray:((UIWindowScene *)scene).windows];
+      }
+    }
+    if (composed.count > 0) {
+      return composed;
+    }
+  }
   NSArray<UIWindow *> *windows = nil;
   if (hasSceneManifest) {
     windows = keyWindow.windowScene.windows;
   } else {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    windows = UIApplication.sharedApplication.windows;
+    windows = application.windows;
 #pragma clang diagnostic pop
   }
   return windows ?: @[];
-}
-
-/// Whether the SDK composes the app's windows on the screen: iOS, and not an
-/// iPhone or iPad app running on a Mac (`+[BGSTrackerApplication
-/// capturesAppScreen]`).
-static BOOL BGSRNSdkComposesScreen(void) {
-#if TARGET_OS_MACCATALYST
-  return NO;
-#else
-  return !NSProcessInfo.processInfo.isiOSAppOnMac;
-#endif
 }
 
 /// Breadth-first: a React root is near the top of its window, and a deep
