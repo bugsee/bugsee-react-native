@@ -365,6 +365,8 @@ static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
 
 static __weak BugseeModule *BGSRNLogFilterModule = nil;
 static BOOL BGSRNLogFilterInstalled = NO;
+/** The JS round trip. Off is the native pass-through, which stays installed. */
+static BOOL BGSRNLogFilterUserEnabled = NO;
 static NSMutableDictionary<NSString *, BGSRNLogFilterPending *> *BGSRNLogFilterPendingTable;
 static int64_t BGSRNLogFilterNextId = 0;
 
@@ -396,6 +398,92 @@ static void BGSRNDropLogFiltersOwnedBy(BugseeModule *module) {
   for (BugseeLogFilterDecisionBlock decision in decisions) {
     decision(nil);
   }
+}
+
+/**
+ * Declared up here so the filter installer, which sits above the method
+ * body, can call it. The implementation is on BugseeModule.
+ */
+@interface BugseeModule (BGSRNLogFilterEmit)
+- (BOOL)emitLogFilterRequest:(NSString *)requestId line:(NSString *)line;
+@end
+
+/**
+ * Installs the native log filter once. It stays installed when the app has
+ * no log callback: an echo is dropped, and every other line is returned
+ * immediately. A user callback asks JS. Clearing that callback restores the
+ * pass-through. The filter is not set back to nil.
+ */
+static void BGSRNInstallLogEventFilter(void) {
+  @synchronized (BGSRNLogFilterLock()) {
+    BGSRNLogFilterInstalled = YES;
+  }
+  [Bugsee setLogEventFilter:^(BugseeLogEvent *event, BugseeLogFilterDecisionBlock decision) {
+      NSString *line = event.text;
+      if (decision == nil) {
+        return;
+      }
+      if (line == nil) {
+        decision(nil);
+        return;
+      }
+      // The console echo. A stderr stamp, and one raw stdout or stderr line
+      // of the noted text, are dropped here, before anything else is asked.
+      // Not a timeout: the line is not passed through. A Custom line is not
+      // that echo. `dictionary` is how the SDK stores the source on the
+      // event. When it is absent, the source is unknown and a non-stamp line
+      // is not dropped.
+      NSInteger source = -1;
+      SEL dictionarySelector = NSSelectorFromString(@"dictionary");
+      if ([event respondsToSelector:dictionarySelector]) {
+        id value = [event valueForKey:@"dictionary"];
+        if ([value isKindOfClass:[NSDictionary class]]) {
+          id raw = [(NSDictionary *)value objectForKey:@"source"];
+          if ([raw respondsToSelector:@selector(integerValue)]) {
+            source = [raw integerValue];
+          }
+        }
+      }
+      if (BGSRNDropConsoleEcho(line, source)) {
+        decision(nil);
+        return;
+      }
+      BOOL askJs = NO;
+      @synchronized (BGSRNLogFilterLock()) {
+        askJs = BGSRNLogFilterUserEnabled;
+      }
+      if (!askJs) {
+        decision(event);
+        return;
+      }
+      BugseeModule *module = BGSRNLogFilterModule;
+      if (module == nil) {
+        decision(nil);
+        return;
+      }
+      BGSRNLogFilterPending *item = [BGSRNLogFilterPending new];
+      item.event = event;
+      item.decision = decision;
+      item.owner = module;
+      NSString *requestId = nil;
+      @synchronized (BGSRNLogFilterLock()) {
+        BGSRNLogFilterNextId += 1;
+        requestId = [NSString stringWithFormat:@"%lld", BGSRNLogFilterNextId];
+        BGSRNLogFilterPendingTable[requestId] = item;
+      }
+      const BOOL delivered = [module emitLogFilterRequest:requestId line:line];
+      if (!delivered) {
+        BugseeLogFilterDecisionBlock drop = nil;
+        @synchronized (BGSRNLogFilterLock()) {
+          BGSRNLogFilterPending *removed = BGSRNLogFilterPendingTable[requestId];
+          [BGSRNLogFilterPendingTable removeObjectForKey:requestId];
+          drop = removed.decision;
+        }
+        if (drop != nil) {
+          drop(nil);
+        }
+      }
+    }];
 }
 
 /// One in-flight breadcrumb-filter request. The decision block is copied: the
@@ -615,6 +703,7 @@ RCT_EXPORT_MODULE(Bugsee)
   if ((self = [super init])) {
     BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithoutJsRuntime], YES);
     BGSRNInstallConsoleCapture();
+    BGSRNInstallLogEventFilter();
   }
   return self;
 }
@@ -689,9 +778,9 @@ RCT_EXPORT_MODULE(Bugsee)
   // pointer when an event arrives; it is nil until then, and a nil module
   // drops the event.
   BGSRNNetworkFilterModule = self;
-  // After the emitter exists. A log filter installed earlier reads this
-  // pointer when a line arrives; it is nil until then, and a nil module
-  // drops the line.
+  // After the emitter exists. The native log filter is already installed.
+  // While a user callback is on, a nil module drops the line. With no user
+  // callback the same filter returns the line.
   BGSRNLogFilterModule = self;
   // Same lifetime as the log filter: nil until the emitter exists, and a nil
   // module drops the crumb.
@@ -835,6 +924,9 @@ RCT_EXPORT_MODULE(Bugsee)
     // already running, or the token was rejected. Declining is a normal
     // outcome, so it resolves false rather than rejecting.
     Bugsee *instance = [Bugsee launchWithToken:token andOptions:options];
+    // launch can replace the log filter. Put the pass-through, or the user
+    // filter if one is already on, back. This does not set the filter to nil.
+    BGSRNInstallLogEventFilter();
     resolve(@(instance != nil));
   });
 }
@@ -853,8 +945,10 @@ RCT_EXPORT_MODULE(Bugsee)
                           // Onto the main queue: the SDK invokes started: on
                           // whatever thread its stop completion happens to
                           // use, and resolve/reject must be called from the
-                          // same queue this method hopped onto.
+                          // same queue this method hopped onto. Reinstall
+                          // here: relaunch can replace the log filter.
                           dispatch_async(dispatch_get_main_queue(), ^{
+                            BGSRNInstallLogEventFilter();
                             resolve(@(success));
                           });
                         }];
@@ -1209,77 +1303,10 @@ RCT_EXPORT_MODULE(Bugsee)
 }
 
 - (void)setLogFilterEnabled:(BOOL)enabled {
-  if (enabled) {
-    @synchronized (BGSRNLogFilterLock()) {
-      if (BGSRNLogFilterInstalled) {
-        return;
-      }
-      BGSRNLogFilterInstalled = YES;
-    }
-    [Bugsee setLogEventFilter:^(BugseeLogEvent *event, BugseeLogFilterDecisionBlock decision) {
-        NSString *line = event.text;
-        if (decision == nil) {
-          return;
-        }
-        if (line == nil) {
-          decision(nil);
-          return;
-        }
-        // The console echo. A stderr stamp, and one raw stdout or stderr line
-        // of the noted text, are dropped here, before JS is asked, so the
-        // user's callback runs once. Not a timeout: the line is not passed
-        // through. A Custom line is not that echo. `dictionary` is how the
-        // SDK stores the source on the event. When it is absent, the source
-        // is unknown and a non-stamp line is not dropped.
-        NSInteger source = -1;
-        SEL dictionarySelector = NSSelectorFromString(@"dictionary");
-        if ([event respondsToSelector:dictionarySelector]) {
-          id value = [event valueForKey:@"dictionary"];
-          if ([value isKindOfClass:[NSDictionary class]]) {
-            id raw = [(NSDictionary *)value objectForKey:@"source"];
-            if ([raw respondsToSelector:@selector(integerValue)]) {
-              source = [raw integerValue];
-            }
-          }
-        }
-        if (BGSRNDropConsoleEcho(line, source)) {
-          decision(nil);
-          return;
-        }
-        BugseeModule *module = BGSRNLogFilterModule;
-        if (module == nil) {
-          decision(nil);
-          return;
-        }
-        BGSRNLogFilterPending *item = [BGSRNLogFilterPending new];
-        item.event = event;
-        item.decision = decision;
-        item.owner = module;
-        NSString *requestId = nil;
-        @synchronized (BGSRNLogFilterLock()) {
-          BGSRNLogFilterNextId += 1;
-          requestId = [NSString stringWithFormat:@"%lld", BGSRNLogFilterNextId];
-          BGSRNLogFilterPendingTable[requestId] = item;
-        }
-        const BOOL delivered = [module emitLogFilterRequest:requestId line:line];
-        if (!delivered) {
-          BugseeLogFilterDecisionBlock drop = nil;
-          @synchronized (BGSRNLogFilterLock()) {
-            BGSRNLogFilterPending *removed = BGSRNLogFilterPendingTable[requestId];
-            [BGSRNLogFilterPendingTable removeObjectForKey:requestId];
-            drop = removed.decision;
-          }
-          if (drop != nil) {
-            drop(nil);
-          }
-        }
-      }];
-    return;
-  }
   @synchronized (BGSRNLogFilterLock()) {
-    BGSRNLogFilterInstalled = NO;
+    BGSRNLogFilterUserEnabled = enabled;
   }
-  [Bugsee setLogEventFilter:nil];
+  BGSRNInstallLogEventFilter();
 }
 
 - (BOOL)emitLogFilterRequest:(NSString *)requestId line:(NSString *)line {

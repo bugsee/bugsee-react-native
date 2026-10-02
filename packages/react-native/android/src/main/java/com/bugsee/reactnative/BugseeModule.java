@@ -109,6 +109,9 @@ public class BugseeModule extends NativeBugseeSpec
         DataRequestBridge.shared().attach(dataRequestSink, originTracker::currentOrigin);
         NetworkFilterBridge.shared().attach(this);
         LogFilterBridge.shared().attach(this);
+        // The echo drop is installed even when the app never calls setLogFilter.
+        // setEnabled(false) is that pass-through; it does not remove the filter.
+        LogFilterBridge.shared().setEnabled(false);
         BreadcrumbFilterBridge.shared().attach(this);
     }
 
@@ -182,12 +185,20 @@ public class BugseeModule extends NativeBugseeSpec
                 // The SDK reports whether it actually started. Declining — it
                 // is already running, or the token was rejected — is a normal
                 // outcome, so it resolves false rather than rejecting.
-                launched -> promise.resolve(Boolean.TRUE.equals(launched)));
+                launched -> {
+                    // launch can replace the log filter. Put the pass-through
+                    // (or the user filter, if one is already on) back.
+                    LogFilterBridge.shared().ensureInstalled();
+                    promise.resolve(Boolean.TRUE.equals(launched));
+                });
     }
 
     @Override
     public void relaunch(final ReadableMap options, final Promise promise) {
-        Bugsee.relaunch(toOptions(options), relaunched -> promise.resolve(Boolean.TRUE.equals(relaunched)));
+        Bugsee.relaunch(toOptions(options), relaunched -> {
+            LogFilterBridge.shared().ensureInstalled();
+            promise.resolve(Boolean.TRUE.equals(relaunched));
+        });
     }
 
     @Override

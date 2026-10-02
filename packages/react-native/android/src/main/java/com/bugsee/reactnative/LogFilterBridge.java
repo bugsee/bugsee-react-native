@@ -26,16 +26,24 @@ import java.util.concurrent.atomic.AtomicReference;
  * deprecated alias of that method; calling the alias would not be a second
  * filter, but it is not the method the 7.x SDK documents.
  *
+ * <p>The native filter stays installed even when the app has no log callback.
+ * It drops a classified console echo and returns every other line at once,
+ * with no JS round trip. {@link #setEnabled}{@code (false)} does not remove
+ * it. While a user callback is installed, a missing sink still drops: that
+ * is the redaction boundary. A missing sink with no user callback is the
+ * pass-through, and the line is kept.
+ *
  * <p>{@link #filter} returns without waiting. The SDK drops a line whose
  * callback is never run, and at 10 seconds recycles the pooled entry. This
  * bridge forgets the pending request at {@link #BORROW_MS}, strictly earlier,
  * without calling the callback. A recycled entry can carry the same text, so
  * a reply that still sees the original message must not {@code setMessage}
- * or {@code callback.run} once that deadline has passed. A missing sink, a
- * failed emit, or a {@code null} reply while {@code getMessage()} is still
- * the original line and the deadline has not fired pass {@code null} to the
- * SDK, which discards the line. Once the message is no longer that line, the
- * bridge does not call {@code setMessage} or {@code callback.run}.
+ * or {@code callback.run} once that deadline has passed. A missing sink
+ * while the user filter is installed, a failed emit, or a {@code null} reply
+ * while {@code getMessage()} is still the original line and the deadline has
+ * not fired pass {@code null} to the SDK, which discards the line. Once the
+ * message is no longer that line, the bridge does not call {@code setMessage}
+ * or {@code callback.run}.
  */
 final class LogFilterBridge {
 
@@ -55,6 +63,11 @@ final class LogFilterBridge {
     interface Scheduler {
         @NonNull
         Cancellable schedule(@NonNull Runnable task, long delayMs);
+    }
+
+    /** Installs the native filter. Tests install nothing. */
+    interface Installer {
+        void install(@NonNull EventFilter<LogEvent> filter);
     }
 
     /**
@@ -100,25 +113,36 @@ final class LogFilterBridge {
 
     private final Scheduler scheduler;
     private final ConsoleEchoDedup echoes;
+    private final Installer installer;
     private final AtomicReference<Sink> sink = new AtomicReference<>();
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong();
-    private final AtomicBoolean installed = new AtomicBoolean();
+    /** True only while the app has a log callback. False is the native pass-through. */
+    private final AtomicBoolean userFilter = new AtomicBoolean();
 
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private LogFilterBridge() {
-        this(new DaemonScheduler(), System::currentTimeMillis);
+        this(new DaemonScheduler(), System::currentTimeMillis, Bugsee::setLogEventFilter);
     }
 
-    /** Tests pass a scheduler they fire themselves. */
+    /** Tests pass a scheduler they fire themselves. They do not touch {@link Bugsee}. */
     LogFilterBridge(@NonNull final Scheduler scheduler) {
-        this(scheduler, System::currentTimeMillis);
+        this(scheduler, System::currentTimeMillis, filter -> { });
     }
 
     /** Tests pass a clock so an echo claim can expire without waiting. */
     LogFilterBridge(@NonNull final Scheduler scheduler, @NonNull final ConsoleEchoDedup.Clock clock) {
+        this(scheduler, clock, filter -> { });
+    }
+
+    private LogFilterBridge(
+            @NonNull final Scheduler scheduler,
+            @NonNull final ConsoleEchoDedup.Clock clock,
+            @NonNull final Installer installer
+    ) {
         this.scheduler = scheduler;
         this.echoes = new ConsoleEchoDedup(clock);
+        this.installer = installer;
     }
 
     private final EventFilter<LogEvent> filter = new EventFilter<LogEvent>() {
@@ -165,17 +189,23 @@ final class LogFilterBridge {
         }
     }
 
-    /** Installs the filter, or removes it. A second {@code true} is a no-op. */
+    /**
+     * Turns the JS round trip on or off. The native filter stays installed
+     * either way: off is the pass-through, which drops an echo and returns
+     * every other line. It does not pass {@code null} to
+     * {@link Bugsee#setLogEventFilter}.
+     */
     void setEnabled(final boolean enabled) {
-        if (enabled) {
-            if (installed.compareAndSet(false, true)) {
-                Bugsee.setLogEventFilter(filter);
-            }
-            return;
-        }
-        if (installed.compareAndSet(true, false)) {
-            Bugsee.setLogEventFilter(null);
-        }
+        userFilter.set(enabled);
+        ensureInstalled();
+    }
+
+    /**
+     * Puts the native filter back if a launch replaced it. Does not change
+     * whether the user callback is asked.
+     */
+    void ensureInstalled() {
+        installer.install(filter);
     }
 
     /**
@@ -224,9 +254,10 @@ final class LogFilterBridge {
     /**
      * One log event from the SDK. A logcat line tagged {@code ReactNativeJS}
      * whose text was noted by {@link #noteEcho} is the console echo: it is
-     * dropped here, before {@link #ask} tells JS, so the user's filter runs
-     * once. The credit is consumed. Every other line, including the channel
-     * line, a {@code Bugsee.log}, and an RN-internal logcat line, is asked.
+     * dropped here, before JS is asked, so the user's filter runs once. The
+     * credit is consumed. With no user callback, every other line is returned
+     * immediately. With a user callback, those lines are asked. A missing
+     * sink on that path still drops.
      */
     void route(
             @NonNull final LogEvent event,
@@ -234,6 +265,10 @@ final class LogFilterBridge {
     ) {
         if (echoes.dropEcho(event.getLogSource(), event.getTag(), event.getMessage())) {
             drop(callback);
+            return;
+        }
+        if (!userFilter.get()) {
+            keep(callback, event);
             return;
         }
         ask(event, callback);
@@ -297,6 +332,18 @@ final class LogFilterBridge {
             callback.run(null);
         } catch (final Throwable ignored) {
             // The SDK already treats a throw from the callback as a drop.
+        }
+    }
+
+    /** The native pass-through. The line is kept. This is not a drop. */
+    private static void keep(
+            @NonNull final Callback1<LogEvent> callback,
+            @NonNull final LogEvent event
+    ) {
+        try {
+            callback.run(event);
+        } catch (final Throwable ignored) {
+            // The SDK already has the line. A throw here must not replace it.
         }
     }
 

@@ -275,6 +275,7 @@ public class LogFilterBridgeTest {
     public void routeAsksTheChannelLineAndDropsItsLogcatEcho() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.setEnabled(true);
         bridge.noteEcho("hello");
         final RecordingCallback channelCallback = new RecordingCallback();
         bridge.route(new SourcedLog(LogSource.Custom, null, "hello"), channelCallback);
@@ -300,6 +301,43 @@ public class LogFilterBridgeTest {
 
         assertEquals(3, sink.ids.size());
         assertEquals(0, stray.runs);
+    }
+
+    /**
+     * No user callback, and no sink. The noted logcat echo is dropped. A
+     * different tag and the Custom line are returned, not dropped.
+     */
+    @Test
+    public void withNoUserFilterANotedEchoIsDroppedAndOtherLinesAreReturned() {
+        bridge.noteEcho("hello");
+        final SourcedLog echo = new SourcedLog(LogSource.LogCat, ConsoleEchoDedup.JS_CONSOLE_TAG, "hello");
+        final RecordingCallback echoCallback = new RecordingCallback();
+        bridge.route(echo, echoCallback);
+        assertEquals(1, echoCallback.runs);
+        assertTrue(echoCallback.sawNull);
+
+        final SourcedLog otherTag = new SourcedLog(LogSource.LogCat, "ReactNative", "hello");
+        final RecordingCallback otherCallback = new RecordingCallback();
+        bridge.route(otherTag, otherCallback);
+        assertEquals(1, otherCallback.runs);
+        assertSame(otherTag, otherCallback.last);
+
+        final SourcedLog custom = new SourcedLog(LogSource.Custom, null, "hello");
+        final RecordingCallback customCallback = new RecordingCallback();
+        bridge.route(custom, customCallback);
+        assertEquals(1, customCallback.runs);
+        assertSame(custom, customCallback.last);
+    }
+
+    /** A user filter with no sink still drops. That is the redaction boundary. */
+    @Test
+    public void aMissingSinkWhileTheUserFilterIsInstalledDropsTheLine() {
+        bridge.setEnabled(true);
+        final MutableLog event = new MutableLog("secret");
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(event, callback);
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
     }
 
     /** Logcat line with a source and a tag, for the echo route. */
