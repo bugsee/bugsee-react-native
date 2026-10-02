@@ -4064,7 +4064,7 @@ The phase with the most native↔JS round-tripping, hence the most device testin
 ## Phase 13 — Build tooling
 
 - [ ] **13.1** Source maps: `bugsee-cli sourcemaps inject` then `debug-files upload --type sourcemaps`. Injection must happen on the **composed** Hermes map, after `compose-source-maps.js`, or the debug ID lands on a map nothing consults.
-- [ ] **13.2** dSYM upload as an Xcode **scheme post-action** running `bugsee-cli xcode post-action`. A build phase also works but needs `BUGSEE_BUILD_INFO_ALL_ACTIONS=1`, and Xcode 15+ defaults `ENABLE_USER_SCRIPT_SANDBOXING` to `YES`, which blocks it.
+- [x] **13.2** dSYM upload as an Xcode **scheme post-action** running `bugsee-cli xcode post-action`. A build phase also works but needs `BUGSEE_BUILD_INFO_ALL_ACTIONS=1`, and Xcode 15+ defaults `ENABLE_USER_SCRIPT_SANDBOXING` to `YES`, which blocks it.
 - [ ] **13.3** Android mapping and NDK symbols — the Gradle plugin's job once applied. Write `android/bugsee.properties` with the **unprefixed** `app_token=` key (not `plugin.appToken`) at the *root* project, and default `plugin.ndk.enabled=true` for RN, since every RN app ships Hermes and `libreactnative.so` it did not write.
 - [ ] **13.4** Expo config plugin, with a `prebuild --clean` test — the `.xcscheme` edit is the most fragile part and Expo has no helper for it.
 - [ ] **13.5** End-to-end: a release build whose JS stack symbolicates in the dashboard. This is the only test that proves the whole chain.

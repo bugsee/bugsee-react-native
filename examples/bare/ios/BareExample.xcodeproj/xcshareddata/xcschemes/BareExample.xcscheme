@@ -84,5 +84,23 @@
    <ArchiveAction
       buildConfiguration = "Release"
       revealArchiveInOrganizer = "YES">
+      <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Upload dSYMs"
+               scriptText = "for dir in \&#10;  &quot;${PROJECT_DIR}/../node_modules&quot; \&#10;  &quot;${PROJECT_DIR}/../node_modules/@bugsee/react-native/node_modules&quot; \&#10;  &quot;${PROJECT_DIR}/../../../packages/react-native/node_modules&quot;&#10;do&#10;  if [ -x &quot;${dir}/.bin/bugsee-cli&quot; ]; then&#10;    &quot;${dir}/.bin/bugsee-cli&quot; xcode post-action&#10;    exit $?&#10;  fi&#10;done&#10;echo &quot;bugsee-cli: not found under node_modules&quot; &gt;&amp;2&#10;exit 1&#10;">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
+                     BuildableName = "BareExample.app"
+                     BlueprintName = "BareExample"
+                     ReferencedContainer = "container:BareExample.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
    </ArchiveAction>
 </Scheme>
