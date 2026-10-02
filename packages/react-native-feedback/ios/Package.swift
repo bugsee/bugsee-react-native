@@ -39,13 +39,18 @@ let package = Package(
       exclude: ["react-native-spm-prefix.h"],
       publicHeadersPath: ".",
       cSettings: [
-        .unsafeFlags(["-include", "react-native-spm-prefix.h"])
+        .unsafeFlags(["-include", "react-native-spm-prefix.h"]),
+        // The ObjC client imports the Swift module. The .mm is C++ and does
+        // not get cSettings, so the flag is repeated below.
+        .define("BUGSEE_FEEDBACK_SPM", to: "1"),
       ],
       cxxSettings: [
         .define("DEBUG", .when(configuration: .debug)),
         .define("NDEBUG", .when(configuration: .release)),
         // This target does not compile the Swift sources. The generated
-        // header belongs to the BugseeFeedback product.
+        // header belongs to the BugseeFeedback product. The .mm is built
+        // with -fno-cxx-modules, so it cannot import that module; the ObjC
+        // client does.
         .define("BUGSEE_FEEDBACK_SPM", to: "1"),
         .unsafeFlags(["-include", "react-native-spm-prefix.h"]),
       ]

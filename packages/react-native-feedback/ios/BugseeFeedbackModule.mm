@@ -1,26 +1,15 @@
 #import "BugseeFeedbackModule.h"
 
+#import "BugseeFeedbackClient.h"
+
 #import <Bugsee/Bugsee.h>
 #import <Bugsee/BugseeTheme.h>
 
 #include <exception>
 
-// Header import, not @import. This file is ObjC++, and neither delivery
-// path enables C++ modules. A generated Swift header is not on disk when
-// the preprocessor searches for it, so probing for the file selects a
-// header this delivery does not produce.
-//
-// CocoaPods compiles the Swift sources into this pod, so the header is that
-// target's own "Product-Swift.h" (BUGSEE_FEEDBACK_COCOAPODS). SPM consumes
-// the BugseeFeedback product, so the header is that module's
-// (BUGSEE_FEEDBACK_SPM). Exactly one of those is set by the build.
-#if BUGSEE_FEEDBACK_SPM
-#import <BugseeFeedback/BugseeFeedback-Swift.h>
-#elif BUGSEE_FEEDBACK_COCOAPODS
-#import "BugseeReactNativeFeedback-Swift.h"
-#else
-#error "Bugsee feedback Swift header import is not configured"
-#endif
+// BugseeFeedback itself is imported by BugseeFeedbackClient.m. This file is
+// Objective-C++ with C++ modules off, so it cannot import that Swift module,
+// and the generated header is not on this target's header search path.
 
 /// Same shape as `BGSRNGuardedEmit`. This target does not compile
 /// BugseeRNSupport, so the catch lives here. The codegen `emitOn*` call is a
@@ -55,57 +44,6 @@ static BOOL FeedbackGuardedEmit(dispatch_block_t emit, NSString *what) {
 - (void)emitSentMessage:(NSString *)message;
 @end
 
-/// Forwards `BugseeFeedbackListener` onto the TurboModule's events.
-///
-/// Held by the SDK weakly on iOS (`setListener:` stores a weak reference),
-/// so this module keeps the strong reference. `module` is nilled in
-/// `invalidate` before any emit, so a callback that already hopped to main
-/// and is still queued drops the event instead of calling an unset emitter.
-@interface BugseeFeedbackEventRelay : NSObject <BugseeFeedbackListener>
-@property (nonatomic, weak) BugseeFeedbackModule *module;
-@end
-
-@implementation BugseeFeedbackEventRelay
-
-- (void)onNewMessagesReceived:(NSArray<NSString *> *)messages {
-  BugseeFeedbackModule *module = self.module;
-  if (module == nil) {
-    return;
-  }
-  NSString *json = @"[]";
-  if ([messages isKindOfClass:[NSArray class]]) {
-    NSData *data = [NSJSONSerialization dataWithJSONObject:messages options:0 error:nil];
-    if (data != nil) {
-      json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"[]";
-    }
-  }
-  [module emitReceivedMessages:json];
-}
-
-- (void)onNewMessageSent:(NSString *)message {
-  BugseeFeedbackModule *module = self.module;
-  if (module == nil || ![message isKindOfClass:[NSString class]]) {
-    return;
-  }
-  [module emitSentMessage:message];
-}
-
-@end
-
-/// The relay currently installed on `BugseeFeedback.shared`. The SDK holds
-/// its listener weakly; this matches that. A reload installs the new
-/// module's relay before the old `invalidate`, and only the owner may nil
-/// the process-wide listener.
-static __weak BugseeFeedbackEventRelay *InstalledFeedbackRelay = nil;
-
-static void ClearInstalledFeedbackRelay(BugseeFeedbackEventRelay *relay) {
-  if (InstalledFeedbackRelay != relay) {
-    return;
-  }
-  InstalledFeedbackRelay = nil;
-  [[BugseeFeedback shared] setListener:nil];
-}
-
 static NSSet<NSString *> *FeedbackThemeKeys(void) {
   static NSSet<NSString *> *keys;
   static dispatch_once_t once;
@@ -139,35 +77,23 @@ static BOOL ComponentOK(double value) {
 }
 
 @implementation BugseeFeedbackModule {
-  BugseeFeedbackEventRelay *_relay;
+  BugseeFeedbackClient *_client;
 }
 
 RCT_EXPORT_MODULE(BugseeFeedbackModule)
 
 - (instancetype)init {
   if (self = [super init]) {
-    // Idempotent. The SPM product also registers from +load; the CocoaPods
-    // path compiles the Swift sources without that shim, so this is the
-    // registration that path has.
-    //
     // Do not install the listener or emit here. The codegen std::function
     // is unset until getTurboModule runs, and an emit from init would throw
-    // std::bad_function_call.
-    [BugseeFeedback register];
-    _relay = [BugseeFeedbackEventRelay new];
-    _relay.module = self;
+    // std::bad_function_call. Registration and the relay live on the client.
+    _client = [[BugseeFeedbackClient alloc] initWithModule:self];
   }
   return self;
 }
 
 - (void)invalidate {
-  // Disarm this instance first. feedback-spm hops the callback to main; one
-  // already queued reads module and drops the event once this is nil, even
-  // when codegen has already cleared the emitter.
-  _relay.module = nil;
-  // Identity-checked, same shape as `if (BGSRNLogFilterModule == self)`.
-  // A reload can install the new relay before this runs.
-  ClearInstalledFeedbackRelay(_relay);
+  [_client disarm];
 }
 
 - (void)emitReceivedMessages:(NSString *)json {
@@ -183,20 +109,15 @@ RCT_EXPORT_MODULE(BugseeFeedbackModule)
 }
 
 - (void)showFeedbackUI {
-  [[BugseeFeedback shared] showFeedbackUI];
+  [_client showFeedbackUI];
 }
 
 - (void)setGreeting:(NSString *)greeting {
-  [[BugseeFeedback shared] setGreeting:greeting];
+  [_client setGreeting:greeting];
 }
 
 - (void)setListenerEnabled:(BOOL)enabled {
-  if (!enabled) {
-    ClearInstalledFeedbackRelay(_relay);
-    return;
-  }
-  [[BugseeFeedback shared] setListener:_relay];
-  InstalledFeedbackRelay = _relay;
+  [_client setListenerEnabled:enabled];
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

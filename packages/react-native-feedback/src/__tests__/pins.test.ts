@@ -23,6 +23,7 @@ describe('the feedback package pins the same native versions as the core', () =>
     'FeedbackBridge.java',
   );
   const ios = read('ios', 'BugseeFeedbackModule.mm');
+  const client = read('ios', 'BugseeFeedbackClient.m');
 
   it('reads the iOS pin from native-versions.json in the podspec', () => {
     expect(podspec).toMatch(/native\['ios'\]\['sdk'\]/);
@@ -66,11 +67,11 @@ describe('the feedback package pins the same native versions as the core', () =>
   });
 
   it('reaches iOS feedback through BugseeFeedback.shared', () => {
-    expect(ios).toMatch(/\[BugseeFeedback shared\]/);
-    expect(ios).toMatch(/\[BugseeFeedback register\]/);
-    expect(ios).toMatch(/showFeedbackUI/);
-    expect(ios).toMatch(/setGreeting:/);
-    expect(ios).toMatch(/setListener:/);
+    expect(client).toMatch(/\[BugseeFeedback shared\]/);
+    expect(client).toMatch(/\[BugseeFeedback register\]/);
+    expect(client).toMatch(/showFeedbackUI/);
+    expect(client).toMatch(/setGreeting:/);
+    expect(client).toMatch(/setListener:/);
   });
 
   it('imports the generated Swift header for the delivery that builds it', () => {
@@ -79,9 +80,15 @@ describe('the feedback package pins the same native versions as the core', () =>
       'utf8',
     );
     expect(ios).not.toMatch(/__has_include/);
-    expect(ios).toMatch(/#import <BugseeFeedback\/BugseeFeedback-Swift.h>/);
-    expect(ios).toMatch(/#import "BugseeReactNativeFeedback-Swift.h"/);
-    expect(ios).toMatch(/#error "Bugsee feedback Swift header import is not configured"/);
+    expect(client).not.toMatch(/__has_include/);
+    // The .mm is Objective-C++ with C++ modules off, so it cannot import the
+    // Swift module. The ObjC client imports the clang module, whose map
+    // points at the flat BugseeFeedback-Swift.h Xcode emits.
+    expect(client).toMatch(/@import BugseeFeedback;/);
+    expect(client).not.toMatch(/#import <BugseeFeedback\/BugseeFeedback-Swift.h>/);
+    expect(client).not.toMatch(/#import "BugseeFeedback-Swift.h"/);
+    expect(client).toMatch(/#import "BugseeReactNativeFeedback-Swift.h"/);
+    expect(client).toMatch(/#error "Bugsee feedback Swift header import is not configured"/);
     expect(manifest).toMatch(/BUGSEE_FEEDBACK_SPM/);
     expect(podspec).toMatch(/BUGSEE_FEEDBACK_COCOAPODS=1/);
     expect(podspec).toMatch(/private_header_files = 'ios\/\*\*\/\*\.h'/);
@@ -90,9 +97,9 @@ describe('the feedback package pins the same native versions as the core', () =>
 
   it('guards codegen emits and nils the SDK listener only for its own relay', () => {
     expect(ios).toMatch(/catch \(const std::exception &e\)/);
-    expect(ios).toMatch(/_relay\.module = nil/);
-    expect(ios).toMatch(/if \(InstalledFeedbackRelay != relay\)/);
-    expect(ios).toMatch(/setListener:nil/);
+    expect(client).toMatch(/_relay\.module = nil/);
+    expect(client).toMatch(/if \(InstalledFeedbackRelay != relay\)/);
+    expect(client).toMatch(/setListener:nil/);
     expect(bridge).toMatch(/clearListener/);
     expect(bridge).toMatch(/if \(installedListener != expected\)/);
     expect(bridge).not.toMatch(/JSONObject\.NULL/);
