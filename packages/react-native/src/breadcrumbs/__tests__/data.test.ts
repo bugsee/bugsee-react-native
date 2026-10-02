@@ -1,7 +1,9 @@
+import type * as ValidateModule from '../../data/validate';
+
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 
 jest.mock('../../data/validate', () => {
-  const actual = jest.requireActual('../../data/validate') as typeof import('../../data/validate');
+  const actual = jest.requireActual('../../data/validate') as typeof ValidateModule;
   return {
     ...actual,
     copyEventParams(data: unknown) {

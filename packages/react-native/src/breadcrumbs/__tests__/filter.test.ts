@@ -321,7 +321,7 @@ describe('setBreadcrumbFilter', () => {
   });
 
   it('drops a snapshot that is not a JSON object, without calling the filter', async () => {
-    let ran = false;
+    let ran: boolean;
     Bugsee.setBreadcrumbFilter(() => {
       ran = true;
       return {};
@@ -346,7 +346,7 @@ describe('setBreadcrumbFilter', () => {
   });
 
   it('drops a snapshot whose string field is not a string, without calling the filter', async () => {
-    let ran = false;
+    let ran: boolean;
     Bugsee.setBreadcrumbFilter(() => {
       ran = true;
       return {};
