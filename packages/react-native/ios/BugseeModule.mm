@@ -856,10 +856,9 @@ RCT_EXPORT_MODULE(Bugsee)
 /// should land on the nearest level, not be chopped toward one.
 - (void)wrapperLog:(NSString *)message
              level:(double)level {
-  // Keeping this channel line ends the equal-text claim. A later equal line
-  // is not dropped as an unstamped copy, including a native RCTLog or a line
-  // whose source is stdout or stderr. A stderr stamp may still be dropped
-  // once. os_log capture is off, and this package does not wait for that copy.
+  // Keeping this channel line ends the equal-text claim. A later Custom line
+  // of the same text is not dropped. One raw stdout or stderr line of this
+  // text may still be, and so may a stderr stamp.
   BGSRNBeginChannelLine(message);
   @try {
     [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
@@ -1014,12 +1013,12 @@ RCT_EXPORT_MODULE(Bugsee)
           decision(nil);
           return;
         }
-        // A stderr stamp is dropped here, before JS is asked, so the user's
-        // callback runs once for that echo. Not a timeout: the line is not
-        // passed through. An equal line is not dropped because its source is
-        // stdout or stderr. os_log capture is off, and this package does not
-        // wait for an unstamped copy. `dictionary` is how the SDK stores the
-        // source on the event.
+        // The console echo. A stderr stamp, and one raw stdout or stderr line
+        // of the noted text, are dropped here, before JS is asked, so the
+        // user's callback runs once. Not a timeout: the line is not passed
+        // through. A Custom line is not that echo. `dictionary` is how the
+        // SDK stores the source on the event. When it is absent, the source
+        // is unknown and a non-stamp line is not dropped.
         NSInteger source = -1;
         SEL dictionarySelector = NSSelectorFromString(@"dictionary");
         if ([event respondsToSelector:dictionarySelector]) {
