@@ -19,6 +19,8 @@ import type { LogFilter } from './logs/filter';
 import { addBreadcrumb as recordBreadcrumb } from './breadcrumbs/add';
 import { setBreadcrumbFilter as installBreadcrumbFilter } from './breadcrumbs/filter';
 import type { Breadcrumb, BreadcrumbFilter } from './breadcrumbs/types';
+import { setNetworkFilter as installNetworkFilter } from './network/filter';
+import type { NetworkFilter } from './network/filter';
 import { type IssueSeverity, LogLevel } from './options/enums';
 import { labelsArgument, severityArgument } from './report/fields';
 import {
@@ -397,6 +399,28 @@ class Bugsee {
   }
 
   /**
+   * Registers the only network filter. A later call replaces it. No
+   * callback, or `null`, clears it. The callback receives the event the SDK
+   * is about to record and returns that event to keep it. Omitting a
+   * writable key the callback received drops the event. `url` is always
+   * required. `body`, `headers`, `errorDescription`, `errorShortMessage`,
+   * `statusText`, `redirectedFromURL`, and `error` are required when that
+   * key was present, including when its value was `null`. A `null` value
+   * on a key that was present clears that field. A key the snapshot omitted
+   * stays omitted: setting that key to `null` leaves it out of the reply.
+   * `null` and `undefined` drop the event. The native SDK invokes the
+   * filter; JS answers on a later turn, and a callback that throws,
+   * rejects, or never settles drops the event.
+   *
+   * A JS filter replaces the iOS built-in sanitizer. Android runs the
+   * default sanitizer before the callback when
+   * `com.bugsee.option.capture.network.default-sanitizer` is on.
+   */
+  setNetworkFilter(callback?: NetworkFilter | null): void {
+    installNetworkFilter(callback);
+  }
+
+  /**
    * Registers the log filter. A later call replaces it. Called with no
    * callback, or with `null`, clears it.
    *
@@ -764,6 +788,7 @@ export { AttributeErrorCode, BugseeAttributeError } from './attributes/errors';
 export type { AttributeReadValue, AttributeValue } from './attributes/validate';
 
 export type { LogFilter } from './logs/filter';
+export type { NetworkFilter, NetworkFilterEvent } from './network/filter';
 
 export type {
   Breadcrumb,

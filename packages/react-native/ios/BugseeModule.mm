@@ -24,6 +24,7 @@
 #import <BugseeRNSupport/BGSRNGuardedEmit.h>
 #import <BugseeRNSupport/BGSRNValues.h>
 #import <BugseeRNSupport/BGSRNJSON.h>
+#import <BugseeRNSupport/BGSRNNetworkFilter.h>
 #import <BugseeRNSupport/BGSRNAttributes.h>
 #import <BugseeRNSupport/BGSRNDataRequestBridge.h>
 #import <BugseeRNSupport/BGSRNReactWindow.h>
@@ -45,6 +46,7 @@
 #import "BGSRNGuardedEmit.h"
 #import "BGSRNValues.h"
 #import "BGSRNJSON.h"
+#import "BGSRNNetworkFilter.h"
 #import "BGSRNAttributes.h"
 #import "BGSRNDataRequestBridge.h"
 #import "BGSRNReactWindow.h"
@@ -299,9 +301,57 @@ static void BGSRNSetAttribute(NSString *name,
   });
 }
 
-/// One in-flight log-filter request. The decision block is copied: the SDK's
-/// block argument is not guaranteed to outlive the filter call, and the reply
-/// comes back later, from JS.
+
+/// One in-flight network-filter request. The decision block is copied: the
+/// SDK's block argument is not guaranteed to outlive the filter call, and the
+/// reply comes back later, from JS. iOS's decision block is once-only and the
+/// provider does not recycle the event, so a late reply still records. There
+/// is no timer here: one that called `decision(nil)` would drop an event the
+/// SDK is still willing to keep.
+@interface BGSRNNetworkFilterPending : NSObject
+@property (nonatomic, strong) BugseeNetworkEvent *event;
+@property (nonatomic, copy) BugseeNetworkFilterDecisionBlock decision;
+@property (nonatomic, weak) BugseeModule *owner;
+@end
+@implementation BGSRNNetworkFilterPending
+@end
+
+static __weak BugseeModule *BGSRNNetworkFilterModule = nil;
+static BOOL BGSRNNetworkFilterInstalled = NO;
+static NSMutableDictionary<NSString *, BGSRNNetworkFilterPending *> *BGSRNNetworkFilterPendingTable;
+static int64_t BGSRNNetworkFilterNextId = 0;
+
+static id BGSRNNetworkFilterLock(void) {
+  static id lock;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    lock = [NSObject new];
+    BGSRNNetworkFilterPendingTable = [NSMutableDictionary dictionary];
+  });
+  return lock;
+}
+
+/// Answers nil for every request `module` still holds, which drops the event.
+/// Called outside the lock: the SDK's decision block must not re-enter it.
+static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
+  NSMutableArray<BugseeNetworkFilterDecisionBlock> *decisions = [NSMutableArray array];
+  @synchronized (BGSRNNetworkFilterLock()) {
+    for (NSString *key in BGSRNNetworkFilterPendingTable.allKeys) {
+      BGSRNNetworkFilterPending *item = BGSRNNetworkFilterPendingTable[key];
+      if (item.owner == module) {
+        [BGSRNNetworkFilterPendingTable removeObjectForKey:key];
+        if (item.decision != nil) {
+          [decisions addObject:item.decision];
+        }
+      }
+    }
+  }
+  for (BugseeNetworkFilterDecisionBlock decision in decisions) {
+    decision(nil);
+  }
+}
+
+
 @interface BGSRNLogFilterPending : NSObject
 @property (nonatomic, strong) BugseeLogEvent *event;
 @property (nonatomic, copy) BugseeLogFilterDecisionBlock decision;
@@ -623,9 +673,13 @@ RCT_EXPORT_MODULE(Bugsee)
       origin:^NSValue *_Nullable {
         return BGSRNReactOrigin();
       }];
-  // After the emitter exists (this method runs from getTurboModule:, once the
-  // JSI object is built). A log filter installed earlier reads this pointer
-  // when a line arrives; it is nil until then, and a nil module drops the line.
+  // After the emitter exists. A network filter installed earlier reads this
+  // pointer when an event arrives; it is nil until then, and a nil module
+  // drops the event.
+  BGSRNNetworkFilterModule = self;
+  // After the emitter exists. A log filter installed earlier reads this
+  // pointer when a line arrives; it is nil until then, and a nil module
+  // drops the line.
   BGSRNLogFilterModule = self;
   // Same lifetime as the log filter: nil until the emitter exists, and a nil
   // module drops the crumb.
@@ -649,6 +703,12 @@ RCT_EXPORT_MODULE(Bugsee)
   // The next runtime cannot know a created-report handle, and a slot left
   // reserved would make every later createReport reject busy.
   [BGSRNCreatedReports.shared clear];
+  // Drop this module's unanswered network events. A reload may already have
+  // attached the new module; only clear the pointer when it is still us.
+  BGSRNDropNetworkFiltersOwnedBy(self);
+  if (BGSRNNetworkFilterModule == self) {
+    BGSRNNetworkFilterModule = nil;
+  }
   // Drop this module's unanswered log lines. A reload may already have
   // attached the new module; only clear the pointer when it is still us.
   BGSRNDropLogFiltersOwnedBy(self);
@@ -999,14 +1059,105 @@ RCT_EXPORT_MODULE(Bugsee)
   [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
 }
 
-/// `setLogEventFilter:`, the method the iOS SDK installs a log filter with.
-/// There is no `setLogFilter:`. `enabled` registers the bridge; `NO` passes
-/// nil, which removes it. The block returns without waiting on JS.
-///
-/// Installed on the calling queue, before this method returns.
-/// `+[Bugsee setLogEventFilter:]` is `@synchronized` and does not need the
-/// main queue. An async main hop would let `wrapperLog:` on the next line
-/// record before the filter existed.
+
+/// `setNetworkEventFilter:`, the method the iOS SDK installs a network filter
+/// with. `enabled` registers the bridge; `NO` passes nil, which removes it.
+/// The write is synchronized and does not need the main queue, so it happens
+/// before this method returns: a later Bugsee call on the same turn already
+/// sees the filter. The block returns without waiting on JS. There is no
+/// deadline here.
+- (void)setNetworkFilterEnabled:(BOOL)enabled {
+  if (enabled) {
+    @synchronized (BGSRNNetworkFilterLock()) {
+      if (BGSRNNetworkFilterInstalled) {
+        return;
+      }
+      BGSRNNetworkFilterInstalled = YES;
+    }
+    [Bugsee setNetworkEventFilter:^(BugseeNetworkEvent *event, BugseeNetworkFilterDecisionBlock decision) {
+        if (decision == nil) {
+          return;
+        }
+        if (event == nil) {
+          decision(nil);
+          return;
+        }
+        BugseeModule *module = BGSRNNetworkFilterModule;
+        if (module == nil) {
+          decision(nil);
+          return;
+        }
+        NSString *eventJson = BGSRNNetworkEventJSON(event);
+        if (eventJson == nil) {
+          decision(nil);
+          return;
+        }
+        BGSRNNetworkFilterPending *item = [BGSRNNetworkFilterPending new];
+        item.event = event;
+        item.decision = decision;
+        item.owner = module;
+        NSString *requestId = nil;
+        @synchronized (BGSRNNetworkFilterLock()) {
+          BGSRNNetworkFilterNextId += 1;
+          requestId = [NSString stringWithFormat:@"%lld", BGSRNNetworkFilterNextId];
+          BGSRNNetworkFilterPendingTable[requestId] = item;
+        }
+        const BOOL delivered = [module emitNetworkFilterRequest:requestId eventJson:eventJson];
+        if (!delivered) {
+          BugseeNetworkFilterDecisionBlock drop = nil;
+          @synchronized (BGSRNNetworkFilterLock()) {
+            BGSRNNetworkFilterPending *removed = BGSRNNetworkFilterPendingTable[requestId];
+            [BGSRNNetworkFilterPendingTable removeObjectForKey:requestId];
+            drop = removed.decision;
+          }
+          if (drop != nil) {
+            drop(nil);
+          }
+        }
+  }];
+  return;
+  }
+  @synchronized (BGSRNNetworkFilterLock()) {
+    BGSRNNetworkFilterInstalled = NO;
+  }
+  [Bugsee setNetworkEventFilter:nil];
+}
+
+- (BOOL)emitNetworkFilterRequest:(NSString *)requestId eventJson:(NSString *)eventJson {
+  NSDictionary *payload = @{ @"requestId" : requestId, @"eventJson" : eventJson };
+  return BGSRNGuardedEmit(^{
+    [self emitOnNetworkFilterRequest:payload];
+  }, @"onNetworkFilterRequest");
+}
+
+/// `eventJson` nil drops. A JSON object is written onto the same event, so
+/// the timestamp stays. A second reply is a no-op. A late reply still
+/// records: this method does not expire the decision.
+- (void)replyNetworkFilter:(NSString *)requestId eventJson:(NSString * _Nullable)eventJson {
+  if (requestId == nil) {
+    return;
+  }
+  BGSRNNetworkFilterPending *item = nil;
+  @synchronized (BGSRNNetworkFilterLock()) {
+    item = BGSRNNetworkFilterPendingTable[requestId];
+    if (item != nil) {
+      [BGSRNNetworkFilterPendingTable removeObjectForKey:requestId];
+    }
+  }
+  if (item.decision == nil) {
+    return;
+  }
+  if (eventJson == nil) {
+    item.decision(nil);
+    return;
+  }
+  if (!BGSRNApplyNetworkReplacement(item.event, eventJson)) {
+    item.decision(nil);
+    return;
+  }
+  item.decision(item.event);
+}
+
 - (void)setLogFilterEnabled:(BOOL)enabled {
   if (enabled) {
     @synchronized (BGSRNLogFilterLock()) {

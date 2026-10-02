@@ -59,6 +59,16 @@ interface DataRequestEvent {
   originY: number;
 }
 
+interface NetworkFilterRequestEvent {
+  requestId: string;
+  eventJson: string;
+}
+
+const networkFilterRequestListeners = new Set<(event: NetworkFilterRequestEvent) => void>();
+
+/** Counted separately from the Set's size, for the same reason as `reportHandlerRequestSubscribeCalls`. */
+let networkFilterRequestSubscribeCalls = 0;
+
 const dataRequestListeners = new Set<(event: DataRequestEvent) => void>();
 
 /** Counted separately from the Set's size, for the same reason as `reportHandlerRequestSubscribeCalls`: the dispatcher always passes the same function reference, so the Set alone cannot tell "subscribed once" from "subscribed four times, deduped". */
@@ -127,6 +137,33 @@ export const native = {
 
   replyDataRequest: jest.fn<void, [string, string | null]>(),
   setViewTreeEnabled: jest.fn<void, [boolean]>(),
+
+  /**
+   * The codegen EventEmitter for a native network-filter request. Tests
+   * drive it with `emitNetworkFilterRequest`. `eventJson` is the event the
+   * SDK handed the filter. The reply is that event's replacement as JSON,
+   * or `null` to drop it.
+   */
+  onNetworkFilterRequest(listener: (event: NetworkFilterRequestEvent) => void) {
+    networkFilterRequestSubscribeCalls += 1;
+    networkFilterRequestListeners.add(listener);
+    return {
+      remove: () => {
+        networkFilterRequestListeners.delete(listener);
+      },
+    };
+  },
+
+  emitNetworkFilterRequest(event: NetworkFilterRequestEvent): void {
+    for (const listener of [...networkFilterRequestListeners]) listener(event);
+  },
+
+  networkFilterRequestSubscribeCallCount(): number {
+    return networkFilterRequestSubscribeCalls;
+  },
+
+  setNetworkFilterEnabled: jest.fn<void, [boolean]>(),
+  replyNetworkFilter: jest.fn<void, [string, string | null]>(),
 
   /**
    * The codegen EventEmitter for a native log-filter request. Tests drive it
@@ -303,6 +340,8 @@ export const native = {
     reportHandlerRequestSubscribeCalls = 0;
     dataRequestListeners.clear();
     dataRequestSubscribeCalls = 0;
+    networkFilterRequestListeners.clear();
+    networkFilterRequestSubscribeCalls = 0;
     logFilterRequestListeners.clear();
     logFilterRequestSubscribeCalls = 0;
     breadcrumbFilterRequestListeners.clear();
