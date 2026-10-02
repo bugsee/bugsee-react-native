@@ -33,7 +33,27 @@ if [[ -z "$js" ]]; then
   exit 1
 fi
 
-cp "$js" "${js}.bugsee-js-source"
+# jsBundleDir is packaged as assets. Preserve files beside the bundle would
+# ship in the APK. Intermediates are not.
+js_dir="$(dirname "$js")"
+marker="/generated/assets/"
+if [[ -n "${BUGSEE_PRESERVE_DIR:-}" ]]; then
+  preserve_dir="$BUGSEE_PRESERVE_DIR"
+elif [[ "$js_dir" == *"$marker"* ]]; then
+  preserve_dir="${js_dir/$marker//intermediates/bugsee-sourcemaps/}"
+else
+  echo "bugsee: refusing to write preserve files beside the bundle ($js_dir)" >&2
+  exit 1
+fi
+case "$preserve_dir" in
+  "$js_dir"|"$js_dir"/*)
+    echo "bugsee: refusing to write preserve files into the packaged asset directory" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$preserve_dir"
+base="$(basename "$js")"
+cp "$js" "${preserve_dir}/${base}.bugsee-js-source"
 
 find_hermesc() {
   if [[ -n "${BUGSEE_REAL_HERMESC:-}" && -x "$BUGSEE_REAL_HERMESC" ]]; then
@@ -64,5 +84,5 @@ real="$(find_hermesc)" || {
   echo "bugsee: hermesc binary not found" >&2
   exit 1
 }
-printf '%s\n' "$real" > "${js}.bugsee-hermesc"
+printf '%s\n' "$real" > "${preserve_dir}/${base}.bugsee-hermesc"
 exec "$real" "$@"

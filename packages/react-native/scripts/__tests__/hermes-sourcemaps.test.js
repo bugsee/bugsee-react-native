@@ -163,4 +163,88 @@ fs.writeFileSync(out, JSON.stringify({ version: 3, file: 'recomposed.js', mappin
       spawn.mock.calls.some((call) => (call[1] ?? []).join(' ').includes('debug-files')),
     ).toBe(false);
   });
+
+  it('does not leave preserve files beside the packaged bundle', () => {
+    const assets = path.join(dir, 'build/generated/assets/react/release');
+    const intermediates = path.join(dir, 'build/intermediates/bugsee-sourcemaps/react/release');
+    fs.mkdirSync(assets, { recursive: true });
+    const packaged = path.join(assets, 'index.android.bundle');
+    fs.writeFileSync(packaged, 'console.log("bugsee-fixture")\n');
+
+    const hermesc = path.join(dir, 'hermesc');
+    fs.writeFileSync(hermesc, '#!/bin/sh\nexit 0\n');
+    fs.chmodSync(hermesc, 0o755);
+    const preserve = path.join(__dirname, '..', 'hermesc-preserve-js.sh');
+    const saved = cp.spawnSync(
+      preserve,
+      ['-w', '-emit-binary', '-out', `${packaged}.hbc`, packaged, '-O', '-output-source-map'],
+      { env: { ...process.env, BUGSEE_REAL_HERMESC: hermesc } },
+    );
+    expect(saved.status).toBe(0);
+    expect(fs.existsSync(`${packaged}.bugsee-js-source`)).toBe(false);
+    expect(fs.existsSync(`${packaged}.bugsee-hermesc`)).toBe(false);
+    expect(fs.existsSync(path.join(intermediates, 'index.android.bundle.bugsee-js-source'))).toBe(
+      true,
+    );
+
+    // A copy left in the asset directory from an older build must not survive finish.
+    fs.writeFileSync(`${packaged}.bugsee-js-source`, 'packaged source');
+    fs.writeFileSync(`${packaged}.bugsee-hermesc`, hermesc);
+    fs.writeFileSync(`${packaged}.bugsee-recompile`, 'packaged temp');
+    const composedPath = path.join(dir, 'index.android.bundle.map');
+    const intermediatePath = path.join(dir, 'index.android.bundle.compiler.map');
+    const packagerPath = path.join(dir, 'index.android.bundle.packager.map');
+    writeJson(composedPath, { version: 3, file: 'composed.js', mappings: 'AACA' });
+    writeJson(intermediatePath, { version: 3, file: 'compiler.js', mappings: 'AAAA' });
+    writeJson(packagerPath, { version: 3, file: 'packager.js', mappings: 'AAAC' });
+    const compile = path.join(dir, 'hermesc-compile');
+    fs.writeFileSync(
+      compile,
+      `#!/bin/sh
+out=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-out" ]; then out="$arg"; fi
+  prev="$arg"
+done
+input=""
+for arg in "$@"; do
+  case "$arg" in
+    -*) continue ;;
+  esac
+  if [ "$arg" != "$out" ] && [ -f "$arg" ]; then input="$arg"; fi
+done
+cp "$input" "$out"
+printf '%s\\n' '{"version":3,"mappings":"BBBB"}' > "$out.map"
+`,
+    );
+    fs.chmodSync(compile, 0o755);
+    const composeScript = path.join(dir, 'compose-source-maps.js');
+    fs.writeFileSync(
+      composeScript,
+      `const fs = require('fs');
+const args = process.argv.slice(2);
+let out;
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '-o') out = args[++i];
+}
+fs.writeFileSync(out, JSON.stringify({ version: 3, mappings: 'CCCC' }));
+`,
+    );
+
+    finishAfterCompose({
+      bundlePath: path.join(intermediates, 'index.android.bundle.bugsee-js-source'),
+      bytecodePath: packaged,
+      composedMapPath: composedPath,
+      intermediateMapPath: intermediatePath,
+      packagerMapPath: packagerPath,
+      composeScript,
+      hermesc: compile,
+      hermesArgs: ['-O', '-output-source-map'],
+    });
+
+    const names = fs.readdirSync(assets);
+    expect(names.filter((name) => name.includes('bugsee'))).toEqual([]);
+    expect(fs.readFileSync(packaged, 'utf8')).toContain('_bugseeDebugIds');
+  });
 });

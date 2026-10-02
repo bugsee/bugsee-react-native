@@ -126,30 +126,52 @@ afterEvaluate {
     }.configureEach { bundleTask ->
         bundleTask.doLast {
             def asset = bundleTask.bundleAssetName.get()
-            def jsDir = bundleTask.jsBundleDir.get().asFile
-            def preserved = new File(jsDir, asset + ".bugsee-js-source")
-            if (!preserved.isFile()) {
-                return
+            def assetDir = bundleTask.jsBundleDir.get().asFile
+            // Same rewrite as hermesc-preserve-js.sh: assets are packaged, intermediates are not.
+            def preserveDir = new File(assetDir.absolutePath.replace(
+                "/generated/assets/",
+                "/intermediates/bugsee-sourcemaps/"
+            ))
+            if (preserveDir.absolutePath == assetDir.absolutePath) {
+                throw new GradleException("Bugsee preserve directory is the packaged asset directory")
             }
-            def composed = new File(bundleTask.jsSourceMapsDir.get().asFile, asset + ".map")
-            def interDir = bundleTask.jsIntermediateSourceMapsDir.get().asFile
-            def hook = file("../../node_modules/@bugsee/react-native/scripts/hermes-sourcemaps.js")
-            def compose = file("../../node_modules/react-native/scripts/compose-source-maps.js")
-            def cmd = [
-                "node", hook.absolutePath, "finish",
-                "--bundle", preserved.absolutePath,
-                "--bytecode", new File(jsDir, asset).absolutePath,
-                "--composed", composed.absolutePath,
-                "--intermediate", new File(interDir, asset + ".compiler.map").absolutePath,
-                "--packager", new File(interDir, asset + ".packager.map").absolutePath,
-                "--compose", compose.absolutePath,
+            def preserved = new File(preserveDir, asset + ".bugsee-js-source")
+            def packagedCopies = [
+                new File(assetDir, asset + ".bugsee-js-source"),
+                new File(assetDir, asset + ".bugsee-hermesc"),
+                new File(assetDir, asset + ".bugsee-recompile"),
+                new File(assetDir, asset + ".bugsee-recompile.map"),
             ]
-            bundleTask.hermesFlags.get().each { flag ->
-                cmd.add("--hermes-arg")
-                cmd.add(flag)
-            }
-            project.exec {
-                commandLine cmd
+            try {
+                if (preserved.isFile()) {
+                    def composed = new File(bundleTask.jsSourceMapsDir.get().asFile, asset + ".map")
+                    def interDir = bundleTask.jsIntermediateSourceMapsDir.get().asFile
+                    def hook = file("../../node_modules/@bugsee/react-native/scripts/hermes-sourcemaps.js")
+                    def compose = file("../../node_modules/react-native/scripts/compose-source-maps.js")
+                    def cmd = [
+                        "node", hook.absolutePath, "finish",
+                        "--bundle", preserved.absolutePath,
+                        "--bytecode", new File(assetDir, asset).absolutePath,
+                        "--composed", composed.absolutePath,
+                        "--intermediate", new File(interDir, asset + ".compiler.map").absolutePath,
+                        "--packager", new File(interDir, asset + ".packager.map").absolutePath,
+                        "--compose", compose.absolutePath,
+                    ]
+                    def hermescNote = new File(preserveDir, asset + ".bugsee-hermesc")
+                    if (hermescNote.isFile()) {
+                        cmd.add("--hermesc")
+                        cmd.add(hermescNote.getText("UTF-8").trim())
+                    }
+                    bundleTask.hermesFlags.get().each { flag ->
+                        cmd.add("--hermes-arg")
+                        cmd.add(flag)
+                    }
+                    project.exec {
+                        commandLine cmd
+                    }
+                }
+            } finally {
+                packagedCopies.each { copy -> copy.delete() }
             }
         }
     }

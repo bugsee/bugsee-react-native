@@ -95,25 +95,59 @@ function injectComposedSourceMap({ bundlePath, composedMapPath, cliPath }) {
   }
 }
 
+function preserveDirFor(filePath) {
+  const dir = path.dirname(filePath);
+  const marker = `${path.sep}generated${path.sep}assets${path.sep}`;
+  const replacement = `${path.sep}intermediates${path.sep}bugsee-sourcemaps${path.sep}`;
+  if (!dir.includes(marker)) return null;
+  const preserveDir = dir.replace(marker, replacement);
+  return preserveDir === dir ? null : preserveDir;
+}
+
 function readHermescSidecar(bytecodePath) {
-  const sidecar = `${bytecodePath}.bugsee-hermesc`;
-  if (!fs.existsSync(sidecar)) return null;
-  const hermesc = fs.readFileSync(sidecar, 'utf8').trim();
-  return hermesc || null;
+  const name = `${path.basename(bytecodePath)}.bugsee-hermesc`;
+  const outside = preserveDirFor(bytecodePath);
+  const candidates = [
+    outside ? path.join(outside, name) : null,
+    path.join(path.dirname(bytecodePath), name),
+  ].filter(Boolean);
+  for (const sidecar of candidates) {
+    if (!fs.existsSync(sidecar)) continue;
+    const hermesc = fs.readFileSync(sidecar, 'utf8').trim();
+    if (hermesc) return hermesc;
+  }
+  return null;
+}
+
+const PACKAGED_PRESERVE_SUFFIXES = [
+  '.bugsee-js-source',
+  '.bugsee-hermesc',
+  '.bugsee-recompile',
+  '.bugsee-recompile.map',
+];
+
+function removePackagedPreserveFiles(bytecodePath) {
+  if (!bytecodePath) return;
+  for (const suffix of PACKAGED_PRESERVE_SUFFIXES) {
+    fs.rmSync(bytecodePath + suffix, { force: true });
+  }
 }
 
 function recompile({ hermesc, bundlePath, bytecodePath, intermediateMapPath, hermesArgs }) {
-  const tempOut = `${bytecodePath}.bugsee-recompile`;
-  const args = ['-w', '-emit-binary', '-max-diagnostic-width=80', ...(hermesArgs ?? [])];
-  if (!args.includes('-output-source-map')) args.push('-output-source-map');
-  args.push('-out', tempOut, bundlePath);
-  run(hermesc, args, 'hermesc');
-  fs.copyFileSync(tempOut, bytecodePath);
-  fs.rmSync(tempOut, { force: true });
-  const emittedMap = `${tempOut}.map`;
-  if (intermediateMapPath && fs.existsSync(emittedMap)) {
-    fs.copyFileSync(emittedMap, intermediateMapPath);
-    fs.rmSync(emittedMap, { force: true });
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-hermesc-'));
+  try {
+    const tempOut = path.join(stage, 'bundle.hbc');
+    const args = ['-w', '-emit-binary', '-max-diagnostic-width=80', ...(hermesArgs ?? [])];
+    if (!args.includes('-output-source-map')) args.push('-output-source-map');
+    args.push('-out', tempOut, bundlePath);
+    run(hermesc, args, 'hermesc');
+    fs.copyFileSync(tempOut, bytecodePath);
+    const emittedMap = `${tempOut}.map`;
+    if (intermediateMapPath && fs.existsSync(emittedMap)) {
+      fs.copyFileSync(emittedMap, intermediateMapPath);
+    }
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
   }
 }
 
@@ -139,26 +173,30 @@ function stampDebugId(mapPath, debugId) {
  * then write the bundle's id back onto the composed map only.
  */
 function finishAfterCompose(opts) {
-  const injected = injectComposedSourceMap(opts);
-  if (!opts.bytecodePath) {
-    return injected;
+  try {
+    const injected = injectComposedSourceMap(opts);
+    if (!opts.bytecodePath) {
+      return injected;
+    }
+    const hermesc = opts.hermesc || readHermescSidecar(opts.bytecodePath);
+    if (!hermesc) {
+      throw new Error('hermesc not found; the debug-id stub would not be in the bytecode');
+    }
+    recompile({
+      hermesc,
+      bundlePath: opts.bundlePath,
+      bytecodePath: opts.bytecodePath,
+      intermediateMapPath: opts.intermediateMapPath,
+      hermesArgs: opts.hermesArgs,
+    });
+    if (opts.composeScript) {
+      runCompose(opts);
+      stampDebugId(opts.composedMapPath, injected.debugId);
+    }
+    return { debugId: injected.debugId, uploadArgv: uploadArgv(opts.composedMapPath) };
+  } finally {
+    removePackagedPreserveFiles(opts.bytecodePath);
   }
-  const hermesc = opts.hermesc || readHermescSidecar(opts.bytecodePath);
-  if (!hermesc) {
-    throw new Error('hermesc not found; the debug-id stub would not be in the bytecode');
-  }
-  recompile({
-    hermesc,
-    bundlePath: opts.bundlePath,
-    bytecodePath: opts.bytecodePath,
-    intermediateMapPath: opts.intermediateMapPath,
-    hermesArgs: opts.hermesArgs,
-  });
-  if (opts.composeScript) {
-    runCompose(opts);
-    stampDebugId(opts.composedMapPath, injected.debugId);
-  }
-  return { debugId: injected.debugId, uploadArgv: uploadArgv(opts.composedMapPath) };
 }
 
 function parseArgs(argv) {
