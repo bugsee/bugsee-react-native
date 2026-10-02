@@ -8,6 +8,9 @@ jest.mock('../../exceptions/handlers', () => ({
   installExceptionHandlers: jest.fn(),
   setExceptionCaptureEnabled: jest.fn(),
 }));
+jest.mock('../../console/capture', () => ({
+  installConsoleCapture: jest.fn(),
+}));
 
 import Bugsee, { PACKAGE_VERSION, WRAPPER_TYPE } from '../../index';
 
