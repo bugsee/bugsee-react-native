@@ -484,6 +484,203 @@ describe('setBreadcrumbFilter', () => {
     );
   });
 
+  it('an unknown addId does not take an owed slot', async () => {
+    const owed = jest.fn((crumb: Record<string, unknown>) => ({
+      ...crumb,
+      message: 'FROM_ADD',
+    }));
+    Bugsee.setBreadcrumbFilter(owed);
+    Bugsee.addBreadcrumb({
+      category: 'ui',
+      level: 'info',
+      message: 'same',
+      type: 'user',
+    });
+    const id = lastAddId();
+    const installed = jest.fn((crumb: Record<string, unknown>) => ({
+      ...crumb,
+      message: 'FROM_CURRENT',
+    }));
+    Bugsee.setBreadcrumbFilter(installed);
+    emit('1', { ...snapshot, message: 'same', type: 'user' }, 'no-such-id');
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      '1',
+      jsonOf({ category: 'ui', message: 'FROM_CURRENT', type: 'user', level: 'info' }),
+    );
+    expect(owed).not.toHaveBeenCalled();
+
+    native.replyBreadcrumbFilter.mockClear();
+    emit('2', { ...snapshot, message: 'same', type: 'user' }, id);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      '2',
+      jsonOf({ category: 'ui', message: 'FROM_ADD', type: 'user', level: 'info' }),
+    );
+    expect(owed).toHaveBeenCalledTimes(1);
+    expect(installed).toHaveBeenCalledTimes(1);
+  });
+
+  it('a false native return drops only the add that returned false', async () => {
+    const first = jest.fn((crumb: Record<string, unknown>) => ({
+      ...crumb,
+      message: 'FIRST',
+    }));
+    Bugsee.setBreadcrumbFilter(first);
+    Bugsee.addBreadcrumb({
+      category: 'ui',
+      level: 'info',
+      message: 'same',
+      type: 'user',
+    });
+    const firstId = lastAddId();
+    const second = jest.fn((crumb: Record<string, unknown>) => ({
+      ...crumb,
+      message: 'SECOND',
+    }));
+    Bugsee.setBreadcrumbFilter(second);
+    native.addBreadcrumb.mockReturnValueOnce(false);
+    Bugsee.addBreadcrumb({
+      category: 'ui',
+      level: 'info',
+      message: 'same',
+      type: 'user',
+    });
+    const secondId = lastAddId();
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, message: 'CURRENT' }));
+    emit('1', { ...snapshot, message: 'same', type: 'user' }, firstId);
+    emit('2', { ...snapshot, message: 'same', type: 'user' }, secondId);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenNthCalledWith(
+      1,
+      '1',
+      jsonOf({ category: 'ui', message: 'FIRST', type: 'user', level: 'info' }),
+    );
+    expect(native.replyBreadcrumbFilter).toHaveBeenNthCalledWith(
+      2,
+      '2',
+      jsonOf({ category: 'ui', message: 'CURRENT', type: 'user', level: 'info' }),
+    );
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).not.toHaveBeenCalled();
+  });
+
+  it('a throw from the native add drops the owed slot', async () => {
+    const redactor = jest.fn((crumb: Record<string, unknown>) => ({
+      ...crumb,
+      message: 'REDACTED',
+    }));
+    Bugsee.setBreadcrumbFilter(redactor);
+    native.addBreadcrumb.mockImplementationOnce(() => {
+      throw new Error('bridge down');
+    });
+    expect(() =>
+      Bugsee.addBreadcrumb({
+        category: 'ui',
+        level: 'info',
+        message: 'probe SECRET',
+        type: 'user',
+      }),
+    ).toThrow('bridge down');
+    const id = lastAddId();
+    Bugsee.setBreadcrumbFilter((crumb) => crumb);
+    emit('1', { ...snapshot, message: 'probe SECRET', type: 'user' }, id);
+    await flush();
+    expect(redactor).not.toHaveBeenCalled();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      '1',
+      jsonOf({
+        category: 'ui',
+        message: 'probe SECRET',
+        type: 'user',
+        level: 'info',
+      }),
+    );
+  });
+
+  it('an empty crumbJson releases the owed callback without running it', async () => {
+    const redactor = jest.fn((crumb: Record<string, unknown>) => ({
+      ...crumb,
+      message: 'REDACTED',
+    }));
+    Bugsee.setBreadcrumbFilter(redactor);
+    Bugsee.addBreadcrumb({
+      category: 'ui',
+      level: 'info',
+      message: 'probe SECRET',
+      type: 'user',
+    });
+    const id = lastAddId();
+    Bugsee.setBreadcrumbFilter((crumb) => crumb);
+    native.emitBreadcrumbFilterRequest({ requestId: 'rel', crumbJson: '', addId: id });
+    await flush();
+    expect(redactor).not.toHaveBeenCalled();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('rel', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    emit('1', { ...snapshot, message: 'probe SECRET', type: 'user' }, id);
+    await flush();
+    expect(redactor).not.toHaveBeenCalled();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      '1',
+      jsonOf({
+        category: 'ui',
+        message: 'probe SECRET',
+        type: 'user',
+        level: 'info',
+      }),
+    );
+  });
+
+  it('releasing an add already claimed does not drop another owed slot', async () => {
+    const first = jest.fn((crumb: Record<string, unknown>) => ({
+      ...crumb,
+      message: 'FIRST',
+    }));
+    Bugsee.setBreadcrumbFilter(first);
+    Bugsee.addBreadcrumb({
+      category: 'ui',
+      level: 'info',
+      message: 'same',
+      type: 'user',
+    });
+    const firstId = lastAddId();
+    const second = jest.fn((crumb: Record<string, unknown>) => ({
+      ...crumb,
+      message: 'SECOND',
+    }));
+    Bugsee.setBreadcrumbFilter(second);
+    native.addBreadcrumb.mockImplementationOnce((...args: unknown[]) => {
+      const id = args[5];
+      if (typeof id !== 'string') {
+        throw new Error('addBreadcrumb did not retain an id');
+      }
+      native.emitBreadcrumbFilterRequest({
+        requestId: 'inline',
+        crumbJson: JSON.stringify({ ...snapshot, message: 'same', type: 'user' }),
+        addId: id,
+      });
+      return false;
+    });
+    Bugsee.addBreadcrumb({
+      category: 'ui',
+      level: 'info',
+      message: 'same',
+      type: 'user',
+    });
+    await flush();
+    native.replyBreadcrumbFilter.mockClear();
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, message: 'CURRENT' }));
+    emit('1', { ...snapshot, message: 'same', type: 'user' }, firstId);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      '1',
+      jsonOf({ category: 'ui', message: 'FIRST', type: 'user', level: 'info' }),
+    );
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
   it('drops a snapshot whose level is not a name', async () => {
     let ran = false;
     Bugsee.setBreadcrumbFilter((crumb) => {
