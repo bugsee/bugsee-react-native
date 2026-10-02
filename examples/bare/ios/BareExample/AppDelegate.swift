@@ -5,11 +5,17 @@ import ReactAppDependencyProvider
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
+  /// The scene's window, kept here too for code that still reads
+  /// `UIApplication.shared.delegate?.window`.
   var window: UIWindow?
 
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
 
+  /// React Native starts in the window `SceneDelegate` creates: since iOS 27
+  /// an app that has not adopted the UIScene lifecycle is stopped at launch
+  /// (`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`), and
+  /// `Info.plist` declares the one scene this app has.
   func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
@@ -23,15 +29,31 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     reactNativeDelegate = delegate
     reactNativeFactory = factory
 
-    window = UIWindow(frame: UIScreen.main.bounds)
+    return true
+  }
+}
 
-    factory.startReactNative(
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+  var window: UIWindow?
+
+  func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    guard let windowScene = scene as? UIWindowScene,
+          let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
+      return
+    }
+    let window = UIWindow(windowScene: windowScene)
+    self.window = window
+    appDelegate.window = window
+
+    appDelegate.reactNativeFactory?.startReactNative(
       withModuleName: "BareExample",
       in: window,
-      launchOptions: launchOptions
+      launchOptions: nil
     )
-
-    return true
   }
 }
 
