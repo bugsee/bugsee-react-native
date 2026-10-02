@@ -22,9 +22,8 @@ function appBuildableReference(scheme: string): string {
 }
 
 /**
- * Inserts the bare example's Archive post-action. The script is not
- * rewritten. The EnvironmentBuildable is the scheme's own app target, so
- * ARCHIVE_PATH is provided.
+ * Inserts the Archive post-action. The EnvironmentBuildable is the scheme's
+ * own app target, so ARCHIVE_PATH is provided.
  */
 export function insertDsymPostAction(scheme: string, script: string = DSYM_POST_ACTION_SCRIPT): string {
   if (scheme.includes('xcode post-action')) {

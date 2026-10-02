@@ -18,10 +18,6 @@ const barePbx = join(
   repoRoot,
   'examples/bare/ios/BareExample.xcodeproj/project.pbxproj',
 );
-const bareScheme = join(
-  repoRoot,
-  'examples/bare/ios/BareExample.xcodeproj/xcshareddata/xcschemes/BareExample.xcscheme',
-);
 
 function decodeXml(value: string): string {
   return value
@@ -42,16 +38,6 @@ function bareBundleScript(): string {
   }
   const quoted = line.trim().replace(/^shellScript = /, '').replace(/;$/, '');
   return decodePbxString(quoted);
-}
-
-function barePostActionScript(): string {
-  const scheme = readFileSync(bareScheme, 'utf8');
-  const match = scheme.match(/\bscriptText\s*=\s*"([^"]*)"/);
-  const encoded = match?.[1];
-  if (encoded === undefined) {
-    throw new Error('bare scheme has no scriptText');
-  }
-  return decodeXml(encoded);
 }
 
 const REAL_TOKEN = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -109,8 +95,9 @@ describe('settled iOS hooks', () => {
     expect(BARE_BUNDLE_SCRIPT).not.toContain('react-native-xcode.sh');
   });
 
-  it('copies the bare Archive post-action script', () => {
-    expect(DSYM_POST_ACTION_SCRIPT).toBe(barePostActionScript());
+  it('keeps the Archive post-action upload guards', () => {
+    expect(DSYM_POST_ACTION_SCRIPT).toContain('xcode post-action');
+    expect(DSYM_POST_ACTION_SCRIPT).not.toContain('xcode upload-dsyms');
     expect(DSYM_POST_ACTION_SCRIPT).not.toMatch(/\.bin\/bugsee-cli/);
     expect(DSYM_POST_ACTION_SCRIPT).not.toMatch(/with-environment\.sh/);
     expect(DSYM_POST_ACTION_SCRIPT).not.toMatch(/\/v2/);
@@ -118,6 +105,19 @@ describe('settled iOS hooks', () => {
     expect(DSYM_POST_ACTION_SCRIPT).not.toMatch(/--force-foreground/);
     expect(DSYM_POST_ACTION_SCRIPT).not.toMatch(/BUGSEE_BUILD_INFO_ALL_ACTIONS/);
     expect(DSYM_POST_ACTION_SCRIPT).not.toMatch(/BUGSEE_BUILD_INFO_ALL_CONFIGURATIONS/);
+    expect(DSYM_POST_ACTION_SCRIPT).toContain('if [ -n "$TOKEN" ]; then');
+    expect(DSYM_POST_ACTION_SCRIPT).toContain('export BUGSEE_APP_TOKEN="$TOKEN"');
+    expect(DSYM_POST_ACTION_SCRIPT).toContain('if [ -n "$ENDPOINT" ]; then');
+    expect(DSYM_POST_ACTION_SCRIPT).toContain('export BUGSEE_ENDPOINT="$ENDPOINT"');
+  });
+
+  it('resolves bugsee-cli from the package graph', () => {
+    expect(DSYM_POST_ACTION_SCRIPT).toContain("require.resolve('@bugsee/cli");
+    expect(DSYM_POST_ACTION_SCRIPT).not.toContain('packages/react-native/node_modules');
+    const resolveAt = DSYM_POST_ACTION_SCRIPT.indexOf("require.resolve('@bugsee/cli");
+    const exitAt = DSYM_POST_ACTION_SCRIPT.lastIndexOf('exit 1');
+    expect(resolveAt).toBeGreaterThan(-1);
+    expect(exitAt).toBeGreaterThan(resolveAt);
   });
 
   it('replaces a classic bundle phase with the bare hook', () => {
