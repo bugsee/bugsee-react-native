@@ -172,6 +172,64 @@ describe('setNetworkFilter', () => {
     expect(repliedEvent(0)?.url).toBe('https://kept.example');
   });
 
+  it('a partial object that omits body and headers replies null', async () => {
+    Bugsee.setNetworkFilter(() => ({ url: 'https://redacted' }));
+    emit('1');
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('deleting body, or setting it undefined, replies null', async () => {
+    Bugsee.setNetworkFilter((event) => {
+      const next = { ...event };
+      delete (next as { body?: string | null }).body;
+      return next;
+    });
+    emit('1');
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+
+    native.replyNetworkFilter.mockClear();
+    Bugsee.setNetworkFilter((event) => ({ ...event, body: undefined }));
+    emit('2');
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('2', null);
+  });
+
+  it('body null when the key was present is kept', async () => {
+    Bugsee.setNetworkFilter((event) => ({ ...event, body: null }));
+    emit('1', { ...ORIGINAL, body: 'secret' });
+    await flush();
+    const payload = native.replyNetworkFilter.mock.calls[0]?.[1] as string;
+    expect(payload).toContain('"body":null');
+    expect(repliedEvent(0)?.url).toBe(ORIGINAL.url);
+  });
+
+  it('a spread that changes url and keeps every key the snapshot sent is kept', async () => {
+    Bugsee.setNetworkFilter((event) => ({ ...event, url: 'https://redacted.example/path' }));
+    emit('1');
+    await flush();
+    const parsed = repliedEvent(0);
+    expect(parsed?.url).toBe('https://redacted.example/path');
+    expect(parsed).toHaveProperty('body');
+    expect(parsed).toHaveProperty('headers');
+  });
+
+  it('a spread of an event whose snapshot omitted body is kept without a body key', async () => {
+    const { body: _body, ...withoutBody } = ORIGINAL;
+    Bugsee.setNetworkFilter((event) => ({ ...event, url: 'wss://example/hot?redacted' }));
+    native.emitNetworkFilterRequest({
+      requestId: '1',
+      eventJson: JSON.stringify(withoutBody),
+    });
+    await flush();
+    const payload = native.replyNetworkFilter.mock.calls[0]?.[1] as string;
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    expect(parsed.url).toBe('wss://example/hot?redacted');
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'body')).toBe(false);
+    expect(payload).not.toContain('"body"');
+  });
+
   it('subscribes to native requests once', () => {
     Bugsee.setNetworkFilter((event) => event);
     Bugsee.setNetworkFilter((event) => event);

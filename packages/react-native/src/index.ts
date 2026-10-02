@@ -381,10 +381,13 @@ class Bugsee {
   /**
    * Registers the only network filter. A later call replaces it. No
    * callback, or `null`, clears it. The callback receives the event the SDK
-   * is about to record and returns that event (or a replacement of the same
-   * shape) to keep it. `null` and `undefined` drop it. The native SDK invokes
-   * the filter; JS answers on a later turn, and a callback that throws,
-   * rejects, or never settles drops the event.
+   * is about to record and returns that event to keep it. Omitting a
+   * writable key the callback received drops the event: `url`, and `body`
+   * or `headers` when that key was present, including when its value was
+   * `null`. A `null` value on a key that was present clears that field. A
+   * key the snapshot omitted stays omitted. `null` and `undefined` drop the
+   * event. The native SDK invokes the filter; JS answers on a later turn,
+   * and a callback that throws, rejects, or never settles drops the event.
    */
   setNetworkFilter(callback?: NetworkFilter | null): void {
     installNetworkFilter(callback);

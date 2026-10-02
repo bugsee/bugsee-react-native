@@ -24,6 +24,7 @@
 #import <BugseeRNSupport/BGSRNGuardedEmit.h>
 #import <BugseeRNSupport/BGSRNValues.h>
 #import <BugseeRNSupport/BGSRNJSON.h>
+#import <BugseeRNSupport/BGSRNNetworkFilter.h>
 #import <BugseeRNSupport/BGSRNAttributes.h>
 #import <BugseeRNSupport/BGSRNDataRequestBridge.h>
 #import <BugseeRNSupport/BGSRNReactWindow.h>
@@ -45,6 +46,7 @@
 #import "BGSRNGuardedEmit.h"
 #import "BGSRNValues.h"
 #import "BGSRNJSON.h"
+#import "BGSRNNetworkFilter.h"
 #import "BGSRNAttributes.h"
 #import "BGSRNDataRequestBridge.h"
 #import "BGSRNReactWindow.h"
@@ -347,127 +349,6 @@ static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
   for (BugseeNetworkFilterDecisionBlock decision in decisions) {
     decision(nil);
   }
-}
-
-static id BGSRNJSONOrNull(id value) {
-  return value == nil ? [NSNull null] : value;
-}
-
-/// The event, in the shape JS's filter receives. `type` matches the bundle:
-/// `websocket` / `udpsocket` for sockets, otherwise the HTTP stage. The
-/// websocket subtype is `websocketEvent`.
-static NSString *BGSRNNetworkEventJSON(BugseeNetworkEvent *event) {
-  const BOOL websocket = event.type == BugseeWebSocket;
-  const BOOL udp = event.type == BugseeUDPSocket;
-  NSString *stage = websocket ? @"websocket"
-                  : udp ? @"udpsocket"
-                        : event.bugseeNetworkEventType;
-  NSString *websocketEvent = websocket ? event.bugseeNetworkEventType : nil;
-  NSString *body = nil;
-  if (event.body.length > 0) {
-    body = [[NSString alloc] initWithData:event.body encoding:NSUTF8StringEncoding];
-  }
-  NSMutableDictionary *headers = nil;
-  if ([event.headers isKindOfClass:[NSDictionary class]]) {
-    headers = [NSMutableDictionary dictionary];
-    [event.headers enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
-      if ([key isKindOfClass:[NSString class]] && [obj isKindOfClass:[NSString class]]) {
-        headers[key] = obj;
-      }
-    }];
-  }
-  NSDictionary *payload = @{
-    @"id" : BGSRNJSONOrNull(event.ID),
-    @"url" : BGSRNJSONOrNull(event.url),
-    @"method" : BGSRNJSONOrNull(event.method),
-    @"body" : BGSRNJSONOrNull(body),
-    @"headers" : headers != nil ? headers : [NSNull null],
-    @"mechanism" : BGSRNJSONOrNull(event.mechanism),
-    @"type" : BGSRNJSONOrNull(stage),
-    @"websocketEvent" : BGSRNJSONOrNull(websocketEvent),
-    @"responseCode" : @(event.responseCode),
-  };
-  NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  if (data == nil) {
-    return nil;
-  }
-  return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-}
-
-/// Writes `url`, `body` and `headers` from JS's replacement onto `event`.
-/// A missing key is left alone. An illegal value, or a write that does not
-/// stick, refuses the replacement so the caller drops the event.
-static BOOL BGSRNApplyNetworkReplacement(BugseeNetworkEvent *event, NSString *eventJson) {
-  NSData *data = [eventJson dataUsingEncoding:NSUTF8StringEncoding];
-  if (data == nil) {
-    return NO;
-  }
-  id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-  if (![parsed isKindOfClass:[NSDictionary class]]) {
-    return NO;
-  }
-  NSDictionary *object = parsed;
-  if (object[@"url"] != nil) {
-    id url = object[@"url"];
-    if (url == [NSNull null]) {
-      event.url = nil;
-      if (event.url != nil) {
-        return NO;
-      }
-    } else if ([url isKindOfClass:[NSString class]]) {
-      event.url = url;
-      if (![event.url isEqualToString:url]) {
-        return NO;
-      }
-    } else {
-      return NO;
-    }
-  }
-  if (object[@"body"] != nil) {
-    id body = object[@"body"];
-    if (body == [NSNull null]) {
-      event.body = nil;
-      if (event.body != nil) {
-        return NO;
-      }
-    } else if ([body isKindOfClass:[NSString class]]) {
-      NSData *encoded = [(NSString *)body dataUsingEncoding:NSUTF8StringEncoding];
-      event.body = encoded;
-      NSString *roundTrip = event.body == nil
-          ? nil
-          : [[NSString alloc] initWithData:event.body encoding:NSUTF8StringEncoding];
-      if (![roundTrip isEqualToString:body]) {
-        return NO;
-      }
-    } else {
-      return NO;
-    }
-  }
-  if (object[@"headers"] != nil) {
-    id headers = object[@"headers"];
-    if (headers == [NSNull null]) {
-      event.headers = nil;
-      if (event.headers != nil) {
-        return NO;
-      }
-    } else if ([headers isKindOfClass:[NSDictionary class]]) {
-      NSMutableDictionary *map = [NSMutableDictionary dictionary];
-      for (id key in (NSDictionary *)headers) {
-        id value = ((NSDictionary *)headers)[key];
-        if (![key isKindOfClass:[NSString class]] || ![value isKindOfClass:[NSString class]]) {
-          return NO;
-        }
-        map[key] = value;
-      }
-      event.headers = map;
-      if (![event.headers isEqualToDictionary:map]) {
-        return NO;
-      }
-    } else {
-      return NO;
-    }
-  }
-  return YES;
 }
 
 @implementation BugseeModule
