@@ -182,14 +182,25 @@ describe('setBreadcrumbFilter', () => {
     expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('4', null);
   });
 
-  it('a never-settling callback does not reply with the original crumb', async () => {
+  it('a never-settling callback does not reply, and the next crumb still can', async () => {
     Bugsee.setBreadcrumbFilter(() => new Promise(() => {}));
-    emit('1', snapshot);
+    emit('hang', snapshot);
     await flush();
     expect(native.replyBreadcrumbFilter).not.toHaveBeenCalled();
-    const replied = native.replyBreadcrumbFilter.mock.calls.map((call) => call[1]);
-    expect(replied).not.toContain(JSON.stringify(snapshot));
-    expect(replied).not.toContain('secret');
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, message: 'later' }));
+    emit('2', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledTimes(1);
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      '2',
+      jsonOf({
+        category: 'ui',
+        message: 'later',
+        type: 'navigation',
+        level: 'info',
+      }),
+    );
+    expect(native.replyBreadcrumbFilter.mock.calls.map((call) => call[0])).not.toContain('hang');
   });
 
   it('a later call replaces the callback', async () => {
@@ -293,5 +304,286 @@ describe('setBreadcrumbFilter', () => {
     await flush();
     expect(ran).toBe(false);
     expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    ran = false;
+    emit('2', { ...snapshot, level: 'verbose' });
+    await flush();
+    expect(ran).toBe(false);
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('2', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    ran = false;
+    emit('3', { ...snapshot, level: '' });
+    await flush();
+    expect(ran).toBe(false);
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('3', null);
+  });
+
+  it('drops a snapshot that is not a JSON object, without calling the filter', async () => {
+    let ran = false;
+    Bugsee.setBreadcrumbFilter(() => {
+      ran = true;
+      return {};
+    });
+    for (const [id, json] of [
+      ['bad', '{'],
+      ['empty', ''],
+      ['null', 'null'],
+      ['array', '[]'],
+      ['number', '1'],
+      ['string', '"ui"'],
+      ['bool', 'true'],
+    ] as const) {
+      native.replyBreadcrumbFilter.mockClear();
+      ran = false;
+      native.emitBreadcrumbFilterRequest({ requestId: id, crumbJson: json });
+      await flush();
+      expect(ran).toBe(false);
+      expect(native.replyBreadcrumbFilter).toHaveBeenCalledTimes(1);
+      expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(id, null);
+    }
+  });
+
+  it('drops a snapshot whose string field is not a string, without calling the filter', async () => {
+    let ran = false;
+    Bugsee.setBreadcrumbFilter(() => {
+      ran = true;
+      return {};
+    });
+    for (const [id, crumb] of [
+      ['category', { ...snapshot, category: 1 }],
+      ['message', { ...snapshot, message: null }],
+      ['type', { ...snapshot, type: false }],
+    ] as const) {
+      native.replyBreadcrumbFilter.mockClear();
+      ran = false;
+      emit(id, crumb);
+      await flush();
+      expect(ran).toBe(false);
+      expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(id, null);
+    }
+  });
+
+  it('keeps a crumb that omits a key, and does not let the callback add it back', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    Bugsee.setBreadcrumbFilter((crumb) => {
+      seen.push(crumb);
+      return { ...crumb, category: 'injected', message: 'injected', type: 'injected', level: 'error', data: { leaked: true } };
+    });
+
+    emit('no-category', { level: 'info', message: 'secret', type: 'navigation' });
+    await flush();
+    expect(seen[0]).not.toHaveProperty('category');
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      'no-category',
+      jsonOf({ message: 'injected', type: 'injected', level: 'error' }),
+    );
+
+    native.replyBreadcrumbFilter.mockClear();
+    emit('no-message', { category: 'ui', level: 'warning', type: 'navigation' });
+    await flush();
+    expect(seen[1]).not.toHaveProperty('message');
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      'no-message',
+      jsonOf({ category: 'injected', type: 'injected', level: 'error' }),
+    );
+
+    native.replyBreadcrumbFilter.mockClear();
+    emit('no-type', { category: 'ui', level: 'fatal', message: 'secret' });
+    await flush();
+    expect(seen[2]).not.toHaveProperty('type');
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      'no-type',
+      jsonOf({ category: 'injected', message: 'injected', level: 'error' }),
+    );
+
+    native.replyBreadcrumbFilter.mockClear();
+    emit('level-only', { level: 'debug' });
+    await flush();
+    expect(seen[3]).toEqual({ level: 'debug' });
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('level-only', jsonOf({ level: 'error' }));
+  });
+
+  it('shows a numeric timestamp, including 0, and ignores one that is not a number', async () => {
+    const seen: unknown[] = [];
+    Bugsee.setBreadcrumbFilter((crumb) => {
+      seen.push(crumb.timestamp);
+      return crumb;
+    });
+    emit('zero', { ...snapshot, timestamp: 0 });
+    await flush();
+    expect(seen).toEqual([0]);
+
+    native.replyBreadcrumbFilter.mockClear();
+    emit('text', { ...snapshot, timestamp: '50' });
+    await flush();
+    expect(seen[1]).toBeUndefined();
+    expect(seen).toHaveLength(2);
+
+    native.replyBreadcrumbFilter.mockClear();
+    emit('absent', { category: 'ui', level: 'info', message: 'secret', type: 'navigation' });
+    await flush();
+    expect(seen[2]).toBeUndefined();
+    const replied = native.replyBreadcrumbFilter.mock.calls[0]?.[1] as string;
+    expect(JSON.parse(replied)).not.toHaveProperty('timestamp');
+  });
+
+  it('drops a keep whose level or string field is not valid', async () => {
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, level: 'verbose' }));
+    emit('1', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, level: 2 }));
+    emit('2', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('2', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    Bugsee.setBreadcrumbFilter((crumb) => {
+      const next = { ...crumb };
+      delete next.level;
+      return next;
+    });
+    emit('3', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('3', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, category: 1, message: null, type: false }));
+    emit('4', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('4', null);
+  });
+
+  it('drops a keep whose data is undefined or not a plain object', async () => {
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, data: undefined }));
+    emit('1', { ...snapshot, data: { id: 1 } });
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, data: new Date(0) }));
+    emit('2', { ...snapshot, data: { id: 1 } });
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('2', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, data: ['a'] }));
+    emit('3', { ...snapshot, data: { id: 1 } });
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('3', null);
+  });
+
+  it('drops an array or a function returned as the keep', async () => {
+    Bugsee.setBreadcrumbFilter(() => [] as unknown as object);
+    emit('1', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    Bugsee.setBreadcrumbFilter(() => (function keep() {}) as unknown as object);
+    emit('2', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('2', null);
+  });
+
+  it('uses the callback that was current when the request arrived', async () => {
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, message: 'first' }));
+    emit('1', snapshot);
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, message: 'second' }));
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      '1',
+      jsonOf({
+        category: 'ui',
+        message: 'first',
+        type: 'navigation',
+        level: 'info',
+      }),
+    );
+    native.replyBreadcrumbFilter.mockClear();
+    emit('2', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      '2',
+      jsonOf({
+        category: 'ui',
+        message: 'second',
+        type: 'navigation',
+        level: 'info',
+      }),
+    );
+  });
+
+  it('swallows a reply the bridge rejects, and still answers the next crumb', async () => {
+    Bugsee.setBreadcrumbFilter((crumb) => crumb);
+    native.replyBreadcrumbFilter.mockImplementationOnce(() => {
+      throw new Error('bridge is gone');
+    });
+    emit('1', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledTimes(1);
+    emit('2', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledTimes(2);
+    expect(native.replyBreadcrumbFilter).toHaveBeenLastCalledWith(
+      '2',
+      jsonOf({
+        category: 'ui',
+        message: 'secret',
+        type: 'navigation',
+        level: 'info',
+      }),
+    );
+  });
+
+  it('keeps a crumb that has no level, and does not invent one', async () => {
+    Bugsee.setBreadcrumbFilter((crumb) => ({ ...crumb, level: 'error' }));
+    emit('no-level', { category: 'ui', message: 'secret', type: 'navigation' });
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      'no-level',
+      jsonOf({ category: 'ui', message: 'secret', type: 'navigation' }),
+    );
+  });
+
+  it('drops a keep whose level or data is inherited rather than own', async () => {
+    const levelProto = { level: 'error' };
+    const levelKeep: Record<string, unknown> = Object.create(levelProto);
+    levelKeep.category = 'ui';
+    levelKeep.message = 'secret';
+    levelKeep.type = 'navigation';
+    Bugsee.setBreadcrumbFilter(() => levelKeep);
+    emit('1', snapshot);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    const dataProto = { data: { id: 9 } };
+    const dataKeep: Record<string, unknown> = Object.create(dataProto);
+    dataKeep.category = 'ui';
+    dataKeep.message = 'secret';
+    dataKeep.type = 'navigation';
+    dataKeep.level = 'info';
+    Bugsee.setBreadcrumbFilter(() => dataKeep);
+    emit('2', { ...snapshot, data: { id: 1 } });
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('2', null);
+  });
+
+  it('rejects a non-function of every other kind and leaves the installed filter', () => {
+    Bugsee.setBreadcrumbFilter((crumb) => crumb);
+    const set = Bugsee.setBreadcrumbFilter as (callback?: unknown) => void;
+    expect(() => set({ nope: true })).toThrow(
+      'Bugsee.setBreadcrumbFilter requires a function, got object',
+    );
+    expect(() => set(Symbol('filter'))).toThrow(
+      'Bugsee.setBreadcrumbFilter requires a function, got symbol',
+    );
+    expect(native.setBreadcrumbFilterEnabled).toHaveBeenCalledTimes(1);
+    expect(native.breadcrumbFilterRequestSubscribeCallCount()).toBe(1);
   });
 });

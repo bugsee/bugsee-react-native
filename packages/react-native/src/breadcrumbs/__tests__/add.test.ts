@@ -76,16 +76,110 @@ describe('addBreadcrumb', () => {
     );
   });
 
-  it('rejects a non-object, a bad level, and a non-object data value', () => {
+  it('accepts a null-prototype crumb and an empty string field', () => {
+    const bare: Record<string, unknown> = Object.create(null);
+    bare.category = '';
+    bare.level = 'debug';
+    bare.message = '';
+    bare.type = '';
+    Bugsee.addBreadcrumb(bare as typeof crumb);
+    expect(native.addBreadcrumb).toHaveBeenCalledWith('', 'debug', '', '', null);
+  });
+
+  it('names the kind of value that is not a crumb object', () => {
     const add = Bugsee.addBreadcrumb as (crumb?: unknown) => void;
-    expect(() => add(null)).toThrow(TypeError);
-    expect(() => add({ ...crumb, level: 'verbose' })).toThrow(
-      /level must be one of debug, info, warning, error, fatal, got verbose/,
+    expect(() => add(null)).toThrow(
+      'Bugsee.addBreadcrumb requires a crumb object, got null',
     );
+    expect(() => add(undefined)).toThrow(
+      'Bugsee.addBreadcrumb requires a crumb object, got undefined',
+    );
+    expect(() => add('ui')).toThrow(
+      'Bugsee.addBreadcrumb requires a crumb object, got string',
+    );
+    expect(() => add(1)).toThrow(
+      'Bugsee.addBreadcrumb requires a crumb object, got number',
+    );
+    expect(() => add(true)).toThrow(
+      'Bugsee.addBreadcrumb requires a crumb object, got boolean',
+    );
+    expect(() => add(['ui'])).toThrow(
+      'Bugsee.addBreadcrumb requires a crumb object, got array',
+    );
+    expect(() => add(new Date(0))).toThrow(
+      'Bugsee.addBreadcrumb requires a crumb object, got object',
+    );
+    class Box {}
+    expect(() => add(new Box())).toThrow(
+      'Bugsee.addBreadcrumb requires a crumb object, got object',
+    );
+    const child = Object.create(Object.create(null));
+    expect(() => add(child)).toThrow(
+      'Bugsee.addBreadcrumb requires a crumb object, got object',
+    );
+    expect(native.addBreadcrumb).not.toHaveBeenCalled();
+  });
+
+  it('names which string field was rejected, including null', () => {
+    const add = Bugsee.addBreadcrumb as (crumb?: unknown) => void;
     expect(() => add({ ...crumb, category: 1 })).toThrow(
-      /category must be a string, got number/,
+      'Bugsee.addBreadcrumb category must be a string, got number',
     );
-    expect(() => add({ ...crumb, data: new Date(0) })).toThrow(TypeError);
+    expect(() => add({ ...crumb, category: null })).toThrow(
+      'Bugsee.addBreadcrumb category must be a string, got null',
+    );
+    expect(() => add({ ...crumb, category: undefined })).toThrow(
+      'Bugsee.addBreadcrumb category must be a string, got undefined',
+    );
+    expect(() => add({ ...crumb, message: false })).toThrow(
+      'Bugsee.addBreadcrumb message must be a string, got boolean',
+    );
+    expect(() => add({ ...crumb, message: null })).toThrow(
+      'Bugsee.addBreadcrumb message must be a string, got null',
+    );
+    expect(() => add({ ...crumb, type: 1 })).toThrow(
+      'Bugsee.addBreadcrumb type must be a string, got number',
+    );
+    expect(() => add({ ...crumb, type: null })).toThrow(
+      'Bugsee.addBreadcrumb type must be a string, got null',
+    );
+    expect(native.addBreadcrumb).not.toHaveBeenCalled();
+  });
+
+  it('names a level that is not one of the five strings', () => {
+    const add = Bugsee.addBreadcrumb as (crumb?: unknown) => void;
+    expect(() => add({ ...crumb, level: 'verbose' })).toThrow(
+      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got verbose',
+    );
+    expect(() => add({ ...crumb, level: '' })).toThrow(
+      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got ',
+    );
+    expect(() => add({ ...crumb, level: 2 })).toThrow(
+      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got number',
+    );
+    expect(() => add({ ...crumb, level: null })).toThrow(
+      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got object',
+    );
+    expect(() => add({ ...crumb, level: undefined })).toThrow(
+      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got undefined',
+    );
+    expect(() => add({ ...crumb, level: false })).toThrow(
+      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got boolean',
+    );
+    expect(native.addBreadcrumb).not.toHaveBeenCalled();
+  });
+
+  it('rejects data that is not a plain object, and does not send it', () => {
+    const add = Bugsee.addBreadcrumb as (crumb?: unknown) => void;
+    expect(() => add({ ...crumb, data: ['a'] })).toThrow(
+      'Bugsee.addBreadcrumb data must be a plain object, got array',
+    );
+    expect(() => add({ ...crumb, data: 'note' })).toThrow(
+      'Bugsee.addBreadcrumb data must be a plain object, got string',
+    );
+    expect(() => add({ ...crumb, data: new Date(0) })).toThrow(
+      'Bugsee.addBreadcrumb data must be a plain object, got object',
+    );
     expect(native.addBreadcrumb).not.toHaveBeenCalled();
   });
 });
