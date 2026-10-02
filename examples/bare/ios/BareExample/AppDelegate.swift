@@ -33,6 +33,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
   }
 }
 
+/// Creates the app's one window and starts React Native in it.
+///
+/// It forwards no URLs to React Native: neither `connectionOptions.urlContexts`
+/// at launch nor `scene(_:openURLContexts:)` later, so `Linking` sees none on
+/// iOS. This app registers no URL scheme; the e2e steers its iOS launches
+/// through launch arguments (`e2e/scenario.ts`). An app that opens URLs hands
+/// both to `RCTLinkingManager`.
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
   var window: UIWindow?
 
