@@ -856,9 +856,10 @@ RCT_EXPORT_MODULE(Bugsee)
 /// should land on the nearest level, not be chopped toward one.
 - (void)wrapperLog:(NSString *)message
              level:(double)level {
-  // Keeping this channel line ends the equal-text claim. A later native
-  // RCTLog of the same text is not dropped. A stderr stamp may still be,
-  // and so may one raw stdout/stderr line of this text.
+  // Keeping this channel line ends the equal-text claim. A later equal line
+  // is not dropped as an unstamped copy, including a native RCTLog or a line
+  // whose source is stdout or stderr. A stderr stamp may still be dropped
+  // once. os_log capture is off, and this package does not wait for that copy.
   BGSRNBeginChannelLine(message);
   @try {
     [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
@@ -1013,10 +1014,12 @@ RCT_EXPORT_MODULE(Bugsee)
           decision(nil);
           return;
         }
-        // The console echo. Dropped here, before JS is asked, so the user's
-        // callback runs once. Not a timeout: the line is not passed through.
-        // `dictionary` is how the SDK stores the source on the event. When it
-        // is absent, the source is unknown and a non-stamp line is not dropped.
+        // A stderr stamp is dropped here, before JS is asked, so the user's
+        // callback runs once for that echo. Not a timeout: the line is not
+        // passed through. An equal line is not dropped because its source is
+        // stdout or stderr. os_log capture is off, and this package does not
+        // wait for an unstamped copy. `dictionary` is how the SDK stores the
+        // source on the event.
         NSInteger source = -1;
         SEL dictionarySelector = NSSelectorFromString(@"dictionary");
         if ([event respondsToSelector:dictionarySelector]) {
