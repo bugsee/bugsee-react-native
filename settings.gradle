@@ -23,6 +23,8 @@ dependencyResolutionManagement {
 rootProject.name = 'bugsee-react-native'
 include ':bugsee-android-bridge'
 project(':bugsee-android-bridge').projectDir = file('packages/react-native/android')
+include ':bugsee-android-feedback'
+project(':bugsee-android-feedback').projectDir = file('packages/react-native-feedback/android')
 
 // The module directory is ALSO built by the example app
 // (examples/bare/android, via autolinking as :bugsee_react-native), and both
@@ -36,5 +38,8 @@ project(':bugsee-android-bridge').projectDir = file('packages/react-native/andro
 gradle.beforeProject { project ->
     if (project.path == ':bugsee-android-bridge') {
         project.layout.buildDirectory.set(new File(settingsDir, 'build/android-bridge'))
+    }
+    if (project.path == ':bugsee-android-feedback') {
+        project.layout.buildDirectory.set(new File(settingsDir, 'build/android-feedback'))
     }
 }

@@ -1883,6 +1883,18 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@bugsee/react-native-feedback@workspace:*, @bugsee/react-native-feedback@workspace:packages/react-native-feedback":
+  version: 0.0.0-use.local
+  resolution: "@bugsee/react-native-feedback@workspace:packages/react-native-feedback"
+  dependencies:
+    react-native: "npm:0.87.1"
+  peerDependencies:
+    "@bugsee/react-native": "*"
+    react: "*"
+    react-native: ">=0.81.0"
+  languageName: unknown
+  linkType: soft
+
 "@bugsee/react-native@workspace:*, @bugsee/react-native@workspace:packages/react-native":
   version: 0.0.0-use.local
   resolution: "@bugsee/react-native@workspace:packages/react-native"
@@ -4308,6 +4320,7 @@ __metadata:
     "@babel/preset-env": "npm:^7.25.3"
     "@babel/runtime": "npm:^7.25.0"
     "@bugsee/react-native": "workspace:*"
+    "@bugsee/react-native-feedback": "workspace:*"
     "@react-native-community/cli": "npm:20.2.0"
     "@react-native-community/cli-platform-android": "npm:20.2.0"
     "@react-native-community/cli-platform-ios": "npm:20.2.0"

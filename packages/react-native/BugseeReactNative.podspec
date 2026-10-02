@@ -65,6 +65,12 @@ Pod::Spec.new do |s|
   CMD
 
   s.requires_arc = true
+  # A Swift pod integrated as a static library can only depend on pods that
+  # define a module. BugseeReactNativeFeedback does, and this pod is that
+  # dependency. Without this, `pod install` stops before it compiles anything.
+  s.pod_target_xcconfig = {
+    'DEFINES_MODULE' => 'YES'
+  }
   s.dependency 'React-Core'
 
   install_modules_dependencies(s) if defined?(install_modules_dependencies)
