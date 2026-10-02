@@ -41,7 +41,7 @@ import java.util.concurrent.Executors;
  */
 @ReactModule(name = BugseeModule.NAME)
 public class BugseeModule extends NativeBugseeSpec
-        implements WrapperEventBus.Sink, ReportHandlerBridge.Sink {
+        implements WrapperEventBus.Sink, ReportHandlerBridge.Sink, LogFilterBridge.Sink {
 
     public static final String NAME = "Bugsee";
 
@@ -102,6 +102,7 @@ public class BugseeModule extends NativeBugseeSpec
         WrapperEventBus.shared().attach(this);
         ReportHandlerBridge.shared().attach(this);
         DataRequestBridge.shared().attach(dataRequestSink, originTracker::currentOrigin);
+        LogFilterBridge.shared().attach(this);
     }
 
     /**
@@ -126,6 +127,10 @@ public class BugseeModule extends NativeBugseeSpec
         // Same for any outstanding vh request, and disables the view tree:
         // the next runtime's anchor has not mounted yet.
         DataRequestBridge.shared().detach(dataRequestSink);
+        // Drops every log-filter request this module was given. An unanswered
+        // one would otherwise sit until the SDK's timeout, and a reply into
+        // this module after it is gone has nowhere to land.
+        LogFilterBridge.shared().detach(this);
         SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
         super.invalidate();
@@ -554,6 +559,27 @@ public class BugseeModule extends NativeBugseeSpec
     @Override
     public void clearUserIdentifier() {
         Bugsee.clearUserIdentifier();
+    }
+
+    @Override
+    public void onLogFilterRequest(@NonNull final String requestId, @NonNull final String line) {
+        final WritableMap payload = Arguments.createMap();
+        payload.putString("requestId", requestId);
+        payload.putString("line", line);
+        emitOnLogFilterRequest(payload);
+    }
+
+    @Override
+    public void setLogFilterEnabled(final boolean enabled) {
+        LogFilterBridge.shared().setEnabled(enabled);
+    }
+
+    @Override
+    public void replyLogFilter(final String requestId, @Nullable final String line) {
+        if (requestId == null) {
+            return;
+        }
+        LogFilterBridge.shared().reply(requestId, line);
     }
 
     /** {@code { value }}, typed by {@code value}'s runtime type, or empty when absent. */

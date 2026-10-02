@@ -16,8 +16,8 @@
  * scenarios/attributes.ts, `e2e-native-smoke` / `native-crash-*` are
  * scenarios/native.ts, `blackout`, `blackout-prelaunch`,
  * `secure-component` and `view-tree` are scenarios/privacy.tsx, and
- * `exc-*` are scenarios/exceptions.tsx, and `rp-*` are
- * scenarios/reporting.ts.
+ * `exc-*` are scenarios/exceptions.tsx, `rp-*` are
+ * scenarios/reporting.ts, and `log-filter` is scenarios/log-filter.ts.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -87,6 +87,10 @@ import {
   isReportingScenario,
   runReportingScenario,
 } from './scenarios/reporting';
+import {
+  isLogFilterScenario,
+  runLogFilterScenario,
+} from './scenarios/log-filter';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -380,6 +384,11 @@ export default function App() {
 
         if (data !== undefined) {
           runDataScenario(choice.nonce);
+          return;
+        }
+
+        if (isLogFilterScenario(choice.scenario)) {
+          runLogFilterScenario(choice.nonce);
           return;
         }
 
