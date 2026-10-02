@@ -104,6 +104,27 @@ describe('setLogFilter', () => {
     expect(echoed?.[1]).toBeNull();
   });
 
+  it('a console line does not suppress a following line of the same text', async () => {
+    const dedup = require('../../console/dedup') as {
+      claimEcho: (message: string) => void;
+      protectLine: (line: string) => void;
+    };
+    dedup.protectLine('ready');
+    dedup.claimEcho('ready');
+    const user = jest.fn((line: string) => line);
+    Bugsee.setLogFilter(user);
+
+    emit('patch', 'ready');
+    emit('later', 'ready');
+    await flush();
+
+    expect(user).toHaveBeenCalledTimes(2);
+    expect(user).toHaveBeenNthCalledWith(1, 'ready');
+    expect(user).toHaveBeenNthCalledWith(2, 'ready');
+    expect(native.replyLogFilter).toHaveBeenCalledWith('patch', 'ready');
+    expect(native.replyLogFilter).toHaveBeenCalledWith('later', 'ready');
+  });
+
   it('a later call replaces the callback', async () => {
     Bugsee.setLogFilter(() => 'first');
     Bugsee.setLogFilter(() => 'second');

@@ -66,6 +66,134 @@ static void BGSRNOnRCTLog(RCTLogLevel level, RCTLogSource source, NSString *mess
   [locals removeObjectForKey:BGSRNConsoleCaptureKey];
 }
 
+static const NSTimeInterval BGSRNEchoWindowSeconds = 2.0;
+static const NSUInteger BGSRNEchoNoteCap = 32;
+
+@interface BGSRNEchoNote : NSObject
+@property (nonatomic, copy) NSString *text;
+@property (nonatomic, assign) NSTimeInterval expires;
+@property (nonatomic, assign) BOOL exact;
+@property (nonatomic, assign) BOOL stamp;
+@end
+
+@implementation BGSRNEchoNote
+@end
+
+static NSMutableArray<BGSRNEchoNote *> *BGSRNEchoNotes;
+
+static id BGSRNEchoLock(void) {
+  static id lock;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    lock = [NSObject new];
+    BGSRNEchoNotes = [NSMutableArray array];
+  });
+  return lock;
+}
+
+static BOOL BGSRNIsConsoleStamp(NSString *line, NSString *message) {
+  if (message.length == 0 || line.length == 0) {
+    return NO;
+  }
+  NSString *tail = [NSString stringWithFormat:@"] %@", message];
+  if (![line hasSuffix:tail] || line.length <= tail.length) {
+    return NO;
+  }
+  NSString *head = [line substringToIndex:line.length - tail.length];
+  NSRange bracket = [head rangeOfString:@"["];
+  if (bracket.location == NSNotFound || bracket.location == 0) {
+    return NO;
+  }
+  NSString *when = [head substringToIndex:bracket.location];
+  NSString *pid = [head substringFromIndex:NSMaxRange(bracket)];
+  static NSRegularExpression *whenPattern;
+  static NSRegularExpression *pidPattern;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    whenPattern = [NSRegularExpression
+        regularExpressionWithPattern:@"^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d+ [^\\s\\[]+$"
+                             options:0
+                               error:nil];
+    pidPattern = [NSRegularExpression regularExpressionWithPattern:@"^\\d+:\\d+$"
+                                                           options:0
+                                                             error:nil];
+  });
+  if (whenPattern == nil || pidPattern == nil) {
+    return NO;
+  }
+  NSRange whenRange = NSMakeRange(0, when.length);
+  NSRange pidRange = NSMakeRange(0, pid.length);
+  NSTextCheckingResult *whenMatch = [whenPattern firstMatchInString:when options:0 range:whenRange];
+  NSTextCheckingResult *pidMatch = [pidPattern firstMatchInString:pid options:0 range:pidRange];
+  return whenMatch != nil && whenMatch.range.length == when.length && pidMatch != nil &&
+      pidMatch.range.length == pid.length;
+}
+
+static void BGSRNPruneEchoNotes(NSTimeInterval now) {
+  for (NSInteger index = (NSInteger)BGSRNEchoNotes.count - 1; index >= 0; index--) {
+    BGSRNEchoNote *note = BGSRNEchoNotes[(NSUInteger)index];
+    if (note.expires <= now || (!note.exact && !note.stamp)) {
+      [BGSRNEchoNotes removeObjectAtIndex:(NSUInteger)index];
+    }
+  }
+}
+
+void BGSRNNoteConsoleEcho(NSString *message) {
+  if (message == nil) {
+    return;
+  }
+  @synchronized(BGSRNEchoLock()) {
+    BGSRNPruneEchoNotes([NSDate date].timeIntervalSince1970);
+    BGSRNEchoNote *note = [BGSRNEchoNote new];
+    note.text = message;
+    note.expires = [NSDate date].timeIntervalSince1970 + BGSRNEchoWindowSeconds;
+    note.exact = YES;
+    note.stamp = YES;
+    [BGSRNEchoNotes addObject:note];
+    while (BGSRNEchoNotes.count > BGSRNEchoNoteCap) {
+      [BGSRNEchoNotes removeObjectAtIndex:0];
+    }
+  }
+}
+
+void BGSRNBeginChannelLine(NSString *message) {
+  if (message == nil) {
+    return;
+  }
+  @synchronized(BGSRNEchoLock()) {
+    for (NSInteger index = 0; index < (NSInteger)BGSRNEchoNotes.count; index++) {
+      BGSRNEchoNote *note = BGSRNEchoNotes[(NSUInteger)index];
+      if (note.exact && [note.text isEqualToString:message]) {
+        note.exact = NO;
+        if (!note.stamp) {
+          [BGSRNEchoNotes removeObjectAtIndex:(NSUInteger)index];
+        }
+        return;
+      }
+    }
+  }
+}
+
+BOOL BGSRNDropConsoleEcho(NSString *line) {
+  if (line.length == 0) {
+    return NO;
+  }
+  @synchronized(BGSRNEchoLock()) {
+    BGSRNPruneEchoNotes([NSDate date].timeIntervalSince1970);
+    for (NSInteger index = 0; index < (NSInteger)BGSRNEchoNotes.count; index++) {
+      BGSRNEchoNote *note = BGSRNEchoNotes[(NSUInteger)index];
+      if (note.stamp && BGSRNIsConsoleStamp(line, note.text)) {
+        note.stamp = NO;
+        if (!note.exact) {
+          [BGSRNEchoNotes removeObjectAtIndex:(NSUInteger)index];
+        }
+        return YES;
+      }
+    }
+    return NO;
+  }
+}
+
 void BGSRNInstallConsoleCapture(void) {
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{

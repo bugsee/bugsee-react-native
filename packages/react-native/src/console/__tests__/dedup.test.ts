@@ -63,12 +63,31 @@ describe('console stream dedup', () => {
     expect(classifyFilterRequest("seen { a: 's3cret' }")).toBe('deliver');
   });
 
-  it('delivers one copy when the echo text equals the patch line', () => {
-    protectLine('BUGSEE_E2E dedup');
-    claimEcho('BUGSEE_E2E dedup');
+  it('does not suppress a following line of the same text once the patch is delivered', () => {
+    protectLine('ready', 0);
+    claimEcho('ready', 0);
 
-    expect(classifyFilterRequest('BUGSEE_E2E dedup')).toBe('deliver');
-    expect(classifyFilterRequest('BUGSEE_E2E dedup')).toBe('drop');
+    expect(classifyFilterRequest('ready', 1)).toBe('deliver');
+    expect(classifyFilterRequest('ready', 1)).toBe('deliver');
+  });
+
+  it('on iOS drops the one unstamped echo and then keeps a later line of the same text', () => {
+    const reactNative = require('react-native') as { Platform: { OS: string } };
+    const previous = reactNative.Platform.OS;
+    reactNative.Platform.OS = 'ios';
+    try {
+      const message = 'ready';
+      const stamped = '2026-10-02 18:40:35.273 BareExample[60839:42420530] ready';
+      protectLine(message, 0);
+      claimEcho(message, 0);
+
+      expect(classifyFilterRequest(stamped, 1)).toBe('drop');
+      expect(classifyFilterRequest(message, 1)).toBe('deliver');
+      expect(classifyFilterRequest(message, 1)).toBe('drop');
+      expect(classifyFilterRequest(message, 1)).toBe('deliver');
+    } finally {
+      reactNative.Platform.OS = previous;
+    }
   });
 
   it('drops the iOS console stamp of a claimed line and still delivers the patch', () => {
@@ -102,7 +121,7 @@ describe('console stream dedup', () => {
     claimEcho(message);
     expect(classifyFilterRequest(stamped)).toBe('drop');
     expect(classifyFilterRequest(message)).toBe('deliver');
-    expect(classifyFilterRequest(message)).toBe('drop');
+    expect(classifyFilterRequest(message)).toBe('deliver');
     expect(classifyFilterRequest(stamped)).toBe('deliver');
   });
 
@@ -127,10 +146,10 @@ describe('console stream dedup', () => {
     expect(classifyFilterRequest('leftover', 1)).toBe('deliver');
   });
 
-  it('drops an expired protected line so a live echo of that text is the one suppressed', () => {
+  it('an expired patch does not leave an equal-text claim behind', () => {
     protectLine('aged', 0);
     claimEcho('aged', 1_000);
-    expect(classifyFilterRequest('aged', ECHO_WINDOW_MS)).toBe('drop');
+    expect(classifyFilterRequest('aged', ECHO_WINDOW_MS)).toBe('deliver');
   });
 
   it('keeps only the newest protected lines once that ledger is full', () => {

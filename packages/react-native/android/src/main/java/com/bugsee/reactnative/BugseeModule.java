@@ -439,6 +439,15 @@ public class BugseeModule extends NativeBugseeSpec
         WrapperChannelHolder.shared().log(message, (int) level);
     }
 
+    /**
+     * Arms the logcat drop for one console echo. Does not record a line.
+     * {@code Bugsee.log} does not call this, so it does not arm a drop.
+     */
+    @Override
+    public void noteConsoleEcho(final String message) {
+        LogFilterBridge.shared().noteEcho(message);
+    }
+
     @Override
     public void onNetworkFilterRequest(@NonNull final String requestId, @NonNull final String eventJson) {
         final WritableMap payload = Arguments.createMap();

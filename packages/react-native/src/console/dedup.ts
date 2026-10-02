@@ -12,6 +12,8 @@
  * patch because `RCTLog` "will also see it" would drop release logs.
  */
 
+import { Platform } from 'react-native';
+
 /** How long an echo claim can still suppress a second filter pass. */
 export const ECHO_WINDOW_MS = 2_000;
 
@@ -20,6 +22,17 @@ const MAX_CLAIMS = 32;
 interface Stamp {
   text: string;
   expires: number;
+  /**
+   * Equal text is the patch, the echo, `Bugsee.log`, and a native line.
+   * Android drops the logcat echo before JS is asked, so this is cleared
+   * when the patch is delivered. iOS still delivers one unstamped stderr
+   * copy; this stays set until that copy is dropped, and then a later
+   * equal line is kept. os_log capture is disabled. This package does not
+   * forward `RCTLogSourceJavaScript`.
+   */
+  exact: boolean;
+  /** A stderr stamp can still be dropped after the equal-text copy is handled. */
+  stamp: boolean;
 }
 
 const echoes: Stamp[] = [];
@@ -56,11 +69,39 @@ export function shouldDropConsoleEcho(dev: boolean, patchOwnsCall: boolean): boo
   return inDev || inRelease;
 }
 
+/**
+ * iOS still delivers one unstamped stderr copy of the console line, plus the
+ * stamp. Android drops the logcat echo before JS is asked, so the equal-text
+ * claim dies with the patch. os_log capture stays disabled; this package
+ * does not forward `RCTLogSourceJavaScript`.
+ */
+function equalEchoReachesJs(): boolean {
+  return Platform.OS === 'ios';
+}
+
+function retireExact(text: string): void {
+  if (equalEchoReachesJs()) {
+    return;
+  }
+  const echoAt = echoes.findIndex((stamp) => stamp.exact && stamp.text === text);
+  if (echoAt === -1) {
+    return;
+  }
+  const echo = echoes[echoAt]!;
+  echo.exact = false;
+  if (!echo.stamp) {
+    echoes.splice(echoAt, 1);
+  }
+}
+
 function prune(list: Stamp[], now: number): void {
   let index = 0;
   while (index < list.length) {
     const stamp = list[index]!;
     if (stamp.expires <= now) {
+      if (list === protectedLines) {
+        retireExact(stamp.text);
+      }
       list.splice(index, 1);
     } else {
       index += 1;
@@ -73,7 +114,7 @@ function prune(list: Stamp[], now: number): void {
 
 /** The text `nativeLoggingHook` actually emitted for this console call. */
 export function claimEcho(message: string, now: number = Date.now()): void {
-  echoes.push({ text: message, expires: now + ECHO_WINDOW_MS });
+  echoes.push({ text: message, expires: now + ECHO_WINDOW_MS, exact: true, stamp: true });
   while (echoes.length > MAX_CLAIMS) {
     echoes.shift();
   }
@@ -81,18 +122,20 @@ export function claimEcho(message: string, now: number = Date.now()): void {
 
 /** The line the JS patch is about to forward. That copy reaches the filter. */
 export function protectLine(line: string, now: number = Date.now()): void {
-  protectedLines.push({ text: line, expires: now + ECHO_WINDOW_MS });
+  protectedLines.push({ text: line, expires: now + ECHO_WINDOW_MS, exact: false, stamp: false });
   while (protectedLines.length > MAX_CLAIMS) {
     protectedLines.shift();
   }
 }
 
 /**
- * iOS captures the console echo from the unified log, and the line the
- * filter sees is the console stamp plus the message:
+ * A stderr line the iOS SDK stored as
  * `2026-10-02 18:40:35.273 BareExample[60839:42420530] <message>`.
- * The JS patch's copy is the message alone. Android's logcat echo keeps the
- * message and puts the tag on the side, so an exact compare is enough there.
+ * The stamp is a different string from the patch, so dropping it does not
+ * retire the equal-text claim. iOS also delivers one unstamped stderr copy
+ * of the same text; that copy is dropped separately and then the claim
+ * dies. os_log capture is disabled. Android's logcat echo is dropped in
+ * the bridge before JS is asked.
  */
 export function isConsoleStampOf(line: string, message: string): boolean {
   const tail = `] ${message}`;
@@ -113,9 +156,14 @@ export function isConsoleStampOf(line: string, message: string): boolean {
 
 /**
  * `deliver` runs the user's filter. `drop` answers the native request with
- * null and does not call the user: it is the echo of a line already
- * protected. A protected line wins over an echo claim of the same text, so
- * the patch's copy is the one the filter sees.
+ * null and does not call the user.
+ *
+ * Android: the equal-text claim dies when the patch is delivered, because
+ * the logcat echo was dropped in the bridge and will not reach JS. A later
+ * `Bugsee.log`, native line, or second `console.*` of that string is kept.
+ * iOS: the SDK still delivers one unstamped stderr copy. That copy is the
+ * echo; dropping it ends the claim. The stamp is dropped too, and dropping
+ * the stamp does not end the claim early. os_log capture is disabled.
  */
 export function classifyFilterRequest(
   line: string,
@@ -123,20 +171,30 @@ export function classifyFilterRequest(
 ): 'deliver' | 'drop' {
   prune(protectedLines, now);
   prune(echoes, now);
+  const stampAt = echoes.findIndex(
+    (stamp) => stamp.stamp && isConsoleStampOf(line, stamp.text),
+  );
+  if (stampAt !== -1) {
+    const echo = echoes[stampAt]!;
+    echo.stamp = false;
+    if (!echo.exact) {
+      echoes.splice(stampAt, 1);
+    }
+    return 'drop';
+  }
   const protectAt = protectedLines.findIndex((stamp) => stamp.text === line);
   if (protectAt !== -1) {
     protectedLines.splice(protectAt, 1);
+    retireExact(line);
     return 'deliver';
   }
-  const echoAt = echoes.findIndex((stamp) => stamp.text === line);
+  const echoAt = echoes.findIndex((stamp) => stamp.exact && stamp.text === line);
   if (echoAt !== -1) {
-    echoes.splice(echoAt, 1);
-    return 'drop';
-  }
-  // The console stamp is a second echo of the same call. Dropping it must
-  // leave the claim: iOS also delivers the message with no stamp, and that
-  // copy is the one this claim exists to suppress.
-  if (echoes.some((stamp) => isConsoleStampOf(line, stamp.text))) {
+    const echo = echoes[echoAt]!;
+    echo.exact = false;
+    if (!echo.stamp) {
+      echoes.splice(echoAt, 1);
+    }
     return 'drop';
   }
   return 'deliver';

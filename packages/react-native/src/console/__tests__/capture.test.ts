@@ -307,7 +307,7 @@ describe('console capture', () => {
     console.log('outer');
     expect(classifyFilterRequest('inner')).toBe('deliver');
     expect(classifyFilterRequest('outer')).toBe('deliver');
-    expect(classifyFilterRequest('outer')).toBe('drop');
+    expect(classifyFilterRequest('outer')).toBe('deliver');
   });
 
   it('wraps the native hook once and does not claim a line it did not forward', () => {
@@ -337,7 +337,7 @@ describe('console capture', () => {
     expect(forwardLog).toHaveBeenCalledTimes(1);
     expect(classifyFilterRequest('before any console call')).toBe('deliver');
     expect(classifyFilterRequest('once')).toBe('deliver');
-    expect(classifyFilterRequest('once')).toBe('drop');
+    expect(classifyFilterRequest('once')).toBe('deliver');
     expect(classifyFilterRequest('after the console call')).toBe('deliver');
   });
 
@@ -383,7 +383,10 @@ describe('console capture', () => {
     expect(echoed).toEqual(['BUGSEE_E2E dedup-line']);
     expect(forwardLog).toHaveBeenCalledTimes(1);
     expect(classifyFilterRequest('BUGSEE_E2E dedup-line')).toBe('deliver');
-    expect(classifyFilterRequest('BUGSEE_E2E dedup-line')).toBe('drop');
+    expect(classifyFilterRequest('BUGSEE_E2E dedup-line')).toBe('deliver');
+    const stamped =
+      '2026-10-02 18:40:35.273 BareExample[60839:42420530] BUGSEE_E2E dedup-line';
+    expect(classifyFilterRequest(stamped)).toBe('drop');
   });
 
   it('a throwing forwardLog does not escape console.log', () => {

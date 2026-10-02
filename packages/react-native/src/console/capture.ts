@@ -1,3 +1,4 @@
+import NativeBugsee from '../NativeBugsee';
 import { LogLevel } from '../options/enums';
 import { forwardLog } from '../wrapper/channel';
 import {
@@ -66,6 +67,13 @@ function installNativeHook(): void {
     if (expectingEcho) {
       expectingEcho = false;
       claimEcho(message);
+      // Before the original hook writes logcat or os_log, so the native
+      // drop is armed when the echo is captured. Not a second log route.
+      try {
+        NativeBugsee.noteConsoleEcho(message);
+      } catch {
+        // The echo may reach the filter. The claim still drops a stamp.
+      }
     }
     current(message, level);
   };

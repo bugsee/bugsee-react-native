@@ -7,7 +7,6 @@ import com.bugsee.library.Bugsee;
 import com.bugsee.library.contracts.common.Callback1;
 import com.bugsee.library.contracts.exchange.EventFilter;
 import com.bugsee.library.contracts.exchange.LogEvent;
-import com.bugsee.library.contracts.internal.LogSource;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -213,11 +212,21 @@ final class LogFilterBridge {
     }
 
     /**
+     * The console patch calls this before the original hook writes logcat.
+     * A later {@code ReactNativeJS} line with this text is the echo and is
+     * dropped in {@link #route}. A {@code Bugsee.log} of the same text is
+     * {@code Custom} and does not arm another drop.
+     */
+    void noteEcho(@Nullable final String message) {
+        echoes.note(message);
+    }
+
+    /**
      * One log event from the SDK. A logcat line tagged {@code ReactNativeJS}
-     * whose text matches a wrapper-channel line noted moments ago is the
-     * console echo: it is dropped here, before {@link #ask} tells JS, so the
-     * user's filter runs once. Every other line, including the channel line
-     * itself and an RN-internal logcat line, is asked as before.
+     * whose text was noted by {@link #noteEcho} is the console echo: it is
+     * dropped here, before {@link #ask} tells JS, so the user's filter runs
+     * once. The credit is consumed. Every other line, including the channel
+     * line, a {@code Bugsee.log}, and an RN-internal logcat line, is asked.
      */
     void route(
             @NonNull final LogEvent event,
@@ -226,9 +235,6 @@ final class LogFilterBridge {
         if (echoes.dropEcho(event.getLogSource(), event.getTag(), event.getMessage())) {
             drop(callback);
             return;
-        }
-        if (event.getLogSource() == LogSource.Custom) {
-            echoes.note(event.getMessage());
         }
         ask(event, callback);
     }

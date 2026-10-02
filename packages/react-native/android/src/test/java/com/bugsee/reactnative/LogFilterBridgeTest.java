@@ -267,13 +267,15 @@ public class LogFilterBridgeTest {
     }
 
     /**
-     * The channel line is asked. The logcat echo of the same text is dropped
-     * without a second ask, so the user's filter runs once.
+     * The console patch notes the echo before logcat is written. The channel
+     * line is asked. The logcat echo is dropped without a second ask. A
+     * later {@code Bugsee.log} of the same text does not arm another drop.
      */
     @Test
     public void routeAsksTheChannelLineAndDropsItsLogcatEcho() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.noteEcho("hello");
         final RecordingCallback channelCallback = new RecordingCallback();
         bridge.route(new SourcedLog(LogSource.Custom, null, "hello"), channelCallback);
 
@@ -288,6 +290,16 @@ public class LogFilterBridgeTest {
         assertEquals(1, sink.ids.size());
         assertEquals(1, echoCallback.runs);
         assertTrue(echoCallback.sawNull);
+
+        final RecordingCallback again = new RecordingCallback();
+        bridge.route(new SourcedLog(LogSource.Custom, null, "hello"), again);
+        final RecordingCallback stray = new RecordingCallback();
+        bridge.route(
+                new SourcedLog(LogSource.LogCat, ConsoleEchoDedup.JS_CONSOLE_TAG, "hello"),
+                stray);
+
+        assertEquals(3, sink.ids.size());
+        assertEquals(0, stray.runs);
     }
 
     /** Logcat line with a source and a tag, for the echo route. */

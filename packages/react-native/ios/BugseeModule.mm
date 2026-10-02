@@ -856,7 +856,15 @@ RCT_EXPORT_MODULE(Bugsee)
 /// should land on the nearest level, not be chopped toward one.
 - (void)wrapperLog:(NSString *)message
              level:(double)level {
+  // The equal-text echo note dies as the channel line is recorded. A stamp
+  // note stays. Bugsee.log goes through this same method and does not arm
+  // a note of its own.
+  BGSRNBeginChannelLine(message);
   [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
+}
+
+- (void)noteConsoleEcho:(NSString *)message {
+  BGSRNNoteConsoleEcho(message);
 }
 
 
@@ -998,6 +1006,12 @@ RCT_EXPORT_MODULE(Bugsee)
           return;
         }
         if (line == nil) {
+          decision(nil);
+          return;
+        }
+        // The console echo. Dropped here, before JS is asked, so the user's
+        // callback runs once. Not a timeout: the line is not passed through.
+        if (BGSRNDropConsoleEcho(line)) {
           decision(nil);
           return;
         }

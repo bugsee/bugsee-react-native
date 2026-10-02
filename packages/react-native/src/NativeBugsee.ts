@@ -198,6 +198,14 @@ export interface Spec extends TurboModule {
   wrapperLog(message: string, level: number): void;
 
   /**
+   * Arms a native drop of the console echo of `message`, before that echo
+   * is written. Android drops the later `ReactNativeJS` logcat line. iOS
+   * drops a stderr stamp of `message`. It does not record a line, and a
+   * `Bugsee.log` of the same text does not arm another drop.
+   */
+  noteConsoleEcho(message: string): void;
+
+  /**
    * A network event the SDK is about to record, offered to the JS filter.
    *
    * `requestId` is native-minted and never reused within a process.
