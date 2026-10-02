@@ -6,7 +6,9 @@ jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMo
 import type { native as NativeMock } from '../../__mocks__/native';
 
 let native: typeof NativeMock;
-let Bugsee: { setLogFilter(callback?: (line: string) => unknown): void };
+let Bugsee: {
+  setLogFilter(callback?: ((line: string) => unknown) | null): void;
+};
 
 beforeEach(() => {
   jest.resetModules();
@@ -112,5 +114,37 @@ describe('setLogFilter', () => {
     Bugsee.setLogFilter();
     Bugsee.setLogFilter(() => 'c');
     expect(native.logFilterRequestSubscribeCallCount()).toBe(1);
+  });
+
+  it('rejects a non-function and keeps the filter already installed', async () => {
+    Bugsee.setLogFilter((line) => `kept:${line}`);
+    const set = Bugsee.setLogFilter as (callback?: unknown) => void;
+    expect(() => set(1)).toThrow(
+      new TypeError('Bugsee.setLogFilter requires a function, got number'),
+    );
+    emit('1', 'secret');
+    await flush();
+    expect(native.replyLogFilter).toHaveBeenCalledTimes(1);
+    expect(native.replyLogFilter).toHaveBeenCalledWith('1', 'kept:secret');
+  });
+
+  it('does not subscribe until a function is installed', () => {
+    Bugsee.setLogFilter();
+    Bugsee.setLogFilter(null);
+    expect(native.logFilterRequestSubscribeCallCount()).toBe(0);
+    expect(native.setLogFilterEnabled).toHaveBeenLastCalledWith(false);
+    Bugsee.setLogFilter(() => 'a');
+    expect(native.logFilterRequestSubscribeCallCount()).toBe(1);
+  });
+
+  it('a cleared filter drops the line before the native request returns', async () => {
+    Bugsee.setLogFilter(() => 'kept');
+    Bugsee.setLogFilter();
+    emit('1', 'secret');
+    expect(native.replyLogFilter).toHaveBeenCalledTimes(1);
+    expect(native.replyLogFilter).toHaveBeenCalledWith('1', null);
+    await flush();
+    expect(native.replyLogFilter).toHaveBeenCalledTimes(1);
+    expect(native.replyLogFilter).toHaveBeenCalledWith('1', null);
   });
 });
