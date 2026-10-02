@@ -82,6 +82,49 @@ describe('setLogFilter', () => {
     expect(native.replyLogFilter).toHaveBeenCalledWith('2', null);
   });
 
+  it('drops an RCTLog echo before the user callback and delivers the patch line', async () => {
+    const dedup = require('../../console/dedup') as {
+      claimEcho: (message: string) => void;
+      protectLine: (line: string) => void;
+    };
+    dedup.protectLine('seen [object Object]');
+    dedup.claimEcho("seen { password: 's3cret' }");
+    const user = jest.fn((line: string) => line);
+    Bugsee.setLogFilter(user);
+
+    emit('echo', "seen { password: 's3cret' }");
+    emit('patch', 'seen [object Object]');
+    await flush();
+
+    expect(user).toHaveBeenCalledTimes(1);
+    expect(user).toHaveBeenCalledWith('seen [object Object]');
+    expect(native.replyLogFilter).toHaveBeenCalledWith('echo', null);
+    expect(native.replyLogFilter).toHaveBeenCalledWith('patch', 'seen [object Object]');
+    const echoed = native.replyLogFilter.mock.calls.find((call) => call[0] === 'echo');
+    expect(echoed?.[1]).toBeNull();
+  });
+
+  it('a console line does not suppress a following line of the same text', async () => {
+    const dedup = require('../../console/dedup') as {
+      claimEcho: (message: string) => void;
+      protectLine: (line: string) => void;
+    };
+    dedup.protectLine('ready');
+    dedup.claimEcho('ready');
+    const user = jest.fn((line: string) => line);
+    Bugsee.setLogFilter(user);
+
+    emit('patch', 'ready');
+    emit('later', 'ready');
+    await flush();
+
+    expect(user).toHaveBeenCalledTimes(2);
+    expect(user).toHaveBeenNthCalledWith(1, 'ready');
+    expect(user).toHaveBeenNthCalledWith(2, 'ready');
+    expect(native.replyLogFilter).toHaveBeenCalledWith('patch', 'ready');
+    expect(native.replyLogFilter).toHaveBeenCalledWith('later', 'ready');
+  });
+
   it('a later call replaces the callback', async () => {
     Bugsee.setLogFilter(() => 'first');
     Bugsee.setLogFilter(() => 'second');
