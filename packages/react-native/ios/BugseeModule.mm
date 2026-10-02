@@ -206,11 +206,12 @@ static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper, BOOL onlyIfAbse
   }
 }
 
-/// The `vh` origin: the `frame.origin` (points) of the window hosting the
-/// React root, among the windows the SDK's own view-hierarchy walk visits --
-/// the offset the SDK adds to every native node, so the two trees share one
-/// space by construction (see `BGSRNReactWindow.h`). nil without one, or off
-/// main: the SDK asks on main, and UIKit must not be read anywhere else.
+/// The `vh` origin: where the window hosting the React root starts in the
+/// frame the SDK records (points), among the windows the SDK's own
+/// view-hierarchy walk visits -- the space the SDK places every native node
+/// in, so the two trees share one space by construction (see
+/// `BGSRNReactWindow.h`). nil without one, or off main: the SDK asks on main,
+/// and UIKit must not be read anywhere else.
 ///
 /// The root is recognised by class name, not by import: `RCTSurfaceHostingView`
 /// is the new architecture's root (the template's `RCTRootView` is its

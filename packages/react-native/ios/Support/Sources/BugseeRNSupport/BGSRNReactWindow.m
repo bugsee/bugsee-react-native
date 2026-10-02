@@ -120,9 +120,10 @@ NSValue *BGSRNReactRootOrigin(UIWindow *keyWindow, NSArray<UIWindow *> *windows,
   if (window == nil) {
     return nil;
   }
-  // `frame.origin`, NOT the window's position in the screen's coordinate
-  // space: the SDK adds exactly this (BGSCaptureViewHierarchyEngine.m:335-336).
-  return [NSValue valueWithCGPoint:window.frame.origin];
+  // Not `frame.origin` on iOS: that is the window's place in its scene, {0, 0}
+  // for a Stage Manager window or the right-hand one side by side, while the
+  // SDK places its nodes on the screen.
+  return BGSRNWindowRecordedOrigin(window);
 }
 
 NSValue *BGSRNWindowRecordedOrigin(UIWindow *window) {
