@@ -13,12 +13,18 @@ import { join } from 'node:path';
  */
 const SCRIPT = join(__dirname, '..', '..', 'examples', 'bare', 'scripts', 'write-credentials.mjs');
 const DEFAULT = { scenario: 'launch' };
+/** CI's BUGSEE_TOKEN_ANDROID. A placeholder, not a credential. */
+const CI_ANDROID_TOKEN = '00000000-0000-4000-8000-000000000000';
+
+function stage(root: string): void {
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  copyFileSync(SCRIPT, join(root, 'scripts', 'write-credentials.mjs'));
+}
 
 function run(scenario?: unknown): unknown {
   const root = mkdtempSync(join(tmpdir(), 'write-credentials-'));
   try {
-    mkdirSync(join(root, 'scripts'));
-    copyFileSync(SCRIPT, join(root, 'scripts', 'write-credentials.mjs'));
+    stage(root);
     const file = join(root, 'e2e-scenario.json');
     if (scenario !== undefined) {
       writeFileSync(file, `${JSON.stringify(scenario)}\n`);
@@ -50,8 +56,7 @@ describe('write-credentials and the e2e scenario file', () => {
   it('resets a file that is not valid JSON', () => {
     const root = mkdtempSync(join(tmpdir(), 'write-credentials-'));
     try {
-      mkdirSync(join(root, 'scripts'));
-      copyFileSync(SCRIPT, join(root, 'scripts', 'write-credentials.mjs'));
+      stage(root);
       writeFileSync(join(root, 'e2e-scenario.json'), '{"scenario":');
       execFileSync(process.execPath, [join(root, 'scripts', 'write-credentials.mjs')], {
         env: { ...process.env, BUGSEE_TOKEN_IOS: 'ios-token' },
@@ -61,5 +66,62 @@ describe('write-credentials and the e2e scenario file', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  function generate(overrides: NodeJS.ProcessEnv): { output: string; props: string } {
+    const root = mkdtempSync(join(tmpdir(), 'write-credentials-'));
+    try {
+      stage(root);
+      // Drop a shell endpoint unless this case sets one, so a real
+      // BUGSEE_ENDPOINT cannot leak into the generated file or the output.
+      const env: NodeJS.ProcessEnv = { ...process.env, BUGSEE_TOKEN_IOS: '', ...overrides };
+      if (!Object.hasOwn(overrides, 'BUGSEE_ENDPOINT')) {
+        delete env.BUGSEE_ENDPOINT;
+      }
+      const output = execFileSync(process.execPath, [join(root, 'scripts', 'write-credentials.mjs')], {
+        env,
+        encoding: 'utf8',
+      });
+      const props = readFileSync(join(root, 'android', 'bugsee.properties'), 'utf8');
+      return { output, props };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it('writes app_token and enables NDK symbol upload for React Native', () => {
+    const androidToken = 'fake-android-token';
+    const { output, props } = generate({ BUGSEE_TOKEN_ANDROID: androidToken });
+    const lines = props.split('\n');
+    const tokenLine = lines.find((line) => line.startsWith('app_token='));
+    expect(tokenLine !== undefined).toBe(true);
+    expect(tokenLine === `app_token=${androidToken}`).toBe(true);
+    expect(lines.includes('plugin.ndk.enabled=true')).toBe(true);
+    expect(props.includes('plugin.appToken')).toBe(false);
+    expect(lines.some((line) => line.startsWith('plugin.endpoint='))).toBe(false);
+    expect(output.includes(androidToken)).toBe(false);
+  });
+
+  it('writes plugin.endpoint when an endpoint is set, and does not append /v2', () => {
+    const androidToken = 'fake-android-token';
+    const endpoint = 'https://endpoint.example';
+    const { output, props } = generate({
+      BUGSEE_TOKEN_IOS: '',
+      BUGSEE_TOKEN_ANDROID: androidToken,
+      BUGSEE_ENDPOINT: endpoint,
+    });
+    const lines = props.split('\n');
+    expect(lines.includes(`plugin.endpoint=${endpoint}`)).toBe(true);
+    expect(lines.some((line) => line.startsWith('plugin.endpoint=') && line.endsWith('/v2'))).toBe(false);
+    expect(output.includes(androidToken)).toBe(false);
+    expect(output.includes(endpoint)).toBe(false);
+  });
+
+  it('does not enable NDK upload for the CI placeholder token', () => {
+    const { output, props } = generate({ BUGSEE_TOKEN_ANDROID: CI_ANDROID_TOKEN });
+    const lines = props.split('\n');
+    expect(lines.some((line) => line.startsWith('plugin.ndk.enabled'))).toBe(false);
+    expect(lines.some((line) => line.startsWith('app_token='))).toBe(true);
+    expect(output.includes(CI_ANDROID_TOKEN)).toBe(false);
   });
 });
