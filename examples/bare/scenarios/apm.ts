@@ -23,7 +23,9 @@ export function runApmScenario(nonce: string): void {
   Bugsee.notify(title, `body-${nonce}`, IssueSeverity.High, { nonce }, true);
   const transaction = Bugsee.startTransaction(transactionName, 'user.flow', { nonce });
   const span = Bugsee.startSpan('db.query', `span-${nonce}`);
-  span.setAttribute('nonce', nonce);
+  // A value the transaction's own attributes do not carry, so the report
+  // can only have it if this setter reached the SDK before finish.
+  span.setAttribute('nonce', `attr-${nonce}`);
   span.finish();
   transaction.finish();
   console.log(`BUGSEE_E2E apm notify=${title} txn=${transactionName}`);

@@ -497,12 +497,19 @@ export interface Spec extends TurboModule {
    * the same handle.
    */
   getActiveSpan(): UnsafeObject;
-  /** `setName`, which sets the operation on both SDKs. */
-  spanSetName(handle: string, name: string): void;
-  spanSetDescription(handle: string, description: string | null): void;
+  /**
+   * `setName`, which sets the operation on both SDKs.
+   *
+   * Returns whether the live span accepted the value. The return is what
+   * keeps the call on the JS thread: codegen queues a `void` TurboModule
+   * method, and a setter then `spanFinish` in one turn would release the
+   * handle before the setter ran. Same for the three setters below.
+   */
+  spanSetName(handle: string, name: string): boolean;
+  spanSetDescription(handle: string, description: string | null): boolean;
   /** `valueJson` is one JSON value: a string, number or boolean. */
-  spanSetAttribute(handle: string, key: string, valueJson: string): void;
-  spanSetStatus(handle: string, status: number): void;
+  spanSetAttribute(handle: string, key: string, valueJson: string): boolean;
+  spanSetStatus(handle: string, status: number): boolean;
   spanStartChild(
     handle: string,
     operation: string,

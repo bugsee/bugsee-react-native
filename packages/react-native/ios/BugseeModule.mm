@@ -2143,38 +2143,70 @@ RCT_EXPORT_MODULE(Bugsee)
   return snapshot;
 }
 
-- (void)spanSetName:(NSString *)handle name:(NSString *)name {
+/// `NSNumber`, not void: codegen queues a void method, so a setter then
+/// `spanFinish` in one turn would release the handle before the setter ran.
+/// The hop stays synchronous so the active span's thread is still main.
+/// Codegen's boolean is `NSNumber *`, the same as `addBreadcrumb`.
+- (NSNumber *)spanSetName:(NSString *)handle name:(NSString *)name {
+  __block BOOL applied = NO;
   BGSRNRunOnMainSync(^{
-    [[self liveSpan:handle].span setName:name];
+    BGSRNLiveSpan *live = [self liveSpan:handle];
+    if (live == nil) {
+      return;
+    }
+    [live.span setName:name];
+    applied = YES;
   });
+  return @(applied);
 }
 
-- (void)spanSetDescription:(NSString *)handle description:(NSString *)description {
+- (NSNumber *)spanSetDescription:(NSString *)handle description:(NSString *)description {
+  __block BOOL applied = NO;
   BGSRNRunOnMainSync(^{
-    [[self liveSpan:handle].span setSpanDescription:description];
+    BGSRNLiveSpan *live = [self liveSpan:handle];
+    if (live == nil) {
+      return;
+    }
+    [live.span setSpanDescription:description];
+    applied = YES;
   });
+  return @(applied);
 }
 
-- (void)spanSetAttribute:(NSString *)handle key:(NSString *)key valueJson:(NSString *)valueJson {
+- (NSNumber *)spanSetAttribute:(NSString *)handle key:(NSString *)key valueJson:(NSString *)valueJson {
+  __block BOOL applied = NO;
   BGSRNRunOnMainSync(^{
     id value = BGSRNJSONScalar(valueJson);
     if (value == nil) {
       NSLog(@"BugseeRN span attribute dropped: value is not a string, number or boolean");
       return;
     }
-    [[self liveSpan:handle].span setAttribute:key value:value];
+    BGSRNLiveSpan *live = [self liveSpan:handle];
+    if (live == nil) {
+      return;
+    }
+    [live.span setAttribute:key value:value];
+    applied = YES;
   });
+  return @(applied);
 }
 
-- (void)spanSetStatus:(NSString *)handle status:(double)status {
+- (NSNumber *)spanSetStatus:(NSString *)handle status:(double)status {
+  __block BOOL applied = NO;
   BGSRNRunOnMainSync(^{
     NSInteger wire = (NSInteger)llround(status);
     if (wire < BGSSpanStatusOK || wire > BGSSpanStatusUnknown) {
       NSLog(@"BugseeRN span status %ld is outside 0..5", (long)wire);
       return;
     }
-    [[self liveSpan:handle].span setStatus:(BGSSpanStatus)wire];
+    BGSRNLiveSpan *live = [self liveSpan:handle];
+    if (live == nil) {
+      return;
+    }
+    [live.span setStatus:(BGSSpanStatus)wire];
+    applied = YES;
   });
+  return @(applied);
 }
 
 - (NSDictionary *)spanStartChild:(NSString *)handle

@@ -1328,6 +1328,9 @@ public class BugseeModule extends NativeBugseeSpec
     // Span calls stay on this thread. Both SDKs keep the active span in
     // thread-local storage, so hopping to another thread would make
     // startSpan miss the transaction startTransaction just opened.
+    // The setters return a boolean for that same thread: codegen queues a
+    // void TurboModule method, and a setAttribute then finish in one turn
+    // would release the handle before the setter ran.
 
     @Override
     public void notify(
@@ -1384,46 +1387,52 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     @Override
-    public void spanSetName(final String handle, final String name) {
-        final LiveSpan live = live(handle);
-        if (live != null) {
-            live.span.setName(name);
-        }
-    }
-
-    @Override
-    public void spanSetDescription(final String handle, @Nullable final String description) {
-        final LiveSpan live = live(handle);
-        if (live != null) {
-            live.span.setDescription(description);
-        }
-    }
-
-    @Override
-    public void spanSetAttribute(final String handle, final String key, final String valueJson) {
+    public boolean spanSetName(final String handle, final String name) {
         final LiveSpan live = live(handle);
         if (live == null) {
-            return;
+            return false;
+        }
+        live.span.setName(name);
+        return true;
+    }
+
+    @Override
+    public boolean spanSetDescription(final String handle, @Nullable final String description) {
+        final LiveSpan live = live(handle);
+        if (live == null) {
+            return false;
+        }
+        live.span.setDescription(description);
+        return true;
+    }
+
+    @Override
+    public boolean spanSetAttribute(final String handle, final String key, final String valueJson) {
+        final LiveSpan live = live(handle);
+        if (live == null) {
+            return false;
         }
         final Object value = jsonValue(valueJson);
         if (value == null) {
             Log.w(TAG, "span attribute dropped: value is not a string, number or boolean");
-            return;
+            return false;
         }
         live.span.setAttribute(key, value);
+        return true;
     }
 
     @Override
-    public void spanSetStatus(final String handle, final double status) {
+    public boolean spanSetStatus(final String handle, final double status) {
         final LiveSpan live = live(handle);
         final SpanStatus parsed = SpanHandles.status((int) status);
         if (live == null || parsed == null) {
             if (parsed == null) {
                 Log.w(TAG, "span status " + (int) status + " is outside 0..5");
             }
-            return;
+            return false;
         }
         live.span.setStatus(parsed);
+        return true;
     }
 
     @Override

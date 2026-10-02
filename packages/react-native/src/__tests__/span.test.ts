@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 // The package entry now exports the options model, which reads Platform.OS,
 // so importing it loads `react-native` -- which jest cannot parse. Mocked to a
 // known platform; this suite is about spans, not about which one.
@@ -122,6 +125,17 @@ describe('spans', () => {
       expect.objectContaining({ code: 'E_SPAN_HANDLE_DEAD' }),
     );
     expect(native.spanSetAttribute).not.toHaveBeenCalled();
+  });
+
+  it('the four setters return a value so codegen does not queue them', () => {
+    const source = readFileSync(join(__dirname, '..', 'NativeBugsee.ts'), 'utf8');
+    for (const name of ['spanSetName', 'spanSetDescription', 'spanSetAttribute', 'spanSetStatus']) {
+      const declared = new RegExp(`\\b${name}\\s*\\([^)]*\\)\\s*:\\s*([^;]+);`).exec(source);
+      expect(declared).not.toBeNull();
+      // `void` is queued. A Promise is queued too. Only a sync boolean
+      // runs on the JS thread, ahead of spanFinish in the same turn.
+      expect({ name, returns: declared![1]!.trim() }).toEqual({ name, returns: 'boolean' });
+    }
   });
 
   it('rejects an empty operation before crossing', () => {

@@ -115,8 +115,40 @@ describeDevice(`a notification and a transaction on ${TARGET_NAME}`, () => {
     expect(text).toBeDefined();
     expect(text).toContain(`txn-${nonce}`);
     expect(text).toContain(`span-${nonce}`);
+    const child = spanByDescription(text!, `span-${nonce}`);
+    expect(child).toBeDefined();
+    // The capture's span objects carry `attributes`. `attr-<nonce>` is the
+    // value setAttribute wrote, which the transaction start does not.
+    expect(child!.attributes).toBeDefined();
+    expect(JSON.stringify(child!.attributes)).toContain(`attr-${nonce}`);
   });
 });
+
+/** The span object whose `description` is `wanted`, anywhere in the capture. */
+function spanByDescription(capture: string, wanted: string): { attributes?: unknown } | undefined {
+  let found: { attributes?: unknown } | undefined;
+  const walk = (node: unknown): void => {
+    if (found !== undefined || node === null || typeof node !== 'object') {
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        walk(item);
+      }
+      return;
+    }
+    const record = node as { description?: unknown; attributes?: unknown };
+    if (record.description === wanted) {
+      found = record;
+      return;
+    }
+    for (const value of Object.values(record)) {
+      walk(value);
+    }
+  };
+  walk(JSON.parse(capture) as unknown);
+  return found;
+}
 
 async function awaitRelay(title: string, timeoutMs = 20_000): Promise<string[]> {
   const deadline = Date.now() + timeoutMs;
