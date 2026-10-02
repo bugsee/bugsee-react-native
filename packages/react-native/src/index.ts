@@ -416,6 +416,10 @@ class Bugsee {
    * the time. `timestamp` is not a field of `crumb`. `level` is `debug`,
    * `info`, `warning`, `error`, or `fatal`. `data` omitted or `null` leaves
    * the crumb without data.
+   *
+   * Capture stays off until launch options set `captureBreadcrumbs: true`,
+   * on Android and on iOS. While it is off, this records nothing and the
+   * filter is not offered a crumb.
    */
   addBreadcrumb(crumb: Breadcrumb): void {
     recordBreadcrumb(crumb);
@@ -435,6 +439,10 @@ class Bugsee {
    * The callback runs on a later turn. This method does not wait for it, and
    * it does not add a timeout. A callback that throws, rejects, or never
    * settles drops the crumb. The original is not passed through.
+   *
+   * Capture stays off until launch options set `captureBreadcrumbs: true`,
+   * on Android and on iOS. While it is off, `addBreadcrumb` records nothing
+   * and the filter is not offered a crumb.
    */
   setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
     installBreadcrumbFilter(callback);

@@ -11,8 +11,8 @@
  * A crumb that is not one of the probes is returned unchanged, so the SDK's
  * own breadcrumb capture still records. The upload waits long enough for the
  * rewrite's round trip to be recorded. The recording `duration` stays the
- * app's 90. Breadcrumb capture is turned on for this scenario only: the iOS
- * SDK's `BugseeOptionCaptureBreadcrumbs` defaults to NO.
+ * app's 90. Breadcrumb capture is turned on for this scenario only: it stays
+ * off on Android and on iOS until launch options set `captureBreadcrumbs`.
  */
 import Bugsee from '@bugsee/react-native';
 

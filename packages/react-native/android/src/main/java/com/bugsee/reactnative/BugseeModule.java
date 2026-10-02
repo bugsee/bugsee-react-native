@@ -10,6 +10,8 @@ import com.bugsee.library.Bugsee;
 import com.bugsee.library.contracts.exchange.Breadcrumb;
 import com.bugsee.library.contracts.exchange.BugseeExchangeFactory;
 import com.bugsee.library.contracts.options.IssueSeverity;
+import com.bugsee.library.contracts.options.Options;
+import com.bugsee.library.contracts.options.OptionsContainer;
 import com.bugsee.library.contracts.reporting.Report;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
@@ -633,12 +635,25 @@ public class BugseeModule extends NativeBugseeSpec
             @Nullable final String dataJson
     ) {
         try {
+            // iOS still hands back a crumb when this option is false, then
+            // records nothing. Android's factory is null in that case. Either
+            // way the call has to say so.
+            final OptionsContainer options = Bugsee.getLaunchOptions();
+            final Object capture = options == null
+                    ? Boolean.FALSE
+                    : options.getOption(Options.CaptureBreadcrumbs, Boolean.FALSE);
+            if (!Boolean.TRUE.equals(capture)) {
+                Log.e(TAG, "addBreadcrumb dropped: capture is off or the SDK made no crumb");
+                return;
+            }
             final BugseeExchangeFactory factory = Bugsee.getExchangeFactory();
             if (factory == null) {
+                Log.e(TAG, "addBreadcrumb dropped: capture is off or the SDK made no crumb");
                 return;
             }
             final Breadcrumb crumb = factory.createBreadcrumb();
             if (crumb == null) {
+                Log.e(TAG, "addBreadcrumb dropped: capture is off or the SDK made no crumb");
                 return;
             }
             final Breadcrumb.Level parsed = BreadcrumbFilterBridge.levelFromName(level);

@@ -1226,9 +1226,21 @@ RCT_EXPORT_MODULE(Bugsee)
     return;
   }
   BGSRNRunOnMain(^{
+    // createBreadcrumb still returns a crumb when capture is left off, and
+    // addBreadcrumb: then records nothing. The option is the signal.
+    id capture = [Bugsee getLaunchOptions][BugseeOptionCaptureBreadcrumbs];
+    if (![capture isKindOfClass:NSNumber.class] || ![(NSNumber *)capture boolValue]) {
+      NSLog(@"BugseeRN addBreadcrumb dropped: capture is off or the SDK made no crumb");
+      return;
+    }
     id<BGSBugseeExchangeFactory> factory = [Bugsee getExchangeFactory];
+    if (factory == nil) {
+      NSLog(@"BugseeRN addBreadcrumb dropped: capture is off or the SDK made no crumb");
+      return;
+    }
     id<BGSBreadcrumb> crumb = [factory createBreadcrumb];
     if (crumb == nil) {
+      NSLog(@"BugseeRN addBreadcrumb dropped: capture is off or the SDK made no crumb");
       return;
     }
     crumb.category = category;

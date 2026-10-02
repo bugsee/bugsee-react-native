@@ -122,9 +122,9 @@ function launchOptions(endpoint: string, scenario: string): LaunchOptions {
   const options = createDefaultLaunchOptions();
   options.endpoint = endpoint;
   options.duration = NON_DEFAULT_DURATION;
-  // This scenario only. The iOS SDK's BugseeOptionCaptureBreadcrumbs defaults
-  // to NO, so a launch that leaves it unset records no crumbs. Duration stays
-  // the app's 90.
+  // This scenario only. Breadcrumb capture stays off on Android and on iOS
+  // until launch options set captureBreadcrumbs, so a launch that leaves it
+  // unset records no crumbs. Duration stays the app's 90.
   if (isBreadcrumbFilterScenario(scenario)) {
     options.captureBreadcrumbs = true;
   }
