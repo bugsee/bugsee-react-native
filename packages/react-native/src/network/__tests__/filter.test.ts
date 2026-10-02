@@ -166,7 +166,7 @@ describe('setNetworkFilter', () => {
     Bugsee.setNetworkFilter((event) => ({ ...event, url: 'https://kept.example' }));
     expect(() => {
       Bugsee.setNetworkFilter('nope' as unknown as () => null);
-    }).toThrow(TypeError);
+    }).toThrow(new TypeError('Bugsee.setNetworkFilter requires a function, got string'));
     emit('1');
     await flush();
     expect(repliedEvent(0)?.url).toBe('https://kept.example');
@@ -236,5 +236,113 @@ describe('setNetworkFilter', () => {
     Bugsee.setNetworkFilter();
     Bugsee.setNetworkFilter((event) => event);
     expect(native.networkFilterRequestSubscribeCallCount()).toBe(1);
+  });
+
+  it('does not subscribe until a function is installed', () => {
+    Bugsee.setNetworkFilter();
+    Bugsee.setNetworkFilter(null);
+    expect(native.networkFilterRequestSubscribeCallCount()).toBe(0);
+    expect(native.setNetworkFilterEnabled).toHaveBeenLastCalledWith(false);
+    Bugsee.setNetworkFilter((event) => event);
+    expect(native.networkFilterRequestSubscribeCallCount()).toBe(1);
+  });
+
+  it('a cleared filter drops the event before the native request returns', async () => {
+    Bugsee.setNetworkFilter((event) => event);
+    Bugsee.setNetworkFilter();
+    emit('1');
+    expect(native.replyNetworkFilter).toHaveBeenCalledTimes(1);
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledTimes(1);
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('malformed event JSON drops the event before the native request returns', () => {
+    Bugsee.setNetworkFilter((event) => event);
+    native.emitNetworkFilterRequest({ requestId: '1', eventJson: '{' });
+    expect(native.replyNetworkFilter).toHaveBeenCalledTimes(1);
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('omitting url replies null', async () => {
+    Bugsee.setNetworkFilter((event) => {
+      const next = { ...event };
+      delete (next as { url?: string | null }).url;
+      return next;
+    });
+    emit('1');
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('omitting headers when the snapshot sent them replies null', async () => {
+    Bugsee.setNetworkFilter((event) => {
+      const next = { ...event };
+      delete (next as { headers?: Record<string, string> | null }).headers;
+      return next;
+    });
+    emit('1');
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('a spread of an event whose snapshot omitted headers is kept without a headers key', async () => {
+    const { headers: _headers, ...withoutHeaders } = ORIGINAL;
+    Bugsee.setNetworkFilter((event) => ({ ...event, url: 'https://redacted.example/path' }));
+    native.emitNetworkFilterRequest({
+      requestId: '1',
+      eventJson: JSON.stringify(withoutHeaders),
+    });
+    await flush();
+    const payload = native.replyNetworkFilter.mock.calls[0]?.[1] as string;
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    expect(parsed.url).toBe('https://redacted.example/path');
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'headers')).toBe(false);
+  });
+
+  it('a function replacement replies null', async () => {
+    Bugsee.setNetworkFilter(() => {
+      const result = function replacement() {
+        return undefined;
+      };
+      const tagged = result as unknown as { url: string; body: null; headers: null };
+      tagged.url = 'https://redacted.example';
+      tagged.body = null;
+      tagged.headers = null;
+      return result;
+    });
+    emit('1');
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('an array replacement replies null', async () => {
+    Bugsee.setNetworkFilter(() => {
+      const result = [] as unknown as { url: string; body: null; headers: null };
+      result.url = 'https://redacted.example';
+      result.body = null;
+      result.headers = null;
+      return result;
+    });
+    emit('1');
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('a circular replacement replies null', async () => {
+    Bugsee.setNetworkFilter(() => {
+      const result: Record<string, unknown> = {
+        url: 'https://redacted.example',
+        body: null,
+        headers: null,
+      };
+      result.self = result;
+      return result;
+    });
+    emit('1');
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledTimes(1);
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
   });
 });
