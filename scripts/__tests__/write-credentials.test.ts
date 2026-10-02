@@ -12,7 +12,6 @@ import { join } from 'node:path';
  * by hand, not just by the e2e -- would then point the SDK at a closed port.
  */
 const SCRIPT = join(__dirname, '..', '..', 'examples', 'bare', 'scripts', 'write-credentials.mjs');
-const ENDPOINT = join(__dirname, '..', '..', 'examples', 'bare', 'endpoint.ts');
 const DEFAULT = { scenario: 'launch' };
 /** CI's BUGSEE_TOKEN_ANDROID. A placeholder, not a credential. */
 const CI_ANDROID_TOKEN = '00000000-0000-4000-8000-000000000000';
@@ -20,7 +19,6 @@ const CI_ANDROID_TOKEN = '00000000-0000-4000-8000-000000000000';
 function stage(root: string): void {
   mkdirSync(join(root, 'scripts'), { recursive: true });
   copyFileSync(SCRIPT, join(root, 'scripts', 'write-credentials.mjs'));
-  copyFileSync(ENDPOINT, join(root, 'endpoint.ts'));
 }
 
 function run(scenario?: unknown): unknown {
