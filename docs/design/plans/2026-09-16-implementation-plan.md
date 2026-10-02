@@ -4034,7 +4034,7 @@ The phase with the most native↔JS round-tripping, hence the most device testin
 
   Decide between declaring `bugsee-android-okhttp` from this package (and verify the injection reaches RN's client) and a `NetworkingModule` interceptor. A device test must show a JS `fetch` in a retained bundle on both platforms. On iOS, confirm that NSURLSession capture covers RN's networking the same way.
 - [ ] **9.4** Network filter, same round-trip shape.
-- [ ] **9.5** `addBreadcrumb(crumb)` and `setBreadcrumbFilter(cb)`. Breadcrumbs are built through the SDK's exchange factory on both platforms, so the bridge constructs rather than forwards.
+- [x] **9.5** `addBreadcrumb(crumb)` and `setBreadcrumbFilter(cb)`. Breadcrumbs are built through the SDK's exchange factory on both platforms, so the bridge constructs rather than forwards. Device: WOD_LX1 `AMRJCP4718402860` retained `breadcrumb-filter immediate 3541e7fe9c78 REDACTED` and `breadcrumb-filter rewrite 3541e7fe9c78 REDACTED`, and the unsettled crumb was absent; simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957` retained `breadcrumb-filter immediate b504020d402c REDACTED` and `breadcrumb-filter rewrite b504020d402c REDACTED`, and the unsettled crumb was absent. The iPhone XS (KRSFT) was already running BareExample after one wait, so that run was not taken.
 - [ ] **9.6** `addNetworkEvent` for stacks the SDK does not auto-instrument.
 - [ ] **9.7** Dedup across the two console streams, *before* either filter runs — otherwise the user's callback runs twice on one line by two routes. Device test in **both** Debug and Release; RN only routes `console.*` through `RCTLog` under `__DEV__`, and Hermes release builds commonly strip console calls.
 - [ ] Review gate.
