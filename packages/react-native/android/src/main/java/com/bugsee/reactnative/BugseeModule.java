@@ -41,7 +41,7 @@ import java.util.concurrent.Executors;
  */
 @ReactModule(name = BugseeModule.NAME)
 public class BugseeModule extends NativeBugseeSpec
-        implements WrapperEventBus.Sink, ReportHandlerBridge.Sink, LogFilterBridge.Sink {
+        implements WrapperEventBus.Sink, ReportHandlerBridge.Sink, NetworkFilterBridge.Sink, LogFilterBridge.Sink {
 
     public static final String NAME = "Bugsee";
 
@@ -102,6 +102,7 @@ public class BugseeModule extends NativeBugseeSpec
         WrapperEventBus.shared().attach(this);
         ReportHandlerBridge.shared().attach(this);
         DataRequestBridge.shared().attach(dataRequestSink, originTracker::currentOrigin);
+        NetworkFilterBridge.shared().attach(this);
         LogFilterBridge.shared().attach(this);
     }
 
@@ -127,6 +128,7 @@ public class BugseeModule extends NativeBugseeSpec
         // Same for any outstanding vh request, and disables the view tree:
         // the next runtime's anchor has not mounted yet.
         DataRequestBridge.shared().detach(dataRequestSink);
+        NetworkFilterBridge.shared().detach(this);
         // Drops every log-filter request this module was given. An unanswered
         // one would otherwise sit until the SDK's timeout, and a reply into
         // this module after it is gone has nowhere to land.
@@ -435,6 +437,27 @@ public class BugseeModule extends NativeBugseeSpec
     @Override
     public void wrapperLog(final String message, final double level) {
         WrapperChannelHolder.shared().log(message, (int) level);
+    }
+
+    @Override
+    public void onNetworkFilterRequest(@NonNull final String requestId, @NonNull final String eventJson) {
+        final WritableMap payload = Arguments.createMap();
+        payload.putString("requestId", requestId);
+        payload.putString("eventJson", eventJson);
+        emitOnNetworkFilterRequest(payload);
+    }
+
+    @Override
+    public void setNetworkFilterEnabled(final boolean enabled) {
+        NetworkFilterBridge.shared().setEnabled(enabled);
+    }
+
+    @Override
+    public void replyNetworkFilter(final String requestId, @Nullable final String eventJson) {
+        if (requestId == null) {
+            return;
+        }
+        NetworkFilterBridge.shared().reply(requestId, eventJson);
     }
 
     // --- Attributes and identity ---------------------------------------

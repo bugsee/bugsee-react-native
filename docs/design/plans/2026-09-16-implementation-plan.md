@@ -4033,7 +4033,7 @@ The phase with the most native↔JS round-tripping, hence the most device testin
   - A typical RN app gets OkHttp only transitively, so JS requests are likely **not** captured today.
 
   The WOD_LX1 retained bundle contains the JS `fetch`. iOS NSURLSession capture does not record a React Native `fetch`.
-- [ ] **9.4** Network filter, same round-trip shape.
+- [x] **9.4** Network filter, same round-trip shape. On the iPhone XS (KRSFT, `345BA7FE-2C29-5722-892A-BFCB1FD34D0C`) and simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957` the retained bundle held one websocket url rewritten with `bugsee-e2e-redacted` and omitted the hung `/v2/sessions` error; WOD_LX1 `AMRJCP4718402860` retained no network events, because this branch does not add `bugsee-android-okhttp`.
 - [ ] **9.5** `addBreadcrumb(crumb)` and `setBreadcrumbFilter(cb)`. Breadcrumbs are built through the SDK's exchange factory on both platforms, so the bridge constructs rather than forwards.
 - [ ] **9.6** `addNetworkEvent` for stacks the SDK does not auto-instrument.
 - [ ] **9.7** Dedup across the two console streams, *before* either filter runs — otherwise the user's callback runs twice on one line by two routes. Device test in **both** Debug and Release; RN only routes `console.*` through `RCTLog` under `__DEV__`, and Hermes release builds commonly strip console calls.

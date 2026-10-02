@@ -17,7 +17,8 @@
  * scenarios/native.ts, `blackout`, `blackout-prelaunch`,
  * `secure-component` and `view-tree` are scenarios/privacy.tsx, and
  * `exc-*` are scenarios/exceptions.tsx, `rp-*` are
- * scenarios/reporting.ts, and `log-filter` is scenarios/log-filter.ts.
+ * scenarios/reporting.ts, `log-filter` is scenarios/log-filter.ts, and
+ * `network-filter` is scenarios/network-filter.ts.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -92,6 +93,11 @@ import {
   isLogFilterScenario,
   runLogFilterScenario,
 } from './scenarios/log-filter';
+import {
+  installNetworkFilter,
+  isNetworkFilterScenario,
+  runNetworkFilterScenario,
+} from './scenarios/network-filter';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -350,6 +356,11 @@ export default function App() {
       if (isReportingScenario(choice.scenario)) {
         installReporting(choice.scenario, choice.nonce);
       }
+      // Before launch(): the network filter has to be installed before the
+      // SDK's own session and Metro's websocket are captured.
+      if (isNetworkFilterScenario(choice.scenario)) {
+        installNetworkFilter(choice.nonce);
+      }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
       // capture up off the main thread, so by the time the promise resolves the
@@ -425,6 +436,11 @@ export default function App() {
 
         if (isReportingScenario(choice.scenario)) {
           runReportingScenario(choice.scenario, choice.nonce);
+          return;
+        }
+
+        if (isNetworkFilterScenario(choice.scenario)) {
+          runNetworkFilterScenario(choice.nonce);
           return;
         }
 
