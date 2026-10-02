@@ -102,11 +102,12 @@ const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
 
 /**
  * `ndkVersion` is the baked `android.sdk`, or null when native crash
- * reporting is explicitly off. Null does not add an implementation line.
- * It excludes the wrapper's `api` NDK artifact so that AAR stays off the
- * APK. A later run with the option omitted or on removes that exclude and
- * adds the implementation line. The wrapper declaration itself is left in
- * place.
+ * reporting is explicitly off. Null strips a direct
+ * `implementation "com.bugsee:bugsee-android-ndk"` line from an earlier
+ * prebuild and excludes the wrapper's transitive `api` artifact. A
+ * configuration exclude does not drop a direct dependency. A later run
+ * with the option omitted or on removes that exclude and adds the
+ * implementation line. The wrapper `api` itself is left in place.
  */
 export function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string {
   let next = appBuildGradle;
@@ -119,7 +120,7 @@ export function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: strin
     }
   }
   if (ndkVersion === null) {
-    return ensureNdkExcluded(next);
+    return ensureNdkExcluded(dropNdkImplementation(next));
   }
   next = dropNdkExclude(next);
   if (/implementation\s+["']com\.bugsee:bugsee-android-ndk:/.test(next)) {
@@ -135,6 +136,15 @@ export function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: strin
   }
   const brace = next.indexOf('{', deps);
   return `${next.slice(0, brace + 1)}\n${dep}${next.slice(brace + 1)}`;
+}
+
+const NDK_IMPLEMENTATION = /^\s*implementation\s+["']com\.bugsee:bugsee-android-ndk:/;
+
+function dropNdkImplementation(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !NDK_IMPLEMENTATION.test(line))
+    .join('\n');
 }
 
 const NDK_EXCLUDE_BLOCK = [

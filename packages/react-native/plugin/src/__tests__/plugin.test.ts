@@ -418,6 +418,25 @@ describe('Android Gradle edits', () => {
     expect(ensureAppAppliesPlugin(next, null)).toBe(next);
   });
 
+  it('drops a direct NDK implementation when native crash reporting is turned off', () => {
+    const app = [
+      'apply plugin: "com.android.application"',
+      'apply plugin: "com.facebook.react"',
+      '',
+      'dependencies {',
+      '    implementation("com.facebook.react:react-android")',
+      '}',
+      '',
+    ].join('\n');
+    const enabled = ensureAppAppliesPlugin(app, versions.sdk);
+    expect(enabled).toContain(`implementation "com.bugsee:bugsee-android-ndk:${versions.sdk}"`);
+    const next = ensureAppAppliesPlugin(enabled, null);
+    expect(next).not.toMatch(/implementation\s+["']com\.bugsee:bugsee-android-ndk:/);
+    expect(next).toContain("exclude group: 'com.bugsee', module: 'bugsee-android-ndk'");
+    expect(next).toContain('implementation("com.facebook.react:react-android")');
+    expect(ensureAppAppliesPlugin(next, null)).toBe(next);
+  });
+
   it('removes a previous NDK exclude when native crash reporting is on', () => {
     const app = [
       'apply plugin: "com.facebook.react"',
