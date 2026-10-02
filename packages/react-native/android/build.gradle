@@ -141,6 +141,13 @@ dependencies {
     // `api`, not `implementation`, to match the core SDK: an app that wants to
     // configure NdkOptions needs the types on its own compile classpath.
     api "com.bugsee:bugsee-android-ndk:${nativeVersions.android.sdk}"
+    // RN's NetworkingModule builds an OkHttpClient. The Bugsee plugin injects
+    // into every OkHttpClient.Builder.build() only when this artifact is on
+    // the classpath, and it auto-adds the artifact only when the app directly
+    // declares com.squareup.okhttp3 — which a typical RN app never does, so
+    // a JS fetch would otherwise never reach a bundle. `api`, like the core
+    // SDK: the interceptor class has to be in the app, not only this module.
+    api "com.bugsee:bugsee-android-okhttp:${nativeVersions.android.sdk}"
     // For @Nullable/@NonNull. The SDK exposes these types in its own public
     // API, so a consumer has androidx.annotation on the classpath regardless.
     implementation 'androidx.annotation:annotation:1.9.1'

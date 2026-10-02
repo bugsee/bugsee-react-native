@@ -10,7 +10,8 @@
  * What it does after launching is picked by a scenario (e2e/scenario.ts):
  * `launch`, the default, is the lifecycle walk launch.test.ts asserts; the
  * `rh-*` scenarios are the report-handler cases in scenarios/report-handler.ts;
- * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts, `secure`
+ * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts, `network`
+ * is scenarios/network.ts, `secure`
  * is scenarios/secure.tsx, `attributes`/`attributes-persist` are
  * scenarios/attributes.ts, `e2e-native-smoke` / `native-crash-*` are
  * scenarios/native.ts, `blackout`, `blackout-prelaunch`,
@@ -55,6 +56,7 @@ import {
   preLaunchDataProbe,
   runDataScenario,
 } from './scenarios/data';
+import { isNetworkScenario, runNetworkScenario } from './scenarios/network';
 import { SecureProbe, isSecureScenario } from './scenarios/secure';
 import {
   isAttributeScenario,
@@ -373,6 +375,11 @@ export default function App() {
 
         if (data !== undefined) {
           runDataScenario(choice.nonce);
+          return;
+        }
+
+        if (isNetworkScenario(choice.scenario)) {
+          await runNetworkScenario(choice.nonce);
           return;
         }
 

@@ -4025,7 +4025,7 @@ The phase with the most native↔JS round-tripping, hence the most device testin
 
 - [ ] **9.1** Console capture with the JS patch.
 - [ ] **9.2** Log filter — the native→JS round trip. **A filter callback that cannot complete must drop the line, not pass it through**; failing open at a redaction boundary leaks exactly what the callback existed to remove.
-- [ ] **9.3** Network: keep the WebSocket patch; `patchXhr` stays disabled. **Do not assume native capture covers `fetch`/XHR on Android** (found 2026-09-29, from the Android SDK source):
+- [x] **9.3** Network: keep the WebSocket patch; `patchXhr` stays disabled. **Do not assume native capture covers `fetch`/XHR on Android** (found 2026-09-29, from the Android SDK source):
   - RN's `NetworkingModule` runs on OkHttp, and Bugsee instruments OkHttp only when `bugsee-android-okhttp` is on the classpath.
   - This package declares only `bugsee-android` + `bugsee-android-ndk`.
   - The Bugsee Gradle plugin adds the okhttp artefact only when the app *directly* declares `com.squareup.okhttp3` (`BugseePlugin.hasOkHttpDependency`). When the artefact is present, it injects into every `OkHttpClient.Builder.build()`, including inside `react-android`.

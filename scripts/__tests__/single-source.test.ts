@@ -127,6 +127,19 @@ describe('the Android dependency set captures native crashes', () => {
     expect([...byArtifact.keys()]).toContain('bugsee-android-ndk');
   });
 
+  // RN's NetworkingModule speaks OkHttp. The Bugsee Gradle plugin injects into
+  // OkHttpClient.Builder.build() only when bugsee-android-okhttp is on the
+  // classpath, and it auto-adds that artifact only for a direct okhttp3
+  // dependency — which a typical RN app does not declare. Without this
+  // declaration a JS fetch never reaches a bundle.
+  it('declares bugsee-android-okhttp at the same version as bugsee-android', () => {
+    const core = byArtifact.get('bugsee-android');
+    const okhttp = byArtifact.get('bugsee-android-okhttp');
+    expect(okhttp).toBeDefined();
+    expect(okhttp).toBe(core);
+    expect(okhttp).toBe('${nativeVersions.android.sdk}');
+  });
+
   // Two Bugsee artifacts resolved to different versions is the one shape worse
   // than omitting the second: Gradle picks the newer, so the pair that actually
   // ships is neither of the ones declared here.
