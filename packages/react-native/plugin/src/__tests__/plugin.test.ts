@@ -223,6 +223,26 @@ describe('Android Gradle edits', () => {
     expect(next).not.toMatch(/implementation\s+["']com\.bugsee:bugsee-android-ndk:/);
     expect(ensureAppAppliesPlugin(next, null)).toBe(next);
   });
+
+  it('removes a previous NDK exclude when native crash reporting is on', () => {
+    const app = [
+      'apply plugin: "com.facebook.react"',
+      'apply plugin: "com.bugsee.android.gradle"',
+      '',
+      'dependencies {',
+      '}',
+      '',
+      'configurations.configureEach {',
+      "    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'",
+      '}',
+      '',
+    ].join('\n');
+    const next = ensureAppAppliesPlugin(app, versions.sdk);
+    expect(next).not.toContain('configurations.configureEach');
+    expect(next).not.toContain("exclude group: 'com.bugsee', module: 'bugsee-android-ndk'");
+    expect(next).toContain(`implementation "com.bugsee:bugsee-android-ndk:${versions.sdk}"`);
+    expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
+  });
 });
 
 describe('published native versions', () => {

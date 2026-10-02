@@ -9,6 +9,8 @@ export declare function ensureGradlePluginDeclared(projectBuildGradle: string, v
  * `ndkVersion` is the baked `android.sdk`, or null when native crash
  * reporting is explicitly off. Null does not add an implementation line.
  * It excludes the wrapper's `api` NDK artifact so that AAR stays off the
- * APK. The wrapper declaration itself is left in place.
+ * APK. A later run with the option omitted or on removes that exclude and
+ * adds the implementation line. The wrapper declaration itself is left in
+ * place.
  */
 export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string;

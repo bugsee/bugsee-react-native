@@ -104,7 +104,9 @@ const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
  * `ndkVersion` is the baked `android.sdk`, or null when native crash
  * reporting is explicitly off. Null does not add an implementation line.
  * It excludes the wrapper's `api` NDK artifact so that AAR stays off the
- * APK. The wrapper declaration itself is left in place.
+ * APK. A later run with the option omitted or on removes that exclude and
+ * adds the implementation line. The wrapper declaration itself is left in
+ * place.
  */
 export function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string {
   let next = appBuildGradle;
@@ -119,6 +121,7 @@ export function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: strin
   if (ndkVersion === null) {
     return ensureNdkExcluded(next);
   }
+  next = dropNdkExclude(next);
   if (/implementation\s+["']com\.bugsee:bugsee-android-ndk:/.test(next)) {
     return next;
   }
@@ -134,10 +137,33 @@ export function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: strin
   return `${next.slice(0, brace + 1)}\n${dep}${next.slice(brace + 1)}`;
 }
 
+const NDK_EXCLUDE_BLOCK = [
+  'configurations.configureEach {',
+  `    ${NDK_EXCLUDE}`,
+  '}',
+].join('\n');
+
 function ensureNdkExcluded(source: string): string {
-  if (source.includes(NDK_EXCLUDE)) {
+  if (source.includes(NDK_EXCLUDE_BLOCK)) {
     return source;
   }
-  const block = ['', 'configurations.configureEach {', `    ${NDK_EXCLUDE}`, '}', ''].join('\n');
+  const block = ['', NDK_EXCLUDE_BLOCK, ''].join('\n');
   return `${source.replace(/\s*$/, '')}\n${block}`;
+}
+
+function dropNdkExclude(source: string): string {
+  const at = source.indexOf(NDK_EXCLUDE_BLOCK);
+  if (at < 0) {
+    return source;
+  }
+  let start = at;
+  if (start > 0 && source[start - 1] === '\n') {
+    start -= 1;
+  }
+  let end = at + NDK_EXCLUDE_BLOCK.length;
+  while (end < source.length && source[end] === '\n') {
+    end += 1;
+  }
+  const next = source.slice(0, start) + source.slice(end);
+  return next.endsWith('\n') || next.length === 0 ? next : `${next}\n`;
 }
