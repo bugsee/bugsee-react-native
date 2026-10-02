@@ -17,6 +17,8 @@
 #import <BugseeRNSupport/BGSRNWrapperChannelHolder.h>
 #import <BugseeRNSupport/BGSRNStatusMapper.h>
 #import <BugseeRNSupport/BGSRNSecureRectangles.h>
+#import <BugseeRNSupport/BGSRNSecureRectanglePulls.h>
+#import <BugseeRNSupport/BGSRNReactRootOriginTracker.h>
 #import <BugseeRNSupport/BGSRNEventBus.h>
 #import <BugseeRNSupport/BGSRNTokens.h>
 #import <BugseeRNSupport/BGSRNReportHandlerBridge.h>
@@ -38,6 +40,8 @@
 #import "BGSRNWrapperChannelHolder.h"
 #import "BGSRNStatusMapper.h"
 #import "BGSRNSecureRectangles.h"
+#import "BGSRNSecureRectanglePulls.h"
+#import "BGSRNReactRootOriginTracker.h"
 #import "BGSRNEventBus.h"
 #import "BGSRNTokens.h"
 #import "BGSRNReportHandlerBridge.h"
@@ -54,6 +58,9 @@
 #import "BGSRNCreatedReports.h"
 #import "BGSRNCreatedReportOps.h"
 #endif
+
+/// Defined below, beside the React root lookup it closes over.
+static BGSRNReactRootOriginTracker *BGSRNSecureOriginTracker(void);
 
 /// The conformance lives here rather than in the Support package so that the
 /// package stays buildable and testable without the SDK's headers. BGSRNWrapper
@@ -87,15 +94,19 @@
 }
 
 /// The packed buffer the SDK expects: `[version, count, l,t,r,b, ...]` as
-/// little-endian int32.
+/// little-endian int32, every rectangle moved from the React root's window to
+/// the screen.
 ///
 /// Read from the process-wide store rather than from this instance. The SDK
 /// pulls 2-3 times a second on the MAIN thread, and the wrapper it pulls
 /// through is replaced when `setWrapperInfo` runs — regions the app marked
 /// secret must survive that swap. See `BGSRNSecureRectangles` for the version
-/// contract, which is what makes the SDK notice a change at all.
+/// contract, which is what makes the SDK notice a change at all. The pull
+/// also re-reads the window's place on the screen
+/// (`BGSRNSecureRectanglePulls`): a window can move with nothing published.
 - (NSData *)secureRectanglesForDisplay:(NSInteger)display {
-  return [BGSRNSecureRectangles.shared snapshotForDisplay:display];
+  (void)BGSRNSecureOriginTracker();  // installs the pulls' refresher on first use
+  return [BGSRNSecureRectanglePulls.shared pullForDisplay:display];
 }
 
 /// Through the data request bridge, for the same reason lifecycle events go
@@ -205,10 +216,7 @@ static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper, BOOL onlyIfAbse
 /// is the new architecture's root (the template's `RCTRootView` is its
 /// `RCTSurfaceHostingProxyRootView` subclass); the legacy `RCTRootView` class
 /// is matched too for interop hosts.
-static NSValue *_Nullable BGSRNReactOrigin(void) {
-  if (!NSThread.isMainThread) {
-    return nil;
-  }
+static BOOL BGSRNIsReactRoot(UIView *view) {
   static Class surfaceHostingView;
   static Class legacyRootView;
   static dispatch_once_t once;
@@ -216,11 +224,50 @@ static NSValue *_Nullable BGSRNReactOrigin(void) {
     surfaceHostingView = NSClassFromString(@"RCTSurfaceHostingView");
     legacyRootView = NSClassFromString(@"RCTRootView");
   });
+  return (surfaceHostingView != Nil && [view isKindOfClass:surfaceHostingView]) ||
+         (legacyRootView != Nil && [view isKindOfClass:legacyRootView]);
+}
+
+static NSValue *_Nullable BGSRNReactOrigin(void) {
+  if (!NSThread.isMainThread) {
+    return nil;
+  }
   UIWindow *keyWindow = BGSRNSdkKeyWindow();
   return BGSRNReactRootOrigin(keyWindow, BGSRNSdkWalkedWindows(keyWindow), ^BOOL(UIView *view) {
-    return (surfaceHostingView != Nil && [view isKindOfClass:surfaceHostingView]) ||
-           (legacyRootView != Nil && [view isKindOfClass:legacyRootView]);
+    return BGSRNIsReactRoot(view);
   });
+}
+
+/// Keeps the secure rectangles on the window JS measures them in: the iOS
+/// peer of Android's `ReactRootOriginTracker` (see
+/// `BGSRNReactRootOriginTracker`). Process-wide, like the store and the pulls
+/// it feeds: the window lookup reads only UIKit, nothing of one module.
+/// Created by the first pull or publish, which also installs it as the pulls'
+/// refresher.
+static BGSRNReactRootOriginTracker *BGSRNSecureOriginTracker(void) {
+  static BGSRNReactRootOriginTracker *tracker = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    tracker = [[BGSRNReactRootOriginTracker alloc]
+        initWithStore:BGSRNSecureRectangles.shared
+             findRoot:^UIView *_Nullable {
+               UIWindow *keyWindow = BGSRNSdkKeyWindow();
+               return BGSRNReactRootView(keyWindow,
+                                         BGSRNSdkWalkedWindows(keyWindow),
+                                         ^BOOL(UIView *view) {
+                                           return BGSRNIsReactRoot(view);
+                                         },
+                                         BGSRNReactRootSearchBudget);
+             }
+           readOrigin:^NSValue *_Nullable(UIWindow *window) {
+             return BGSRNWindowRecordedOrigin(window);
+           }];
+    BGSRNReactRootOriginTracker *installed = tracker;
+    BGSRNSecureRectanglePulls.shared.refresher = ^{
+      [installed refresh];
+    };
+  });
+  return tracker;
 }
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
@@ -428,6 +475,13 @@ RCT_EXPORT_MODULE(Bugsee)
                                          count:count
                                     forDisplay:(NSInteger)display];
   free(flat);
+  // JS measured in the React root's window; where that window sits on the
+  // screen is read on main, as Android re-reads its root's display origin on
+  // every publish.
+  BGSRNReactRootOriginTracker *tracker = BGSRNSecureOriginTracker();
+  BGSRNRunOnMain(^{
+    [tracker refreshFindingTheRoot];
+  });
 }
 
 #pragma mark - Blackout and view-hierarchy capture (design doc §4.1)

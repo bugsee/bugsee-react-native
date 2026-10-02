@@ -19,8 +19,46 @@ static int32_t BGSRNNextVersion(int32_t current) {
   return next == kInitialVersion ? kInitialVersion + 1 : next;
 }
 
+/// One coordinate moved by the origin, rounded outward: down for a left or top
+/// edge, up for a right or bottom one, so the region can only grow. Saturates
+/// at the int32 range.
+static int32_t BGSRNMovedCoordinate(int32_t value, NSUInteger index, CGPoint origin) {
+  const BOOL isX = index % 2 == 0;
+  const BOOL isLeadingEdge = index % kCoordinatesPerRectangle < 2;
+  const double moved = (double)value + (isX ? origin.x : origin.y);
+  const double rounded = isLeadingEdge ? floor(moved) : ceil(moved);
+  if (rounded >= (double)INT32_MAX) {
+    return INT32_MAX;
+  }
+  if (rounded <= (double)INT32_MIN) {
+    return INT32_MIN;
+  }
+  return (int32_t)rounded;
+}
+
+/// `raw` (int32 coordinates) with every coordinate moved by `origin`.
+static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
+  if (origin.x == 0 && origin.y == 0) {
+    return raw;
+  }
+  const NSUInteger count = raw.length / sizeof(int32_t);
+  NSMutableData *moved = [NSMutableData dataWithLength:raw.length];
+  const int32_t *in = (const int32_t *)raw.bytes;
+  int32_t *out = (int32_t *)moved.mutableBytes;
+  for (NSUInteger i = 0; i < count; i++) {
+    out[i] = BGSRNMovedCoordinate(in[i], i, origin);
+  }
+  return [moved copy];
+}
+
 @implementation BGSRNSecureRectangles {
-  /// display -> the coordinates last published for it, as NSData of int32.
+  /// display -> the coordinates JS last published for it, in its window's
+  /// points, as NSData of int32.
+  NSMutableDictionary<NSNumber *, NSData *> *_rawByDisplay;
+  /// display -> the window's place on that display's screen, a CGPoint.
+  NSMutableDictionary<NSNumber *, NSValue *> *_originByDisplay;
+  /// display -> the coordinates served to the SDK: the raw ones moved by the
+  /// origin. Absent until something is published for the display.
   NSMutableDictionary<NSNumber *, NSData *> *_coordinatesByDisplay;
   /// display -> its current version.
   NSMutableDictionary<NSNumber *, NSNumber *> *_versionsByDisplay;
@@ -42,6 +80,8 @@ static int32_t BGSRNNextVersion(int32_t current) {
 - (instancetype)init {
   self = [super init];
   if (self) {
+    _rawByDisplay = [NSMutableDictionary dictionary];
+    _originByDisplay = [NSMutableDictionary dictionary];
     _coordinatesByDisplay = [NSMutableDictionary dictionary];
     _versionsByDisplay = [NSMutableDictionary dictionary];
     _lock = [[NSLock alloc] init];
@@ -67,16 +107,46 @@ static int32_t BGSRNNextVersion(int32_t current) {
 
   NSNumber *key = @(display);
   [_lock lock];
-  NSData *previous = _coordinatesByDisplay[key];
-  if (previous == nil || ![previous isEqualToData:published]) {
-    const int32_t currentVersion =
-        previous == nil ? kInitialVersion : _versionsByDisplay[key].intValue;
-    _coordinatesByDisplay[key] = published;
-    _versionsByDisplay[key] = @(BGSRNNextVersion(currentVersion));
-  }
+  _rawByDisplay[key] = published;
+  [self serveLocked:key];
   [_lock unlock];
 
   return YES;
+}
+
+- (void)setOrigin:(CGPoint)origin forDisplay:(NSInteger)display {
+  NSNumber *key = @(display);
+  [_lock lock];
+  // The usual case: re-read on every pull, the window has not moved.
+  CGPoint previous = CGPointZero;
+  NSValue *recorded = _originByDisplay[key];
+  [recorded getValue:&previous size:sizeof(previous)];
+  if (recorded != nil && CGPointEqualToPoint(previous, origin)) {
+    [_lock unlock];
+    return;
+  }
+  _originByDisplay[key] = [NSValue valueWithBytes:&origin objCType:@encode(CGPoint)];
+  // Nothing published yet: the display keeps reporting the empty set at its
+  // initial version, and the origin applies to whatever comes.
+  if (_rawByDisplay[key] != nil) {
+    [self serveLocked:key];
+  }
+  [_lock unlock];
+}
+
+/// Moves the display's raw coordinates by its origin and serves them, moving
+/// the version only when what is served changes. Called with `_lock` held.
+- (void)serveLocked:(NSNumber *)key {
+  CGPoint origin = CGPointZero;
+  [_originByDisplay[key] getValue:&origin size:sizeof(origin)];
+  NSData *served = BGSRNMovedCoordinates(_rawByDisplay[key], origin);
+  NSData *previous = _coordinatesByDisplay[key];
+  if (previous == nil || ![previous isEqualToData:served]) {
+    const int32_t currentVersion =
+        previous == nil ? kInitialVersion : _versionsByDisplay[key].intValue;
+    _coordinatesByDisplay[key] = served;
+    _versionsByDisplay[key] = @(BGSRNNextVersion(currentVersion));
+  }
 }
 
 - (NSData *)snapshotForDisplay:(NSInteger)display {

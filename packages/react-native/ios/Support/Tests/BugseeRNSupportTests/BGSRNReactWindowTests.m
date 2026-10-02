@@ -121,4 +121,43 @@
   XCTAssertEqualObjects(BGSRNSdkWalkedWindows(nil), @[]);
 }
 
+/// The tracker keeps the root view itself, so the search hands it back.
+- (void)testTheSearchReturnsTheRootView {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 10, 10)];
+  UIView *container = [UIView new];
+  BGSRNFakeReactRoot *root = [BGSRNFakeReactRoot new];
+  [container addSubview:root];
+  [window addSubview:container];
+
+  XCTAssertEqual(BGSRNReactRootView(window, @[], _isReactRoot, BGSRNReactRootSearchBudget), root);
+  XCTAssertNil(BGSRNReactRootView(nil, @[], _isReactRoot, BGSRNReactRootSearchBudget));
+}
+
+/// A window that is not on a screen has no place on one; the tracker then
+/// keeps the last origin rather than serve the rectangles at {0, 0}.
+- (void)testAWindowOnNoScreenHasNoScreenOrigin {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(37, 53, 100, 100)];
+  window.windowScene = nil;
+
+  XCTAssertNil(BGSRNWindowRecordedOrigin(window));
+}
+
+/// The test runner's scene fills its iPhone screen, so a window placed at
+/// {37, 53} in it starts at {37, 53} on the screen. A window side by side or
+/// in Stage Manager adds its scene's place, which only a device shows.
+- (void)testAWindowStartsOnTheScreenWhereItSitsInAFullScreenScene {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(37, 53, 100, 100)];
+  UIWindowScene *scene = window.windowScene;
+  if (scene == nil
+      || !CGRectEqualToRect(scene.coordinateSpace.bounds, scene.screen.bounds)) {
+    XCTSkip(@"The test runner has no scene filling its screen");
+  }
+
+  NSValue *origin = BGSRNWindowRecordedOrigin(window);
+
+  XCTAssertNotNil(origin);
+  XCTAssertEqualWithAccuracy(origin.CGPointValue.x, 37, 0.5);
+  XCTAssertEqualWithAccuracy(origin.CGPointValue.y, 53, 0.5);
+}
+
 @end

@@ -35,9 +35,15 @@ FOUNDATION_EXPORT UIWindow *_Nullable BGSRNSdkKeyWindow(void);
 /// the React Native template's case: it declares no manifest.
 FOUNDATION_EXPORT NSArray<UIWindow *> *BGSRNSdkWalkedWindows(UIWindow *_Nullable keyWindow);
 
-/// The first window whose view tree, searched breadth-first over at most
-/// `budget` views per window, has a view `isReactRoot` accepts. `keyWindow` is
-/// tried first, then `windows` in order. nil if none does.
+/// The first view `isReactRoot` accepts, searching each window's tree
+/// breadth-first over at most `budget` views. `keyWindow` is tried first, then
+/// `windows` in order. nil if no window has one.
+FOUNDATION_EXPORT UIView *_Nullable BGSRNReactRootView(UIWindow *_Nullable keyWindow,
+                                                      NSArray<UIWindow *> *windows,
+                                                      BOOL (^isReactRoot)(UIView *view),
+                                                      NSUInteger budget);
+
+/// The window hosting that view (`BGSRNReactRootView`), or nil.
 FOUNDATION_EXPORT UIWindow *_Nullable BGSRNWindowHostingReactRoot(UIWindow *_Nullable keyWindow,
                                                                  NSArray<UIWindow *> *windows,
                                                                  BOOL (^isReactRoot)(UIView *view),
@@ -49,5 +55,20 @@ FOUNDATION_EXPORT UIWindow *_Nullable BGSRNWindowHostingReactRoot(UIWindow *_Nul
 FOUNDATION_EXPORT NSValue *_Nullable BGSRNReactRootOrigin(UIWindow *_Nullable keyWindow,
                                                           NSArray<UIWindow *> *windows,
                                                           BOOL (^isReactRoot)(UIView *view));
+
+/// Where `window`'s own coordinate space starts in the frame the SDK records,
+/// in points, boxed as a `CGPoint`: what to add to a `measureInWindow`
+/// rectangle to put it where the SDK draws it, as its secure-rectangle
+/// contract wants. nil when the window is on no screen.
+///
+/// The SDK records every window of the app at its place on the screen on iOS,
+/// so this is the window's place on its screen (interface orientation),
+/// through the screen's fixed (portrait) space as the SDK places windows
+/// (`+[BGSTrackerApplication screenRectForRect:inView:]`): converted straight
+/// to `screen.coordinateSpace`, a scene that shares its screen (iPad tiling,
+/// iPhone Duo side by side) reads {0, 0}. An iPhone or iPad app running on a
+/// Mac, and Mac Catalyst, record the key window's scene alone, where the SDK
+/// adds `frame.origin` (`+[BGSTrackerApplication captureRectForRect:inView:]`).
+FOUNDATION_EXPORT NSValue *_Nullable BGSRNWindowRecordedOrigin(UIWindow *window);
 
 NS_ASSUME_NONNULL_END
