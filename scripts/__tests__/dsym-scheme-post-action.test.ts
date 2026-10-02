@@ -99,6 +99,16 @@ describe('BareExample archive scheme uploads dSYMs', () => {
     expect(script).not.toMatch(/--app-token/);
     expect(script).not.toMatch(/BUGSEE_APP_TOKEN="[^$]/);
     expect(script).not.toMatch(/BUGSEE_APP_TOKEN='[^$]/);
+    // A GUI Archive does not inherit the shell. An empty endpoint must stay
+    // unset so the CLI keeps its own default, and the file's value must be
+    // passed through unchanged.
+    expect(script).toMatch(/-extract endpoint raw\b/);
+    expect(script).toMatch(/\[\s*-z\s+"\$BUGSEE_ENDPOINT"\s*\]/);
+    expect(script).toMatch(
+      /if \[ -n "\$ENDPOINT" \]; then\n\s+export BUGSEE_ENDPOINT="\$ENDPOINT"\n\s+fi/,
+    );
+    expect(script).not.toMatch(/https?:\/\//);
+    expect(script).not.toMatch(/\/v2/);
   });
 
   // Without "Provide build settings from" the app target, ARCHIVE_PATH is
