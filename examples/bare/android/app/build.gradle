@@ -101,6 +101,13 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // AGP defaults this to NONE, so the plugin's native upload finds
+            // nothing and skips. SYMBOL_TABLE emits symbols for code this app
+            // builds. Maven Hermes and libreactnative.so are pre-stripped;
+            // this level does not symbolicate those two.
+            ndk {
+                debugSymbolLevel 'SYMBOL_TABLE'
+            }
         }
         release {
             // Caution! In production, you need to generate your own keystore file.
@@ -114,6 +121,12 @@ android {
             debuggable findProperty('bugseeE2eDebuggable') == 'true'
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            // Same level as debug: run-android.sh is assembleDebug, and a
+            // release build needs the metadata too. Pre-stripped Maven Hermes
+            // and libreactnative.so are not symbolicated by this.
+            ndk {
+                debugSymbolLevel 'SYMBOL_TABLE'
+            }
         }
     }
 }
@@ -179,9 +192,18 @@ afterEvaluate {
     }
 }
 
+// Same file the root project parses to check the Gradle plugin pin.
+def nativeVersions = new groovy.json.JsonSlurper().parse(rootProject.file("../../../native-versions.json"))
+
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+
+    // plugin.ndk.enabled makes the plugin add bugsee-android-ndk on its own
+    // version range, because the wrapper's api dependency is not a direct
+    // dependency of :app. Declare it here at native-versions.json's
+    // android.sdk, the same pin the wrapper uses.
+    implementation "com.bugsee:bugsee-android-ndk:${nativeVersions.android.sdk}"
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

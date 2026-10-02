@@ -63,26 +63,53 @@ describe('write-credentials and the e2e scenario file', () => {
     }
   });
 
-  it('writes app_token and enables NDK symbol upload for React Native', () => {
+  function generate(overrides: NodeJS.ProcessEnv): { output: string; props: string } {
     const root = mkdtempSync(join(tmpdir(), 'write-credentials-'));
-    const androidToken = 'fake-android-token';
     try {
       mkdirSync(join(root, 'scripts'));
       copyFileSync(SCRIPT, join(root, 'scripts', 'write-credentials.mjs'));
+      // Drop a shell endpoint unless this case sets one, so a real
+      // BUGSEE_ENDPOINT cannot leak into the generated file or the output.
+      const env: NodeJS.ProcessEnv = { ...process.env, BUGSEE_TOKEN_IOS: '', ...overrides };
+      if (!Object.hasOwn(overrides, 'BUGSEE_ENDPOINT')) {
+        delete env.BUGSEE_ENDPOINT;
+      }
       const output = execFileSync(process.execPath, [join(root, 'scripts', 'write-credentials.mjs')], {
-        env: { ...process.env, BUGSEE_TOKEN_IOS: '', BUGSEE_TOKEN_ANDROID: androidToken },
+        env,
         encoding: 'utf8',
       });
       const props = readFileSync(join(root, 'android', 'bugsee.properties'), 'utf8');
-      const lines = props.split('\n');
-      const tokenLine = lines.find((line) => line.startsWith('app_token='));
-      expect(tokenLine !== undefined).toBe(true);
-      expect(tokenLine === `app_token=${androidToken}`).toBe(true);
-      expect(lines.includes('plugin.ndk.enabled=true')).toBe(true);
-      expect(props.includes('plugin.appToken')).toBe(false);
-      expect(output.includes(androidToken)).toBe(false);
+      return { output, props };
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  }
+
+  it('writes app_token and enables NDK symbol upload for React Native', () => {
+    const androidToken = 'fake-android-token';
+    const { output, props } = generate({ BUGSEE_TOKEN_ANDROID: androidToken });
+    const lines = props.split('\n');
+    const tokenLine = lines.find((line) => line.startsWith('app_token='));
+    expect(tokenLine !== undefined).toBe(true);
+    expect(tokenLine === `app_token=${androidToken}`).toBe(true);
+    expect(lines.includes('plugin.ndk.enabled=true')).toBe(true);
+    expect(props.includes('plugin.appToken')).toBe(false);
+    expect(lines.some((line) => line.startsWith('plugin.endpoint='))).toBe(false);
+    expect(output.includes(androidToken)).toBe(false);
+  });
+
+  it('writes plugin.endpoint when an endpoint is set, and does not append /v2', () => {
+    const androidToken = 'fake-android-token';
+    const endpoint = 'https://endpoint.example';
+    const { output, props } = generate({
+      BUGSEE_TOKEN_IOS: '',
+      BUGSEE_TOKEN_ANDROID: androidToken,
+      BUGSEE_ENDPOINT: endpoint,
+    });
+    const lines = props.split('\n');
+    expect(lines.includes(`plugin.endpoint=${endpoint}`)).toBe(true);
+    expect(lines.some((line) => line.startsWith('plugin.endpoint=') && line.endsWith('/v2'))).toBe(false);
+    expect(output.includes(androidToken)).toBe(false);
+    expect(output.includes(endpoint)).toBe(false);
   });
 });
