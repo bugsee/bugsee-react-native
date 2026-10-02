@@ -74,6 +74,16 @@ const dataRequestListeners = new Set<(event: DataRequestEvent) => void>();
 /** Counted separately from the Set's size, for the same reason as `reportHandlerRequestSubscribeCalls`: the dispatcher always passes the same function reference, so the Set alone cannot tell "subscribed once" from "subscribed four times, deduped". */
 let dataRequestSubscribeCalls = 0;
 
+interface LogFilterRequestEvent {
+  requestId: string;
+  line: string;
+}
+
+const logFilterRequestListeners = new Set<(event: LogFilterRequestEvent) => void>();
+
+/** Counted separately from the Set's size, for the same reason as `reportHandlerRequestSubscribeCalls`. */
+let logFilterRequestSubscribeCalls = 0;
+
 export const native = {
   setWrapperInfo: jest.fn<void, [Record<string, unknown>]>(),
   setSecureRectangles: jest.fn<void, [number, number[]]>(),
@@ -142,6 +152,32 @@ export const native = {
 
   setNetworkFilterEnabled: jest.fn<void, [boolean]>(),
   replyNetworkFilter: jest.fn<void, [string, string | null]>(),
+
+  /**
+   * The codegen EventEmitter for a native log-filter request. Tests drive it
+   * with `emitLogFilterRequest`. `line` is what native would send back: a
+   * replacement string, or `null` to drop.
+   */
+  onLogFilterRequest(listener: (event: LogFilterRequestEvent) => void) {
+    logFilterRequestSubscribeCalls += 1;
+    logFilterRequestListeners.add(listener);
+    return {
+      remove: () => {
+        logFilterRequestListeners.delete(listener);
+      },
+    };
+  },
+
+  emitLogFilterRequest(event: LogFilterRequestEvent): void {
+    for (const listener of [...logFilterRequestListeners]) listener(event);
+  },
+
+  logFilterRequestSubscribeCallCount(): number {
+    return logFilterRequestSubscribeCalls;
+  },
+
+  setLogFilterEnabled: jest.fn<void, [boolean]>(),
+  replyLogFilter: jest.fn<void, [string, string | null]>(),
 
   /**
    * The codegen EventEmitter, which is a SUBSCRIBE function returning an
@@ -262,6 +298,8 @@ export const native = {
     dataRequestSubscribeCalls = 0;
     networkFilterRequestListeners.clear();
     networkFilterRequestSubscribeCalls = 0;
+    logFilterRequestListeners.clear();
+    logFilterRequestSubscribeCalls = 0;
     for (const [name, value] of Object.entries(this)) {
       if (typeof value === 'function' && 'mockReset' in value) {
         const fn = value as jest.Mock;

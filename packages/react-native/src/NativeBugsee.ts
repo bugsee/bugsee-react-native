@@ -220,6 +220,28 @@ export interface Spec extends TurboModule {
    * the same `requestId` is a no-op. Not answering drops the event.
    */
   replyNetworkFilter(requestId: string, eventJson: string | null): void;
+  /**
+   * A log line the SDK is about to record, offered to the JS filter.
+   *
+   * `requestId` is native-minted and never reused within a process. `line`
+   * is the text the SDK would store. JS answers with {@link replyLogFilter}.
+   * A request that never gets an answer is dropped by the SDK's own timeout;
+   * this event is not a second one.
+   */
+  readonly onLogFilterRequest: EventEmitter<{ requestId: string; line: string }>;
+  /**
+   * Installs or removes the native log filter (`setLogEventFilter` on both
+   * SDKs). `true` registers the bridge; `false` passes `null`, which is how
+   * both SDKs clear a filter. Lines are not filtered in JS as well.
+   */
+  setLogFilterEnabled(enabled: boolean): void;
+  /**
+   * Answers one {@link onLogFilterRequest}. `line` is the replacement to
+   * keep; `null` drops the line. A second reply for the same `requestId` is
+   * a no-op. Not answering drops the line — the SDK's timeout, not a reply
+   * that passes the original through.
+   */
+  replyLogFilter(requestId: string, line: string | null): void;
 
   /**
    * Sets a string attribute, verified by a native read-back: neither SDK's

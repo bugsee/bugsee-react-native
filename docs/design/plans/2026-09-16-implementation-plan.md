@@ -4024,8 +4024,8 @@ Record, for the controller:
 
 The phase with the most native↔JS round-tripping, hence the most device testing.
 
-- [ ] **9.1** Console capture with the JS patch.
-- [ ] **9.2** Log filter — the native→JS round trip. **A filter callback that cannot complete must drop the line, not pass it through**; failing open at a redaction boundary leaks exactly what the callback existed to remove.
+- [x] **9.1** Console capture with the JS patch. A `console.log` was retained as source 98 (`LogSource.Custom`) at level 3 on the WOD_LX1, the iOS simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957`, and iPhone XS KRSFT.
+- [x] **9.2** Log filter — the native→JS round trip. **A filter callback that cannot complete must drop the line, not pass it through**; failing open at a redaction boundary leaks exactly what the callback existed to remove. Device: WOD_LX1 `AMRJCP4718402860` retained `log-filter rewrite 1ac247198f48 REDACTED` (source 98, level 2) and omitted the unsettled hang line, and simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957` did the same for nonce `fcdfade08169`; the iPhone XS (KRSFT) was already running BareExample after a 10-minute wait, so that run was not taken.
 - [ ] **9.3** Network: keep the WebSocket patch; `patchXhr` stays disabled. **Do not assume native capture covers `fetch`/XHR on Android** (found 2026-09-29, from the Android SDK source):
   - RN's `NetworkingModule` runs on OkHttp, and Bugsee instruments OkHttp only when `bugsee-android-okhttp` is on the classpath.
   - This package declares only `bugsee-android` + `bugsee-android-ndk`.

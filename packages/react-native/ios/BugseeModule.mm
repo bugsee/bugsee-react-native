@@ -351,6 +351,51 @@ static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
   }
 }
 
+
+@interface BGSRNLogFilterPending : NSObject
+@property (nonatomic, strong) BugseeLogEvent *event;
+@property (nonatomic, copy) BugseeLogFilterDecisionBlock decision;
+@property (nonatomic, weak) BugseeModule *owner;
+@end
+@implementation BGSRNLogFilterPending
+@end
+
+static __weak BugseeModule *BGSRNLogFilterModule = nil;
+static BOOL BGSRNLogFilterInstalled = NO;
+static NSMutableDictionary<NSString *, BGSRNLogFilterPending *> *BGSRNLogFilterPendingTable;
+static int64_t BGSRNLogFilterNextId = 0;
+
+static id BGSRNLogFilterLock(void) {
+  static id lock;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    lock = [NSObject new];
+    BGSRNLogFilterPendingTable = [NSMutableDictionary dictionary];
+  });
+  return lock;
+}
+
+/// Answers `nil` for every request `module` still holds, which drops the line.
+/// Called outside the lock: the SDK's decision block must not re-enter it.
+static void BGSRNDropLogFiltersOwnedBy(BugseeModule *module) {
+  NSMutableArray<BugseeLogFilterDecisionBlock> *decisions = [NSMutableArray array];
+  @synchronized (BGSRNLogFilterLock()) {
+    for (NSString *key in BGSRNLogFilterPendingTable.allKeys) {
+      BGSRNLogFilterPending *item = BGSRNLogFilterPendingTable[key];
+      if (item.owner == module) {
+        [BGSRNLogFilterPendingTable removeObjectForKey:key];
+        if (item.decision != nil) {
+          [decisions addObject:item.decision];
+        }
+      }
+    }
+  }
+  for (BugseeLogFilterDecisionBlock decision in decisions) {
+    decision(nil);
+  }
+}
+
+
 @implementation BugseeModule
 
 RCT_EXPORT_MODULE(Bugsee)
@@ -437,6 +482,10 @@ RCT_EXPORT_MODULE(Bugsee)
   // pointer when an event arrives; it is nil until then, and a nil module
   // drops the event.
   BGSRNNetworkFilterModule = self;
+  // After the emitter exists. A log filter installed earlier reads this
+  // pointer when a line arrives; it is nil until then, and a nil module
+  // drops the line.
+  BGSRNLogFilterModule = self;
 }
 
 /// Identity-checked inside the bus: a reload can construct and attach the NEW
@@ -461,6 +510,12 @@ RCT_EXPORT_MODULE(Bugsee)
   BGSRNDropNetworkFiltersOwnedBy(self);
   if (BGSRNNetworkFilterModule == self) {
     BGSRNNetworkFilterModule = nil;
+  }
+  // Drop this module's unanswered log lines. A reload may already have
+  // attached the new module; only clear the pointer when it is still us.
+  BGSRNDropLogFiltersOwnedBy(self);
+  if (BGSRNLogFilterModule == self) {
+    BGSRNLogFilterModule = nil;
   }
 }
 
@@ -898,6 +953,96 @@ RCT_EXPORT_MODULE(Bugsee)
   }
   item.decision(item.event);
 }
+
+- (void)setLogFilterEnabled:(BOOL)enabled {
+  if (enabled) {
+    @synchronized (BGSRNLogFilterLock()) {
+      if (BGSRNLogFilterInstalled) {
+        return;
+      }
+      BGSRNLogFilterInstalled = YES;
+    }
+    [Bugsee setLogEventFilter:^(BugseeLogEvent *event, BugseeLogFilterDecisionBlock decision) {
+        NSString *line = event.text;
+        if (decision == nil) {
+          return;
+        }
+        if (line == nil) {
+          decision(nil);
+          return;
+        }
+        BugseeModule *module = BGSRNLogFilterModule;
+        if (module == nil) {
+          decision(nil);
+          return;
+        }
+        BGSRNLogFilterPending *item = [BGSRNLogFilterPending new];
+        item.event = event;
+        item.decision = decision;
+        item.owner = module;
+        NSString *requestId = nil;
+        @synchronized (BGSRNLogFilterLock()) {
+          BGSRNLogFilterNextId += 1;
+          requestId = [NSString stringWithFormat:@"%lld", BGSRNLogFilterNextId];
+          BGSRNLogFilterPendingTable[requestId] = item;
+        }
+        const BOOL delivered = [module emitLogFilterRequest:requestId line:line];
+        if (!delivered) {
+          BugseeLogFilterDecisionBlock drop = nil;
+          @synchronized (BGSRNLogFilterLock()) {
+            BGSRNLogFilterPending *removed = BGSRNLogFilterPendingTable[requestId];
+            [BGSRNLogFilterPendingTable removeObjectForKey:requestId];
+            drop = removed.decision;
+          }
+          if (drop != nil) {
+            drop(nil);
+          }
+        }
+      }];
+    return;
+  }
+  @synchronized (BGSRNLogFilterLock()) {
+    BGSRNLogFilterInstalled = NO;
+  }
+  [Bugsee setLogEventFilter:nil];
+}
+
+- (BOOL)emitLogFilterRequest:(NSString *)requestId line:(NSString *)line {
+  NSDictionary *payload = @{ @"requestId" : requestId, @"line" : line };
+  return BGSRNGuardedEmit(^{
+    [self emitOnLogFilterRequest:payload];
+  }, @"onLogFilterRequest");
+}
+
+/// `line` nil drops. A string is written onto the same event, so the level
+/// and the timestamp stay. If the write does not stick, the line is dropped
+/// rather than kept unredacted. A second reply is a no-op.
+- (void)replyLogFilter:(NSString *)requestId line:(NSString * _Nullable)line {
+  if (requestId == nil) {
+    return;
+  }
+  BGSRNLogFilterPending *item = nil;
+  @synchronized (BGSRNLogFilterLock()) {
+    item = BGSRNLogFilterPendingTable[requestId];
+    if (item != nil) {
+      [BGSRNLogFilterPendingTable removeObjectForKey:requestId];
+    }
+  }
+  if (item.decision == nil) {
+    return;
+  }
+  if (line == nil) {
+    item.decision(nil);
+    return;
+  }
+  item.event.text = line;
+  if (![item.event.text isEqualToString:line]) {
+    item.decision(nil);
+    return;
+  }
+  item.decision(item.event);
+}
+
 
 #pragma mark - Attributes and identity
 
