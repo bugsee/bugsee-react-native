@@ -67,6 +67,29 @@ describe('log, crossing the real channel', () => {
     expect(native.wrapperLog).not.toHaveBeenCalled();
   });
 
+  // The console patch honours capture.logs. An explicit log() does not:
+  // it still goes through forwardLog, whatever that option says.
+  it('an explicit log still forwards when capture.logs is false', () => {
+    const { installConsoleCapture } = require('../console/capture') as {
+      installConsoleCapture: (options?: Record<string, unknown>) => void;
+    };
+    const methods = ['log', 'info', 'warn', 'error', 'debug'] as const;
+    const saved = methods.map(method => [method, console[method]] as const);
+    console.log = jest.fn() as unknown as typeof console.log;
+    try {
+      installConsoleCapture({ 'com.bugsee.option.capture.logs': false });
+      Bugsee.log('explicit');
+      expect(native.wrapperLog).toHaveBeenCalledTimes(1);
+      expect(native.wrapperLog).toHaveBeenCalledWith('explicit', LogLevel.Info);
+      console.log('from the patch');
+      expect(native.wrapperLog).toHaveBeenCalledTimes(1);
+    } finally {
+      for (const [method, original] of saved) {
+        console[method] = original;
+      }
+    }
+  });
+
   // Internal: `log` is the only public spelling of this route.
   it('forwardLog is still not exported from the package entry', () => {
     const entry = require('../index') as Record<string, unknown>;

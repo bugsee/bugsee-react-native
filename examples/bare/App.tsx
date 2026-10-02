@@ -10,14 +10,14 @@
  * What it does after launching is picked by a scenario (e2e/scenario.ts):
  * `launch`, the default, is the lifecycle walk launch.test.ts asserts; the
  * `rh-*` scenarios are the report-handler cases in scenarios/report-handler.ts;
- * `channel` is scenarios/channel.ts, `data` is scenarios/data.ts, `network`
- * is scenarios/network.ts, `secure`
+ * `channel` is scenarios/channel.ts, `console` is scenarios/console.ts,
+ * `data` is scenarios/data.ts, `network` is scenarios/network.ts, `secure`
  * is scenarios/secure.tsx, `attributes`/`attributes-persist` are
  * scenarios/attributes.ts, `e2e-native-smoke` / `native-crash-*` are
  * scenarios/native.ts, `blackout`, `blackout-prelaunch`,
  * `secure-component` and `view-tree` are scenarios/privacy.tsx, and
- * `exc-*` are scenarios/exceptions.tsx, and `rp-*` are
- * scenarios/reporting.ts.
+ * `exc-*` are scenarios/exceptions.tsx, `rp-*` are
+ * scenarios/reporting.ts, and `log-filter` is scenarios/log-filter.ts.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -51,6 +51,7 @@ import {
   preLaunchChannelProbe,
   runChannelScenario,
 } from './scenarios/channel';
+import { isConsoleScenario, runConsoleScenario } from './scenarios/console';
 import {
   isDataScenario,
   preLaunchDataProbe,
@@ -87,6 +88,10 @@ import {
   isReportingScenario,
   runReportingScenario,
 } from './scenarios/reporting';
+import {
+  isLogFilterScenario,
+  runLogFilterScenario,
+} from './scenarios/log-filter';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -373,6 +378,11 @@ export default function App() {
           return;
         }
 
+        if (isConsoleScenario(choice.scenario)) {
+          runConsoleScenario(choice.nonce);
+          return;
+        }
+
         if (data !== undefined) {
           runDataScenario(choice.nonce);
           return;
@@ -380,6 +390,11 @@ export default function App() {
 
         if (isNetworkScenario(choice.scenario)) {
           await runNetworkScenario(choice.nonce);
+          return;
+        }
+
+        if (isLogFilterScenario(choice.scenario)) {
+          runLogFilterScenario(choice.nonce);
           return;
         }
 

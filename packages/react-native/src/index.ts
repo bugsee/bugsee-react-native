@@ -13,6 +13,9 @@ import { setReportHandler as installReportHandler } from './report/dispatcher';
 import { createReport as openCreatedReport } from './report/CreatedReport';
 import type { BugseeCreatedReport, BugseeReportHandler } from './report/types';
 import { forwardLog } from './wrapper/channel';
+import { installConsoleCapture } from './console/capture';
+import { setLogFilter as installLogFilter } from './logs/filter';
+import type { LogFilter } from './logs/filter';
 import { type IssueSeverity, LogLevel } from './options/enums';
 import { labelsArgument, severityArgument } from './report/fields';
 import {
@@ -91,6 +94,11 @@ class Bugsee {
    * promise rejections). On Hermes, the last caller of
    * `enablePromiseRejectionTracker` wins — Hermes has no getter — so another
    * SDK that installs a tracker after this call replaces ours.
+   *
+   * After the native call resolves, patches `console.*` so each line still
+   * prints and is then forwarded through the wrapper channel. A rejection
+   * does not install the patch. A later call does not wrap the functions
+   * again; it does re-read `com.bugsee.option.capture.logs`.
    */
   async launch(token: string, options: LaunchOptions = {}): Promise<boolean> {
     assertUsableToken(token);
@@ -100,7 +108,9 @@ class Bugsee {
     this.registerWrapper();
     installExceptionHandlers();
     applyExceptionCaptureFromOptions(options);
-    return NativeBugsee.launch(token, options);
+    const launched = await NativeBugsee.launch(token, options);
+    installConsoleCapture(options);
+    return launched;
   }
 
   /**
@@ -115,12 +125,19 @@ class Bugsee {
     );
   }
 
-  /** Restarts an already-launched session with a new set of options. */
+  /**
+   * Restarts an already-launched session with a new set of options.
+   *
+   * Installs the console patch after the native call resolves, same as
+   * {@link launch}. A second install does not wrap again.
+   */
   async relaunch(options: LaunchOptions = {}): Promise<boolean> {
     this.registerWrapper();
     installExceptionHandlers();
     applyExceptionCaptureFromOptions(options);
-    return NativeBugsee.relaunch(options);
+    const relaunched = await NativeBugsee.relaunch(options);
+    installConsoleCapture(options);
+    return relaunched;
   }
 
   /**
@@ -377,6 +394,21 @@ class Bugsee {
   }
 
   /**
+   * Registers the log filter. A later call replaces it. Called with no
+   * callback, or with `null`, clears it.
+   *
+   * The callback receives the line and returns the line to keep, or a
+   * replacement string. `null` or `undefined` drops the line. The native SDK
+   * is what invokes the filter; the callback runs on a later turn, and this
+   * method does not wait for it. A callback that throws, rejects, or does
+   * not settle before the SDK's own timeout drops the line. It is not passed
+   * through.
+   */
+  setLogFilter(callback?: LogFilter | null): void {
+    installLogFilter(callback);
+  }
+
+  /**
    * Records a named event, with optional params.
    *
    * `params` must be a plain object or omitted entirely -- `null` throws
@@ -531,12 +563,15 @@ class Bugsee {
    * off during that read: the default is on, and the read yields, so a render
    * error in the gap would otherwise be reported when the option is false.
    * If the read rejects, capture stays off and the handlers are not installed.
+   * The console patch is installed from those same options, after the
+   * handlers; a rejected read does not install it either.
    */
   async attach(): Promise<void> {
     setExceptionCaptureEnabled(false);
     const options = await this.getLaunchOptions();
     applyExceptionCaptureFromOptions(options);
     installExceptionHandlers();
+    installConsoleCapture(options);
   }
 
   /**
@@ -687,6 +722,8 @@ export type { EventParams, EventParamValue, TraceValue } from './data/validate';
 
 export { AttributeErrorCode, BugseeAttributeError } from './attributes/errors';
 export type { AttributeReadValue, AttributeValue } from './attributes/validate';
+
+export type { LogFilter } from './logs/filter';
 
 export type { ExceptionOptions } from './exceptions/options';
 export { ErrorBoundary } from './exceptions/ErrorBoundary';

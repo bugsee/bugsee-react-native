@@ -6,6 +6,9 @@ jest.mock('../exceptions/handlers', () => ({
   installExceptionHandlers: jest.fn(),
   setExceptionCaptureEnabled: jest.fn(),
 }));
+jest.mock('../console/capture', () => ({
+  installConsoleCapture: jest.fn(),
+}));
 
 import Bugsee, { Status } from '../index';
 import { native } from '../__mocks__/native';
@@ -13,6 +16,7 @@ import {
   installExceptionHandlers,
   setExceptionCaptureEnabled,
 } from '../exceptions/handlers';
+import { installConsoleCapture } from '../console/capture';
 
 jest.mock('../NativeBugsee', () => require('../__mocks__/native').nativeMock);
 
@@ -20,6 +24,7 @@ beforeEach(() => {
   native.reset();
   jest.mocked(installExceptionHandlers).mockClear();
   jest.mocked(setExceptionCaptureEnabled).mockClear();
+  jest.mocked(installConsoleCapture).mockClear();
 });
 
 describe('launch', () => {
@@ -72,6 +77,31 @@ describe('launch', () => {
     await Bugsee.launch('tok', { 'com.bugsee.option.detect.crash': false });
     expect(setExceptionCaptureEnabled).toHaveBeenCalledWith(false);
   });
+
+  it('installs console capture after launch resolves, passing the options', async () => {
+    const opts = { 'com.bugsee.option.capture.logs': false };
+    await Bugsee.launch('tok', opts);
+    expect(installConsoleCapture).toHaveBeenCalledTimes(1);
+    expect(installConsoleCapture).toHaveBeenCalledWith(opts);
+    const launchOrder = native.launch.mock.invocationCallOrder[0];
+    const installOrder = jest.mocked(installConsoleCapture).mock.invocationCallOrder[0];
+    expect(launchOrder).toEqual(expect.any(Number));
+    expect(installOrder).toEqual(expect.any(Number));
+    expect(launchOrder!).toBeLessThan(installOrder!);
+  });
+
+  it('installs console capture when launch resolves false', async () => {
+    native.launch.mockResolvedValue(false);
+    await Bugsee.launch('tok');
+    expect(installConsoleCapture).toHaveBeenCalledTimes(1);
+    expect(installConsoleCapture).toHaveBeenCalledWith({});
+  });
+
+  it('does not install console capture when launch rejects', async () => {
+    native.launch.mockRejectedValue(new Error('boom'));
+    await expect(Bugsee.launch('tok')).rejects.toThrow('boom');
+    expect(installConsoleCapture).not.toHaveBeenCalled();
+  });
 });
 
 describe('relaunch and stop', () => {
@@ -85,6 +115,24 @@ describe('relaunch and stop', () => {
     await Bugsee.relaunch({ 'com.bugsee.option.detect.crash': false });
     expect(installExceptionHandlers).toHaveBeenCalledTimes(1);
     expect(setExceptionCaptureEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it('relaunch installs console capture after the native call resolves', async () => {
+    const opts = { 'com.bugsee.option.capture.logs': true };
+    await Bugsee.relaunch(opts);
+    expect(installConsoleCapture).toHaveBeenCalledTimes(1);
+    expect(installConsoleCapture).toHaveBeenCalledWith(opts);
+    const relaunchOrder = native.relaunch.mock.invocationCallOrder[0];
+    const installOrder = jest.mocked(installConsoleCapture).mock.invocationCallOrder[0];
+    expect(relaunchOrder).toEqual(expect.any(Number));
+    expect(installOrder).toEqual(expect.any(Number));
+    expect(relaunchOrder!).toBeLessThan(installOrder!);
+  });
+
+  it('does not install console capture when relaunch rejects', async () => {
+    native.relaunch.mockRejectedValue(new Error('boom'));
+    await expect(Bugsee.relaunch()).rejects.toThrow('boom');
+    expect(installConsoleCapture).not.toHaveBeenCalled();
   });
 
   it('stop returns the native result', async () => {
@@ -147,6 +195,15 @@ describe('attach', () => {
     expect(installExceptionHandlers).not.toHaveBeenCalled();
     expect(setExceptionCaptureEnabled).toHaveBeenCalledTimes(1);
     expect(setExceptionCaptureEnabled).toHaveBeenCalledWith(false);
+    expect(installConsoleCapture).not.toHaveBeenCalled();
+  });
+
+  it('installs console capture from the launch options it just read', async () => {
+    const opts = { 'com.bugsee.option.capture.logs': false };
+    native.getLaunchOptions.mockResolvedValue(opts);
+    await Bugsee.attach();
+    expect(installConsoleCapture).toHaveBeenCalledTimes(1);
+    expect(installConsoleCapture).toHaveBeenCalledWith(opts);
   });
 });
 
