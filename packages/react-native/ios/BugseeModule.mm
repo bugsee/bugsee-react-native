@@ -856,11 +856,15 @@ RCT_EXPORT_MODULE(Bugsee)
 /// should land on the nearest level, not be chopped toward one.
 - (void)wrapperLog:(NSString *)message
              level:(double)level {
-  // This filter request is the channel line (the patch, or Bugsee.log).
-  // It is kept. An equal echo that is not this request is dropped once.
-  // Bugsee.log does not arm a note of its own.
+  // Keeping this channel line ends the equal-text claim. A later native
+  // RCTLog of the same text is not dropped. A stderr stamp may still be,
+  // and so may one raw stdout/stderr line of this text.
   BGSRNBeginChannelLine(message);
-  [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
+  @try {
+    [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
+  } @finally {
+    BGSRNEndChannelLine(message);
+  }
 }
 
 - (void)noteConsoleEcho:(NSString *)message {
@@ -1011,7 +1015,20 @@ RCT_EXPORT_MODULE(Bugsee)
         }
         // The console echo. Dropped here, before JS is asked, so the user's
         // callback runs once. Not a timeout: the line is not passed through.
-        if (BGSRNDropConsoleEcho(line)) {
+        // `dictionary` is how the SDK stores the source on the event. When it
+        // is absent, the source is unknown and a non-stamp line is not dropped.
+        NSInteger source = -1;
+        SEL dictionarySelector = NSSelectorFromString(@"dictionary");
+        if ([event respondsToSelector:dictionarySelector]) {
+          id value = [event valueForKey:@"dictionary"];
+          if ([value isKindOfClass:[NSDictionary class]]) {
+            id raw = [(NSDictionary *)value objectForKey:@"source"];
+            if ([raw respondsToSelector:@selector(integerValue)]) {
+              source = [raw integerValue];
+            }
+          }
+        }
+        if (BGSRNDropConsoleEcho(line, source)) {
           decision(nil);
           return;
         }
