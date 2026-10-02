@@ -35,6 +35,7 @@
 #import <BugseeRNSupport/BGSRNReportArgs.h>
 #import <BugseeRNSupport/BGSRNCreatedReports.h>
 #import <BugseeRNSupport/BGSRNCreatedReportOps.h>
+#import <BugseeRNSupport/BGSRNSpanHandles.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -58,6 +59,7 @@
 #import "BGSRNReportArgs.h"
 #import "BGSRNCreatedReports.h"
 #import "BGSRNCreatedReportOps.h"
+#import "BGSRNSpanHandles.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -690,7 +692,106 @@ static BOOL BGSRNApplyBreadcrumbKeep(id<BGSBreadcrumb> breadcrumb, NSDictionary 
   return YES;
 }
 
+@interface BGSRNLiveSpan : NSObject <BGSRNRetainedSpan>
+@property (nonatomic, readonly) id<BGSSpan> span;
+- (instancetype)initWithSpan:(id<BGSSpan>)span;
+@end
+
+@implementation BGSRNLiveSpan {
+  id<BGSSpan> _span;
+}
+
+- (instancetype)initWithSpan:(id<BGSSpan>)span {
+  self = [super init];
+  if (self != nil) {
+    _span = span;
+  }
+  return self;
+}
+
+- (id<BGSSpan>)span {
+  return _span;
+}
+
+- (void)bgsrnFinishWithStatus:(NSNumber *)status {
+  if (status == nil) {
+    [_span finish];
+    return;
+  }
+  [_span finishWithStatus:(BGSSpanStatus)status.integerValue];
+}
+
+- (BOOL)bgsrnIsFinished {
+  return _span.isFinished;
+}
+
+@end
+
+/// One JSON value, or nil when it is missing, null, an object or an array.
+static id BGSRNJSONScalar(NSString *json) {
+  if (json == nil) {
+    return nil;
+  }
+  NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
+  if (data == nil) {
+    return nil;
+  }
+  NSError *error = nil;
+  id value = [NSJSONSerialization JSONObjectWithData:data
+                                              options:NSJSONReadingFragmentsAllowed
+                                                error:&error];
+  if (error != nil || value == nil || value == [NSNull null]) {
+    return nil;
+  }
+  if ([value isKindOfClass:[NSDictionary class]] || [value isKindOfClass:[NSArray class]]) {
+    return nil;
+  }
+  return value;
+}
+
+static NSString *BGSRNAttributesJSON(NSDictionary *attributes) {
+  if (attributes == nil || attributes.count == 0) {
+    return @"{}";
+  }
+  if (![NSJSONSerialization isValidJSONObject:attributes]) {
+    return @"{}";
+  }
+  NSData *data = [NSJSONSerialization dataWithJSONObject:attributes options:0 error:nil];
+  if (data == nil) {
+    return @"{}";
+  }
+  return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"{}";
+}
+
+static NSDictionary *BGSRNSpanSnapshot(NSString *handle, id<BGSSpan> span) {
+  NSMutableDictionary *map = [NSMutableDictionary dictionary];
+  map[@"handle"] = handle ?: @"";
+  map[@"spanId"] = span.spanId ?: @"";
+  map[@"traceId"] = span.traceId ?: @"";
+  map[@"operation"] = span.operation ?: @"";
+  map[@"description"] = span.spanDescription ?: [NSNull null];
+  map[@"status"] = @((NSInteger)span.status);
+  map[@"finished"] = @(span.isFinished);
+  map[@"attributesJson"] = BGSRNAttributesJSON(span.attributes);
+  if ([span conformsToProtocol:@protocol(BGSTransaction)]) {
+    id<BGSTransaction> transaction = (id<BGSTransaction>)span;
+    map[@"name"] = transaction.name ?: @"";
+    map[@"sampled"] = @(transaction.isSampled);
+  }
+  return map;
+}
+
+static NSDictionary *BGSRNNoSpan(void) {
+  return @{@"handle": @""};
+}
+
+@interface BugseeModule ()
+@property (nonatomic, strong) BGSRNSpanHandles *spanHandles;
+@end
+
 @implementation BugseeModule
+
+@synthesize spanHandles = _spanHandles;
 
 RCT_EXPORT_MODULE(Bugsee)
 
@@ -822,6 +923,10 @@ RCT_EXPORT_MODULE(Bugsee)
   if (BGSRNBreadcrumbFilterModule == self) {
     BGSRNBreadcrumbFilterModule = nil;
   }
+  // The next runtime cannot know these handles. Drop them without finishing:
+  // a reload must not close a transaction the SDK still has.
+  [_spanHandles releaseAll];
+  _spanHandles = nil;
 }
 
 /// The SDK touches UIKit during start-up, so it must not be constructed on a
@@ -1942,6 +2047,171 @@ RCT_EXPORT_MODULE(Bugsee)
       BGSRNRejectException(reject, exception);
     }
   });
+}
+
+- (BGSRNSpanHandles *)spanHandles {
+  if (_spanHandles == nil) {
+    _spanHandles = [BGSRNSpanHandles new];
+  }
+  return _spanHandles;
+}
+
+- (BGSRNLiveSpan *)liveSpan:(NSString *)handle {
+  id adapter = [self.spanHandles adapterForHandle:handle];
+  return [adapter isKindOfClass:[BGSRNLiveSpan class]] ? adapter : nil;
+}
+
+- (NSDictionary *)adoptSpan:(id<BGSSpan>)span {
+  if (span == nil) {
+    return BGSRNNoSpan();
+  }
+  BGSRNLiveSpan *adapter = [[BGSRNLiveSpan alloc] initWithSpan:span];
+  NSString *handle = [self.spanHandles retainSpan:span adapter:adapter];
+  return BGSRNSpanSnapshot(handle, span);
+}
+
+/// On main, synchronously. The active span is pthread-local and does not
+/// cross dispatch_async, and every span call has to see the same thread.
+- (void)notify:(NSString *)title
+          body:(NSString *)body
+      severity:(double)severity
+    fieldsJson:(NSString *)fieldsJson
+        urgent:(BOOL)urgent {
+  NSDictionary *parsed = nil;
+  if (fieldsJson != nil) {
+    NSError *error = nil;
+    parsed = BGSRNJSONObject(fieldsJson, &error);
+    if (parsed == nil) {
+      NSLog(@"BugseeRN notify dropped: %@", error);
+      return;
+    }
+  }
+  NSMutableDictionary<NSString *, NSString *> *fields = nil;
+  if (parsed != nil) {
+    fields = [NSMutableDictionary dictionary];
+    for (NSString *key in parsed) {
+      id value = parsed[key];
+      if ([value isKindOfClass:[NSString class]]) {
+        fields[key] = value;
+      }
+    }
+  }
+  NSInteger wire = (NSInteger)llround(severity);
+  BGSRNRunOnMain(^{
+    [Bugsee notifyWithTitle:title
+                       body:body
+                   severity:(BugseeSeverityLevel)wire
+                     fields:fields
+                     urgent:urgent];
+  });
+}
+
+- (NSDictionary *)startTransaction:(NSString *)name
+                         operation:(NSString *)operation
+                    attributesJson:(NSString *)attributesJson {
+  __block NSDictionary *snapshot = nil;
+  BGSRNRunOnMainSync(^{
+    NSDictionary *attributes = nil;
+    if (attributesJson != nil) {
+      NSError *error = nil;
+      attributes = BGSRNJSONObject(attributesJson, &error);
+      if (attributes == nil) {
+        NSLog(@"BugseeRN startTransaction dropped attributes: %@", error);
+      }
+    }
+    id<BGSTransaction> transaction = attributes == nil
+        ? [Bugsee startTransactionWithName:name operation:operation]
+        : [Bugsee startTransactionWithName:name operation:operation attributes:attributes];
+    snapshot = [self adoptSpan:transaction];
+  });
+  return snapshot;
+}
+
+- (NSDictionary *)startSpan:(NSString *)operation description:(NSString *)description {
+  __block NSDictionary *snapshot = nil;
+  BGSRNRunOnMainSync(^{
+    snapshot = [self adoptSpan:[Bugsee startSpanWithOperation:operation description:description]];
+  });
+  return snapshot;
+}
+
+- (NSDictionary *)getActiveSpan {
+  __block NSDictionary *snapshot = nil;
+  BGSRNRunOnMainSync(^{
+    snapshot = [self adoptSpan:[Bugsee getActiveSpan]];
+  });
+  return snapshot;
+}
+
+- (void)spanSetName:(NSString *)handle name:(NSString *)name {
+  BGSRNRunOnMainSync(^{
+    [[self liveSpan:handle].span setName:name];
+  });
+}
+
+- (void)spanSetDescription:(NSString *)handle description:(NSString *)description {
+  BGSRNRunOnMainSync(^{
+    [[self liveSpan:handle].span setSpanDescription:description];
+  });
+}
+
+- (void)spanSetAttribute:(NSString *)handle key:(NSString *)key valueJson:(NSString *)valueJson {
+  BGSRNRunOnMainSync(^{
+    id value = BGSRNJSONScalar(valueJson);
+    if (value == nil) {
+      NSLog(@"BugseeRN span attribute dropped: value is not a string, number or boolean");
+      return;
+    }
+    [[self liveSpan:handle].span setAttribute:key value:value];
+  });
+}
+
+- (void)spanSetStatus:(NSString *)handle status:(double)status {
+  BGSRNRunOnMainSync(^{
+    NSInteger wire = (NSInteger)llround(status);
+    if (wire < BGSSpanStatusOK || wire > BGSSpanStatusUnknown) {
+      NSLog(@"BugseeRN span status %ld is outside 0..5", (long)wire);
+      return;
+    }
+    [[self liveSpan:handle].span setStatus:(BGSSpanStatus)wire];
+  });
+}
+
+- (NSDictionary *)spanStartChild:(NSString *)handle
+                       operation:(NSString *)operation
+                     description:(NSString *)description {
+  __block NSDictionary *snapshot = nil;
+  BGSRNRunOnMainSync(^{
+    BGSRNLiveSpan *live = [self liveSpan:handle];
+    if (live == nil) {
+      snapshot = BGSRNNoSpan();
+      return;
+    }
+    id<BGSSpan> child = description == nil
+        ? [live.span startChildSpanWithOperation:operation]
+        : [live.span startChildSpanWithOperation:operation description:description];
+    snapshot = [self adoptSpan:child];
+  });
+  return snapshot;
+}
+
+- (NSArray<NSString *> *)spanFinish:(NSString *)handle
+                             status:(double)status
+                        statusSet:(BOOL)statusSet {
+  __block NSArray<NSString *> *released = @[];
+  BGSRNRunOnMainSync(^{
+    NSNumber *wire = nil;
+    if (statusSet) {
+      NSInteger value = (NSInteger)llround(status);
+      if (value < BGSSpanStatusOK || value > BGSSpanStatusUnknown) {
+        NSLog(@"BugseeRN span finish status %ld is outside 0..5", (long)value);
+        return;
+      }
+      wire = @(value);
+    }
+    released = [self.spanHandles finishHandle:handle status:wire];
+  });
+  return released;
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

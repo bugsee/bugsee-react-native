@@ -12,6 +12,9 @@ import com.bugsee.library.contracts.exchange.BugseeExchangeFactory;
 import com.bugsee.library.contracts.options.IssueSeverity;
 import com.bugsee.library.contracts.options.Options;
 import com.bugsee.library.contracts.options.OptionsContainer;
+import com.bugsee.library.contracts.performance.Span;
+import com.bugsee.library.contracts.performance.SpanStatus;
+import com.bugsee.library.contracts.performance.Transaction;
 import com.bugsee.library.contracts.reporting.Report;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
@@ -29,9 +32,14 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.json.JSONTokener;
 
 /**
  * The Android half of the `Bugsee` TurboModule.
@@ -94,6 +102,9 @@ public class BugseeModule extends NativeBugseeSpec
      */
     private final DataRequestBridge.Sink dataRequestSink = this::emitRequest;
 
+    /** Spans this module is holding. {@link #invalidate()} drops them. */
+    private final SpanHandles spanHandles = new SpanHandles();
+
     public BugseeModule(final ReactApplicationContext context) {
         super(context);
         originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared());
@@ -146,6 +157,9 @@ public class BugseeModule extends NativeBugseeSpec
         // unanswered one is not recorded; a reply into this module after it
         // is gone has nowhere to land.
         BreadcrumbFilterBridge.shared().detach(this);
+        // The next runtime cannot know these handles. Drop them without
+        // finishing: a reload must not close a transaction the SDK still has.
+        spanHandles.releaseAll();
         SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
         super.invalidate();
@@ -1308,5 +1322,261 @@ public class BugseeModule extends NativeBugseeSpec
             }
         }
         return result;
+    }
+
+    // --- Notify and spans ------------------------------------------------
+    // Span calls stay on this thread. Both SDKs keep the active span in
+    // thread-local storage, so hopping to another thread would make
+    // startSpan miss the transaction startTransaction just opened.
+
+    @Override
+    public void notify(
+            final String title,
+            @Nullable final String body,
+            final double severity,
+            @Nullable final String fieldsJson,
+            final boolean urgent
+    ) {
+        Map<String, String> fields = null;
+        if (fieldsJson != null) {
+            try {
+                final Map<String, Object> parsed = BridgeJson.parseObject(fieldsJson);
+                fields = new LinkedHashMap<>();
+                for (final Map.Entry<String, Object> entry : parsed.entrySet()) {
+                    if (entry.getValue() instanceof String) {
+                        fields.put(entry.getKey(), (String) entry.getValue());
+                    }
+                }
+            } catch (final BridgeJson.BadJson error) {
+                Log.w(TAG, "notify dropped: " + error.getMessage());
+                return;
+            }
+        }
+        Bugsee.notify(title, body, ReportArgs.severity((int) severity), fields, urgent);
+    }
+
+    @Override
+    public WritableMap startTransaction(
+            final String name,
+            final String operation,
+            @Nullable final String attributesJson
+    ) {
+        final Map<String, Object> attributes = attributes(attributesJson, "startTransaction");
+        final Transaction transaction = attributes == null
+                ? Bugsee.startTransaction(name, operation)
+                : Bugsee.startTransaction(name, operation, attributes);
+        return snapshot(spanHandles.retain(transaction, new LiveSpan(transaction)), transaction);
+    }
+
+    @Override
+    public WritableMap startSpan(final String operation, @Nullable final String description) {
+        final Span span = Bugsee.startSpan(operation, description);
+        return snapshot(spanHandles.retain(span, new LiveSpan(span)), span);
+    }
+
+    @Override
+    public WritableMap getActiveSpan() {
+        final Span span = Bugsee.getActiveSpan();
+        if (span == null) {
+            return noSpan();
+        }
+        return snapshot(spanHandles.retain(span, new LiveSpan(span)), span);
+    }
+
+    @Override
+    public void spanSetName(final String handle, final String name) {
+        final LiveSpan live = live(handle);
+        if (live != null) {
+            live.span.setName(name);
+        }
+    }
+
+    @Override
+    public void spanSetDescription(final String handle, @Nullable final String description) {
+        final LiveSpan live = live(handle);
+        if (live != null) {
+            live.span.setDescription(description);
+        }
+    }
+
+    @Override
+    public void spanSetAttribute(final String handle, final String key, final String valueJson) {
+        final LiveSpan live = live(handle);
+        if (live == null) {
+            return;
+        }
+        final Object value = jsonValue(valueJson);
+        if (value == null) {
+            Log.w(TAG, "span attribute dropped: value is not a string, number or boolean");
+            return;
+        }
+        live.span.setAttribute(key, value);
+    }
+
+    @Override
+    public void spanSetStatus(final String handle, final double status) {
+        final LiveSpan live = live(handle);
+        final SpanStatus parsed = SpanHandles.status((int) status);
+        if (live == null || parsed == null) {
+            if (parsed == null) {
+                Log.w(TAG, "span status " + (int) status + " is outside 0..5");
+            }
+            return;
+        }
+        live.span.setStatus(parsed);
+    }
+
+    @Override
+    public WritableMap spanStartChild(
+            final String handle,
+            final String operation,
+            @Nullable final String description
+    ) {
+        final LiveSpan live = live(handle);
+        if (live == null) {
+            return noSpan();
+        }
+        final Span child = description == null
+                ? live.span.startChildSpan(operation)
+                : live.span.startChildSpan(operation, description);
+        return snapshot(spanHandles.retain(child, new LiveSpan(child)), child);
+    }
+
+    @Override
+    public WritableArray spanFinish(final String handle, final double status, final boolean statusSet) {
+        final WritableArray released = Arguments.createArray();
+        final SpanStatus parsed = statusSet ? SpanHandles.status((int) status) : null;
+        if (statusSet && parsed == null) {
+            Log.w(TAG, "span finish status " + (int) status + " is outside 0..5");
+            return released;
+        }
+        for (final String id : spanHandles.finish(handle, parsed)) {
+            released.pushString(id);
+        }
+        return released;
+    }
+
+    @Nullable
+    private LiveSpan live(final String handle) {
+        final SpanHandles.Retained retained = spanHandles.get(handle);
+        if (retained instanceof LiveSpan) {
+            return (LiveSpan) retained;
+        }
+        return null;
+    }
+
+    private static WritableMap noSpan() {
+        final WritableMap map = Arguments.createMap();
+        map.putString("handle", "");
+        return map;
+    }
+
+    private static WritableMap snapshot(final String handle, final Span span) {
+        final WritableMap map = Arguments.createMap();
+        map.putString("handle", handle);
+        map.putString("spanId", span.getSpanId() == null ? "" : span.getSpanId());
+        map.putString("traceId", span.getTraceId() == null ? "" : span.getTraceId());
+        map.putString("operation", span.getOperation() == null ? "" : span.getOperation());
+        if (span.getDescription() == null) {
+            map.putNull("description");
+        } else {
+            map.putString("description", span.getDescription());
+        }
+        final SpanStatus status = span.getStatus();
+        map.putInt("status", status == null ? 0 : status.ordinal());
+        map.putBoolean("finished", span.isFinished());
+        map.putString("attributesJson", attributesJson(span.getAttributes()));
+        if (span instanceof Transaction) {
+            final Transaction transaction = (Transaction) span;
+            map.putString("name", transaction.getName() == null ? "" : transaction.getName());
+            map.putBoolean("sampled", transaction.isSampled());
+        }
+        return map;
+    }
+
+    private static String attributesJson(@Nullable final Map<String, Object> attributes) {
+        if (attributes == null || attributes.isEmpty()) {
+            return "{}";
+        }
+        final JSONObject object = new JSONObject();
+        for (final Map.Entry<String, Object> entry : attributes.entrySet()) {
+            final Object value = entry.getValue();
+            if (value instanceof String || value instanceof Boolean || value instanceof Number) {
+                try {
+                    object.put(entry.getKey(), value);
+                } catch (final JSONException ignored) {
+                    // A key the JSON writer refuses is omitted, not fatal.
+                }
+            }
+        }
+        return object.toString();
+    }
+
+    @Nullable
+    private static Map<String, Object> attributes(
+            @Nullable final String json,
+            final String method
+    ) {
+        if (json == null) {
+            return null;
+        }
+        try {
+            return BridgeJson.parseObject(json);
+        } catch (final BridgeJson.BadJson error) {
+            Log.w(TAG, method + " dropped attributes: " + error.getMessage());
+            return null;
+        }
+    }
+
+    /** One JSON value, or null when it is missing, null, an object or an array. */
+    @Nullable
+    private static Object jsonValue(@Nullable final String json) {
+        if (json == null) {
+            return null;
+        }
+        final JSONTokener tokener = new JSONTokener(json);
+        final Object value;
+        try {
+            value = tokener.nextValue();
+        } catch (final JSONException error) {
+            Log.w(TAG, "span attribute dropped: malformed JSON (" + json.length() + " characters)");
+            return null;
+        }
+        if (value == null || value == JSONObject.NULL) {
+            return null;
+        }
+        if (value instanceof String || value instanceof Boolean) {
+            return value;
+        }
+        if (value instanceof Integer || value instanceof Long) {
+            return value;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
+        }
+        return null;
+    }
+
+    /** The SDK span plus the registry's finish/isFinished surface. */
+    private static final class LiveSpan implements SpanHandles.Retained {
+        final Span span;
+
+        LiveSpan(final Span span) {
+            this.span = span;
+        }
+
+        @Override
+        public void finish(@Nullable final SpanStatus status) {
+            if (status == null) {
+                span.finish();
+            } else {
+                span.finish(status);
+            }
+        }
+
+        @Override
+        public boolean isFinished() {
+            return span.isFinished();
+        }
     }
 }

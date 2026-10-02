@@ -53,6 +53,14 @@ import {
   reportHandled,
   reportUnhandled,
 } from './exceptions/report';
+import { notify as queueNotification } from './apm/notify';
+import {
+  getActiveSpan as readActiveSpan,
+  startSpan as openSpan,
+  startTransaction as openTransaction,
+} from './apm/span';
+import type { BugseeSpan, BugseeTransaction } from './apm/span';
+import type { SpanAttribute } from './apm/types';
 
 const DETECT_CRASH_OPTION = 'com.bugsee.option.detect.crash';
 
@@ -722,6 +730,66 @@ class Bugsee {
         : { fallbackStack: dropFirstStackFrame(new Error().stack) };
     return reportUnhandled(error, extras);
   }
+
+  /**
+   * Queues a notification for the app's messaging integrations. This does
+   * not create a bug report: no video, logs or events are attached. Both
+   * SDKs persist it and upload it in a batch. `urgent` skip-ahead POSTs
+   * this item without draining older ones; omitted, the call is not urgent.
+   *
+   * Omitted `severity` crosses as `0`, which both SDKs treat as unset.
+   * Omitted `fields` cross as null. A call before `launch()` is ignored by
+   * the SDK. An empty title is rejected here, because both SDKs would drop
+   * it and only log. A sixth argument throws `TypeError`.
+   */
+  notify(
+    title: string,
+    body?: string | null,
+    severity?: IssueSeverity,
+    fields?: Readonly<Record<string, string>> | null,
+    urgent?: boolean,
+  ): void {
+    if (arguments.length > 5) {
+      throw new TypeError('Bugsee.notify takes at most five arguments');
+    }
+    queueNotification(title, body, severity, fields, urgent);
+  }
+
+  /**
+   * Starts a performance transaction and returns it. The bridge retains the
+   * native object until {@link BugseeSpan.finish} releases it, including any
+   * child that finish cancelled.
+   *
+   * `name` and `operation` are the SDK's two required strings. Omitted
+   * `attributes` is the two-argument overload. The transaction becomes the
+   * active span on the thread the bridge calls from, so a later
+   * {@link startSpan} is its child. Both SDKs return a no-op when
+   * performance monitoring is off; `finish` still releases that handle.
+   */
+  startTransaction(
+    name: string,
+    operation: string,
+    attributes?: Readonly<Record<string, SpanAttribute>>,
+  ): BugseeTransaction {
+    return openTransaction(name, operation, attributes);
+  }
+
+  /**
+   * Starts a span as a child of the active span on the bridge's thread.
+   * With no active transaction, or with performance monitoring off, the SDK
+   * returns a no-op. `finish` releases the handle either way.
+   */
+  startSpan(operation: string, description?: string | null): BugseeSpan {
+    return openSpan(operation, description);
+  }
+
+  /**
+   * The active span on the bridge's thread, or null when there is none.
+   * A span this process already holds is the same object.
+   */
+  getActiveSpan(): BugseeSpan | null {
+    return readActiveSpan();
+  }
 }
 
 /**
@@ -823,6 +891,10 @@ export type {
 } from './breadcrumbs/types';
 
 export type { ExceptionOptions } from './exceptions/options';
+export { SpanStatus } from './apm/types';
+export type { SpanAttribute } from './apm/types';
+export type { BugseeSpan, BugseeTransaction } from './apm/span';
+export { SpanErrorCode, BugseeSpanError } from './apm/types';
 export { ErrorBoundary } from './exceptions/ErrorBoundary';
 export type {
   ErrorBoundaryFallbackProps,

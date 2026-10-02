@@ -482,6 +482,76 @@ export async function pullIosBundles(): Promise<PulledBundle[]> {
   return bundles;
 }
 
+/** Where Android persists a notification until its batch upload. */
+const ANDROID_RELAY = 'files/bugsee_data/relay';
+/** Where iOS persists a notification (`kNotificationsFolder`). */
+const IOS_NOTIFICATIONS = `${IOS_SDK_DATA}/notifications`;
+
+/**
+ * The notification files still on the device, as text.
+ *
+ * A notification does not ride inside the bug-report bundle. Airplane mode
+ * (Android) and the dead endpoint (iOS) keep the upload from completing, so
+ * the file is what "a notification arrived" means.
+ */
+export async function relayTexts(ios: boolean): Promise<string[]> {
+  return ios ? iosRelayTexts() : androidRelayTexts();
+}
+
+async function androidRelayTexts(): Promise<string[]> {
+  const listed = await adbStatus('shell', 'run-as', ANDROID_PACKAGE, 'ls', ANDROID_RELAY);
+  if (listed.code !== 0) {
+    return [];
+  }
+  const files = listed.output
+    .split(/\s+/)
+    .map(name => name.trim())
+    .filter(name => name.endsWith('.json'));
+  const texts: string[] = [];
+  for (const file of files) {
+    const { stdout } = await execFileAsync(
+      ADB,
+      ['-s', ANDROID_SERIAL, 'exec-out', 'run-as', ANDROID_PACKAGE, 'cat', `${ANDROID_RELAY}/${file}`],
+      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 },
+    );
+    texts.push(stdout);
+  }
+  return texts;
+}
+
+async function iosRelayTexts(): Promise<string[]> {
+  if (onDevice()) {
+    const names = ((await deviceEntries(IOS_NOTIFICATIONS)) ?? []).filter(name => name.endsWith('.json'));
+    const root = mkdtempSync(join(tmpdir(), 'bugsee-relay-'));
+    const texts: string[] = [];
+    try {
+      for (const name of names) {
+        const dest = join(root, name);
+        await devicectl(
+          'copy',
+          'from',
+          ...CONTAINER,
+          '--source',
+          `${IOS_NOTIFICATIONS}/${name}`,
+          '--destination',
+          dest,
+        );
+        texts.push(readFileSync(dest, 'utf8'));
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    return texts;
+  }
+  const dir = join(await simulatorContainer(), IOS_NOTIFICATIONS);
+  if (!existsSync(dir)) {
+    return [];
+  }
+  return readdirSync(dir)
+    .filter(name => name.endsWith('.json'))
+    .map(name => readFileSync(join(dir, name), 'utf8'));
+}
+
 /**
  * A minimal zip reader. The iOS SDK stores most entries with zstd (method
  * 93), which neither macOS's `unzip` nor its `bsdtar` can read; Node's zlib

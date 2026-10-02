@@ -4045,6 +4045,8 @@ The phase with the most native↔JS round-tripping, hence the most device testin
 
 `notify(title, body, severity, fields, urgent)`; `startTransaction`, `startSpan`, `getActiveSpan`. Spans are objects with lifetime, so the bridge must not leak them — tests pin that a finished span is released. Device test: a notification arrives; a transaction appears in a report.
 
+Device: WOD_LX1 `AMRJCP4718402860`, Debug, logged `BUGSEE_E2E apm notify=notify-63127dab6203 txn=txn-63127dab6203` (pass: the relay held the notification, and the report's performance capture held the transaction and its child span). iOS Simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957`, Debug, logged `BUGSEE_E2E apm notify=notify-19d207323e5d txn=txn-19d207323e5d` (pass, same two artifacts). iPhone XS (KRSFT) was already running BareExample (pid 43437); waited and retried once, and that process was still there, so that run was not taken.
+
 ---
 
 ## Phase 11 — Appearance & data
