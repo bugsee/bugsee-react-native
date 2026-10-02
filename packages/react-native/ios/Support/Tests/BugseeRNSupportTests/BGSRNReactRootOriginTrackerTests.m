@@ -57,9 +57,9 @@
   XCTAssertEqualObjects([self served], (@[@110, @70, @130, @90]));
 }
 
-/// The SDK pulls ten times a second on the main thread. With no React root on
-/// screen (a brownfield app's native screens) a search there would walk every
-/// window to its budget each time.
+/// The SDK pulls once per captured frame on the main thread. With no React
+/// root on screen (a brownfield app's native screens) a search there would
+/// walk every window to its budget each time.
 - (void)testAPullNeverSearches {
   BGSRNReactRootOriginTracker *tracker = [self tracker];
 

@@ -98,7 +98,7 @@ static BGSRNReactRootOriginTracker *BGSRNSecureOriginTracker(void);
 /// the screen.
 ///
 /// Read from the process-wide store rather than from this instance. The SDK
-/// pulls 2-3 times a second on the MAIN thread, and the wrapper it pulls
+/// pulls on the MAIN thread once per captured frame, and the wrapper it pulls
 /// through is replaced when `setWrapperInfo` runs — regions the app marked
 /// secret must survive that swap. See `BGSRNSecureRectangles` for the version
 /// contract, which is what makes the SDK notice a change at all. The pull

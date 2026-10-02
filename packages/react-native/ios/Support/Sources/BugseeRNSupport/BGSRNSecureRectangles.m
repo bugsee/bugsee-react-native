@@ -63,8 +63,8 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
   /// display -> its current version.
   NSMutableDictionary<NSNumber *, NSNumber *> *_versionsByDisplay;
   /// Serialises the JS-thread write against the main-thread pull. A plain lock
-  /// rather than a queue: the pull happens on the SDK's own thread 2-3 times a
-  /// second and must not be made to hop.
+  /// rather than a queue: the pull happens on main once per captured frame and
+  /// must not be made to hop.
   NSLock *_lock;
 }
 

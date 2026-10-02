@@ -16,9 +16,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// It keeps the React root view it found, weakly, and follows `root.window`,
 /// which costs nothing and still answers when the root is moved into another
 /// window. Searching the windows for a root happens only on a JS publish, and
-/// only when the root found last has left its window: the SDK's pulls run ten
-/// times a second on the main thread, and in an app showing no React root at
-/// all (the native screens of a brownfield app) a search would walk every
+/// only when the root found last has left its window: the SDK pulls on the
+/// main thread once per captured frame, and in an app showing no React root
+/// at all (the native screens of a brownfield app) a search would walk every
 /// window to its budget each time.
 ///
 /// Main thread only: it reads UIKit.

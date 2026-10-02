@@ -3,7 +3,8 @@
 
 #import "BGSRNSecureOriginTestSupport.h"
 
-/// The SDK pulls 2-3 times a second, more while capturing. Each pull keeps the
+/// The SDK pulls once per captured frame, and from the touch filter at most
+/// every 100 ms while nothing captures. Each pull keeps the
 /// window's place fresh -- a window moves with nothing published -- but no
 /// more often than every 100 ms, and it always gets its rectangles.
 @interface BGSRNSecureRectanglePullsTests : XCTestCase
