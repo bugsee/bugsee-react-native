@@ -13,6 +13,8 @@ import { setReportHandler as installReportHandler } from './report/dispatcher';
 import { createReport as openCreatedReport } from './report/CreatedReport';
 import type { BugseeCreatedReport, BugseeReportHandler } from './report/types';
 import { forwardLog } from './wrapper/channel';
+import { setLogFilter as installLogFilter } from './logs/filter';
+import type { LogFilter } from './logs/filter';
 import { type IssueSeverity, LogLevel } from './options/enums';
 import { labelsArgument, severityArgument } from './report/fields';
 import {
@@ -377,6 +379,21 @@ class Bugsee {
   }
 
   /**
+   * Registers the log filter. A later call replaces it. Called with no
+   * callback, or with `null`, clears it.
+   *
+   * The callback receives the line and returns the line to keep, or a
+   * replacement string. `null` or `undefined` drops the line. The native SDK
+   * is what invokes the filter; the callback runs on a later turn, and this
+   * method does not wait for it. A callback that throws, rejects, or does
+   * not settle before the SDK's own timeout drops the line. It is not passed
+   * through.
+   */
+  setLogFilter(callback?: LogFilter | null): void {
+    installLogFilter(callback);
+  }
+
+  /**
    * Records a named event, with optional params.
    *
    * `params` must be a plain object or omitted entirely -- `null` throws
@@ -687,6 +704,8 @@ export type { EventParams, EventParamValue, TraceValue } from './data/validate';
 
 export { AttributeErrorCode, BugseeAttributeError } from './attributes/errors';
 export type { AttributeReadValue, AttributeValue } from './attributes/validate';
+
+export type { LogFilter } from './logs/filter';
 
 export type { ExceptionOptions } from './exceptions/options';
 export { ErrorBoundary } from './exceptions/ErrorBoundary';

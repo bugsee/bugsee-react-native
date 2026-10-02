@@ -15,8 +15,8 @@
  * scenarios/attributes.ts, `e2e-native-smoke` / `native-crash-*` are
  * scenarios/native.ts, `blackout`, `blackout-prelaunch`,
  * `secure-component` and `view-tree` are scenarios/privacy.tsx, and
- * `exc-*` are scenarios/exceptions.tsx, and `rp-*` are
- * scenarios/reporting.ts.
+ * `exc-*` are scenarios/exceptions.tsx, `rp-*` are
+ * scenarios/reporting.ts, and `log-filter` is scenarios/log-filter.ts.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -85,6 +85,11 @@ import {
   isReportingScenario,
   runReportingScenario,
 } from './scenarios/reporting';
+import {
+  installLogFilter,
+  isLogFilterScenario,
+  runLogFilterScenario,
+} from './scenarios/log-filter';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -343,6 +348,11 @@ export default function App() {
       if (isReportingScenario(choice.scenario)) {
         installReporting(choice.scenario, choice.nonce);
       }
+      // Before launch(): the log filter has to be registered before the
+      // lines this scenario sends, or they are recorded unfiltered.
+      if (isLogFilterScenario(choice.scenario)) {
+        installLogFilter(choice.nonce);
+      }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
       // capture up off the main thread, so by the time the promise resolves the
@@ -373,6 +383,11 @@ export default function App() {
 
         if (data !== undefined) {
           runDataScenario(choice.nonce);
+          return;
+        }
+
+        if (isLogFilterScenario(choice.scenario)) {
+          runLogFilterScenario(choice.nonce);
           return;
         }
 
