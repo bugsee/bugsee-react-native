@@ -2,8 +2,10 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DSYM_POST_ACTION_SCRIPT = void 0;
 // Archive post-action inserted into the Expo scheme. After NODE_BINARY is
-// known, the CLI is resolved from the package graph so a hoisted install
-// still finds it. Tokens are exported only when non-empty.
+// known, the app root (${PROJECT_DIR}/..) is passed to node so resolution
+// does not use the post-action working directory. The native optional
+// dependency is preferred; otherwise the JS CLI path comes from the package
+// bin field. Tokens are exported only when non-empty.
 exports.DSYM_POST_ACTION_SCRIPT = [
     'CREDS="${PROJECT_DIR}/../credentials.json"',
     'TOKEN="$BUGSEE_APP_TOKEN"',
@@ -46,10 +48,11 @@ exports.DSYM_POST_ACTION_SCRIPT = [
     'if [ -n "$NODE_BINARY" ] && [ -x "$NODE_BINARY" ]; then',
     '  PATH="$(dirname "$NODE_BINARY"):$PATH"',
     '  export PATH NODE_BINARY',
+    '  APP_ROOT="${PROJECT_DIR}/.."',
     '  if [ "$(uname -m)" = "x86_64" ]; then',
-    '    NATIVE_PKG="$("$NODE_BINARY" --print "try { require.resolve(\'@bugsee/cli-darwin-x64/package.json\') } catch (e) { \'\' }")"',
+    '    NATIVE_PKG="$("$NODE_BINARY" --print "try { require.resolve(\'@bugsee/cli-darwin-x64/package.json\', { paths: [process.argv[1]] }) } catch (e) { \'\' }" "$APP_ROOT")"',
     '  else',
-    '    NATIVE_PKG="$("$NODE_BINARY" --print "try { require.resolve(\'@bugsee/cli-darwin-arm64/package.json\') } catch (e) { \'\' }")"',
+    '    NATIVE_PKG="$("$NODE_BINARY" --print "try { require.resolve(\'@bugsee/cli-darwin-arm64/package.json\', { paths: [process.argv[1]] }) } catch (e) { \'\' }" "$APP_ROOT")"',
     '  fi',
     '  if [ -n "$NATIVE_PKG" ]; then',
     '    NATIVE_BIN="$(dirname "$NATIVE_PKG")/bin/bugsee-cli"',
@@ -58,7 +61,7 @@ exports.DSYM_POST_ACTION_SCRIPT = [
     '      exit $?',
     '    fi',
     '  fi',
-    '  CLI_JS="$("$NODE_BINARY" --print "try { require.resolve(\'@bugsee/cli/bin/bugsee-cli.js\') } catch (e) { \'\' }")"',
+    '  CLI_JS="$("$NODE_BINARY" --print "try { const fs = require(\'fs\'); const path = require(\'path\'); const pkg = require.resolve(\'@bugsee/cli/package.json\', { paths: [process.argv[1]] }); const rel = JSON.parse(fs.readFileSync(pkg, \'utf8\')).bin[\'bugsee-cli\']; rel ? path.join(path.dirname(pkg), rel) : \'\'; } catch (e) { \'\' }" "$APP_ROOT")"',
     '  if [ -n "$CLI_JS" ]; then',
     '    "$NODE_BINARY" "$CLI_JS" xcode post-action',
     '    exit $?',

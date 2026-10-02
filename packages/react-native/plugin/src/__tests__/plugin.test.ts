@@ -19,6 +19,31 @@ const barePbx = join(
   'examples/bare/ios/BareExample.xcodeproj/project.pbxproj',
 );
 
+function requireResolveCalls(script: string): string[] {
+  const calls: string[] = [];
+  const needle = 'require.resolve(';
+  let from = 0;
+  while (from < script.length) {
+    const start = script.indexOf(needle, from);
+    if (start < 0) break;
+    let depth = 0;
+    let i = start + needle.length - 1;
+    for (; i < script.length; i++) {
+      if (script[i] === '(') depth++;
+      else if (script[i] === ')') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    calls.push(script.slice(start, i));
+    from = i;
+  }
+  return calls;
+}
+
 function decodeXml(value: string): string {
   return value
     .replace(/&#10;/g, '\n')
@@ -111,13 +136,49 @@ describe('settled iOS hooks', () => {
     expect(DSYM_POST_ACTION_SCRIPT).toContain('export BUGSEE_ENDPOINT="$ENDPOINT"');
   });
 
-  it('resolves bugsee-cli from the package graph', () => {
-    expect(DSYM_POST_ACTION_SCRIPT).toContain("require.resolve('@bugsee/cli");
+  it('resolves bugsee-cli from the app root, not the bin subpath', () => {
+    expect(DSYM_POST_ACTION_SCRIPT).not.toContain(
+      "require.resolve('@bugsee/cli/bin/bugsee-cli.js')",
+    );
+    expect(DSYM_POST_ACTION_SCRIPT).not.toMatch(
+      /require\.resolve\(['"]@bugsee\/cli\/bin\/bugsee-cli\.js['"]\)/,
+    );
     expect(DSYM_POST_ACTION_SCRIPT).not.toContain('packages/react-native/node_modules');
-    const resolveAt = DSYM_POST_ACTION_SCRIPT.indexOf("require.resolve('@bugsee/cli");
+    expect(DSYM_POST_ACTION_SCRIPT).toContain('APP_ROOT="${PROJECT_DIR}/.."');
+
+    const calls = requireResolveCalls(DSYM_POST_ACTION_SCRIPT);
+    expect(calls).toEqual([
+      "require.resolve('@bugsee/cli-darwin-x64/package.json', { paths: [process.argv[1]] })",
+      "require.resolve('@bugsee/cli-darwin-arm64/package.json', { paths: [process.argv[1]] })",
+      "require.resolve('@bugsee/cli/package.json', { paths: [process.argv[1]] })",
+    ]);
+    for (const call of calls) {
+      expect(call).toContain('paths:');
+      expect(call).toContain('process.argv[1]');
+    }
+
+    const printScripts = [...DSYM_POST_ACTION_SCRIPT.matchAll(/--print "([^"]*)"/g)].map(
+      (match) => match[1],
+    );
+    expect(printScripts).toHaveLength(calls.length);
+    for (const src of printScripts) {
+      expect(src).not.toContain('PROJECT_DIR');
+      expect(src).not.toContain('APP_ROOT');
+      expect(src).not.toContain('process.cwd');
+    }
+    expect(DSYM_POST_ACTION_SCRIPT.match(/--print "[^"]*" "\$APP_ROOT"/g)).toHaveLength(
+      calls.length,
+    );
+    expect(DSYM_POST_ACTION_SCRIPT).toContain(".bin['bugsee-cli']");
+
+    const nativeAt = DSYM_POST_ACTION_SCRIPT.indexOf('@bugsee/cli-darwin-arm64/package.json');
+    const jsAt = DSYM_POST_ACTION_SCRIPT.indexOf(
+      "require.resolve('@bugsee/cli/package.json'",
+    );
     const exitAt = DSYM_POST_ACTION_SCRIPT.lastIndexOf('exit 1');
-    expect(resolveAt).toBeGreaterThan(-1);
-    expect(exitAt).toBeGreaterThan(resolveAt);
+    expect(nativeAt).toBeGreaterThan(-1);
+    expect(jsAt).toBeGreaterThan(nativeAt);
+    expect(exitAt).toBeGreaterThan(jsAt);
   });
 
   it('replaces a classic bundle phase with the bare hook', () => {
