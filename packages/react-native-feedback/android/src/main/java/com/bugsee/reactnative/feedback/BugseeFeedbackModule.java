@@ -26,6 +26,17 @@ public class BugseeFeedbackModule extends NativeBugseeFeedbackSpec {
 
     public static final String NAME = "BugseeFeedbackModule";
 
+    /**
+     * The listener this instance installed. {@code invalidate} clears the SDK
+     * only when this is still the one installed: a reload can attach the new
+     * module first, and an unconditional null would silence it.
+     */
+    @Nullable
+    private FeedbackListener installedListener;
+
+    /** False after {@code invalidate} or a disable, so a queued callback drops. */
+    private volatile boolean acceptingEvents;
+
     public BugseeFeedbackModule(final ReactApplicationContext context) {
         super(context);
     }
@@ -38,7 +49,7 @@ public class BugseeFeedbackModule extends NativeBugseeFeedbackSpec {
 
     @Override
     public void invalidate() {
-        FeedbackBridge.setListener(null);
+        detachListener();
     }
 
     @Override
@@ -54,16 +65,23 @@ public class BugseeFeedbackModule extends NativeBugseeFeedbackSpec {
     @Override
     public void setListenerEnabled(final boolean enabled) {
         if (!enabled) {
-            FeedbackBridge.setListener(null);
+            detachListener();
             return;
         }
-        FeedbackBridge.setListener(new FeedbackListener() {
+        acceptingEvents = true;
+        final FeedbackListener listener = new FeedbackListener() {
             @Override
             public void onNewMessagesReceived(@Nullable final List<String> newMessages) {
+                if (!acceptingEvents) {
+                    return;
+                }
                 final List<String> copy = newMessages == null
                         ? new ArrayList<>()
                         : new ArrayList<>(newMessages);
                 emit(() -> {
+                    if (!acceptingEvents) {
+                        return;
+                    }
                     final WritableMap map = Arguments.createMap();
                     map.putString("messagesJson", FeedbackBridge.messagesJson(copy));
                     emitOnNewMessagesReceived(map);
@@ -72,14 +90,35 @@ public class BugseeFeedbackModule extends NativeBugseeFeedbackSpec {
 
             @Override
             public void onNewMessageSent(@Nullable final String message) {
+                if (!acceptingEvents) {
+                    return;
+                }
                 final String copy = message;
                 emit(() -> {
+                    if (!acceptingEvents) {
+                        return;
+                    }
                     final WritableMap map = Arguments.createMap();
                     map.putString("message", copy);
                     emitOnNewMessageSent(map);
                 });
             }
-        });
+        };
+        installedListener = listener;
+        FeedbackBridge.setListener(listener);
+    }
+
+    /**
+     * Stops this instance emitting, and nulls the SDK listener only when it
+     * is still the one this instance installed.
+     */
+    private void detachListener() {
+        acceptingEvents = false;
+        final FeedbackListener ours = installedListener;
+        installedListener = null;
+        if (ours != null) {
+            FeedbackBridge.clearListener(ours);
+        }
     }
 
     @Override

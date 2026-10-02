@@ -78,12 +78,27 @@ describe('setListener', () => {
     expect(sent).toHaveBeenCalledWith('hi');
   });
 
-  it('skips a received payload that is not a string array', () => {
+  it('skips a received payload that is not JSON array', () => {
     const received = jest.fn();
     setListener({ onNewMessagesReceived: received });
     native.emitReceived('not json');
     native.emitReceived(JSON.stringify({ a: 1 }));
-    native.emitReceived(JSON.stringify(['ok', 1]));
+    expect(received).not.toHaveBeenCalled();
+  });
+
+  it('delivers the strings from a batch that also contains nulls', () => {
+    const received = jest.fn();
+    setListener({ onNewMessagesReceived: received });
+    native.emitReceived(JSON.stringify([null, 'c', 1, 'd']));
+    expect(received).toHaveBeenCalledTimes(1);
+    expect(received).toHaveBeenCalledWith(['c', 'd']);
+  });
+
+  it('delivers nothing when every entry is null', () => {
+    const received = jest.fn();
+    setListener({ onNewMessagesReceived: received });
+    native.emitReceived(JSON.stringify([null, null]));
+    native.emitReceived('[]');
     expect(received).not.toHaveBeenCalled();
   });
 

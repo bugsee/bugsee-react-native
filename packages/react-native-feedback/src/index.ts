@@ -29,10 +29,17 @@ function parseMessages(payload: string): string[] | undefined {
   }
   const messages: string[] = [];
   for (const item of parsed) {
+    // A null or other non-string is one bad entry, not a reason to drop
+    // the strings beside it. An array that contains no strings is not a
+    // delivery: the native side omits nulls, and a batch of only nulls
+    // arrives as an empty array.
     if (typeof item !== 'string') {
-      return undefined;
+      continue;
     }
     messages.push(item);
+  }
+  if (messages.length === 0) {
+    return undefined;
   }
   return messages;
 }

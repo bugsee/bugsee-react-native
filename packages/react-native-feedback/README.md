@@ -31,7 +31,6 @@ import {
 } from '@bugsee/react-native-feedback';
 
 setGreeting('How can we help?');
-appearance.backgroundColor = '#112233';
 setListener({
   onNewMessagesReceived(messages) {},
   onNewMessageSent(message) {},
@@ -41,3 +40,18 @@ showFeedbackUI();
 
 Call these after `Bugsee.launch` has resolved. Android reaches the feature
 through `Bugsee.ext(Feedback.class)`. iOS uses `BugseeFeedback.shared`.
+
+## Appearance
+
+`appearance` stores feedback colors. Android writes them with
+`FeedbackAppearance` keys. iOS writes them onto `BugseeTheme`, which is the
+published surface:
+
+```ts
+appearance.backgroundColor = '#112233';
+```
+
+The `feedback-spm` 7.0.0-beta3 SwiftUI chat hard-codes `Color.accentColor`
+and `Color.gray` and does not read `BugseeTheme`, so that assignment does
+not change the chat in this beta. The setter still stores the color on
+`BugseeTheme`.

@@ -72,4 +72,14 @@ describe('the feedback package pins the same native versions as the core', () =>
     expect(ios).toMatch(/setGreeting:/);
     expect(ios).toMatch(/setListener:/);
   });
+
+  it('guards codegen emits and nils the SDK listener only for its own relay', () => {
+    expect(ios).toMatch(/catch \(const std::exception &e\)/);
+    expect(ios).toMatch(/_relay\.module = nil/);
+    expect(ios).toMatch(/if \(InstalledFeedbackRelay != relay\)/);
+    expect(ios).toMatch(/setListener:nil/);
+    expect(bridge).toMatch(/clearListener/);
+    expect(bridge).toMatch(/if \(installedListener != expected\)/);
+    expect(bridge).not.toMatch(/JSONObject\.NULL/);
+  });
 });

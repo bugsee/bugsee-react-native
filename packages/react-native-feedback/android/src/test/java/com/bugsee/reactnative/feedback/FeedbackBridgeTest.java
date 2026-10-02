@@ -1,6 +1,7 @@
 package com.bugsee.reactnative.feedback;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -92,7 +93,27 @@ public class FeedbackBridgeTest {
         assertNull(feedback.greeting);
         assertTrue(feedback.greetingSet);
 
-        final FeedbackListener listener = new FeedbackListener() {
+        final FeedbackListener listener = silentListener();
+        FeedbackBridge.setListener(listener);
+        assertSame(listener, feedback.listener);
+        FeedbackBridge.setListener(null);
+        assertNull(feedback.listener);
+        assertTrue(feedback.listenerSet);
+
+        // A reload installs the new module's listener before the old
+        // invalidate. Clearing the old one must leave the new one in place.
+        final FeedbackListener replacement = silentListener();
+        FeedbackBridge.setListener(listener);
+        FeedbackBridge.setListener(replacement);
+        assertFalse(FeedbackBridge.clearListener(listener));
+        assertSame(replacement, feedback.listener);
+        assertTrue(FeedbackBridge.clearListener(replacement));
+        assertNull(feedback.listener);
+        assertFalse(FeedbackBridge.clearListener(replacement));
+    }
+
+    private static FeedbackListener silentListener() {
+        return new FeedbackListener() {
             @Override
             public void onNewMessagesReceived(@Nullable final List<String> newMessages) {
             }
@@ -101,11 +122,6 @@ public class FeedbackBridgeTest {
             public void onNewMessageSent(@Nullable final String message) {
             }
         };
-        FeedbackBridge.setListener(listener);
-        assertSame(listener, feedback.listener);
-        FeedbackBridge.setListener(null);
-        assertNull(feedback.listener);
-        assertTrue(feedback.listenerSet);
     }
 
     @Test
@@ -149,10 +165,12 @@ public class FeedbackBridgeTest {
     }
 
     @Test
-    public void messagesJsonKeepsOrderAndNulls() {
+    public void messagesJsonOmitsNullsAndKeepsTheRest() {
         assertEquals("[]", FeedbackBridge.messagesJson(null));
         assertEquals("[]", FeedbackBridge.messagesJson(Collections.emptyList()));
         assertEquals("[\"a\",\"b\"]", FeedbackBridge.messagesJson(Arrays.asList("a", "b")));
-        assertEquals("[null,\"c\"]", FeedbackBridge.messagesJson(Arrays.asList(null, "c")));
+        assertEquals("[\"c\"]", FeedbackBridge.messagesJson(Arrays.asList(null, "c")));
+        assertEquals("[\"a\",\"b\"]", FeedbackBridge.messagesJson(Arrays.asList("a", null, "b")));
+        assertEquals("[]", FeedbackBridge.messagesJson(Arrays.asList(null, null)));
     }
 }

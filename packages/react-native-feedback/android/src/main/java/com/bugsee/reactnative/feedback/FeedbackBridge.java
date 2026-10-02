@@ -9,7 +9,6 @@ import com.bugsee.library.contracts.extensions.Feedback;
 import com.bugsee.library.contracts.feedback.FeedbackListener;
 
 import org.json.JSONArray;
-import org.json.JSONObject;
 
 import java.util.List;
 
@@ -25,6 +24,17 @@ import java.util.List;
  * lives in the feedback artifact rather than in the core SDK.
  */
 public final class FeedbackBridge {
+
+    /**
+     * The listener last handed to {@code setOnNewFeedbackListener}. A reload
+     * can install the new module's listener before the old module's
+     * {@code invalidate} runs; {@link #clearListener} nulls the SDK only when
+     * this is still the caller's instance.
+     */
+    @Nullable
+    private static FeedbackListener installedListener;
+
+    private static final Object LISTENER_LOCK = new Object();
 
     private FeedbackBridge() {
     }
@@ -51,26 +61,48 @@ public final class FeedbackBridge {
     }
 
     public static void setListener(@Nullable final FeedbackListener listener) {
-        final Feedback feedback = extension();
-        if (feedback == null) {
-            return;
+        synchronized (LISTENER_LOCK) {
+            final Feedback feedback = extension();
+            if (feedback == null) {
+                return;
+            }
+            feedback.setOnNewFeedbackListener(listener);
+            installedListener = listener;
         }
-        feedback.setOnNewFeedbackListener(listener);
+    }
+
+    /**
+     * Nulls the SDK listener only when {@code expected} is still the one
+     * installed. Returns whether this call cleared it. A newer module's
+     * listener is left in place.
+     */
+    public static boolean clearListener(@NonNull final FeedbackListener expected) {
+        synchronized (LISTENER_LOCK) {
+            if (installedListener != expected) {
+                return false;
+            }
+            final Feedback feedback = extension();
+            if (feedback != null) {
+                feedback.setOnNewFeedbackListener(null);
+            }
+            installedListener = null;
+            return true;
+        }
     }
 
     /**
      * A JSON array of the message strings, in the order the SDK handed them
-     * over. {@code null} entries become JSON null. A null list is {@code []}.
+     * over. Null entries are omitted. A null list, an empty list, and a list
+     * of only nulls are {@code []}.
      */
     @NonNull
     public static String messagesJson(@Nullable final List<String> messages) {
         final JSONArray array = new JSONArray();
         if (messages != null) {
             for (final String message : messages) {
-                // Android's org.json rejects put(null). JSONObject.NULL is
-                // the null both that copy and the test's org.json render as
-                // a JSON null.
-                array.put(message == null ? JSONObject.NULL : message);
+                if (message != null) {
+                    array.put(message);
+                }
             }
         }
         return array.toString();
