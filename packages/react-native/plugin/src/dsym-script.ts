@@ -1,8 +1,32 @@
 // Archive post-action inserted into the Expo scheme. After NODE_BINARY is
-// known, the app root (${PROJECT_DIR}/..) is passed to node so resolution
-// does not use the post-action working directory. The native optional
-// dependency is preferred; otherwise the JS CLI path comes from the package
-// bin field. Tokens are exported only when non-empty.
+// known, ${PROJECT_DIR}/.. is passed to node as the app root. The wrapper is
+// resolved from that root, @bugsee/cli from the wrapper directory (a nested
+// install is not visible from the app root), and the native optional
+// dependency from the CLI directory. Otherwise the JS entry comes from the
+// CLI package bin field. Tokens are exported only when non-empty.
+
+const locateBugseeCliPackage = [
+  "const path = require('path');",
+  'const appRoot = process.argv[1];',
+  "const wrapperPkg = require.resolve('@bugsee/react-native/package.json', { paths: [appRoot] });",
+  'const wrapperDir = path.dirname(wrapperPkg);',
+  "const cliPkg = require.resolve('@bugsee/cli/package.json', { paths: [wrapperDir] });",
+  'const cliDir = path.dirname(cliPkg);',
+].join(' ');
+
+/** Node --print source. Prints the CLI package.json path, or '' when missing. */
+export const RESOLVE_BUGSEE_CLI_PACKAGE = `try { ${locateBugseeCliPackage} cliPkg; } catch (e) { '' }`;
+
+export function resolveNativeCliPackageSource(packageJson: string): string {
+  return `try { ${locateBugseeCliPackage} require.resolve('${packageJson}', { paths: [cliDir] }); } catch (e) { '' }`;
+}
+
+const resolveBugseeCliJsSource = `try { const fs = require('fs'); ${locateBugseeCliPackage} const rel = JSON.parse(fs.readFileSync(cliPkg, 'utf8')).bin['bugsee-cli']; rel ? path.join(cliDir, rel) : ''; } catch (e) { '' }`;
+
+function nodePrint(source: string): string {
+  return `"$("$NODE_BINARY" --print "${source}" "$APP_ROOT")"`;
+}
+
 export const DSYM_POST_ACTION_SCRIPT = [
   'CREDS="${PROJECT_DIR}/../credentials.json"',
   'TOKEN="$BUGSEE_APP_TOKEN"',
@@ -47,9 +71,9 @@ export const DSYM_POST_ACTION_SCRIPT = [
   '  export PATH NODE_BINARY',
   '  APP_ROOT="${PROJECT_DIR}/.."',
   '  if [ "$(uname -m)" = "x86_64" ]; then',
-  '    NATIVE_PKG="$("$NODE_BINARY" --print "try { require.resolve(\'@bugsee/cli-darwin-x64/package.json\', { paths: [process.argv[1]] }) } catch (e) { \'\' }" "$APP_ROOT")"',
+  `    NATIVE_PKG=${nodePrint(resolveNativeCliPackageSource('@bugsee/cli-darwin-x64/package.json'))}`,
   '  else',
-  '    NATIVE_PKG="$("$NODE_BINARY" --print "try { require.resolve(\'@bugsee/cli-darwin-arm64/package.json\', { paths: [process.argv[1]] }) } catch (e) { \'\' }" "$APP_ROOT")"',
+  `    NATIVE_PKG=${nodePrint(resolveNativeCliPackageSource('@bugsee/cli-darwin-arm64/package.json'))}`,
   '  fi',
   '  if [ -n "$NATIVE_PKG" ]; then',
   '    NATIVE_BIN="$(dirname "$NATIVE_PKG")/bin/bugsee-cli"',
@@ -58,7 +82,7 @@ export const DSYM_POST_ACTION_SCRIPT = [
   '      exit $?',
   '    fi',
   '  fi',
-  '  CLI_JS="$("$NODE_BINARY" --print "try { const fs = require(\'fs\'); const path = require(\'path\'); const pkg = require.resolve(\'@bugsee/cli/package.json\', { paths: [process.argv[1]] }); const rel = JSON.parse(fs.readFileSync(pkg, \'utf8\')).bin[\'bugsee-cli\']; rel ? path.join(path.dirname(pkg), rel) : \'\'; } catch (e) { \'\' }" "$APP_ROOT")"',
+  `  CLI_JS=${nodePrint(resolveBugseeCliJsSource)}`,
   '  if [ -n "$CLI_JS" ]; then',
   '    "$NODE_BINARY" "$CLI_JS" xcode post-action',
   '    exit $?',

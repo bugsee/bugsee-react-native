@@ -1,7 +1,8 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { isPlaceholderToken as exampleIsPlaceholderToken } from '../../../../../examples/bare/endpoint';
 import { rewriteBundlePhase, BARE_BUNDLE_SCRIPT } from '../bundle-phase';
@@ -9,7 +10,11 @@ import { decodePbxString, encodePbxString } from '../pbx-string';
 import { bugseePropertiesText, isPlaceholderToken } from '../properties';
 import { ensureAppAppliesPlugin, ensureGradlePluginDeclared, ensureMavenCentral } from '../gradle';
 import { insertDsymPostAction } from '../scheme';
-import { DSYM_POST_ACTION_SCRIPT } from '../dsym-script';
+import {
+  DSYM_POST_ACTION_SCRIPT,
+  RESOLVE_BUGSEE_CLI_PACKAGE,
+  resolveNativeCliPackageSource,
+} from '../dsym-script';
 import { manifestAutoLaunchToken } from '../manifest';
 import { loadNativeVersions } from '../native-versions';
 
@@ -136,7 +141,7 @@ describe('settled iOS hooks', () => {
     expect(DSYM_POST_ACTION_SCRIPT).toContain('export BUGSEE_ENDPOINT="$ENDPOINT"');
   });
 
-  it('resolves bugsee-cli from the app root, not the bin subpath', () => {
+  it('resolves the CLI from the wrapper and the native package from the CLI', () => {
     expect(DSYM_POST_ACTION_SCRIPT).not.toContain(
       "require.resolve('@bugsee/cli/bin/bugsee-cli.js')",
     );
@@ -144,41 +149,169 @@ describe('settled iOS hooks', () => {
       /require\.resolve\(['"]@bugsee\/cli\/bin\/bugsee-cli\.js['"]\)/,
     );
     expect(DSYM_POST_ACTION_SCRIPT).not.toContain('packages/react-native/node_modules');
+    expect(DSYM_POST_ACTION_SCRIPT).not.toContain(
+      "require.resolve('@bugsee/cli/package.json', { paths: [appRoot] })",
+    );
+    expect(DSYM_POST_ACTION_SCRIPT).not.toContain(
+      "require.resolve('@bugsee/cli/package.json', { paths: [process.argv[1]] })",
+    );
     expect(DSYM_POST_ACTION_SCRIPT).toContain('APP_ROOT="${PROJECT_DIR}/.."');
+    expect(DSYM_POST_ACTION_SCRIPT).toContain('uname -m');
+    expect(DSYM_POST_ACTION_SCRIPT).toContain(".bin['bugsee-cli']");
+    expect(RESOLVE_BUGSEE_CLI_PACKAGE).toContain(
+      "require.resolve('@bugsee/cli/package.json', { paths: [wrapperDir] })",
+    );
+    expect(DSYM_POST_ACTION_SCRIPT).toContain(
+      "require.resolve('@bugsee/cli/package.json', { paths: [wrapperDir] })",
+    );
+    expect(DSYM_POST_ACTION_SCRIPT).toContain(
+      "require.resolve('@bugsee/react-native/package.json', { paths: [appRoot] })",
+    );
+    expect(DSYM_POST_ACTION_SCRIPT).toContain(
+      resolveNativeCliPackageSource('@bugsee/cli-darwin-x64/package.json'),
+    );
+    expect(DSYM_POST_ACTION_SCRIPT).toContain(
+      resolveNativeCliPackageSource('@bugsee/cli-darwin-arm64/package.json'),
+    );
 
     const calls = requireResolveCalls(DSYM_POST_ACTION_SCRIPT);
     expect(calls).toEqual([
-      "require.resolve('@bugsee/cli-darwin-x64/package.json', { paths: [process.argv[1]] })",
-      "require.resolve('@bugsee/cli-darwin-arm64/package.json', { paths: [process.argv[1]] })",
-      "require.resolve('@bugsee/cli/package.json', { paths: [process.argv[1]] })",
+      "require.resolve('@bugsee/react-native/package.json', { paths: [appRoot] })",
+      "require.resolve('@bugsee/cli/package.json', { paths: [wrapperDir] })",
+      "require.resolve('@bugsee/cli-darwin-x64/package.json', { paths: [cliDir] })",
+      "require.resolve('@bugsee/react-native/package.json', { paths: [appRoot] })",
+      "require.resolve('@bugsee/cli/package.json', { paths: [wrapperDir] })",
+      "require.resolve('@bugsee/cli-darwin-arm64/package.json', { paths: [cliDir] })",
+      "require.resolve('@bugsee/react-native/package.json', { paths: [appRoot] })",
+      "require.resolve('@bugsee/cli/package.json', { paths: [wrapperDir] })",
     ]);
-    for (const call of calls) {
-      expect(call).toContain('paths:');
-      expect(call).toContain('process.argv[1]');
-    }
 
     const printScripts = [...DSYM_POST_ACTION_SCRIPT.matchAll(/--print "([^"]*)"/g)].map(
       (match) => match[1],
     );
-    expect(printScripts).toHaveLength(calls.length);
+    expect(printScripts).toHaveLength(3);
     for (const src of printScripts) {
       expect(src).not.toContain('PROJECT_DIR');
       expect(src).not.toContain('APP_ROOT');
       expect(src).not.toContain('process.cwd');
     }
-    expect(DSYM_POST_ACTION_SCRIPT.match(/--print "[^"]*" "\$APP_ROOT"/g)).toHaveLength(
-      calls.length,
-    );
-    expect(DSYM_POST_ACTION_SCRIPT).toContain(".bin['bugsee-cli']");
+    expect(DSYM_POST_ACTION_SCRIPT.match(/--print "[^"]*" "\$APP_ROOT"/g)).toHaveLength(3);
 
-    const nativeAt = DSYM_POST_ACTION_SCRIPT.indexOf('@bugsee/cli-darwin-arm64/package.json');
-    const jsAt = DSYM_POST_ACTION_SCRIPT.indexOf(
-      "require.resolve('@bugsee/cli/package.json'",
-    );
+    const nativeRun = DSYM_POST_ACTION_SCRIPT.indexOf('"$NATIVE_BIN" xcode post-action');
+    const jsRun = DSYM_POST_ACTION_SCRIPT.indexOf('"$NODE_BINARY" "$CLI_JS" xcode post-action');
     const exitAt = DSYM_POST_ACTION_SCRIPT.lastIndexOf('exit 1');
-    expect(nativeAt).toBeGreaterThan(-1);
-    expect(jsAt).toBeGreaterThan(nativeAt);
-    expect(exitAt).toBeGreaterThan(jsAt);
+    expect(nativeRun).toBeGreaterThan(-1);
+    expect(jsRun).toBeGreaterThan(nativeRun);
+    expect(exitAt).toBeGreaterThan(jsRun);
+  });
+
+  it('resolves a nested @bugsee/cli from the wrapper and a hoisted one from the app root', () => {
+    expect(DSYM_POST_ACTION_SCRIPT).not.toContain(
+      "require.resolve('@bugsee/cli/bin/bugsee-cli.js')",
+    );
+
+    const roots: string[] = [];
+    function makeRoot(): string {
+      const root = mkdtempSync(join(tmpdir(), 'bugsee-cli-resolve-'));
+      roots.push(root);
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+      return root;
+    }
+    function writePackage(file: string, value: unknown): void {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify(value));
+    }
+    function nodePrint(source: string, start: string): { status: number | null; stdout: string; stderr: string } {
+      const result = spawnSync(process.execPath, ['--print', source, start], {
+        encoding: 'utf8',
+        env: { ...process.env, NODE_PATH: '' },
+      });
+      return {
+        status: result.status,
+        stdout: (result.stdout ?? '').trim(),
+        stderr: result.stderr ?? '',
+      };
+    }
+
+    try {
+      const nested = makeRoot();
+      writePackage(join(nested, 'node_modules/@bugsee/react-native/package.json'), {
+        name: '@bugsee/react-native',
+      });
+      const nestedCli = join(
+        nested,
+        'node_modules/@bugsee/react-native/node_modules/@bugsee/cli/package.json',
+      );
+      writePackage(nestedCli, {
+        name: '@bugsee/cli',
+        bin: { 'bugsee-cli': 'bin/bugsee-cli.js' },
+      });
+      const nestedNative = join(
+        dirname(nestedCli),
+        'node_modules/@bugsee/cli-darwin-arm64/package.json',
+      );
+      writePackage(nestedNative, { name: '@bugsee/cli-darwin-arm64' });
+
+      const nestedFromApp = nodePrint(
+        "require.resolve('@bugsee/cli/package.json', { paths: [process.argv[1]] })",
+        nested,
+      );
+      expect(nestedFromApp.status).not.toBe(0);
+      expect(nestedFromApp.stderr).toMatch(/MODULE_NOT_FOUND|Cannot find module/);
+
+      const wrapperPkg = nodePrint(
+        "require.resolve('@bugsee/react-native/package.json', { paths: [process.argv[1]] })",
+        nested,
+      );
+      expect(wrapperPkg.status).toBe(0);
+      const nestedFromWrapper = nodePrint(
+        "require.resolve('@bugsee/cli/package.json', { paths: [process.argv[1]] })",
+        dirname(wrapperPkg.stdout),
+      );
+      expect(nestedFromWrapper.status).toBe(0);
+      expect(nestedFromWrapper.stdout).toBe(realpathSync(nestedCli));
+
+      const nestedViaScript = nodePrint(RESOLVE_BUGSEE_CLI_PACKAGE, nested);
+      expect(nestedViaScript.status).toBe(0);
+      expect(nestedViaScript.stdout).toBe(realpathSync(nestedCli));
+
+      const nativeFromApp = nodePrint(
+        "require.resolve('@bugsee/cli-darwin-arm64/package.json', { paths: [process.argv[1]] })",
+        nested,
+      );
+      expect(nativeFromApp.status).not.toBe(0);
+      const nativeViaScript = nodePrint(
+        resolveNativeCliPackageSource('@bugsee/cli-darwin-arm64/package.json'),
+        nested,
+      );
+      expect(nativeViaScript.status).toBe(0);
+      expect(nativeViaScript.stdout).toBe(realpathSync(nestedNative));
+
+      const hoisted = makeRoot();
+      writePackage(join(hoisted, 'node_modules/@bugsee/react-native/package.json'), {
+        name: '@bugsee/react-native',
+      });
+      const hoistedCli = join(hoisted, 'node_modules/@bugsee/cli/package.json');
+      writePackage(hoistedCli, {
+        name: '@bugsee/cli',
+        bin: { 'bugsee-cli': 'bin/bugsee-cli.js' },
+      });
+
+      const hoistedFromApp = nodePrint(
+        "require.resolve('@bugsee/cli/package.json', { paths: [process.argv[1]] })",
+        hoisted,
+      );
+      expect(hoistedFromApp.status).toBe(0);
+      expect(hoistedFromApp.stdout).toBe(realpathSync(hoistedCli));
+
+      const hoistedViaScript = nodePrint(RESOLVE_BUGSEE_CLI_PACKAGE, hoisted);
+      expect(hoistedViaScript.status).toBe(0);
+      expect(hoistedViaScript.stdout).toBe(realpathSync(hoistedCli));
+    } finally {
+      for (const root of roots) {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
   });
 
   it('replaces a classic bundle phase with the bare hook', () => {
