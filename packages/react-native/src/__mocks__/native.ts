@@ -192,6 +192,7 @@ export const native = {
 
   setLogFilterEnabled: jest.fn<void, [boolean]>(),
   replyLogFilter: jest.fn<void, [string, string | null]>(),
+  noteConsoleEcho: jest.fn<void, [string]>(),
 
   /**
    * `level` is the name (`debug`, `info`, `warning`, `error`, `fatal`).

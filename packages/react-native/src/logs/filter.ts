@@ -1,3 +1,4 @@
+import { classifyFilterRequest } from '../console/dedup';
 import NativeBugsee from '../NativeBugsee';
 
 /**
@@ -55,6 +56,14 @@ export function setLogFilter(callback?: LogFilter | null): void {
 function onLogFilterRequest(event: { requestId: string; line: string }): void {
   const callback = current;
   const { requestId } = event;
+  // The RCTLog echo of a console call the JS patch already forwarded.
+  // Answered here, before the user's callback, so a filter that samples,
+  // counts, or appends runs once. Null drops the echo; it does not pass
+  // the line through.
+  if (classifyFilterRequest(event.line) === 'drop') {
+    reply(requestId, null);
+    return;
+  }
   if (callback === undefined) {
     reply(requestId, null);
     return;

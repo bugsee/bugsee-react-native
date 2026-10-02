@@ -265,4 +265,119 @@ public class LogFilterBridgeTest {
         assertEquals(0, recycledCallback.runs);
         assertEquals(0, recycled.setMessageCalls);
     }
+
+    /**
+     * The console patch notes the echo before logcat is written. The channel
+     * line is asked. The logcat echo is dropped without a second ask. A
+     * later {@code Bugsee.log} of the same text does not arm another drop.
+     */
+    @Test
+    public void routeAsksTheChannelLineAndDropsItsLogcatEcho() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.setEnabled(true);
+        bridge.noteEcho("hello");
+        final RecordingCallback channelCallback = new RecordingCallback();
+        bridge.route(new SourcedLog(LogSource.Custom, null, "hello"), channelCallback);
+
+        assertEquals(1, sink.ids.size());
+        assertEquals(0, channelCallback.runs);
+
+        final RecordingCallback echoCallback = new RecordingCallback();
+        bridge.route(
+                new SourcedLog(LogSource.LogCat, ConsoleEchoDedup.JS_CONSOLE_TAG, "hello"),
+                echoCallback);
+
+        assertEquals(1, sink.ids.size());
+        assertEquals(1, echoCallback.runs);
+        assertTrue(echoCallback.sawNull);
+
+        final RecordingCallback again = new RecordingCallback();
+        bridge.route(new SourcedLog(LogSource.Custom, null, "hello"), again);
+        final RecordingCallback stray = new RecordingCallback();
+        bridge.route(
+                new SourcedLog(LogSource.LogCat, ConsoleEchoDedup.JS_CONSOLE_TAG, "hello"),
+                stray);
+
+        assertEquals(3, sink.ids.size());
+        assertEquals(0, stray.runs);
+    }
+
+    /**
+     * No user callback, and no sink. The noted logcat echo is dropped. A
+     * different tag and the Custom line are returned, not dropped.
+     */
+    @Test
+    public void withNoUserFilterANotedEchoIsDroppedAndOtherLinesAreReturned() {
+        bridge.noteEcho("hello");
+        final SourcedLog echo = new SourcedLog(LogSource.LogCat, ConsoleEchoDedup.JS_CONSOLE_TAG, "hello");
+        final RecordingCallback echoCallback = new RecordingCallback();
+        bridge.route(echo, echoCallback);
+        assertEquals(1, echoCallback.runs);
+        assertTrue(echoCallback.sawNull);
+
+        final SourcedLog otherTag = new SourcedLog(LogSource.LogCat, "ReactNative", "hello");
+        final RecordingCallback otherCallback = new RecordingCallback();
+        bridge.route(otherTag, otherCallback);
+        assertEquals(1, otherCallback.runs);
+        assertSame(otherTag, otherCallback.last);
+
+        final SourcedLog custom = new SourcedLog(LogSource.Custom, null, "hello");
+        final RecordingCallback customCallback = new RecordingCallback();
+        bridge.route(custom, customCallback);
+        assertEquals(1, customCallback.runs);
+        assertSame(custom, customCallback.last);
+    }
+
+    /** A user filter with no sink still drops. That is the redaction boundary. */
+    @Test
+    public void aMissingSinkWhileTheUserFilterIsInstalledDropsTheLine() {
+        bridge.setEnabled(true);
+        final MutableLog event = new MutableLog("secret");
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(event, callback);
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    /** Logcat line with a source and a tag, for the echo route. */
+    private static final class SourcedLog implements LogEvent {
+        private final LogSource source;
+        private final String tag;
+        private final String message;
+
+        SourcedLog(final LogSource source, final String tag, final String message) {
+            this.source = source;
+            this.tag = tag;
+            this.message = message;
+        }
+
+        @Override
+        public long getTimestamp() {
+            return 1L;
+        }
+
+        @Override
+        @NonNull
+        public LogSource getLogSource() {
+            return source;
+        }
+
+        @Override
+        @Nullable
+        public String getMessage() {
+            return message;
+        }
+
+        @Override
+        public LogLevel getLevel() {
+            return LogLevel.Info;
+        }
+
+        @Override
+        @Nullable
+        public String getTag() {
+            return tag;
+        }
+    }
 }
