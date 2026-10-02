@@ -221,7 +221,8 @@ describe('setNetworkFilter', () => {
   });
 
   it('a spread of an event whose snapshot omitted body is kept without a body key', async () => {
-    const { body: _body, ...withoutBody } = ORIGINAL;
+    const withoutBody = { ...ORIGINAL };
+    delete withoutBody.body;
     Bugsee.setNetworkFilter((event) => ({ ...event, url: 'wss://example/hot?redacted' }));
     native.emitNetworkFilterRequest({
       requestId: '1',
@@ -293,7 +294,8 @@ describe('setNetworkFilter', () => {
   });
 
   it('a spread of an event whose snapshot omitted headers is kept without a headers key', async () => {
-    const { headers: _headers, ...withoutHeaders } = ORIGINAL;
+    const withoutHeaders = { ...ORIGINAL };
+    delete withoutHeaders.headers;
     Bugsee.setNetworkFilter((event) => ({ ...event, url: 'https://redacted.example/path' }));
     native.emitNetworkFilterRequest({
       requestId: '1',
@@ -336,7 +338,8 @@ describe('setNetworkFilter', () => {
   });
 
   it('body null from a snapshot that omitted body is left out of the reply', async () => {
-    const { body: _body, ...withoutBody } = ORIGINAL;
+    const withoutBody = { ...ORIGINAL };
+    delete withoutBody.body;
     Bugsee.setNetworkFilter((event) => ({ ...event, body: event.body ?? null }));
     native.emitNetworkFilterRequest({
       requestId: '1',
@@ -352,7 +355,8 @@ describe('setNetworkFilter', () => {
   });
 
   it('headers null from a snapshot that omitted headers is left out of the reply', async () => {
-    const { headers: _headers, ...withoutHeaders } = ORIGINAL;
+    const withoutHeaders = { ...ORIGINAL };
+    delete withoutHeaders.headers;
     Bugsee.setNetworkFilter((event) => ({ ...event, headers: event.headers ?? null }));
     native.emitNetworkFilterRequest({
       requestId: '1',
