@@ -46,7 +46,14 @@ function stringifyArg(arg: unknown): string {
  * are not JSON, so a field that holds a secret is not copied into the log.
  */
 function formatConsoleLine(args: readonly unknown[]): string {
-  return args.map(stringifyArg).join(' ');
+  // A loop, not map+join: the intermediate array showed up on this hot path.
+  let result = '';
+  let first = true;
+  for (const arg of args) {
+    result += (first ? '' : ' ') + stringifyArg(arg);
+    first = false;
+  }
+  return result;
 }
 
 function patch(method: ConsoleMethod): void {
