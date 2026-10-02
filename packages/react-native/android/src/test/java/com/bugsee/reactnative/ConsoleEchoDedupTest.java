@@ -90,6 +90,41 @@ public class ConsoleEchoDedupTest {
     }
 
     /**
+     * Consuming the last credit removes the order entry. Noting the same
+     * string again must not append a second copy, including when that
+     * consume-and-note repeats. Filling past the cap then evicts an older
+     * distinct key, not the credit that was consumed and noted again.
+     */
+    @Test
+    public void aConsumedMessageNotedAgainDoesNotLeaveAStaleOrderEntry() {
+        dedup.note("again");
+        assertTrue(echo("again"));
+        dedup.note("again");
+        assertEquals(1, dedup.orderSize());
+        assertEquals(1, dedup.size());
+
+        for (int i = 0; i < ConsoleEchoDedup.MAX_MESSAGES + 8; i++) {
+            assertTrue(echo("again"));
+            dedup.note("again");
+            assertEquals(1, dedup.orderSize());
+            assertEquals(1, dedup.size());
+        }
+
+        assertTrue(echo("again"));
+        assertEquals(0, dedup.orderSize());
+        for (int i = 0; i < ConsoleEchoDedup.MAX_MESSAGES - 1; i++) {
+            dedup.note("m" + i);
+        }
+        dedup.note("again");
+        assertEquals(ConsoleEchoDedup.MAX_MESSAGES, dedup.orderSize());
+        dedup.note("past");
+        assertEquals(ConsoleEchoDedup.MAX_MESSAGES, dedup.size());
+        assertEquals(ConsoleEchoDedup.MAX_MESSAGES, dedup.orderSize());
+        assertTrue(echo("again"));
+        assertFalse(echo("m0"));
+    }
+
+    /**
      * {@code dropEcho} may remove the deque while {@code note} is about to
      * append. The new credit has to land in the map, so the next echo is
      * still dropped.
@@ -113,6 +148,10 @@ public class ConsoleEchoDedupTest {
             assertFalse(dedup.dropEcho(LogSource.LogCat, ConsoleEchoDedup.JS_CONSOLE_TAG, "race"));
         }
         assertTrue(failure.get() == null);
+    }
+
+    private boolean echo(final String message) {
+        return dedup.dropEcho(LogSource.LogCat, ConsoleEchoDedup.JS_CONSOLE_TAG, message);
     }
 
     private static void race(

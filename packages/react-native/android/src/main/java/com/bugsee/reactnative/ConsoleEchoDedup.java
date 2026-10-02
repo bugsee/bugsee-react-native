@@ -48,7 +48,12 @@ final class ConsoleEchoDedup {
 
     private final Clock clock;
     private final ConcurrentHashMap<String, ArrayDeque<Long>> credits = new ConcurrentHashMap<>();
-    /** Insertion order of distinct messages. Guarded by itself. */
+    /**
+     * One entry per live key, oldest first. Guarded by itself. A key leaves
+     * this deque when its last credit is consumed or expires, so a later
+     * {@link #note} cannot append a second copy, and {@link #trimToCap}
+     * cannot treat that copy as a reason to delete a live credit.
+     */
     private final ArrayDeque<String> notedOrder = new ArrayDeque<>();
 
     ConsoleEchoDedup(@NonNull final Clock clock) {
@@ -62,21 +67,13 @@ final class ConsoleEchoDedup {
         }
         final long now = clock.now();
         final long expiry = now + WINDOW_MS;
-        final boolean[] created = {false};
         credits.compute(message, (key, queue) -> {
             final ArrayDeque<Long> next = queue == null ? new ArrayDeque<>() : queue;
-            if (queue == null) {
-                created[0] = true;
-            }
             discardExpired(next, now);
             next.addLast(expiry);
             return next;
         });
-        if (created[0]) {
-            synchronized (notedOrder) {
-                notedOrder.addLast(message);
-            }
-        }
+        syncOrder(message);
         sweep(now);
         trimToCap();
     }
@@ -107,12 +104,20 @@ final class ConsoleEchoDedup {
             dropped[0] = true;
             return queue.isEmpty() ? null : queue;
         });
+        syncOrder(message);
         return dropped[0];
     }
 
     /** How many distinct messages still hold a credit. Tests assert the cap. */
     int size() {
         return credits.size();
+    }
+
+    /** How many order entries exist. One per live key; tests reject a stale copy. */
+    int orderSize() {
+        synchronized (notedOrder) {
+            return notedOrder.size();
+        }
     }
 
     private void sweep(final long now) {
@@ -124,32 +129,56 @@ final class ConsoleEchoDedup {
                 discardExpired(queue, now);
                 return queue.isEmpty() ? null : queue;
             });
-            if (!credits.containsKey(key)) {
-                synchronized (notedOrder) {
-                    notedOrder.remove(key);
+            syncOrder(key);
+        }
+    }
+
+    /**
+     * Drops the oldest live keys until the map is within {@link #MAX_MESSAGES}.
+     * A polled entry that is a second listing of a key still in the deque is
+     * stale: it is discarded and the live credit stays. Eviction runs inside
+     * {@code compute}, so it cannot delete a credit a concurrent {@link #note}
+     * has just attached to a different deque.
+     */
+    private void trimToCap() {
+        synchronized (notedOrder) {
+            while (credits.size() > MAX_MESSAGES) {
+                final String oldest = notedOrder.pollFirst();
+                if (oldest == null) {
+                    return;
                 }
+                if (notedOrder.contains(oldest) || !credits.containsKey(oldest)) {
+                    continue;
+                }
+                credits.compute(oldest, (key, queue) -> null);
             }
         }
     }
 
-    private void trimToCap() {
-        int stale = 0;
-        while (credits.size() > MAX_MESSAGES) {
-            final String oldest;
-            synchronized (notedOrder) {
-                oldest = notedOrder.pollFirst();
-            }
-            if (oldest == null) {
-                return;
-            }
-            if (credits.remove(oldest) == null) {
-                stale += 1;
-                if (stale > MAX_MESSAGES) {
-                    return;
+    /**
+     * One listing while {@code message} is in the map, and none once its last
+     * credit is gone. Extra copies are dropped. A missing live key is appended.
+     */
+    private void syncOrder(@NonNull final String message) {
+        synchronized (notedOrder) {
+            final boolean live = credits.containsKey(message);
+            boolean seen = false;
+            final ArrayDeque<String> next = new ArrayDeque<>();
+            for (final String key : notedOrder) {
+                if (!message.equals(key)) {
+                    next.addLast(key);
+                    continue;
                 }
-            } else {
-                stale = 0;
+                if (live && !seen) {
+                    next.addLast(key);
+                    seen = true;
+                }
             }
+            if (live && !seen) {
+                next.addLast(message);
+            }
+            notedOrder.clear();
+            notedOrder.addAll(next);
         }
     }
 
