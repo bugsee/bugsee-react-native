@@ -254,6 +254,63 @@ export interface Spec extends TurboModule {
   replyLogFilter(requestId: string, line: string | null): void;
 
   /**
+   * Records a breadcrumb the exchange factory constructs. `level` is the
+   * name `debug`, `info`, `warning`, `error`, or `fatal`. Each native side
+   * maps that name to its own integer. The factory stamps the time; this
+   * does not take a timestamp. `dataJson` is the crumb's `data` as JSON
+   * text, or `null` when the caller supplied none.
+   *
+   * `addId` is the id JS retained for this manual add, or `null` when no
+   * filter is installed. Returns `true` only when a filter request for that
+   * id was emitted or will be emitted. `false` means JS should drop the id:
+   * capture is off, or the crumb was not built. The id is not a field of the
+   * crumb.
+   */
+  addBreadcrumb(
+    category: string,
+    level: string,
+    message: string,
+    type: string,
+    dataJson: string | null,
+    addId: string | null,
+  ): boolean;
+
+  /**
+   * A breadcrumb the SDK is about to record, offered to the JS filter.
+   *
+   * `requestId` is native-minted and never reused within a process.
+   * `crumbJson` is the snapshot: only the keys the crumb had, `level` as
+   * its name, `timestamp` when it is set. JS answers with
+   * {@link replyBreadcrumbFilter}. A request that never gets an answer is
+   * not recorded; this event is not a second timeout, and the reply is never
+   * the original crumb after a failed filter.
+   *
+   * `addId` is set only on the request for the manual `addBreadcrumb` that
+   * passed that id. It sits beside `crumbJson`; it is not a key inside the
+   * crumb the callback sees. An SDK crumb omits it.
+   */
+  readonly onBreadcrumbFilterRequest: EventEmitter<{
+    requestId: string;
+    crumbJson: string;
+    addId?: string;
+  }>;
+  /**
+   * Installs or removes the native breadcrumb filter. `true` registers the
+   * bridge on the calling queue, before this method returns. `false` removes
+   * it on the main queue, behind any `addBreadcrumb` already queued there.
+   * Passing `null` is how both SDKs clear a filter.
+   */
+  setBreadcrumbFilterEnabled(enabled: boolean): void;
+  /**
+   * Answers one {@link onBreadcrumbFilterRequest}. `crumbJson` is the keep,
+   * with every writable key the snapshot sent and `level` as its name;
+   * `null` drops the crumb. A second reply for the same `requestId` is a
+   * no-op. Not answering leaves the crumb unrecorded — there is no reply
+   * that passes the original through.
+   */
+  replyBreadcrumbFilter(requestId: string, crumbJson: string | null): void;
+
+  /**
    * Sets a string attribute, verified by a native read-back: neither SDK's
    * own setter reports a dropped value truthfully (design doc Phase 5,
    * "Planner decisions"), so this rejects `E_ATTRIBUTE_REJECTED` when the
