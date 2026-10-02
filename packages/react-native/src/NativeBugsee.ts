@@ -198,6 +198,30 @@ export interface Spec extends TurboModule {
   wrapperLog(message: string, level: number): void;
 
   /**
+   * A network event the SDK is about to record, offered to the JS filter.
+   *
+   * `requestId` is native-minted and never reused within a process.
+   * `eventJson` is the event (`setNetworkEventFilter`'s keep-value is the
+   * event object on both SDKs, not a string). JS answers with
+   * {@link replyNetworkFilter}. A request that never gets an answer is
+   * dropped by the SDK; this event is not a second timeout that would pass
+   * the original through.
+   */
+  readonly onNetworkFilterRequest: EventEmitter<{ requestId: string; eventJson: string }>;
+  /**
+   * Installs or removes the native network filter (`setNetworkEventFilter`
+   * on both SDKs). `true` registers the bridge; `false` passes `null`, which
+   * is how both SDKs clear a filter.
+   */
+  setNetworkFilterEnabled(enabled: boolean): void;
+  /**
+   * Answers one {@link onNetworkFilterRequest}. `eventJson` is the
+   * replacement event to keep; `null` drops the event. A second reply for
+   * the same `requestId` is a no-op. Not answering drops the event.
+   */
+  replyNetworkFilter(requestId: string, eventJson: string | null): void;
+
+  /**
    * Sets a string attribute, verified by a native read-back: neither SDK's
    * own setter reports a dropped value truthfully (design doc Phase 5,
    * "Planner decisions"), so this rejects `E_ATTRIBUTE_REJECTED` when the

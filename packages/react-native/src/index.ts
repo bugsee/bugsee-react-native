@@ -13,6 +13,8 @@ import { setReportHandler as installReportHandler } from './report/dispatcher';
 import { createReport as openCreatedReport } from './report/CreatedReport';
 import type { BugseeCreatedReport, BugseeReportHandler } from './report/types';
 import { forwardLog } from './wrapper/channel';
+import { setNetworkFilter as installNetworkFilter } from './network/filter';
+import type { NetworkFilter } from './network/filter';
 import { type IssueSeverity, LogLevel } from './options/enums';
 import { labelsArgument, severityArgument } from './report/fields';
 import {
@@ -377,6 +379,18 @@ class Bugsee {
   }
 
   /**
+   * Registers the only network filter. A later call replaces it. No
+   * callback, or `null`, clears it. The callback receives the event the SDK
+   * is about to record and returns that event (or a replacement of the same
+   * shape) to keep it. `null` and `undefined` drop it. The native SDK invokes
+   * the filter; JS answers on a later turn, and a callback that throws,
+   * rejects, or never settles drops the event.
+   */
+  setNetworkFilter(callback?: NetworkFilter | null): void {
+    installNetworkFilter(callback);
+  }
+
+  /**
    * Records a named event, with optional params.
    *
    * `params` must be a plain object or omitted entirely -- `null` throws
@@ -687,6 +701,8 @@ export type { EventParams, EventParamValue, TraceValue } from './data/validate';
 
 export { AttributeErrorCode, BugseeAttributeError } from './attributes/errors';
 export type { AttributeReadValue, AttributeValue } from './attributes/validate';
+
+export type { NetworkFilter, NetworkFilterEvent } from './network/filter';
 
 export type { ExceptionOptions } from './exceptions/options';
 export { ErrorBoundary } from './exceptions/ErrorBoundary';
