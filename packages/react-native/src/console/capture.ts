@@ -28,13 +28,25 @@ let installed = false;
 let forwardEnabled = true;
 
 /**
+ * One argument, via `String`. That is the success path, including functions.
+ * `String` throws for a null-prototype object and for a throwing `toString`
+ * / `valueOf`. The fallback is the ordinary tag, which does not copy fields.
+ */
+function stringifyArg(arg: unknown): string {
+  try {
+    return String(arg);
+  } catch {
+    return Object.prototype.toString.call(arg);
+  }
+}
+
+/**
  * One console line, the way a console prints several arguments: joined with
- * a space, each argument via `String`. Objects stay `[object Object]` —
- * they are not JSON, so a field that holds a secret is not copied into the
- * log.
+ * a space. Objects that `String` can convert stay `[object Object]` — they
+ * are not JSON, so a field that holds a secret is not copied into the log.
  */
 function formatConsoleLine(args: readonly unknown[]): string {
-  return args.map(arg => String(arg)).join(' ');
+  return args.map(stringifyArg).join(' ');
 }
 
 function patch(method: ConsoleMethod): void {
@@ -45,7 +57,13 @@ function patch(method: ConsoleMethod): void {
     if (!forwardEnabled) {
       return;
     }
-    forwardLog(formatConsoleLine(args), level);
+    // Formatting or the channel can throw. The original call has already
+    // run; this wrap must not turn that into an uncaught exception.
+    try {
+      forwardLog(formatConsoleLine(args), level);
+    } catch {
+      // Drop the line. The console call itself succeeded.
+    }
   };
   console[method] = wrapped as typeof console.log;
 }

@@ -177,4 +177,60 @@ describe('console capture', () => {
 
     expect(forwardLog).toHaveBeenCalledWith('Symbol(token)', LogLevel.Info);
   });
+
+  it('does not throw on Object.create(null), and does not copy an own field', () => {
+    const { installConsoleCapture, forwardLog } = load();
+    const original = jest.fn();
+    console.log = original as unknown as typeof console.log;
+    installConsoleCapture({});
+
+    const blank: Record<string, string> = Object.create(null);
+    blank.token = 's3cret';
+
+    expect(() => console.log(blank)).not.toThrow();
+    expect(original).toHaveBeenCalledWith(blank);
+    expect(forwardLog).toHaveBeenCalledTimes(1);
+    const message = forwardLog.mock.calls[0]?.[0] as string;
+    expect(message).toBe('[object Object]');
+    expect(message).not.toContain('token');
+    expect(message).not.toContain('s3cret');
+  });
+
+  it('a throwing toString does not escape console.log', () => {
+    const { installConsoleCapture, forwardLog } = load();
+    const original = jest.fn();
+    console.log = original as unknown as typeof console.log;
+    installConsoleCapture({});
+
+    const bad = {
+      secret: 's3cret',
+      toString(): string {
+        throw new Error('toString');
+      },
+      valueOf(): string {
+        throw new Error('valueOf');
+      },
+    };
+
+    expect(() => console.log('seen', bad)).not.toThrow();
+    expect(original).toHaveBeenCalledWith('seen', bad);
+    expect(forwardLog).toHaveBeenCalledTimes(1);
+    const message = forwardLog.mock.calls[0]?.[0] as string;
+    expect(message).toBe('seen [object Object]');
+    expect(message).not.toContain('s3cret');
+  });
+
+  it('a throwing forwardLog does not escape console.log', () => {
+    const { installConsoleCapture, forwardLog } = load();
+    const original = jest.fn();
+    console.log = original as unknown as typeof console.log;
+    forwardLog.mockImplementation(() => {
+      throw new Error('channel down');
+    });
+    installConsoleCapture({});
+
+    expect(() => console.log('still printed')).not.toThrow();
+    expect(original).toHaveBeenCalledWith('still printed');
+    expect(forwardLog).toHaveBeenCalledWith('still printed', LogLevel.Info);
+  });
 });
