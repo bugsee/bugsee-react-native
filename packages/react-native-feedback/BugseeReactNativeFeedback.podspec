@@ -21,7 +21,14 @@ Pod::Spec.new do |s|
   # imports that underlying module. These headers include the codegen spec,
   # which cannot be built as part of that module.
   s.private_header_files = 'ios/**/*.h'
-  s.resources    = 'BugseeFeedbackSources/PrivacyInfo.xcprivacy'
+  # A static pod's `resources` are copied into the app root. This file is
+  # named PrivacyInfo.xcprivacy, the same name as the example app's own
+  # manifest, and Xcode refuses the duplicate. A resource bundle keeps the
+  # manifest (Xcode still aggregates it) at
+  # BugseeReactNativeFeedback.bundle/PrivacyInfo.xcprivacy.
+  s.resource_bundles = {
+    'BugseeReactNativeFeedback' => ['BugseeFeedbackSources/PrivacyInfo.xcprivacy']
+  }
 
   # bugsee/feedback-spm 7.x publishes Swift source. The core SDK's download
   # host has no feedback archive beside its own framework zip, so there is

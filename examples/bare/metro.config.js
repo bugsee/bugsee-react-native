@@ -4,6 +4,10 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 
 const workspaceRoot = path.resolve(__dirname, '..', '..');
 const library = path.resolve(workspaceRoot, 'packages', 'react-native');
+// Same reason as the core library: the workspace symlink's realpath is
+// outside the app, and Metro will not serve it unless it is a watch folder
+// and an extraNodeModules entry.
+const feedback = path.resolve(workspaceRoot, 'packages', 'react-native-feedback');
 // The example-only native test helpers (Task 7.6a), a workspace sibling.
 const e2eNative = path.resolve(workspaceRoot, 'examples', 'e2e-native');
 
@@ -38,7 +42,7 @@ const appOrigin = path.resolve(__dirname, 'index.js');
  * @type {import('@react-native/metro-config').MetroConfig}
  */
 const config = {
-  watchFolders: [library, e2eNative, rootNodeModules, appNodeModules],
+  watchFolders: [library, feedback, e2eNative, rootNodeModules, appNodeModules],
   resolver: {
     // extraNodeModules below is only a FALLBACK: Metro tries the hierarchical
     // node_modules lookup first. From the library's sources that lookup finds
@@ -61,6 +65,7 @@ const config = {
     nodeModulesPaths: [appNodeModules, rootNodeModules],
     extraNodeModules: {
       '@bugsee/react-native': library,
+      '@bugsee/react-native-feedback': feedback,
       'bugsee-e2e-native': e2eNative,
       // The library declares react and react-native as peers; point them at
       // the app's single copy so there are never two Reacts in the bundle.

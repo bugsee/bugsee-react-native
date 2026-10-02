@@ -142,6 +142,8 @@ static BOOL ComponentOK(double value) {
   BugseeFeedbackEventRelay *_relay;
 }
 
+RCT_EXPORT_MODULE(BugseeFeedbackModule)
+
 - (instancetype)init {
   if (self = [super init]) {
     // Idempotent. The SPM product also registers from +load; the CocoaPods
@@ -195,6 +197,13 @@ static BOOL ComponentOK(double value) {
   }
   [[BugseeFeedback shared] setListener:_relay];
   InstalledFeedbackRelay = _relay;
+}
+
+- (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
+    (const facebook::react::ObjCTurboModule::InitParams &)params {
+  // Without this, RCTModuleProviders drops the class ("does not conform to
+  // RCTModuleProvider") and the JS module never loads.
+  return std::make_shared<facebook::react::NativeBugseeFeedbackSpecJSI>(params);
 }
 
 - (void)setAppearanceColor:(NSString *)name
