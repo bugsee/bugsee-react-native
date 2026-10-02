@@ -214,6 +214,23 @@ describe('console stream dedup', () => {
     expect(classifyFilterRequest('stale', ECHO_WINDOW_MS)).toBe('deliver');
   });
 
+  it('forgets a stderr stamp once the window has elapsed', () => {
+    const message = 'stale';
+    const stamped = `2026-10-02 18:40:35.273 BareExample[60839:42420530] ${message}`;
+    claimEcho(message, 0);
+    expect(classifyFilterRequest(stamped, ECHO_WINDOW_MS)).toBe('deliver');
+
+    claimEcho(message, 0);
+    expect(classifyFilterRequest(stamped, ECHO_WINDOW_MS - 1)).toBe('drop');
+  });
+
+  it('drops an echo claimed after the patch line was delivered', () => {
+    protectLine('ready', 0);
+    expect(classifyFilterRequest('ready', 1)).toBe('deliver');
+    claimEcho('ready', 1);
+    expect(classifyFilterRequest('ready', 1)).toBe('drop');
+  });
+
   it('still drops an echo claim inside the window', () => {
     claimEcho('fresh', 0);
     expect(classifyFilterRequest('fresh', ECHO_WINDOW_MS - 1)).toBe('drop');

@@ -5,7 +5,6 @@ import {
   claimEcho,
   protectLine,
   readDev,
-  shouldDropConsoleEcho,
   shouldForwardJsPatch,
 } from './dedup';
 
@@ -33,7 +32,7 @@ const LEVEL_BY_METHOD: Record<ConsoleMethod, LogLevel> = {
 };
 
 let installed = false;
-let forwardEnabled = true;
+let forwardEnabled!: boolean;
 /** Set around the original console call when this patch will also forward. */
 let expectingEcho = false;
 
@@ -122,32 +121,23 @@ function patch(method: ConsoleMethod): void {
   const wrapped = (...args: unknown[]): void => {
     const dev = readDev();
     const owns = forwardEnabled && shouldForwardJsPatch(dev);
-    const dropEcho = shouldDropConsoleEcho(dev, owns);
-    let line: string | undefined;
-    if (owns) {
-      try {
-        line = formatConsoleLine(args);
-      } catch {
-        line = undefined;
-      }
+    if (!owns) {
+      original(...args);
+      return;
     }
-    if (dropEcho && line !== undefined) {
-      expectingEcho = true;
-    }
+    // The patch owns the call, so the echo is claimed and the line is
+    // protected. That is shouldDropConsoleEcho(dev, true).
+    const line = formatConsoleLine(args);
+    expectingEcho = true;
     try {
       original(...args);
     } finally {
       expectingEcho = false;
     }
-    if (!owns || line === undefined) {
-      return;
-    }
-    // Formatting or the channel can throw. The original call has already
-    // run; this wrap must not turn that into an uncaught exception.
+    // The channel can throw. The original call has already run; this wrap
+    // must not turn that into an uncaught exception.
     try {
-      if (dropEcho) {
-        protectLine(line);
-      }
+      protectLine(line);
       forwardLog(line, level);
     } catch {
       // Drop the line. The console call itself succeeded.

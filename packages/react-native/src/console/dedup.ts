@@ -29,9 +29,9 @@ interface Claim {
  * os_log capture is disabled, so there is no unstamped stderr copy to wait
  * for. The stamp is a different string and is dropped on its own.
  */
-const exactEchoes: Claim[] = [];
-const stampEchoes: Claim[] = [];
-const protectedLines: Claim[] = [];
+const exactEchoes = new Array<Claim>();
+const stampEchoes = new Array<Claim>();
+const protectedLines = new Array<Claim>();
 
 /** `__DEV__` when the runtime defined it, otherwise a release-shaped build. */
 export function readDev(): boolean {
@@ -43,10 +43,12 @@ export function readDev(): boolean {
  * The JS patch forwards in dev and in release. A build that forwarded only
  * in one of them would either double-filter dev or drop release.
  */
+// The build flag is part of the signature. Both values forward.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function shouldForwardJsPatch(dev: boolean): boolean {
-  const inDev = dev;
-  const inRelease = !dev;
-  return inDev || inRelease;
+  // Dev and release both forward. The argument stays so a caller cannot
+  // select one build and skip the other.
+  return true;
 }
 
 /**
@@ -56,12 +58,9 @@ export function shouldForwardJsPatch(dev: boolean): boolean {
  * core, a native module) is not an echo and is kept.
  */
 export function shouldDropConsoleEcho(dev: boolean, patchOwnsCall: boolean): boolean {
-  if (!patchOwnsCall) {
-    return false;
-  }
-  const inDev = dev;
-  const inRelease = !dev;
-  return inDev || inRelease;
+  // The echo is dropped in dev and in release. Only whether the patch owns
+  // the call changes the answer.
+  return patchOwnsCall;
 }
 
 /**
@@ -88,9 +87,6 @@ function prune(list: Claim[], now: number): void {
     } else {
       index += 1;
     }
-  }
-  while (list.length > MAX_CLAIMS) {
-    list.shift();
   }
 }
 
@@ -127,9 +123,6 @@ export function isConsoleStampOf(line: string, message: string): boolean {
   }
   const head = line.slice(0, line.length - tail.length);
   const splitAt = head.indexOf('[');
-  if (splitAt <= 0) {
-    return false;
-  }
   const when = head.slice(0, splitAt);
   const pid = head.slice(splitAt + 1);
   return (
