@@ -5,16 +5,21 @@
 
 #include <exception>
 
-// Header imports, not @import. This file is ObjC++, and neither delivery
-// path enables C++ modules. SPM's product is the BugseeFeedback module; the
-// CocoaPods path compiles the same Swift sources into this pod, whose
-// generated header is named after the pod.
-#if __has_include(<BugseeFeedback/BugseeFeedback-Swift.h>)
+// Header import, not @import. This file is ObjC++, and neither delivery
+// path enables C++ modules. A generated Swift header is not on disk when
+// the preprocessor searches for it, so probing for the file selects a
+// header this delivery does not produce.
+//
+// CocoaPods compiles the Swift sources into this pod, so the header is that
+// target's own "Product-Swift.h" (BUGSEE_FEEDBACK_COCOAPODS). SPM consumes
+// the BugseeFeedback product, so the header is that module's
+// (BUGSEE_FEEDBACK_SPM). Exactly one of those is set by the build.
+#if BUGSEE_FEEDBACK_SPM
 #import <BugseeFeedback/BugseeFeedback-Swift.h>
-#elif __has_include(<BugseeReactNativeFeedback/BugseeReactNativeFeedback-Swift.h>)
-#import <BugseeReactNativeFeedback/BugseeReactNativeFeedback-Swift.h>
-#else
+#elif BUGSEE_FEEDBACK_COCOAPODS
 #import "BugseeReactNativeFeedback-Swift.h"
+#else
+#error "Bugsee feedback Swift header import is not configured"
 #endif
 
 /// Same shape as `BGSRNGuardedEmit`. This target does not compile

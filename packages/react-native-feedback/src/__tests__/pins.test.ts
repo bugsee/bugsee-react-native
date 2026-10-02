@@ -73,6 +73,21 @@ describe('the feedback package pins the same native versions as the core', () =>
     expect(ios).toMatch(/setListener:/);
   });
 
+  it('imports the generated Swift header for the delivery that builds it', () => {
+    const corePodspec = readFileSync(
+      join(pkg, '..', 'react-native', 'BugseeReactNative.podspec'),
+      'utf8',
+    );
+    expect(ios).not.toMatch(/__has_include/);
+    expect(ios).toMatch(/#import <BugseeFeedback\/BugseeFeedback-Swift.h>/);
+    expect(ios).toMatch(/#import "BugseeReactNativeFeedback-Swift.h"/);
+    expect(ios).toMatch(/#error "Bugsee feedback Swift header import is not configured"/);
+    expect(manifest).toMatch(/BUGSEE_FEEDBACK_SPM/);
+    expect(podspec).toMatch(/BUGSEE_FEEDBACK_COCOAPODS=1/);
+    expect(podspec).toMatch(/private_header_files = 'ios\/\*\*\/\*\.h'/);
+    expect(corePodspec).toMatch(/'DEFINES_MODULE' => 'YES'/);
+  });
+
   it('guards codegen emits and nils the SDK listener only for its own relay', () => {
     expect(ios).toMatch(/catch \(const std::exception &e\)/);
     expect(ios).toMatch(/_relay\.module = nil/);

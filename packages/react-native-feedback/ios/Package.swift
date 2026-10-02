@@ -44,6 +44,9 @@ let package = Package(
       cxxSettings: [
         .define("DEBUG", .when(configuration: .debug)),
         .define("NDEBUG", .when(configuration: .release)),
+        // This target does not compile the Swift sources. The generated
+        // header belongs to the BugseeFeedback product.
+        .define("BUGSEE_FEEDBACK_SPM", to: "1"),
         .unsafeFlags(["-include", "react-native-spm-prefix.h"]),
       ]
     )

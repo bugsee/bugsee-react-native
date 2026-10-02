@@ -17,6 +17,10 @@ Pod::Spec.new do |s|
   s.swift_version = '5.9'
 
   s.source_files = 'ios/**/*.{h,m,mm}', 'BugseeFeedbackSources/**/*.swift'
+  # Not public. The pod defines a module because it contains Swift, and Swift
+  # imports that underlying module. These headers include the codegen spec,
+  # which cannot be built as part of that module.
+  s.private_header_files = 'ios/**/*.h'
   s.resources    = 'BugseeFeedbackSources/PrivacyInfo.xcprivacy'
 
   # bugsee/feedback-spm 7.x publishes Swift source. The core SDK's download
@@ -54,6 +58,9 @@ Pod::Spec.new do |s|
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
+    # This pod compiles the Swift sources itself, so the generated header is
+    # the target's own "Product-Swift.h", not the SPM module header.
+    'GCC_PREPROCESSOR_DEFINITIONS' => '$(inherited) BUGSEE_FEEDBACK_COCOAPODS=1',
     'FRAMEWORK_SEARCH_PATHS' => '$(inherited) "${PODS_ROOT}/BugseeReactNative" "${PODS_XCFRAMEWORKS_BUILD_DIR}/BugseeReactNative"'
   }
 
