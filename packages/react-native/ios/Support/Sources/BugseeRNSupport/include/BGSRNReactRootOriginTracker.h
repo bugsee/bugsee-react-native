@@ -21,6 +21,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// at all (the native screens of a brownfield app) a search would walk every
 /// window to its budget each time.
 ///
+/// One root, as on Android: with React roots in two windows, it follows the
+/// first one found until that one leaves its window, and the rectangles JS
+/// measured in the other window are moved by the wrong origin.
+///
 /// Main thread only: it reads UIKit.
 @interface BGSRNReactRootOriginTracker : NSObject
 
