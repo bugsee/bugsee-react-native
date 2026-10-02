@@ -3,8 +3,8 @@ export interface AndroidNativeVersions {
     readonly gradlePlugin: string;
 }
 /**
- * Walk up from the plugin until `native-versions.json` appears. That file
- * is the only pin: the Gradle plugin version is `android.gradlePlugin` and
- * the NDK artifact version is `android.sdk`.
+ * `build:plugin` copies `android.sdk` and `android.gradlePlugin` from the
+ * repo-root native-versions.json into `native-versions.baked.json` beside
+ * this module. A published install has no repo-root JSON to walk to.
  */
-export declare function loadNativeVersions(startDir: string): AndroidNativeVersions;
+export declare function loadNativeVersions(moduleDir?: string): AndroidNativeVersions;

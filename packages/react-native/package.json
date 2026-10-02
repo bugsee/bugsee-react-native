@@ -30,7 +30,7 @@
     "react-native": "0.87.1"
   },
   "scripts": {
-    "build:plugin": "node ../../node_modules/typescript/lib/tsc.js -p plugin/tsconfig.json",
+    "build:plugin": "node ../../node_modules/typescript/lib/tsc.js -p plugin/tsconfig.json && node plugin/bake-native-versions.js",
     "prepack": "node ../../scripts/cli-check-releasable-pins.ts"
   },
   "codegenConfig": {

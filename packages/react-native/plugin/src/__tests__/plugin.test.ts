@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { isPlaceholderToken as exampleIsPlaceholderToken } from '../../../../../examples/bare/endpoint';
@@ -143,8 +145,16 @@ describe('settled iOS hooks', () => {
     expect(rewritten).toContain('bugsee-xcode.sh');
     expect(rewritten).toContain('export:embed');
     expect(rewritten).toContain('resolveAppEntry');
+    expect(rewritten).toContain('CLI_PATH');
+    expect(rewritten).toContain('ENTRY_FILE');
     expect(rewritten).not.toContain('react-native-xcode.sh');
     expect(rewritten).toContain('REACT_NATIVE_PATH');
+    expect(rewritten).toContain(
+      'BUGSEE_XCODE="$("$NODE_BINARY" --print "require(\'path\').join(require(\'path\').dirname(require.resolve(\'@bugsee/react-native/package.json\')), \'scripts/bugsee-xcode.sh\')")"',
+    );
+    expect(rewritten).toContain('/bin/bash "$BUGSEE_XCODE"');
+    expect(rewritten).not.toContain('${SRCROOT}/../node_modules');
+    expect(rewritten.match(/\/bin\/bash/g)).toHaveLength(1);
   });
 
   it('round-trips a pbxproj shell script', () => {
@@ -153,7 +163,7 @@ describe('settled iOS hooks', () => {
 });
 
 describe('Android Gradle edits', () => {
-  const versions = loadNativeVersions(join(__dirname, '..'));
+  const versions = loadNativeVersions(join(__dirname, '..', '..', 'build'));
 
   const settings = [
     'pluginManagement {',
@@ -201,14 +211,41 @@ describe('Android Gradle edits', () => {
     const next = ensureAppAppliesPlugin(app, versions.sdk);
     expect(next).toContain('apply plugin: "com.bugsee.android.gradle"');
     expect(next).toContain(`implementation "com.bugsee:bugsee-android-ndk:${versions.sdk}"`);
+    expect(next).not.toContain("exclude group: 'com.bugsee', module: 'bugsee-android-ndk'");
     expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
   });
 
-  it('skips the NDK artifact when native crash reporting is off', () => {
+  it('excludes the NDK artifact when native crash reporting is off', () => {
     const app = 'apply plugin: "com.facebook.react"\n\ndependencies {\n}\n';
     const next = ensureAppAppliesPlugin(app, null);
     expect(next).toContain('apply plugin: "com.bugsee.android.gradle"');
-    expect(next).not.toContain('bugsee-android-ndk');
+    expect(next).toContain("exclude group: 'com.bugsee', module: 'bugsee-android-ndk'");
+    expect(next).not.toMatch(/implementation\s+["']com\.bugsee:bugsee-android-ndk:/);
+    expect(ensureAppAppliesPlugin(next, null)).toBe(next);
+  });
+});
+
+describe('published native versions', () => {
+  it('loads baked versions from a tree that has only the published plugin files', () => {
+    const source = JSON.parse(readFileSync(join(repoRoot, 'native-versions.json'), 'utf8')) as {
+      android: { sdk: string; gradlePlugin: string };
+    };
+    const temp = mkdtempSync(join(tmpdir(), 'bugsee-published-'));
+    try {
+      const build = join(temp, 'plugin', 'build');
+      cpSync(join(__dirname, '..', '..', 'build'), build, { recursive: true });
+      expect(existsSync(join(temp, 'native-versions.json'))).toBe(false);
+      expect(existsSync(join(temp, 'plugin', 'native-versions.json'))).toBe(false);
+      const loaded = createRequire(join(build, 'native-versions.js'))(
+        join(build, 'native-versions.js'),
+      ) as { loadNativeVersions: () => { sdk: string; gradlePlugin: string } };
+      expect(loaded.loadNativeVersions()).toEqual({
+        sdk: source.android.sdk,
+        gradlePlugin: source.android.gradlePlugin,
+      });
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
   });
 });
 

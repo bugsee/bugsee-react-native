@@ -34,7 +34,8 @@ export interface BugseePluginProps {
   uploadSymbols?: boolean;
   /**
    * Defaults on. Writes `plugin.ndk.enabled=true` for a real token and adds
-   * `com.bugsee:bugsee-android-ndk`. `false` opts out of both.
+   * `com.bugsee:bugsee-android-ndk`. `false` skips both and excludes the
+   * wrapper's NDK AAR from the app.
    */
   nativeCrashReporting?: boolean;
   /** Defaults to native-versions.json `android.gradlePlugin`. */

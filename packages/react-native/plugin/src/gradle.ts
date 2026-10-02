@@ -98,10 +98,13 @@ export function ensureGradlePluginDeclared(projectBuildGradle: string, version: 
   return declaration + projectBuildGradle;
 }
 
+const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
+
 /**
- * `ndkVersion` is `android.sdk` from native-versions.json, or null when
- * native crash reporting is opted out. Null skips the artifact; the plugin
- * is still applied so mapping upload can run.
+ * `ndkVersion` is the baked `android.sdk`, or null when native crash
+ * reporting is explicitly off. Null does not add an implementation line.
+ * It excludes the wrapper's `api` NDK artifact so that AAR stays off the
+ * APK. The wrapper declaration itself is left in place.
  */
 export function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string {
   let next = appBuildGradle;
@@ -113,7 +116,10 @@ export function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: strin
       next = `apply plugin: "${PLUGIN_ID}"\n${next}`;
     }
   }
-  if (ndkVersion === null || next.includes('bugsee-android-ndk')) {
+  if (ndkVersion === null) {
+    return ensureNdkExcluded(next);
+  }
+  if (/implementation\s+["']com\.bugsee:bugsee-android-ndk:/.test(next)) {
     return next;
   }
   if (!/^[0-9A-Za-z.+_-]+$/.test(ndkVersion)) {
@@ -126,4 +132,12 @@ export function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: strin
   }
   const brace = next.indexOf('{', deps);
   return `${next.slice(0, brace + 1)}\n${dep}${next.slice(brace + 1)}`;
+}
+
+function ensureNdkExcluded(source: string): string {
+  if (source.includes(NDK_EXCLUDE)) {
+    return source;
+  }
+  const block = ['', 'configurations.configureEach {', `    ${NDK_EXCLUDE}`, '}', ''].join('\n');
+  return `${source.replace(/\s*$/, '')}\n${block}`;
 }

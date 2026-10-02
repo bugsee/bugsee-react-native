@@ -1,41 +1,33 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface AndroidNativeVersions {
   readonly sdk: string;
   readonly gradlePlugin: string;
 }
 
-interface NativeVersionsFile {
-  readonly android?: {
-    readonly sdk?: string;
-    readonly gradlePlugin?: string;
-  };
+interface BakedVersions {
+  readonly sdk?: string;
+  readonly gradlePlugin?: string;
 }
 
 /**
- * Walk up from the plugin until `native-versions.json` appears. That file
- * is the only pin: the Gradle plugin version is `android.gradlePlugin` and
- * the NDK artifact version is `android.sdk`.
+ * `build:plugin` copies `android.sdk` and `android.gradlePlugin` from the
+ * repo-root native-versions.json into `native-versions.baked.json` beside
+ * this module. A published install has no repo-root JSON to walk to.
  */
-export function loadNativeVersions(startDir: string): AndroidNativeVersions {
-  let dir = startDir;
-  for (let i = 0; i < 10; i += 1) {
-    const candidate = join(dir, 'native-versions.json');
-    if (existsSync(candidate)) {
-      const parsed = JSON.parse(readFileSync(candidate, 'utf8')) as NativeVersionsFile;
-      const sdk = parsed.android?.sdk;
-      const gradlePlugin = parsed.android?.gradlePlugin;
-      if (!sdk || !gradlePlugin) {
-        throw new Error(`${candidate} is missing android.sdk or android.gradlePlugin`);
-      }
-      return { sdk, gradlePlugin };
-    }
-    const parent = dirname(dir);
-    if (parent === dir) {
-      break;
-    }
-    dir = parent;
+export function loadNativeVersions(moduleDir: string = __dirname): AndroidNativeVersions {
+  const file = join(moduleDir, 'native-versions.baked.json');
+  let parsed: BakedVersions;
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8')) as BakedVersions;
+  } catch (error) {
+    throw new Error(`baked native versions not found at ${file}`, { cause: error });
   }
-  throw new Error(`native-versions.json not found above ${startDir}`);
+  const sdk = parsed.sdk;
+  const gradlePlugin = parsed.gradlePlugin;
+  if (!sdk || !gradlePlugin) {
+    throw new Error(`${file} is missing sdk or gradlePlugin`);
+  }
+  return { sdk, gradlePlugin };
 }

@@ -16,20 +16,20 @@ export const BARE_BUNDLE_SCRIPT = [
   '',
 ].join('\n');
 
-const BUGSEE_XCODE = '"${SRCROOT}/../node_modules/@bugsee/react-native/scripts/bugsee-xcode.sh"';
-
 /**
  * Expo's bundle phase sets ENTRY_FILE, CLI_PATH and BUNDLE_COMMAND, then
  * runs react-native-xcode.sh. Replacing the whole phase would drop those
  * and the Expo bundle would not be the one bugsee-xcode.sh injects into.
- * Swap only that invocation for the existing hook.
+ * Swap only that invocation. Resolve the hook the way Expo resolves
+ * react-native-xcode.sh, so a hoisted node_modules still finds it.
  */
 const EXPO_XCODE_INVOCATION =
   /`"\$NODE_BINARY" --print "require\('path'\)\.dirname\(require\.resolve\('react-native\/package\.json'\)\) \+ '\/scripts\/react-native-xcode\.sh'"`/;
 
 const EXPO_REPLACEMENT = [
   'export REACT_NATIVE_PATH="$("$NODE_BINARY" --print "require(\'path\').dirname(require.resolve(\'react-native/package.json\'))")"',
-  `/bin/bash ${BUGSEE_XCODE}`,
+  'BUGSEE_XCODE="$("$NODE_BINARY" --print "require(\'path\').join(require(\'path\').dirname(require.resolve(\'@bugsee/react-native/package.json\')), \'scripts/bugsee-xcode.sh\')")"',
+  '/bin/bash "$BUGSEE_XCODE"',
 ].join('\n');
 
 export function rewriteBundlePhase(script: string): string {
