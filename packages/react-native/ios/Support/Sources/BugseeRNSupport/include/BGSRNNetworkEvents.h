@@ -5,28 +5,23 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, BGSRNNetworkEventOutcome) {
   BGSRNNetworkEventOutcomeAdded = 0,
-  /// The factory was missing or `createNetworkEvent` returned nil.
+  /// `eventWithID:` produced nothing. The caller logs the drop and returns.
   BGSRNNetworkEventOutcomeNoEvent,
   BGSRNNetworkEventOutcomeRejected,
 };
 
-typedef id _Nullable (^BGSRNNetworkEventCreate)(NSTimeInterval timestamp,
-                                                BGSNetworkEventStage stage,
-                                                NSString *_Nullable eventId,
-                                                NSString *_Nullable mechanism,
-                                                NSString *_Nullable method);
+typedef void (^BGSRNNetworkEventSubmit)(BugseeNetworkEvent *event, BOOL requiresFiltering);
 
-typedef void (^BGSRNNetworkEventSubmit)(id event, BOOL requiresFiltering);
-
-/// Builds one app-recorded network event and submits it with filtering
-/// required. `create` nil, or a nil event, is {@link BGSRNNetworkEventOutcomeNoEvent}.
-/// The caller logs `addNetworkEvent dropped: the SDK made no event` for that
-/// and does not pass the original through on a timer.
+/// Builds one app-recorded `BugseeNetworkEvent` and submits it with filtering
+/// required. Shipped beta3's exchange-factory `createNetworkEvent` is a stub
+/// that always returns nil, so this does not call it: the event is
+/// `+[BugseeNetworkEvent eventWithID:HTTPmethod:...]`, then
+/// `addNetworkEvent:requiresFiltering:` with YES. There is no timer that
+/// would pass the original through.
 ///
-/// `now` is milliseconds, the unit the exchange factory stamps.
+/// `nowMs` is epoch milliseconds, the unit `BugseeGetCurrentTimeStampMs` uses.
 FOUNDATION_EXPORT BGSRNNetworkEventOutcome BGSRNRecordNetworkEvent(
     NSDictionary<NSString *, id> *object,
-    BGSRNNetworkEventCreate _Nullable create,
     BGSRNNetworkEventSubmit submit,
     NSTimeInterval nowMs);
 

@@ -956,32 +956,25 @@ RCT_EXPORT_MODULE(Bugsee)
   item.decision(item.event);
 }
 
-/// A network event the app recorded itself. The bridge stamps the time,
-/// builds the event with the exchange factory, and submits it with filtering
-/// required. A missing factory or a nil event is logged and dropped. There
-/// is no timer that would pass the original through.
+/// A network event the app recorded itself. The bridge stamps the time in
+/// epoch milliseconds and builds a `BugseeNetworkEvent`. Beta3's exchange
+/// factory `createNetworkEvent` always returns nil, so this does not call it.
+/// The event is submitted with filtering required. The one-argument
+/// `addNetworkEvent:` passes NO and is not used. There is no timer that
+/// would pass the original through.
 - (void)addNetworkEvent:(NSString *)eventJson {
   NSError *error = nil;
   NSDictionary *object = BGSRNJSONObject(eventJson, &error);
   if (object == nil) {
     return;
   }
-  id<BGSBugseeExchangeFactory> factory = [Bugsee getExchangeFactory];
-  BGSRNNetworkEventCreate create = nil;
-  if (factory != nil) {
-    create = ^id(NSTimeInterval timestamp, BGSNetworkEventStage stage, NSString *eventId,
-                 NSString *mechanism, NSString *method) {
-      return [factory createNetworkEventWithTimestamp:timestamp
-                                                stage:stage
-                                              eventId:eventId
-                                            mechanism:mechanism
-                                               method:method];
-    };
-  }
   BGSRNNetworkEventOutcome outcome = BGSRNRecordNetworkEvent(
-      object, create,
-      ^(id event, BOOL requiresFiltering) {
-        [Bugsee addNetworkEvent:(BugseeNetworkEvent *)event requiresFiltering:requiresFiltering];
+      object,
+      ^(BugseeNetworkEvent *event, BOOL requiresFiltering) {
+        if (!requiresFiltering) {
+          return;
+        }
+        [Bugsee addNetworkEvent:event requiresFiltering:YES];
       },
       [[NSDate date] timeIntervalSince1970] * 1000.0);
   if (outcome == BGSRNNetworkEventOutcomeNoEvent) {

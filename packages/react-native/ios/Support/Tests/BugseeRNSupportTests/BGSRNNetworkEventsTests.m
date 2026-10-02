@@ -2,49 +2,19 @@
 @import Bugsee;
 @import BugseeRNSupport;
 
-@interface BGSRNFakeManualNetworkEvent : NSObject
-@property (nonatomic, copy, nullable) NSString *url;
-@property (nonatomic, copy, nullable) NSString *body;
-@property (nonatomic, copy, nullable) NSDictionary *headers;
-@property (nonatomic, assign) NSInteger responseCode;
-@property (nonatomic, copy, nullable) NSString *statusText;
-@property (nonatomic, copy, nullable) NSString *errorDescription;
-@property (nonatomic, copy, nullable) NSString *errorShortMessage;
-@property (nonatomic, copy, nullable) NSString *redirectedFromURL;
-@property (nonatomic, copy, nullable) NSDictionary *error;
-@end
-
-@implementation BGSRNFakeManualNetworkEvent
-@end
-
 @interface BGSRNNetworkEventsTests : XCTestCase
 @end
 
 @implementation BGSRNNetworkEventsTests
 
 - (void)testCompletedRequiresFilteringAndStampsTheClock {
-  __block NSTimeInterval seenTime = -1;
-  __block BGSNetworkEventStage seenStage = BGSNetworkEventStageRequestStarted;
-  __block NSString *seenMechanism = nil;
-  __block NSString *seenMethod = nil;
-  __block NSString *seenId = @"unset";
-  BGSRNFakeManualNetworkEvent *made = [BGSRNFakeManualNetworkEvent new];
-  __block id submitted = nil;
+  __block BugseeNetworkEvent *submitted = nil;
   __block BOOL filtering = NO;
   __block NSInteger submits = 0;
 
   BGSRNNetworkEventOutcome outcome = BGSRNRecordNetworkEvent(
       @{@"url" : @"https://e2e.example/keep", @"method" : @"GET", @"stage" : @"completed"},
-      ^id(NSTimeInterval timestamp, BGSNetworkEventStage stage, NSString *eventId, NSString *mechanism,
-          NSString *method) {
-        seenTime = timestamp;
-        seenStage = stage;
-        seenId = eventId;
-        seenMechanism = mechanism;
-        seenMethod = method;
-        return made;
-      },
-      ^(id event, BOOL requiresFiltering) {
+      ^(BugseeNetworkEvent *event, BOOL requiresFiltering) {
         submits += 1;
         submitted = event;
         filtering = requiresFiltering;
@@ -52,43 +22,31 @@
       1700000000000.0);
 
   XCTAssertEqual(outcome, BGSRNNetworkEventOutcomeAdded);
-  XCTAssertEqual(seenTime, 1700000000000.0);
-  XCTAssertEqual(seenStage, BGSNetworkEventStageRequestCompleted);
-  XCTAssertEqualObjects(seenMechanism, @"react-native");
-  XCTAssertEqualObjects(seenMethod, @"GET");
-  XCTAssertNil(seenId);
   XCTAssertEqual(submits, 1);
   XCTAssertTrue(filtering);
-  XCTAssertEqualObjects(made.url, @"https://e2e.example/keep");
-  XCTAssertEqual(submitted, made);
+  XCTAssertEqual(submitted.type, BugseeNetwork);
+  XCTAssertEqualObjects(submitted.bugseeNetworkEventType, BugseeNetworkEventComplete);
+  XCTAssertEqualObjects(submitted.mechanism, @"react-native");
+  XCTAssertEqualObjects(submitted.method, @"GET");
+  XCTAssertEqualObjects(submitted.url, @"https://e2e.example/keep");
+  XCTAssertEqual(submitted.timestamp, 1700000000000.0);
+  XCTAssertGreaterThan(submitted.ID.length, 0u);
 }
 
-- (void)testANilCreateDropsWithoutSubmitting {
+- (void)testAnUnknownStageIsNotSubmitted {
   __block NSInteger submits = 0;
-  BGSRNNetworkEventOutcome missing = BGSRNRecordNetworkEvent(
-      @{@"url" : @"https://e2e.example/keep", @"method" : @"GET", @"stage" : @"completed"}, nil,
-      ^(id event, BOOL requiresFiltering) {
+  BGSRNNetworkEventOutcome outcome = BGSRNRecordNetworkEvent(
+      @{@"url" : @"https://e2e.example/keep", @"method" : @"GET", @"stage" : @"done"},
+      ^(BugseeNetworkEvent *event, BOOL requiresFiltering) {
         submits += 1;
       },
       0);
-  XCTAssertEqual(missing, BGSRNNetworkEventOutcomeNoEvent);
-  BGSRNNetworkEventOutcome empty = BGSRNRecordNetworkEvent(
-      @{@"url" : @"https://e2e.example/keep", @"method" : @"GET", @"stage" : @"complete"},
-      ^id(NSTimeInterval timestamp, BGSNetworkEventStage stage, NSString *eventId, NSString *mechanism,
-          NSString *method) {
-        return nil;
-      },
-      ^(id event, BOOL requiresFiltering) {
-        submits += 1;
-      },
-      0);
-  XCTAssertEqual(empty, BGSRNNetworkEventOutcomeNoEvent);
+  XCTAssertEqual(outcome, BGSRNNetworkEventOutcomeRejected);
   XCTAssertEqual(submits, 0);
 }
 
 - (void)testWritableFilterFieldsAreSet {
-  BGSRNFakeManualNetworkEvent *made = [BGSRNFakeManualNetworkEvent new];
-  __block BGSNetworkEventStage seenStage = BGSNetworkEventStageRequestStarted;
+  __block BugseeNetworkEvent *submitted = nil;
   BGSRNNetworkEventOutcome outcome = BGSRNRecordNetworkEvent(
       @{
         @"url" : @"https://e2e.example/keep",
@@ -98,32 +56,44 @@
         @"body" : @"secret",
         @"headers" : @{@"Authorization" : @"Bearer x"},
         @"responseCode" : @201,
-        @"statusText" : @"Created",
-        @"errorDescription" : @"none",
-        @"errorShortMessage" : @"ok",
         @"redirectedFromURL" : @"https://e2e.example/from",
         @"error" : @{@"domain" : @"test"},
       },
-      ^id(NSTimeInterval timestamp, BGSNetworkEventStage stage, NSString *eventId, NSString *mechanism,
-          NSString *method) {
-        seenStage = stage;
-        XCTAssertEqualObjects(eventId, @"evt-1");
-        return made;
-      },
-      ^(id event, BOOL requiresFiltering) {
+      ^(BugseeNetworkEvent *event, BOOL requiresFiltering) {
         XCTAssertTrue(requiresFiltering);
+        submitted = event;
       },
       5);
   XCTAssertEqual(outcome, BGSRNNetworkEventOutcomeAdded);
-  XCTAssertEqual(seenStage, BGSNetworkEventStageRequestErrored);
-  XCTAssertEqualObjects(made.body, @"secret");
-  XCTAssertEqualObjects(made.headers[@"Authorization"], @"Bearer x");
-  XCTAssertEqual(made.responseCode, 201);
-  XCTAssertEqualObjects(made.statusText, @"Created");
-  XCTAssertEqualObjects(made.errorDescription, @"none");
-  XCTAssertEqualObjects(made.errorShortMessage, @"ok");
-  XCTAssertEqualObjects(made.redirectedFromURL, @"https://e2e.example/from");
-  XCTAssertEqualObjects(made.error[@"domain"], @"test");
+  XCTAssertEqual(submitted.type, BugseeNetwork);
+  XCTAssertEqualObjects(submitted.bugseeNetworkEventType, BugseeNetworkEventError);
+  XCTAssertEqualObjects(submitted.ID, @"evt-1");
+  XCTAssertEqualObjects(submitted.method, @"POST");
+  NSString *body = [[NSString alloc] initWithData:submitted.body encoding:NSUTF8StringEncoding];
+  XCTAssertEqualObjects(body, @"secret");
+  XCTAssertEqualObjects(submitted.headers[@"Authorization"], @"Bearer x");
+  XCTAssertEqual(submitted.responseCode, 201);
+  XCTAssertEqualObjects(submitted.redirectedFromURL, @"https://e2e.example/from");
+  XCTAssertEqualObjects(submitted.error[@"domain"], @"test");
+  XCTAssertEqualObjects(submitted.mechanism, @"react-native");
+  XCTAssertEqual(submitted.timestamp, 5);
+}
+
+- (void)testBeginAndCancelUseThoseConstants {
+  __block NSString *begin = nil;
+  __block NSString *cancel = nil;
+  BGSRNRecordNetworkEvent(@{@"url" : @"https://e2e.example/keep", @"method" : @"GET", @"stage" : @"before"},
+                          ^(BugseeNetworkEvent *event, BOOL requiresFiltering) {
+                            begin = event.bugseeNetworkEventType;
+                          },
+                          1);
+  BGSRNRecordNetworkEvent(@{@"url" : @"https://e2e.example/keep", @"method" : @"GET", @"stage" : @"abort"},
+                          ^(BugseeNetworkEvent *event, BOOL requiresFiltering) {
+                            cancel = event.bugseeNetworkEventType;
+                          },
+                          1);
+  XCTAssertEqualObjects(begin, BugseeNetworkEventBegin);
+  XCTAssertEqualObjects(cancel, BugseeNetworkEventCancel);
 }
 
 @end

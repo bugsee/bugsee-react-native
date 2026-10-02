@@ -14,7 +14,7 @@ static NSString *BGSRNStringOrNil(id value) {
 }
 
 /// `completed` is the name JS and the device test use. The SDK's wire name
-/// for that stage is `complete`.
+/// for that stage is `complete`, `BugseeNetworkEventComplete`.
 static BOOL BGSRNNetworkStage(id name, BGSNetworkEventStage *out) {
   if (name == nil || name == [NSNull null] || [name isEqual:@"completed"] || [name isEqual:@"complete"]) {
     *out = BGSNetworkEventStageRequestCompleted;
@@ -49,10 +49,23 @@ static BOOL BGSRNNetworkStage(id name, BGSNetworkEventStage *out) {
   return YES;
 }
 
-@protocol BGSRNNetworkEventExtras <NSObject>
-@property (nonatomic, copy, nullable) NSString *redirectedFromURL;
-@property (nonatomic, copy, nullable) NSDictionary *error;
-@end
+static NSString *BGSRNBugseeEventType(BGSNetworkEventStage stage) {
+  switch (stage) {
+    case BGSNetworkEventStageRequestStarted:
+      return BugseeNetworkEventBegin;
+    case BGSNetworkEventStageRequestAborted:
+      return BugseeNetworkEventCancel;
+    case BGSNetworkEventStageRequestErrored:
+      return BugseeNetworkEventError;
+    case BGSNetworkEventStageWebSocket:
+      return BugseeWebSocketEventMessage;
+    case BGSNetworkEventStageRequestCompleted:
+    case BGSNetworkEventStageRedirect:
+    case BGSNetworkEventStageRequestTimingsReceived:
+      return BugseeNetworkEventComplete;
+  }
+  return BugseeNetworkEventComplete;
+}
 
 static BOOL BGSRNHeaders(id value, NSDictionary<NSString *, NSString *> *__autoreleasing *out) {
   if (value == nil || value == [NSNull null]) {
@@ -75,7 +88,6 @@ static BOOL BGSRNHeaders(id value, NSDictionary<NSString *, NSString *> *__autor
 }
 
 BGSRNNetworkEventOutcome BGSRNRecordNetworkEvent(NSDictionary<NSString *, id> *object,
-                                                 BGSRNNetworkEventCreate create,
                                                  BGSRNNetworkEventSubmit submit,
                                                  NSTimeInterval nowMs) {
   NSString *url = BGSRNStringOrNil(object[@"url"]);
@@ -108,46 +120,40 @@ BGSRNNetworkEventOutcome BGSRNRecordNetworkEvent(NSDictionary<NSString *, id> *o
       && ![object[@"error"] isKindOfClass:[NSDictionary class]]) {
     return BGSRNNetworkEventOutcomeRejected;
   }
-  if (create == nil) {
+
+  NSString *eventId = BGSRNStringOrNil(object[@"id"]);
+  if (eventId.length == 0) {
+    eventId = [NSUUID UUID].UUIDString;
+  }
+  NSData *body = nil;
+  NSString *bodyText = BGSRNStringOrNil(object[@"body"]);
+  if (bodyText != nil) {
+    body = [bodyText dataUsingEncoding:NSUTF8StringEncoding];
+  }
+  id errorValue = object[@"error"];
+  NSDictionary *error = [errorValue isKindOfClass:[NSDictionary class]] ? errorValue : nil;
+  const NSInteger responseCode = (object[@"responseCode"] != nil && object[@"responseCode"] != [NSNull null])
+      ? [object[@"responseCode"] integerValue]
+      : 0;
+  const BugseeNetworkType kind = stage == BGSNetworkEventStageWebSocket ? BugseeWebSocket : BugseeNetwork;
+  BugseeNetworkEvent *event = [BugseeNetworkEvent eventWithID:eventId
+                                                    HTTPmethod:method
+                                                          type:kind
+                                               bugseeEventType:BGSRNBugseeEventType(stage)
+                                                           url:url
+                                                 redirectedUrl:BGSRNStringOrNil(object[@"redirectedFromURL"])
+                                                          body:body
+                                                         error:error
+                                                       headers:hasHeaders ? headers : nil
+                                                  noBodyReason:nil
+                                                      dataSize:(int64_t)body.length
+                                                  responseCode:responseCode];
+  if (event == nil) {
     return BGSRNNetworkEventOutcomeNoEvent;
   }
-  id created = nil;
-  @try {
-    created = create(nowMs, stage, BGSRNStringOrNil(object[@"id"]), BGSRNNetworkEventMechanism, method);
-  } @catch (NSException *exception) {
-    return BGSRNNetworkEventOutcomeNoEvent;
-  }
-  if (created == nil) {
-    return BGSRNNetworkEventOutcomeNoEvent;
-  }
-  id<BGSNetworkEventContract> event = created;
-  event.url = url;
-  if (object[@"body"] != nil) {
-    event.body = BGSRNStringOrNil(object[@"body"]);
-  }
-  if (hasHeaders) {
-    event.headers = headers;
-  }
-  if (object[@"responseCode"] != nil && object[@"responseCode"] != [NSNull null]) {
-    event.responseCode = [object[@"responseCode"] integerValue];
-  }
-  if (object[@"statusText"] != nil) {
-    event.statusText = BGSRNStringOrNil(object[@"statusText"]);
-  }
-  if (object[@"errorDescription"] != nil) {
-    event.errorDescription = BGSRNStringOrNil(object[@"errorDescription"]);
-  }
-  if (object[@"errorShortMessage"] != nil) {
-    event.errorShortMessage = BGSRNStringOrNil(object[@"errorShortMessage"]);
-  }
-  if (object[@"redirectedFromURL"] != nil && [event respondsToSelector:@selector(setRedirectedFromURL:)]) {
-    ((id<BGSRNNetworkEventExtras>)event).redirectedFromURL = BGSRNStringOrNil(object[@"redirectedFromURL"]);
-  }
-  if (object[@"error"] != nil && [event respondsToSelector:@selector(setError:)]) {
-    id error = object[@"error"];
-    ((id<BGSRNNetworkEventExtras>)event).error = error == [NSNull null] ? nil : error;
-  }
-  // Filtering is required. An installed setNetworkFilter must see this event.
+  event.mechanism = BGSRNNetworkEventMechanism;
+  event.timestamp = nowMs;
+  // Filtering is required. The one-argument addNetworkEvent: passes NO.
   submit(event, YES);
   return BGSRNNetworkEventOutcomeAdded;
 }
