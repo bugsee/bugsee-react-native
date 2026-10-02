@@ -7,6 +7,8 @@ import android.util.Base64;
 import android.util.Log;
 
 import com.bugsee.library.Bugsee;
+import com.bugsee.library.contracts.exchange.Breadcrumb;
+import com.bugsee.library.contracts.exchange.BugseeExchangeFactory;
 import com.bugsee.library.contracts.options.IssueSeverity;
 import com.bugsee.library.contracts.reporting.Report;
 import com.facebook.react.bridge.Arguments;
@@ -41,7 +43,8 @@ import java.util.concurrent.Executors;
  */
 @ReactModule(name = BugseeModule.NAME)
 public class BugseeModule extends NativeBugseeSpec
-        implements WrapperEventBus.Sink, ReportHandlerBridge.Sink, LogFilterBridge.Sink {
+        implements WrapperEventBus.Sink, ReportHandlerBridge.Sink, LogFilterBridge.Sink,
+            BreadcrumbFilterBridge.Sink {
 
     public static final String NAME = "Bugsee";
 
@@ -103,6 +106,7 @@ public class BugseeModule extends NativeBugseeSpec
         ReportHandlerBridge.shared().attach(this);
         DataRequestBridge.shared().attach(dataRequestSink, originTracker::currentOrigin);
         LogFilterBridge.shared().attach(this);
+        BreadcrumbFilterBridge.shared().attach(this);
     }
 
     /**
@@ -131,6 +135,10 @@ public class BugseeModule extends NativeBugseeSpec
         // one would otherwise sit until the SDK's timeout, and a reply into
         // this module after it is gone has nowhere to land.
         LogFilterBridge.shared().detach(this);
+        // Drops every breadcrumb-filter request this module was given. An
+        // unanswered one is not recorded; a reply into this module after it
+        // is gone has nowhere to land.
+        BreadcrumbFilterBridge.shared().detach(this);
         SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
         super.invalidate();
@@ -580,6 +588,83 @@ public class BugseeModule extends NativeBugseeSpec
             return;
         }
         LogFilterBridge.shared().reply(requestId, line);
+    }
+
+    @Override
+    public void onBreadcrumbFilterRequest(
+            @NonNull final String requestId,
+            @NonNull final String crumbJson
+    ) {
+        final WritableMap payload = Arguments.createMap();
+        payload.putString("requestId", requestId);
+        payload.putString("crumbJson", crumbJson);
+        emitOnBreadcrumbFilterRequest(payload);
+    }
+
+    @Override
+    public void setBreadcrumbFilterEnabled(final boolean enabled) {
+        BreadcrumbFilterBridge.shared().setEnabled(enabled);
+    }
+
+    @Override
+    public void replyBreadcrumbFilter(
+            final String requestId,
+            @Nullable final String crumbJson
+    ) {
+        if (requestId == null) {
+            return;
+        }
+        BreadcrumbFilterBridge.shared().reply(requestId, crumbJson);
+    }
+
+    /**
+     * Builds the crumb with {@link Bugsee#getExchangeFactory()} and records
+     * it. The no-argument {@code createBreadcrumb} leaves the timestamp unset
+     * so the provider stamps it. {@code level} is
+     * {@link Breadcrumb.Level#getValue()} (1..5); {@link Breadcrumb.Level#fromValue}
+     * is that value's inverse, not the enum ordinal. {@code dataJson} null
+     * leaves data unset.
+     */
+    @Override
+    public void addBreadcrumb(
+            final String category,
+            final double level,
+            final String message,
+            final String type,
+            @Nullable final String dataJson
+    ) {
+        try {
+            final BugseeExchangeFactory factory = Bugsee.getExchangeFactory();
+            if (factory == null) {
+                return;
+            }
+            final Breadcrumb crumb = factory.createBreadcrumb();
+            if (crumb == null) {
+                return;
+            }
+            final double number = level;
+            if (number < 1d || number > 5d || number != Math.rint(number)) {
+                Log.e(TAG, "addBreadcrumb dropped: level is not a Breadcrumb.Level value");
+                return;
+            }
+            final Breadcrumb.Level parsed = Breadcrumb.Level.fromValue((byte) number);
+            if (parsed == null) {
+                Log.e(TAG, "addBreadcrumb dropped: level is not a Breadcrumb.Level value");
+                return;
+            }
+            crumb.setCategory(category);
+            crumb.setLevel(parsed);
+            crumb.setMessage(message);
+            crumb.setType(type);
+            if (dataJson != null) {
+                crumb.setData(BridgeJson.parseObject(dataJson));
+            }
+            Bugsee.addBreadcrumb(crumb);
+        } catch (final BridgeJson.BadJson e) {
+            Log.e(TAG, "addBreadcrumb dropped: its data is not a JSON object: " + e.getMessage());
+        } catch (final RuntimeException e) {
+            Log.e(TAG, "addBreadcrumb failed", e);
+        }
     }
 
     /** {@code { value }}, typed by {@code value}'s runtime type, or empty when absent. */

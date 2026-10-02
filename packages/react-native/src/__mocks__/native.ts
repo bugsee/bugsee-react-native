@@ -74,6 +74,18 @@ const logFilterRequestListeners = new Set<(event: LogFilterRequestEvent) => void
 /** Counted separately from the Set's size, for the same reason as `reportHandlerRequestSubscribeCalls`. */
 let logFilterRequestSubscribeCalls = 0;
 
+interface BreadcrumbFilterRequestEvent {
+  requestId: string;
+  crumbJson: string;
+}
+
+const breadcrumbFilterRequestListeners = new Set<
+  (event: BreadcrumbFilterRequestEvent) => void
+>();
+
+/** Counted separately from the Set's size, for the same reason as `reportHandlerRequestSubscribeCalls`. */
+let breadcrumbFilterRequestSubscribeCalls = 0;
+
 export const native = {
   setWrapperInfo: jest.fn<void, [Record<string, unknown>]>(),
   setSecureRectangles: jest.fn<void, [number, number[]]>(),
@@ -141,6 +153,38 @@ export const native = {
 
   setLogFilterEnabled: jest.fn<void, [boolean]>(),
   replyLogFilter: jest.fn<void, [string, string | null]>(),
+
+  /**
+   * `level` is `Breadcrumb.Level.getValue()`. `dataJson` is JSON text, or
+   * null when the caller supplied no data.
+   */
+  addBreadcrumb: jest.fn<void, [string, number, string, string, string | null]>(),
+
+  /**
+   * The codegen EventEmitter for a native breadcrumb-filter request. Tests
+   * drive it with `emitBreadcrumbFilterRequest`. `crumbJson` is the snapshot
+   * native would send; the reply is a keep as JSON text, or `null` to drop.
+   */
+  onBreadcrumbFilterRequest(listener: (event: BreadcrumbFilterRequestEvent) => void) {
+    breadcrumbFilterRequestSubscribeCalls += 1;
+    breadcrumbFilterRequestListeners.add(listener);
+    return {
+      remove: () => {
+        breadcrumbFilterRequestListeners.delete(listener);
+      },
+    };
+  },
+
+  emitBreadcrumbFilterRequest(event: BreadcrumbFilterRequestEvent): void {
+    for (const listener of [...breadcrumbFilterRequestListeners]) listener(event);
+  },
+
+  breadcrumbFilterRequestSubscribeCallCount(): number {
+    return breadcrumbFilterRequestSubscribeCalls;
+  },
+
+  setBreadcrumbFilterEnabled: jest.fn<void, [boolean]>(),
+  replyBreadcrumbFilter: jest.fn<void, [string, string | null]>(),
 
   /**
    * The codegen EventEmitter, which is a SUBSCRIBE function returning an
@@ -261,6 +305,8 @@ export const native = {
     dataRequestSubscribeCalls = 0;
     logFilterRequestListeners.clear();
     logFilterRequestSubscribeCalls = 0;
+    breadcrumbFilterRequestListeners.clear();
+    breadcrumbFilterRequestSubscribeCalls = 0;
     for (const [name, value] of Object.entries(this)) {
       if (typeof value === 'function' && 'mockReset' in value) {
         const fn = value as jest.Mock;

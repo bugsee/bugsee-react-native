@@ -221,6 +221,50 @@ export interface Spec extends TurboModule {
   replyLogFilter(requestId: string, line: string | null): void;
 
   /**
+   * Records a breadcrumb the exchange factory constructs. `level` is
+   * `Breadcrumb.Level.getValue()` (1 debug .. 5 fatal), not the enum
+   * ordinal. The factory stamps the time; this does not take a timestamp.
+   * `dataJson` is the crumb's `data` as JSON text, or `null` when the caller
+   * supplied none.
+   */
+  addBreadcrumb(
+    category: string,
+    level: number,
+    message: string,
+    type: string,
+    dataJson: string | null,
+  ): void;
+
+  /**
+   * A breadcrumb the SDK is about to record, offered to the JS filter.
+   *
+   * `requestId` is native-minted and never reused within a process.
+   * `crumbJson` is the snapshot: only the keys the crumb had, `level` as
+   * `getValue()`, `timestamp` when it is set. JS answers with
+   * {@link replyBreadcrumbFilter}. A request that never gets an answer is
+   * not recorded; this event is not a second timeout, and the reply is never
+   * the original crumb after a failed filter.
+   */
+  readonly onBreadcrumbFilterRequest: EventEmitter<{
+    requestId: string;
+    crumbJson: string;
+  }>;
+  /**
+   * Installs or removes the native breadcrumb filter. `true` registers the
+   * bridge; `false` passes `null`, which is how both SDKs clear a filter.
+   * Installed on the calling queue, before this method returns.
+   */
+  setBreadcrumbFilterEnabled(enabled: boolean): void;
+  /**
+   * Answers one {@link onBreadcrumbFilterRequest}. `crumbJson` is the keep,
+   * with every writable key the snapshot sent and `level` as `getValue()`;
+   * `null` drops the crumb. A second reply for the same `requestId` is a
+   * no-op. Not answering leaves the crumb unrecorded — there is no reply
+   * that passes the original through.
+   */
+  replyBreadcrumbFilter(requestId: string, crumbJson: string | null): void;
+
+  /**
    * Sets a string attribute, verified by a native read-back: neither SDK's
    * own setter reports a dropped value truthfully (design doc Phase 5,
    * "Planner decisions"), so this rejects `E_ATTRIBUTE_REJECTED` when the

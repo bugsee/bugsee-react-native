@@ -345,6 +345,161 @@ static void BGSRNDropLogFiltersOwnedBy(BugseeModule *module) {
   }
 }
 
+/// One in-flight breadcrumb-filter request. The decision block is copied: the
+/// SDK's block argument is not guaranteed to outlive the filter call, and the
+/// reply comes back later, from JS. There is no timer. The SDK does not time
+/// the filter out, and a late decision still records.
+@interface BGSRNBreadcrumbFilterPending : NSObject
+@property (nonatomic, strong) id<BGSBreadcrumb> breadcrumb;
+@property (nonatomic, copy) BugseeBreadcrumbFilterDecisionBlock decision;
+@property (nonatomic, weak) BugseeModule *owner;
+@end
+@implementation BGSRNBreadcrumbFilterPending
+@end
+
+static __weak BugseeModule *BGSRNBreadcrumbFilterModule = nil;
+static BOOL BGSRNBreadcrumbFilterInstalled = NO;
+static NSMutableDictionary<NSString *, BGSRNBreadcrumbFilterPending *> *BGSRNBreadcrumbFilterPendingTable;
+static int64_t BGSRNBreadcrumbFilterNextId = 0;
+
+static id BGSRNBreadcrumbFilterLock(void) {
+  static id lock;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    lock = [NSObject new];
+    BGSRNBreadcrumbFilterPendingTable = [NSMutableDictionary dictionary];
+  });
+  return lock;
+}
+
+/// Answers `nil` for every request `module` still holds, which drops the crumb.
+/// Called outside the lock: the SDK's decision block must not re-enter it.
+/// This is teardown, not a timeout.
+static void BGSRNDropBreadcrumbFiltersOwnedBy(BugseeModule *module) {
+  NSMutableArray<BugseeBreadcrumbFilterDecisionBlock> *decisions = [NSMutableArray array];
+  @synchronized (BGSRNBreadcrumbFilterLock()) {
+    for (NSString *key in BGSRNBreadcrumbFilterPendingTable.allKeys) {
+      BGSRNBreadcrumbFilterPending *item = BGSRNBreadcrumbFilterPendingTable[key];
+      if (item.owner == module) {
+        [BGSRNBreadcrumbFilterPendingTable removeObjectForKey:key];
+        if (item.decision != nil) {
+          [decisions addObject:item.decision];
+        }
+      }
+    }
+  }
+  for (BugseeBreadcrumbFilterDecisionBlock decision in decisions) {
+    decision(nil);
+  }
+}
+
+/// The crumb as JSON, with only the keys the SDK actually set. `level` is the
+/// same integer as Android `Breadcrumb.Level.getValue()` (0 means unset and
+/// is omitted). A zero timestamp is omitted. Nil when the crumb cannot be
+/// serialised: the caller drops it rather than sending a partial snapshot.
+static NSString *BGSRNBreadcrumbSnapshotJson(id<BGSBreadcrumb> crumb) {
+  if (crumb == nil) {
+    return nil;
+  }
+  NSMutableDictionary *object = [NSMutableDictionary dictionary];
+  if (crumb.category != nil) {
+    object[@"category"] = crumb.category;
+  }
+  if (crumb.level != 0) {
+    object[@"level"] = @(crumb.level);
+  }
+  if (crumb.message != nil) {
+    object[@"message"] = crumb.message;
+  }
+  if (crumb.type != nil) {
+    object[@"type"] = crumb.type;
+  }
+  if (crumb.data != nil) {
+    object[@"data"] = crumb.data;
+  }
+  if (crumb.timestamp != 0) {
+    object[@"timestamp"] = @(crumb.timestamp);
+  }
+  if (![NSJSONSerialization isValidJSONObject:object]) {
+    return nil;
+  }
+  NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];
+  if (data == nil) {
+    return nil;
+  }
+  return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+/// Writes the keys `kept` names onto `breadcrumb`. A key it omits stays.
+/// `timestamp` is read-only and is not written. Returns NO when a write is
+/// the wrong type or does not stick, so the caller can drop the crumb.
+static BOOL BGSRNApplyBreadcrumbKeep(id<BGSBreadcrumb> breadcrumb, NSDictionary *kept) {
+  id category = kept[@"category"];
+  if (category != nil) {
+    if (![category isKindOfClass:NSString.class]) {
+      return NO;
+    }
+    breadcrumb.category = (NSString *)category;
+    if (![breadcrumb.category isEqualToString:category]) {
+      return NO;
+    }
+  }
+  id message = kept[@"message"];
+  if (message != nil) {
+    if (![message isKindOfClass:NSString.class]) {
+      return NO;
+    }
+    breadcrumb.message = (NSString *)message;
+    if (![breadcrumb.message isEqualToString:message]) {
+      return NO;
+    }
+  }
+  id type = kept[@"type"];
+  if (type != nil) {
+    if (![type isKindOfClass:NSString.class]) {
+      return NO;
+    }
+    breadcrumb.type = (NSString *)type;
+    if (![breadcrumb.type isEqualToString:type]) {
+      return NO;
+    }
+  }
+  id level = kept[@"level"];
+  if (level != nil) {
+    // JSON `true` is a CFBoolean, which is an NSNumber. It is not a level.
+    if (level == (id)kCFBooleanTrue || level == (id)kCFBooleanFalse
+        || ![level isKindOfClass:NSNumber.class]) {
+      return NO;
+    }
+    const double number = [level doubleValue];
+    const NSInteger value = (NSInteger)number;
+    if (number < 1.0 || number > 5.0 || (double)value != number) {
+      return NO;
+    }
+    breadcrumb.level = value;
+    if (breadcrumb.level != value) {
+      return NO;
+    }
+  }
+  if ([kept objectForKey:@"data"] != nil) {
+    id data = kept[@"data"];
+    if (data == [NSNull null]) {
+      breadcrumb.data = nil;
+      if (breadcrumb.data != nil) {
+        return NO;
+      }
+    } else if ([data isKindOfClass:NSDictionary.class]) {
+      breadcrumb.data = (NSDictionary *)data;
+      if (breadcrumb.data == nil) {
+        return NO;
+      }
+    } else {
+      return NO;
+    }
+  }
+  return YES;
+}
+
 @implementation BugseeModule
 
 RCT_EXPORT_MODULE(Bugsee)
@@ -431,6 +586,9 @@ RCT_EXPORT_MODULE(Bugsee)
   // JSI object is built). A log filter installed earlier reads this pointer
   // when a line arrives; it is nil until then, and a nil module drops the line.
   BGSRNLogFilterModule = self;
+  // Same lifetime as the log filter: nil until the emitter exists, and a nil
+  // module drops the crumb.
+  BGSRNBreadcrumbFilterModule = self;
 }
 
 /// Identity-checked inside the bus: a reload can construct and attach the NEW
@@ -455,6 +613,12 @@ RCT_EXPORT_MODULE(Bugsee)
   BGSRNDropLogFiltersOwnedBy(self);
   if (BGSRNLogFilterModule == self) {
     BGSRNLogFilterModule = nil;
+  }
+  // Drop this module's unanswered crumbs. A reload may already have attached
+  // the new module; only clear the pointer when it is still us.
+  BGSRNDropBreadcrumbFiltersOwnedBy(self);
+  if (BGSRNBreadcrumbFilterModule == self) {
+    BGSRNBreadcrumbFilterModule = nil;
   }
 }
 
@@ -889,6 +1053,152 @@ RCT_EXPORT_MODULE(Bugsee)
     return;
   }
   item.decision(item.event);
+}
+
+/// `setBreadcrumbFilter:`. `enabled` registers the bridge; `NO` passes nil,
+/// which removes it. The block returns without waiting on JS.
+///
+/// Installed on the calling queue, before this method returns. Not wrapped in
+/// `BGSRNRunOnMain`: an async hop would let a crumb recorded on the next line
+/// pass before the filter existed. There is no timer that calls
+/// `decision(nil)`. A late decision still records.
+- (void)setBreadcrumbFilterEnabled:(BOOL)enabled {
+  if (enabled) {
+    @synchronized (BGSRNBreadcrumbFilterLock()) {
+      if (BGSRNBreadcrumbFilterInstalled) {
+        return;
+      }
+      BGSRNBreadcrumbFilterInstalled = YES;
+    }
+    [Bugsee setBreadcrumbFilter:^(id<BGSBreadcrumb> breadcrumb, BugseeBreadcrumbFilterDecisionBlock decision) {
+        if (decision == nil) {
+          return;
+        }
+        if (breadcrumb == nil) {
+          decision(nil);
+          return;
+        }
+        BugseeModule *module = BGSRNBreadcrumbFilterModule;
+        if (module == nil) {
+          decision(nil);
+          return;
+        }
+        NSString *crumbJson = BGSRNBreadcrumbSnapshotJson(breadcrumb);
+        if (crumbJson == nil) {
+          decision(nil);
+          return;
+        }
+        BGSRNBreadcrumbFilterPending *item = [BGSRNBreadcrumbFilterPending new];
+        item.breadcrumb = breadcrumb;
+        item.decision = decision;
+        item.owner = module;
+        NSString *requestId = nil;
+        @synchronized (BGSRNBreadcrumbFilterLock()) {
+          BGSRNBreadcrumbFilterNextId += 1;
+          requestId = [NSString stringWithFormat:@"%lld", BGSRNBreadcrumbFilterNextId];
+          BGSRNBreadcrumbFilterPendingTable[requestId] = item;
+        }
+        const BOOL delivered = [module emitBreadcrumbFilterRequest:requestId crumbJson:crumbJson];
+        if (!delivered) {
+          BugseeBreadcrumbFilterDecisionBlock drop = nil;
+          @synchronized (BGSRNBreadcrumbFilterLock()) {
+            BGSRNBreadcrumbFilterPending *removed = BGSRNBreadcrumbFilterPendingTable[requestId];
+            [BGSRNBreadcrumbFilterPendingTable removeObjectForKey:requestId];
+            drop = removed.decision;
+          }
+          if (drop != nil) {
+            drop(nil);
+          }
+        }
+      }];
+    return;
+  }
+  @synchronized (BGSRNBreadcrumbFilterLock()) {
+    BGSRNBreadcrumbFilterInstalled = NO;
+  }
+  [Bugsee setBreadcrumbFilter:nil];
+}
+
+- (BOOL)emitBreadcrumbFilterRequest:(NSString *)requestId crumbJson:(NSString *)crumbJson {
+  NSDictionary *payload = @{ @"requestId" : requestId, @"crumbJson" : crumbJson };
+  return BGSRNGuardedEmit(^{
+    [self emitOnBreadcrumbFilterRequest:payload];
+  }, @"onBreadcrumbFilterRequest");
+}
+
+/// `crumbJson` nil drops. An object is written onto the same breadcrumb.
+/// `timestamp` is not written: `BGSEvent.timestamp` is read-only, and the SDK
+/// pins the time it observed before the filter ran. If a write does not
+/// stick, the crumb is dropped rather than kept unredacted. A second reply
+/// is a no-op. There is no timer.
+- (void)replyBreadcrumbFilter:(NSString *)requestId crumbJson:(NSString * _Nullable)crumbJson {
+  if (requestId == nil) {
+    return;
+  }
+  BGSRNBreadcrumbFilterPending *item = nil;
+  @synchronized (BGSRNBreadcrumbFilterLock()) {
+    item = BGSRNBreadcrumbFilterPendingTable[requestId];
+    if (item != nil) {
+      [BGSRNBreadcrumbFilterPendingTable removeObjectForKey:requestId];
+    }
+  }
+  if (item.decision == nil) {
+    return;
+  }
+  if (crumbJson == nil) {
+    item.decision(nil);
+    return;
+  }
+  NSError *error = nil;
+  NSDictionary *kept = BGSRNJSONObject(crumbJson, &error);
+  if (kept == nil || !BGSRNApplyBreadcrumbKeep(item.breadcrumb, kept)) {
+    item.decision(nil);
+    return;
+  }
+  item.decision(item.breadcrumb);
+}
+
+/// The no-argument `createBreadcrumb` leaves the timestamp unset so the
+/// provider stamps it. `level` is Android `Breadcrumb.Level.getValue()`
+/// (1..5), stored as `BGSBreadcrumb.level`. `dataJson` nil leaves data unset.
+/// On main, like every other SDK entry point. The filter install above is
+/// not: it has to be on the calling queue.
+- (void)addBreadcrumb:(NSString *)category
+                level:(double)level
+              message:(NSString *)message
+                 type:(NSString *)type
+             dataJson:(NSString * _Nullable)dataJson {
+  NSDictionary *data = nil;
+  const BOOL hasData = dataJson != nil;
+  if (hasData) {
+    NSError *error = nil;
+    data = BGSRNJSONObject(dataJson, &error);
+    if (data == nil) {
+      NSLog(@"BugseeRN addBreadcrumb dropped: its data is not a JSON object: %@",
+            error.localizedDescription);
+      return;
+    }
+  }
+  const NSInteger levelValue = (NSInteger)level;
+  if (level < 1.0 || level > 5.0 || (double)levelValue != level) {
+    NSLog(@"BugseeRN addBreadcrumb dropped: level %g is not a Breadcrumb.Level value", level);
+    return;
+  }
+  BGSRNRunOnMain(^{
+    id<BGSBugseeExchangeFactory> factory = [Bugsee getExchangeFactory];
+    id<BGSBreadcrumb> crumb = [factory createBreadcrumb];
+    if (crumb == nil) {
+      return;
+    }
+    crumb.category = category;
+    crumb.level = levelValue;
+    crumb.message = message;
+    crumb.type = type;
+    if (hasData) {
+      crumb.data = data;
+    }
+    [Bugsee addBreadcrumb:crumb];
+  });
 }
 
 #pragma mark - Attributes and identity

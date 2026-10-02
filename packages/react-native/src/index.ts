@@ -16,6 +16,9 @@ import { forwardLog } from './wrapper/channel';
 import { installConsoleCapture } from './console/capture';
 import { setLogFilter as installLogFilter } from './logs/filter';
 import type { LogFilter } from './logs/filter';
+import { addBreadcrumb as recordBreadcrumb } from './breadcrumbs/add';
+import { setBreadcrumbFilter as installBreadcrumbFilter } from './breadcrumbs/filter';
+import type { Breadcrumb, BreadcrumbFilter } from './breadcrumbs/types';
 import { type IssueSeverity, LogLevel } from './options/enums';
 import { labelsArgument, severityArgument } from './report/fields';
 import {
@@ -409,6 +412,35 @@ class Bugsee {
   }
 
   /**
+   * Records a breadcrumb built by the SDK's exchange factory, which stamps
+   * the time. `timestamp` is not a field of `crumb`. `level` is `debug`,
+   * `info`, `warning`, `error`, or `fatal`. `data` omitted or `null` leaves
+   * the crumb without data.
+   */
+  addBreadcrumb(crumb: Breadcrumb): void {
+    recordBreadcrumb(crumb);
+  }
+
+  /**
+   * Registers the breadcrumb filter. A later call replaces it. Called with
+   * no callback, or with `null`, clears it.
+   *
+   * The callback receives the crumb. Returning the crumb, or another object,
+   * keeps it. `null` or `undefined` drops it. A keep must include every
+   * writable key the snapshot sent (`category`, `level`, `message`, `type`,
+   * and `data` when that key was present). Dropping one, or setting it
+   * `undefined`, drops the crumb. A key the snapshot omitted stays omitted.
+   * `data: null` clears data. `timestamp` is read-only and is not sent back.
+   *
+   * The callback runs on a later turn. This method does not wait for it, and
+   * it does not add a timeout. A callback that throws, rejects, or never
+   * settles drops the crumb. The original is not passed through.
+   */
+  setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
+    installBreadcrumbFilter(callback);
+  }
+
+  /**
    * Records a named event, with optional params.
    *
    * `params` must be a plain object or omitted entirely -- `null` throws
@@ -724,6 +756,13 @@ export { AttributeErrorCode, BugseeAttributeError } from './attributes/errors';
 export type { AttributeReadValue, AttributeValue } from './attributes/validate';
 
 export type { LogFilter } from './logs/filter';
+
+export type {
+  Breadcrumb,
+  BreadcrumbFilter,
+  BreadcrumbLevel,
+  BreadcrumbSnapshot,
+} from './breadcrumbs/types';
 
 export type { ExceptionOptions } from './exceptions/options';
 export { ErrorBoundary } from './exceptions/ErrorBoundary';
