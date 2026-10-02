@@ -96,6 +96,7 @@ describe('spans', () => {
 
   it('setName, setDescription, setAttribute and setStatus cross, and setName is the operation', () => {
     native.startSpan.mockReturnValue(wire());
+    native.spanSetAttribute.mockReturnValue(true);
     const span = Bugsee.startSpan('db.query', null);
     span.setName('http.client').setDescription('GET').setAttribute('code', 200).setStatus(SpanStatus.OK);
     expect(native.spanSetName).toHaveBeenCalledWith('sp-1', 'http.client');
@@ -125,6 +126,30 @@ describe('spans', () => {
       expect.objectContaining({ code: 'E_SPAN_HANDLE_DEAD' }),
     );
     expect(native.spanSetAttribute).not.toHaveBeenCalled();
+  });
+
+  it('the first finish returns even when native omits the handle', () => {
+    native.startSpan.mockReturnValue(wire());
+    native.spanFinish.mockReturnValue([]);
+    const span = Bugsee.startSpan('db.query');
+    expect(() => span.finish()).not.toThrow();
+    expect(span.finished).toBe(true);
+    expect(() => span.finish()).toThrow(expect.objectContaining({ code: 'E_SPAN_HANDLE_DEAD' }));
+    expect(native.spanFinish).toHaveBeenCalledTimes(1);
+  });
+
+  it('a lone surrogate is well-formed, and a refused attribute is not cached', () => {
+    native.startSpan.mockReturnValue(wire());
+    const span = Bugsee.startSpan('db.query');
+    native.spanSetAttribute.mockReturnValue(false);
+    span.setAttribute('k', '\uD800');
+    const sent = native.spanSetAttribute.mock.calls[0]?.[2] as string;
+    expect(sent).not.toContain('\\ud800');
+    expect(sent).toContain('\uFFFD');
+    expect(span.attributes).toEqual({});
+    native.spanSetAttribute.mockReturnValue(true);
+    span.setAttribute('k', '\uD800');
+    expect(span.attributes).toEqual({ k: '\uFFFD' });
   });
 
   it('the four setters return a value so codegen does not queue them', () => {

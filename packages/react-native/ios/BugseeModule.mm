@@ -8,6 +8,7 @@
 // cascade of undeclared identifiers that hides the real cause.
 #import <Bugsee/Bugsee.h>
 #import <UIKit/UIKit.h>
+#import <os/lock.h>
 
 // CocoaPods compiles BugseeRNSupport's sources straight into this pod, so its
 // headers arrive flat; under SPM it is a separate target and they arrive under
@@ -789,7 +790,10 @@ static NSDictionary *BGSRNNoSpan(void) {
 @property (nonatomic, strong) BGSRNSpanHandles *spanHandles;
 @end
 
-@implementation BugseeModule
+@implementation BugseeModule {
+  os_unfair_lock _spanRegistryLock;
+  BOOL _spansRetired;
+}
 
 @synthesize spanHandles = _spanHandles;
 
@@ -802,6 +806,7 @@ RCT_EXPORT_MODULE(Bugsee)
 /// emitter is unset before then, and this call does not emit.
 - (instancetype)init {
   if ((self = [super init])) {
+    _spanRegistryLock = OS_UNFAIR_LOCK_INIT;
     BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithoutJsRuntime], YES);
     BGSRNInstallConsoleCapture();
     BGSRNInstallLogEventFilter();
@@ -924,9 +929,15 @@ RCT_EXPORT_MODULE(Bugsee)
     BGSRNBreadcrumbFilterModule = nil;
   }
   // The next runtime cannot know these handles. Drop them without finishing:
-  // a reload must not close a transaction the SDK still has.
-  [_spanHandles releaseAll];
-  _spanHandles = nil;
+  // a reload must not close a transaction the SDK still has. The getter
+  // must not allocate a fresh registry after this: a span call still in
+  // flight would adopt into an object invalidate already abandoned.
+  os_unfair_lock_lock(&_spanRegistryLock);
+  _spansRetired = YES;
+  BGSRNSpanHandles *previous = _spanHandles;
+  _spanHandles = [BGSRNSpanHandles closedRegistry];
+  os_unfair_lock_unlock(&_spanRegistryLock);
+  [previous releaseAll];
 }
 
 /// The SDK touches UIKit during start-up, so it must not be constructed on a
@@ -2050,10 +2061,14 @@ RCT_EXPORT_MODULE(Bugsee)
 }
 
 - (BGSRNSpanHandles *)spanHandles {
-  if (_spanHandles == nil) {
-    _spanHandles = [BGSRNSpanHandles new];
+  os_unfair_lock_lock(&_spanRegistryLock);
+  BGSRNSpanHandles *handles = _spansRetired ? [BGSRNSpanHandles closedRegistry] : _spanHandles;
+  if (handles == nil) {
+    handles = [BGSRNSpanHandles new];
+    _spanHandles = handles;
   }
-  return _spanHandles;
+  os_unfair_lock_unlock(&_spanRegistryLock);
+  return handles;
 }
 
 - (BGSRNLiveSpan *)liveSpan:(NSString *)handle {

@@ -18,8 +18,8 @@ NS_ASSUME_NONNULL_BEGIN
  *
  * A span is an object with a lifetime. This registry is the strong
  * reference that would leak it: `finishHandle` calls through to the span
- * and then drops every entry whose span is now finished, including a child
- * a parent finish cancelled. `liveCount` and `containsHandle` are what the
+ * and then drops that handle even when it still reports unfinished, plus
+ * any other span that now reports finished. `liveCount` and `containsHandle` are what the
  * tests assert, so a finish that forgets to remove the entry fails them.
  */
 @interface BGSRNSpanHandles : NSObject
@@ -28,13 +28,17 @@ NS_ASSUME_NONNULL_BEGIN
 /// issued and does not store `adapter` again.
 - (NSString *)retainSpan:(id)span adapter:(id<BGSRNRetainedSpan>)adapter;
 
-/// Finishes `handle` and releases every retained span that is now finished.
-/// Empty when `handle` is not held.
+/// Finishes `handle`, then drops that handle even when it still reports
+/// unfinished. Other retained spans are dropped only when they now report
+/// finished. Empty when `handle` is not held.
 - (NSArray<NSString *> *)finishHandle:(NSString *)handle
                                status:(NSNumber *_Nullable)status;
 
-/// Drops every handle. Does not finish the spans.
+/// Drops every handle and refuses later retains. Does not finish the spans.
 - (void)releaseAll;
+
+/// The registry `invalidate` hands out. It retains nothing.
++ (BGSRNSpanHandles *)closedRegistry;
 
 - (BOOL)containsHandle:(NSString *)handle;
 - (NSUInteger)liveCount;

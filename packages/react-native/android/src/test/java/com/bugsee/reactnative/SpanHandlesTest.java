@@ -75,6 +75,26 @@ public class SpanHandlesTest {
     }
 
     @Test
+    public void aSpanThatStaysUnfinishedIsStillReleased() {
+        final SpanHandles handles = new SpanHandles();
+        final Sticky span = new Sticky();
+        final String handle = handles.retain(span, span);
+        final List<String> released = handles.finish(handle, null);
+        assertEquals(Arrays.asList(handle), released);
+        assertTrue(span.finishCalled);
+        assertFalse(span.isFinished());
+        assertFalse(handles.contains(handle));
+        assertEquals(0, handles.size());
+    }
+
+    @Test
+    public void aNullSpanIsNotRetained() {
+        final SpanHandles handles = new SpanHandles();
+        assertEquals("", handles.retain(null, new Fake()));
+        assertEquals(0, handles.size());
+    }
+
+    @Test
     public void anUnknownHandleReleasesNothing() {
         final SpanHandles handles = new SpanHandles();
         assertTrue(handles.finish("sp-nope", null).isEmpty());
@@ -118,6 +138,21 @@ public class SpanHandlesTest {
         @Override
         public boolean isFinished() {
             return finished;
+        }
+    }
+
+    /** {@code finish} runs, and {@code isFinished} stays false. A no-op span can do that. */
+    private static final class Sticky implements SpanHandles.Retained {
+        boolean finishCalled;
+
+        @Override
+        public void finish(final SpanStatus status) {
+            finishCalled = true;
+        }
+
+        @Override
+        public boolean isFinished() {
+            return false;
         }
     }
 }

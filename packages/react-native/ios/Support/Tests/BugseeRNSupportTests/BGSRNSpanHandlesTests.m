@@ -37,6 +37,19 @@
 
 @end
 
+@interface BGSRNStickySpan : NSObject <BGSRNRetainedSpan>
+@property (nonatomic) BOOL finishCalled;
+@end
+
+@implementation BGSRNStickySpan
+- (void)bgsrnFinishWithStatus:(NSNumber *)status {
+  _finishCalled = YES;
+}
+- (BOOL)bgsrnIsFinished {
+  return NO;
+}
+@end
+
 @interface BGSRNSpanHandlesTests : XCTestCase
 @end
 
@@ -91,6 +104,34 @@
   NSString *second = [handles retainSpan:span adapter:[BGSRNFakeSpan new]];
   XCTAssertEqualObjects(first, second);
   XCTAssertEqual(handles.liveCount, 1u);
+}
+
+/// `finish` runs, and `isFinished` stays false. A no-op span can do that.
+- (void)testASpanThatStaysUnfinishedIsStillReleased {
+  BGSRNSpanHandles *handles = [BGSRNSpanHandles new];
+  BGSRNStickySpan *span = [BGSRNStickySpan new];
+  NSString *handle = [handles retainSpan:span adapter:span];
+  NSArray<NSString *> *released = [handles finishHandle:handle status:nil];
+  XCTAssertEqualObjects(released, @[handle]);
+  XCTAssertTrue(span.finishCalled);
+  XCTAssertFalse(span.bgsrnIsFinished);
+  XCTAssertFalse([handles containsHandle:handle]);
+  XCTAssertEqual(handles.liveCount, 0u);
+}
+
+- (void)testANilSpanIsNotRetained {
+  BGSRNSpanHandles *handles = [BGSRNSpanHandles new];
+  XCTAssertEqualObjects([handles retainSpan:nil adapter:[BGSRNFakeSpan new]], @"");
+  XCTAssertEqual(handles.liveCount, 0u);
+}
+
+/// The object `invalidate` returns. A later retain must not store anything.
+- (void)testAClosedRegistryAdoptsNothing {
+  BGSRNSpanHandles *handles = [BGSRNSpanHandles closedRegistry];
+  BGSRNFakeSpan *span = [BGSRNFakeSpan new];
+  XCTAssertEqualObjects([handles retainSpan:span adapter:span], @"");
+  XCTAssertEqual(handles.liveCount, 0u);
+  XCTAssertEqualObjects([handles finishHandle:@"sp-1" status:nil], @[]);
 }
 
 - (void)testAnUnknownHandleReleasesNothing {

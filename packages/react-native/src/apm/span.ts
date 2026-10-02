@@ -1,5 +1,5 @@
 import NativeBugsee from '../NativeBugsee';
-import { encodeBridgeObject } from '../bridge/json';
+import { encodeBridgeJson, encodeBridgeObject } from '../bridge/json';
 import {
   BugseeSpanError,
   SpanErrorCode,
@@ -157,8 +157,11 @@ class SpanObject {
     this.guard();
     const name = assertText(key, 'setAttribute', 'key');
     const attribute = assertAttribute(value);
-    NativeBugsee.spanSetAttribute(this.wire.handle, name, JSON.stringify(attribute));
-    this.attributes = { ...this.attributes, [name]: attribute };
+    const wire = encodeBridgeJson(attribute);
+    if (NativeBugsee.spanSetAttribute(this.wire.handle, name, wire)) {
+      const stored = JSON.parse(wire) as SpanAttribute;
+      this.attributes = { ...this.attributes, [name]: stored };
+    }
     return this;
   }
 
@@ -191,10 +194,11 @@ class SpanObject {
     const wire = explicit ? assertStatus(status) : 0;
     const released = NativeBugsee.spanFinish(this.wire.handle, wire, explicit);
     markReleased(released);
+    // The handle this call asked to finish is dead here, even when native
+    // omits it from the list. A later call is what throws.
     if (!this.dead) {
       this.markDead();
       live.delete(this.wire.handle);
-      dead();
     }
   }
 

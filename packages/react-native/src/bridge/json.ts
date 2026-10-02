@@ -99,3 +99,12 @@ function wellFormedCopy(value: unknown): unknown {
 export function encodeBridgeObject(value: Readonly<Record<string, unknown>>): string {
   return JSON.stringify(wellFormedCopy(value));
 }
+
+/**
+ * One JSON value for the bridge, strings well-formed the same way as
+ * {@link encodeBridgeObject}. A lone surrogate becomes U+FFFD before
+ * `JSON.stringify`, so iOS `NSJSONSerialization` does not reject the text.
+ */
+export function encodeBridgeJson(value: unknown): string {
+  return JSON.stringify(wellFormedCopy(value));
+}

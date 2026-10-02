@@ -1368,12 +1368,18 @@ public class BugseeModule extends NativeBugseeSpec
         final Transaction transaction = attributes == null
                 ? Bugsee.startTransaction(name, operation)
                 : Bugsee.startTransaction(name, operation, attributes);
+        if (transaction == null) {
+            return noSpan();
+        }
         return snapshot(spanHandles.retain(transaction, new LiveSpan(transaction)), transaction);
     }
 
     @Override
     public WritableMap startSpan(final String operation, @Nullable final String description) {
         final Span span = Bugsee.startSpan(operation, description);
+        if (span == null) {
+            return noSpan();
+        }
         return snapshot(spanHandles.retain(span, new LiveSpan(span)), span);
     }
 
@@ -1448,6 +1454,9 @@ public class BugseeModule extends NativeBugseeSpec
         final Span child = description == null
                 ? live.span.startChildSpan(operation)
                 : live.span.startChildSpan(operation, description);
+        if (child == null) {
+            return noSpan();
+        }
         return snapshot(spanHandles.retain(child, new LiveSpan(child)), child);
     }
 

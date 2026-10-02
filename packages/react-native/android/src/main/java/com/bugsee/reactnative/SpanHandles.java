@@ -48,8 +48,14 @@ final class SpanHandles {
     /**
      * Holds {@code retained} for {@code identity}. The same identity returns
      * the handle already issued and does not store {@code retained} again.
+     * A null identity is not a span: the map would reject it, and nothing is
+     * stored. Synchronized like {@code CreatedReports}: {@code invalidate}
+     * calls {@link #releaseAll} on another thread.
      */
-    String retain(final Object identity, final Retained retained) {
+    synchronized String retain(@Nullable final Object identity, @Nullable final Retained retained) {
+        if (identity == null || retained == null) {
+            return "";
+        }
         final String existing = byIdentity.get(identity);
         if (existing != null) {
             return existing;
@@ -62,34 +68,36 @@ final class SpanHandles {
     }
 
     /**
-     * Finishes {@code handle} and releases every retained span that is now
-     * finished. Empty when {@code handle} is not held: nothing is released.
+     * Finishes {@code handle}, then drops that handle even when
+     * {@code isFinished()} is still false (a no-op span can leave the flag
+     * down). Other retained spans are dropped only when they now report
+     * finished. Empty when {@code handle} is not held.
      */
-    List<String> finish(final String handle, @Nullable final SpanStatus status) {
+    synchronized List<String> finish(final String handle, @Nullable final SpanStatus status) {
         final Entry entry = byHandle.get(handle);
         if (entry == null) {
             return Collections.emptyList();
         }
         entry.retained.finish(status);
-        return releaseFinished();
+        return releaseFinished(handle);
     }
 
     /** Drops every handle. Does not finish the spans. Used when the module goes away. */
-    void releaseAll() {
+    synchronized void releaseAll() {
         byHandle.clear();
         byIdentity.clear();
     }
 
-    boolean contains(final String handle) {
+    synchronized boolean contains(final String handle) {
         return byHandle.containsKey(handle);
     }
 
-    int size() {
+    synchronized int size() {
         return byHandle.size();
     }
 
     @Nullable
-    Retained get(final String handle) {
+    synchronized Retained get(final String handle) {
         final Entry entry = byHandle.get(handle);
         return entry == null ? null : entry.retained;
     }
@@ -112,8 +120,14 @@ final class SpanHandles {
         return status;
     }
 
-    private List<String> releaseFinished() {
+    /** Caller holds the lock. {@code called} is removed whether or not it reports finished. */
+    private List<String> releaseFinished(final String called) {
         final List<String> released = new ArrayList<>();
+        final Entry calledEntry = byHandle.remove(called);
+        if (calledEntry != null) {
+            byIdentity.remove(calledEntry.identity);
+            released.add(called);
+        }
         final Iterator<Map.Entry<String, Entry>> entries = byHandle.entrySet().iterator();
         while (entries.hasNext()) {
             final Map.Entry<String, Entry> entry = entries.next();
