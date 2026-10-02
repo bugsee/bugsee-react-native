@@ -7,6 +7,12 @@ import { jsonOf } from '../../__mocks__/native';
 let native: typeof NativeMock;
 let Bugsee: {
   setBreadcrumbFilter(callback?: ((crumb: Record<string, unknown>) => unknown) | null): void;
+  addBreadcrumb(crumb: {
+    category: string;
+    level: string;
+    message: string;
+    type: string;
+  }): void;
 };
 
 beforeEach(() => {
@@ -292,6 +298,41 @@ describe('setBreadcrumbFilter', () => {
     expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', null);
     await flush();
     expect(native.replyBreadcrumbFilter).toHaveBeenCalledTimes(1);
+  });
+
+  it('redacts a crumb added on the same turn as the clear, and drops any other', async () => {
+    Bugsee.setBreadcrumbFilter((crumb) => ({
+      ...crumb,
+      message: String(crumb.message).replace('SECRET', 'REDACTED'),
+    }));
+    Bugsee.addBreadcrumb({
+      category: 'ui',
+      level: 'info',
+      message: 'probe SECRET',
+      type: 'user',
+    });
+    Bugsee.setBreadcrumbFilter(null);
+    emit('1', { ...snapshot, message: 'probe SECRET', type: 'user' });
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith(
+      '1',
+      jsonOf({
+        category: 'ui',
+        message: 'probe REDACTED',
+        type: 'user',
+        level: 'info',
+      }),
+    );
+    const replied = native.replyBreadcrumbFilter.mock.calls[0]?.[1] as string;
+    expect(replied).not.toContain('SECRET');
+
+    native.replyBreadcrumbFilter.mockClear();
+    emit('2', { ...snapshot, message: 'probe SECRET', type: 'user' });
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('2', null);
+
+    native.replyBreadcrumbFilter.mockClear();
+    emit('3', snapshot);
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('3', null);
   });
 
   it('drops a snapshot whose level is not a name', async () => {

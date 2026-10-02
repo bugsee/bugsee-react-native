@@ -409,6 +409,10 @@ static void BGSRNDropLogFiltersOwnedBy(BugseeModule *module) {
 
 static __weak BugseeModule *BGSRNBreadcrumbFilterModule = nil;
 static BOOL BGSRNBreadcrumbFilterInstalled = NO;
+/// Bumped on every enable and every disable. A disable queued on main nils
+/// the filter only when this is still the generation it captured, so a later
+/// enable is not wiped by a nil that was already queued.
+static int64_t BGSRNBreadcrumbFilterGeneration = 0;
 static NSMutableDictionary<NSString *, BGSRNBreadcrumbFilterPending *> *BGSRNBreadcrumbFilterPendingTable;
 static int64_t BGSRNBreadcrumbFilterNextId = 0;
 
@@ -1250,13 +1254,19 @@ RCT_EXPORT_MODULE(Bugsee)
 /// `setBreadcrumbFilter:`. `enabled` registers the bridge; `NO` passes nil,
 /// which removes it. The block returns without waiting on JS.
 ///
-/// Installed on the calling queue, before this method returns. Not wrapped in
-/// `BGSRNRunOnMain`: an async hop would let a crumb recorded on the next line
-/// pass before the filter existed. There is no timer that calls
-/// `decision(nil)`. A late decision still records.
+/// Enable stays on the calling queue, before this method returns. Not wrapped
+/// in `BGSRNRunOnMain`: an async install would let a crumb recorded on the
+/// next line pass before the filter existed. Disable hops to the main queue,
+/// where `addBreadcrumb` already queued its record. That queue is FIFO, so
+/// the nil cannot overtake the crumb. The generation this disable captured
+/// has to still be current or the nil does not run: a clear and then a new
+/// callback, before main runs, must not have the queued nil remove the newer
+/// filter. There is no timer that calls `decision(nil)`. A late decision
+/// still records.
 - (void)setBreadcrumbFilterEnabled:(BOOL)enabled {
   if (enabled) {
     @synchronized (BGSRNBreadcrumbFilterLock()) {
+      BGSRNBreadcrumbFilterGeneration += 1;
       if (BGSRNBreadcrumbFilterInstalled) {
         return;
       }
@@ -1305,10 +1315,20 @@ RCT_EXPORT_MODULE(Bugsee)
       }];
     return;
   }
+  int64_t generation = 0;
   @synchronized (BGSRNBreadcrumbFilterLock()) {
-    BGSRNBreadcrumbFilterInstalled = NO;
+    BGSRNBreadcrumbFilterGeneration += 1;
+    generation = BGSRNBreadcrumbFilterGeneration;
   }
-  [Bugsee setBreadcrumbFilter:nil];
+  BGSRNRunOnMain(^{
+    @synchronized (BGSRNBreadcrumbFilterLock()) {
+      if (BGSRNBreadcrumbFilterGeneration != generation) {
+        return;
+      }
+      BGSRNBreadcrumbFilterInstalled = NO;
+      [Bugsee setBreadcrumbFilter:nil];
+    }
+  });
 }
 
 - (BOOL)emitBreadcrumbFilterRequest:(NSString *)requestId crumbJson:(NSString *)crumbJson {
@@ -1354,6 +1374,7 @@ RCT_EXPORT_MODULE(Bugsee)
 /// provider stamps it. `level` is the JS name, mapped to `BugseeLogLevel`.
 /// `dataJson` nil leaves data unset. On main, like every other SDK entry
 /// point. The filter install above is not: it has to be on the calling queue.
+/// A filter clear is on this queue too, behind the block queued here.
 - (void)addBreadcrumb:(NSString *)category
                 level:(NSString *)level
               message:(NSString *)message

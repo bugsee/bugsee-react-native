@@ -10,6 +10,34 @@ let current: BreadcrumbFilter | undefined;
 let subscribed = false;
 
 /**
+ * Crumbs `addBreadcrumb` submitted while `current` was set. iOS records on
+ * the main queue, so a clear on the same turn runs before that record asks
+ * JS. The callback that was installed at the add still answers that crumb.
+ * A request whose message was not one of these drops, which is the clear.
+ */
+const owed: Array<{ message: string; callback: BreadcrumbFilter }> = [];
+
+/** Called from `addBreadcrumb` after validation, before the native call. */
+export function retainBreadcrumbFilterForAdd(message: string): void {
+  if (current === undefined) {
+    return;
+  }
+  owed.push({ message, callback: current });
+}
+
+function claimBreadcrumbFilter(message: string | undefined): BreadcrumbFilter | undefined {
+  if (message === undefined) {
+    return undefined;
+  }
+  const index = owed.findIndex((item) => item.message === message);
+  if (index < 0) {
+    return undefined;
+  }
+  const [item] = owed.splice(index, 1);
+  return item?.callback;
+}
+
+/**
  * Registers `callback` as the only breadcrumb filter. A later call replaces
  * it. `undefined` or `null` clears it, which tells native to uninstall the
  * filter so crumbs are recorded without one.
@@ -37,8 +65,10 @@ export function setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
  * Answers one native filter request.
  *
  * The callback is read here, at dispatch, so a `setBreadcrumbFilter` made
- * while this request is in flight changes the next crumb, not this one. The
- * callback itself runs on a later turn.
+ * while this request is in flight changes the next crumb, not this one.
+ * When nothing is installed, a crumb `addBreadcrumb` submitted under a
+ * filter that this turn then cleared is answered by that filter. Any other
+ * request drops. The callback itself runs on a later turn.
  *
  * A throw, a rejection, a result that is not an object, or a keep that drops
  * a writable key the snapshot sent (`category`, `level`, `message`, `type`,
@@ -48,14 +78,15 @@ export function setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
  * omitted. `data: null` when the snapshot sent `data` clears it.
  */
 function onBreadcrumbFilterRequest(event: { requestId: string; crumbJson: string }): void {
-  const callback = current;
   const { requestId } = event;
-  if (callback === undefined) {
+  const snapshot = snapshotFromJson(event.crumbJson);
+  if (snapshot === null) {
     reply(requestId, null);
     return;
   }
-  const snapshot = snapshotFromJson(event.crumbJson);
-  if (snapshot === null) {
+  const reserved = claimBreadcrumbFilter(snapshot.message);
+  const callback = current ?? reserved;
+  if (callback === undefined) {
     reply(requestId, null);
     return;
   }

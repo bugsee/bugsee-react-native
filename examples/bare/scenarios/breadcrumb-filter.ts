@@ -6,7 +6,9 @@
  * `Bugsee.addBreadcrumb` on the next line, with no await between them. That
  * first crumb is rewritten. A second crumb is rewritten the same way. A third
  * crumb's callback never settles, so it is not recorded; this scenario does
- * not add a timeout that would pass the crumb through.
+ * not add a timeout that would pass the crumb through. A fourth crumb carries
+ * a secret and `setBreadcrumbFilter(null)` is the next call, on that same
+ * turn. The secret is redacted. The clear is not awaited.
  *
  * A crumb that is not one of the probes is returned unchanged, so the SDK's
  * own breadcrumb capture still records. The upload waits long enough for the
@@ -31,7 +33,10 @@ function mark(message: string): void {
 /** How long to wait, after the crumbs are sent, before uploading. */
 const UPLOAD_AFTER_MS = 5_000;
 
-function probe(kind: 'immediate' | 'rewrite' | 'hang', nonce: string): string {
+function probe(
+  kind: 'immediate' | 'rewrite' | 'hang' | 'cleared',
+  nonce: string,
+): string {
   return `breadcrumb-filter ${kind} ${nonce}`;
 }
 
@@ -42,7 +47,11 @@ function probe(kind: 'immediate' | 'rewrite' | 'hang', nonce: string): string {
 export function installBreadcrumbFilter(nonce: string): void {
   Bugsee.setBreadcrumbFilter((crumb) => {
     const message = crumb.message ?? '';
-    if (message.includes(probe('immediate', nonce)) || message.includes(probe('rewrite', nonce))) {
+    if (
+      message.includes(probe('immediate', nonce)) ||
+      message.includes(probe('rewrite', nonce)) ||
+      message.includes(probe('cleared', nonce))
+    ) {
       return { ...crumb, message: message.replace('SECRET', 'REDACTED') };
     }
     if (message.includes(probe('hang', nonce))) {
@@ -52,7 +61,7 @@ export function installBreadcrumbFilter(nonce: string): void {
   });
 }
 
-function record(kind: 'immediate' | 'rewrite' | 'hang', nonce: string): void {
+function record(kind: 'immediate' | 'rewrite' | 'hang' | 'cleared', nonce: string): void {
   Bugsee.addBreadcrumb({
     category: 'e2e',
     level: 'info',
@@ -75,6 +84,11 @@ export function runBreadcrumbFilterScenario(nonce: string): void {
   mark(`rewrite sent nonce=${nonce}`);
   record('hang', nonce);
   mark(`hang sent nonce=${nonce}`);
+  // Same turn as the add above: nothing is awaited between them. The clear
+  // must not overtake that crumb, and the secret must be redacted.
+  record('cleared', nonce);
+  Bugsee.setBreadcrumbFilter(null);
+  mark(`cleared same turn nonce=${nonce}`);
   setTimeout(() => {
     Bugsee.upload(`breadcrumb-filter-${nonce}`, '');
     mark(`uploaded nonce=${nonce}`);

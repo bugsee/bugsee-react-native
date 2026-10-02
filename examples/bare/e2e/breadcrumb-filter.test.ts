@@ -4,6 +4,8 @@
  * Same retention as log-filter.test.ts. A crumb with a unique message is
  * retained, rewritten. A second crumb the filter rewrites is the crumb in
  * the retained bundle. A filter that never settles leaves that crumb out.
+ * A fourth crumb is added and the filter is cleared on that same turn; the
+ * bundle contains the redacted message and does not contain the secret.
  * `duration` stays 90. Breadcrumb capture is on for this scenario only,
  * because the iOS SDK's `BugseeOptionCaptureBreadcrumbs` defaults to NO.
  *
@@ -157,5 +159,31 @@ describeDevice(`breadcrumb filter on ${TARGET_NAME}`, () => {
       messageOf(event).includes(`breadcrumb-filter hang ${nonce} SECRET`),
     );
     expect(leaked).toHaveLength(0);
+  });
+
+  it('a crumb cleared on the same turn is retained redacted', () => {
+    expect(bundles).toHaveLength(1);
+    const events = breadcrumbEventsOf(bundles[0]!);
+    const want = `breadcrumb-filter cleared ${nonce} REDACTED`;
+    const matches = events.filter(event => messageOf(event).includes(`breadcrumb-filter cleared ${nonce}`));
+    report('cleared matches', matches);
+    expect(matches).toHaveLength(1);
+    const [event] = matches as [Record<string, unknown>];
+    expect(event.message).toBe(want);
+    expect(event.level).toBe('info');
+    const leaked = events.filter(event =>
+      messageOf(event).includes(`breadcrumb-filter cleared ${nonce} SECRET`),
+    );
+    expect(leaked).toHaveLength(0);
+    const cleared = log.all(
+      new RegExp(`BUGSEE_E2E breadcrumb-filter cleared same turn nonce=${nonce}`),
+    );
+    const uploaded = log.all(
+      new RegExp(`BUGSEE_E2E breadcrumb-filter uploaded nonce=${nonce}`),
+    );
+    // iOS prints the line twice, once with the process prefix and once raw.
+    expect(cleared.length).toBeGreaterThan(0);
+    expect(uploaded.length).toBeGreaterThan(0);
+    expect(cleared[0]!.index).toBeLessThan(uploaded[0]!.index);
   });
 });

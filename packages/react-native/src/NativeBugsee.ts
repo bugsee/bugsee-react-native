@@ -274,8 +274,9 @@ export interface Spec extends TurboModule {
   }>;
   /**
    * Installs or removes the native breadcrumb filter. `true` registers the
-   * bridge; `false` passes `null`, which is how both SDKs clear a filter.
-   * Installed on the calling queue, before this method returns.
+   * bridge on the calling queue, before this method returns. `false` removes
+   * it on the main queue, behind any `addBreadcrumb` already queued there.
+   * Passing `null` is how both SDKs clear a filter.
    */
   setBreadcrumbFilterEnabled(enabled: boolean): void;
   /**

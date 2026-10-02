@@ -1,6 +1,7 @@
 import NativeBugsee from '../NativeBugsee';
 import { encodeBridgeObject } from '../bridge/json';
 import { copyBreadcrumbData } from './data';
+import { retainBreadcrumbFilterForAdd } from './filter';
 import { isBreadcrumbLevel } from './types';
 import type { Breadcrumb } from './types';
 
@@ -43,5 +44,6 @@ export function addBreadcrumb(crumb: Breadcrumb): void {
   if (crumb.data != null) {
     dataJson = encodeBridgeObject(copyBreadcrumbData(crumb.data));
   }
+  retainBreadcrumbFilterForAdd(message);
   NativeBugsee.addBreadcrumb(category, level, message, type, dataJson);
 }
