@@ -29,6 +29,8 @@ NSString *BGSRNNetworkEventJSON(BugseeNetworkEvent *event) {
     @"type" : BGSRNJSONOrNull(stage),
     @"websocketEvent" : BGSRNJSONOrNull(websocketEvent),
     @"responseCode" : @(event.responseCode),
+    @"redirectedFromURL" : BGSRNJSONOrNull(event.redirectedFromURL),
+    @"error" : BGSRNJSONOrNull(event.error),
   } mutableCopy];
   // Non-empty bytes that are not UTF-8 stay off the snapshot. JSON null is
   // only for a body that is actually nil or empty; a present null is a clear.
@@ -111,6 +113,38 @@ BOOL BGSRNApplyNetworkReplacement(BugseeNetworkEvent *event, NSString *eventJson
       }
       event.headers = map;
       if (![event.headers isEqualToDictionary:map]) {
+        return NO;
+      }
+    } else {
+      return NO;
+    }
+  }
+  if (object[@"redirectedFromURL"] != nil) {
+    id redirected = object[@"redirectedFromURL"];
+    if (redirected == [NSNull null]) {
+      event.redirectedFromURL = nil;
+      if (event.redirectedFromURL != nil) {
+        return NO;
+      }
+    } else if ([redirected isKindOfClass:[NSString class]]) {
+      event.redirectedFromURL = redirected;
+      if (![event.redirectedFromURL isEqualToString:redirected]) {
+        return NO;
+      }
+    } else {
+      return NO;
+    }
+  }
+  if (object[@"error"] != nil) {
+    id error = object[@"error"];
+    if (error == [NSNull null]) {
+      event.error = nil;
+      if (event.error != nil) {
+        return NO;
+      }
+    } else if ([error isKindOfClass:[NSDictionary class]]) {
+      event.error = error;
+      if (![event.error isEqualToDictionary:error]) {
         return NO;
       }
     } else {

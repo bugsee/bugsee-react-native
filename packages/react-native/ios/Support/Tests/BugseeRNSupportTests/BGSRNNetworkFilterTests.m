@@ -77,4 +77,58 @@
   XCTAssertEqualObjects(snapshot[@"body"], @"hello");
 }
 
+- (void)testRedirectedFromURLAndErrorRoundTripAnIdentityOrSpreadReply {
+  NSDictionary *nilFields = [self payloadOf:[self eventWithBody:nil]];
+  XCTAssertEqualObjects(nilFields[@"redirectedFromURL"], NSNull.null);
+  XCTAssertEqualObjects(nilFields[@"error"], NSNull.null);
+
+  NSDictionary *error = @{@"domain" : @"NSURLErrorDomain", @"code" : @(-1009)};
+  BugseeNetworkEvent *event =
+      [BugseeNetworkEvent eventWithID:@"req-1"
+                           HTTPmethod:@"GET"
+                                 type:BugseeNetwork
+                      bugseeEventType:@"complete"
+                                  url:@"https://example/items"
+                        redirectedUrl:@"https://example/old"
+                                 body:[@"hello" dataUsingEncoding:NSUTF8StringEncoding]
+                                error:error
+                              headers:@{@"Accept" : @"application/json"}
+                         noBodyReason:nil
+                             dataSize:5
+                         responseCode:200];
+  NSDictionary *snapshot = [self payloadOf:event];
+  XCTAssertEqualObjects(snapshot[@"redirectedFromURL"], @"https://example/old");
+  XCTAssertEqualObjects(snapshot[@"error"][@"domain"], @"NSURLErrorDomain");
+  XCTAssertEqualObjects(snapshot[@"error"][@"code"], @(-1009));
+
+  NSString *identity = BGSRNNetworkEventJSON(event);
+  XCTAssertTrue(BGSRNApplyNetworkReplacement(event, identity));
+  XCTAssertEqualObjects(event.redirectedFromURL, @"https://example/old");
+  XCTAssertEqualObjects(event.error[@"domain"], @"NSURLErrorDomain");
+  XCTAssertEqualObjects(event.error[@"code"], @(-1009));
+
+  NSMutableDictionary *spread = [snapshot mutableCopy];
+  spread[@"url"] = @"https://example/items?bugsee-e2e-redacted=1";
+  NSData *replyData = [NSJSONSerialization dataWithJSONObject:spread options:0 error:nil];
+  NSString *reply = [[NSString alloc] initWithData:replyData encoding:NSUTF8StringEncoding];
+  XCTAssertTrue([reply containsString:@"\"redirectedFromURL\""]);
+  XCTAssertTrue([reply containsString:@"\"error\""]);
+  XCTAssertTrue(BGSRNApplyNetworkReplacement(event, reply));
+  XCTAssertEqualObjects(event.url, spread[@"url"]);
+  XCTAssertEqualObjects(event.redirectedFromURL, @"https://example/old");
+  XCTAssertEqualObjects(event.error[@"domain"], @"NSURLErrorDomain");
+  XCTAssertEqualObjects(event.error[@"code"], @(-1009));
+
+  XCTAssertTrue(BGSRNApplyNetworkReplacement(event, @"{\"redirectedFromURL\":null,\"error\":null}"));
+  XCTAssertNil(event.redirectedFromURL);
+  XCTAssertNil(event.error);
+
+  event.redirectedFromURL = @"https://example/old";
+  event.error = error;
+  XCTAssertFalse(BGSRNApplyNetworkReplacement(event, @"{\"redirectedFromURL\":1}"));
+  XCTAssertEqualObjects(event.redirectedFromURL, @"https://example/old");
+  XCTAssertFalse(BGSRNApplyNetworkReplacement(event, @"{\"error\":\"nope\"}"));
+  XCTAssertEqualObjects(event.error[@"domain"], @"NSURLErrorDomain");
+}
+
 @end

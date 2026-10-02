@@ -1,6 +1,7 @@
 package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -10,8 +11,13 @@ import androidx.annotation.Nullable;
 
 import com.bugsee.library.contracts.common.Callback1;
 import com.bugsee.library.contracts.exchange.NetworkEvent;
+import com.bugsee.library.contracts.options.Options;
+import com.bugsee.library.contracts.options.OptionsContainer;
 
+import org.json.JSONObject;
 import org.junit.Test;
+
+import java.lang.reflect.Proxy;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -83,10 +89,12 @@ public class NetworkFilterBridgeTest {
 
     private static final class RecordingSink implements NetworkFilterBridge.Sink {
         final List<String> ids = new ArrayList<>();
+        final List<String> json = new ArrayList<>();
 
         @Override
         public void onNetworkFilterRequest(@NonNull final String requestId, @NonNull final String eventJson) {
             ids.add(requestId);
+            json.add(eventJson);
         }
     }
 
@@ -94,6 +102,10 @@ public class NetworkFilterBridgeTest {
     private static final class MutableNetwork implements NetworkEvent {
         @Nullable String id;
         @Nullable String url;
+        @Nullable String body;
+        @Nullable String errorDescription;
+        @Nullable String errorShortMessage;
+        @Nullable String statusText;
         int setUrlCalls;
 
         MutableNetwork(@NonNull final String url) {
@@ -129,7 +141,12 @@ public class NetworkFilterBridgeTest {
 
         @Override
         public String getBody() {
-            return null;
+            return body;
+        }
+
+        @Override
+        public void setBody(@Nullable final String body) {
+            this.body = body;
         }
 
         @Override
@@ -139,12 +156,22 @@ public class NetworkFilterBridgeTest {
 
         @Override
         public String getErrorShortMessage() {
-            return null;
+            return errorShortMessage;
+        }
+
+        @Override
+        public void setErrorShortMessage(@Nullable final String message) {
+            errorShortMessage = message;
         }
 
         @Override
         public String getErrorDescription() {
-            return null;
+            return errorDescription;
+        }
+
+        @Override
+        public void setErrorDescription(@Nullable final String description) {
+            errorDescription = description;
         }
 
         @Override
@@ -173,11 +200,12 @@ public class NetworkFilterBridgeTest {
 
         @Override
         public String getStatusText() {
-            return null;
+            return statusText;
         }
 
         @Override
         public void setStatusText(@Nullable final String text) {
+            statusText = text;
         }
 
         @Override
@@ -192,7 +220,8 @@ public class NetworkFilterBridgeTest {
     }
 
     private final ManualScheduler scheduler = new ManualScheduler();
-    private final NetworkFilterBridge bridge = new NetworkFilterBridge(scheduler);
+    /** The borrow tests leave the default sanitizer off. It needs no launched SDK. */
+    private final NetworkFilterBridge bridge = new NetworkFilterBridge(scheduler, () -> false);
 
     @Test
     public void aReplyAfterTheUrlChangedDoesNotTouchTheEntry() {
@@ -280,5 +309,116 @@ public class NetworkFilterBridgeTest {
         assertTrue(liveCallback.sawNull);
         assertEquals(0, recycledCallback.runs);
         assertEquals(0, recycled.setUrlCalls);
+    }
+
+    /**
+     * The real 7.3.0 sanitizer redacts a {@code token} query. That happens
+     * before the url is remembered, so a reply still matches {@code stillBorrowed}
+     * and the error fields in the snapshot are written back.
+     */
+    @Test
+    public void aDefaultSanitizerRedactsTokenBeforeTheUrlIsRemembered() throws Exception {
+        final ManualScheduler localScheduler = new ManualScheduler();
+        final NetworkFilterBridge sanitizing = new NetworkFilterBridge(localScheduler, () -> true);
+        final RecordingSink sink = new RecordingSink();
+        sanitizing.attach(sink);
+        final MutableNetwork event = new MutableNetwork(
+                "https://api.example/v1/items?token=bugsee-secret-token-value&ok=1"
+        );
+        final RecordingCallback callback = new RecordingCallback();
+        sanitizing.ask(event, callback);
+
+        final String json = sink.json.get(0);
+        assertFalse(json.contains("bugsee-secret-token-value"));
+        assertTrue(json.contains("token=%3Credacted%3E"));
+        assertTrue(event.url.contains("token=%3Credacted%3E"));
+        final JSONObject snapshot = new JSONObject(json);
+        assertTrue(snapshot.isNull("errorDescription"));
+        assertTrue(snapshot.isNull("errorShortMessage"));
+        assertTrue(snapshot.isNull("statusText"));
+
+        snapshot.put("errorDescription", "gateway");
+        snapshot.put("errorShortMessage", "late");
+        snapshot.put("statusText", "OK");
+        sanitizing.reply(sink.ids.get(0), snapshot.toString());
+
+        assertEquals(1, callback.runs);
+        assertSame(event, callback.last);
+        assertEquals("gateway", event.errorDescription);
+        assertEquals("late", event.errorShortMessage);
+        assertEquals("OK", event.statusText);
+        assertTrue(event.url.contains("token=%3Credacted%3E"));
+        assertFalse(event.url.contains("bugsee-secret-token-value"));
+    }
+
+    @Test
+    public void jsonNullClearsErrorFieldsAndStatusText() throws Exception {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        final MutableNetwork event = new MutableNetwork("https://api.example/v1/items");
+        event.errorDescription = "gateway";
+        event.errorShortMessage = "late";
+        event.statusText = "OK";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(event, callback);
+
+        final JSONObject snapshot = new JSONObject(sink.json.get(0));
+        assertEquals("gateway", snapshot.getString("errorDescription"));
+        assertEquals("late", snapshot.getString("errorShortMessage"));
+        assertEquals("OK", snapshot.getString("statusText"));
+
+        bridge.reply(
+                sink.ids.get(0),
+                "{\"errorDescription\":null,\"errorShortMessage\":null,\"statusText\":null}"
+        );
+
+        assertEquals(1, callback.runs);
+        assertSame(event, callback.last);
+        assertNull(event.errorDescription);
+        assertNull(event.errorShortMessage);
+        assertNull(event.statusText);
+    }
+
+    @Test
+    public void aDisabledDefaultSanitizerLeavesTheTokenQuery() throws Exception {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        final String url = "https://api.example/v1/items?token=bugsee-secret-token-value&ok=1";
+        final MutableNetwork event = new MutableNetwork(url);
+        bridge.ask(event, new RecordingCallback());
+
+        assertEquals(url, event.url);
+        assertTrue(sink.json.get(0).contains("bugsee-secret-token-value"));
+    }
+
+    @Test
+    public void theSanitizerOptionUsesTheCaptureProviderDefault() {
+        final OptionsContainer absent = options((key, fallback) -> fallback);
+        assertTrue(NetworkFilterBridge.readDefaultSanitizerOption(absent));
+
+        final OptionsContainer off = options((key, fallback) -> Boolean.FALSE);
+        assertFalse(NetworkFilterBridge.readDefaultSanitizerOption(off));
+
+        final OptionsContainer on = options((key, fallback) -> Boolean.TRUE);
+        assertTrue(NetworkFilterBridge.readDefaultSanitizerOption(on));
+    }
+
+    private interface OptionRead {
+        Object get(String key, Object fallback);
+    }
+
+    private static OptionsContainer options(final OptionRead read) {
+        return (OptionsContainer) Proxy.newProxyInstance(
+                OptionsContainer.class.getClassLoader(),
+                new Class<?>[] { OptionsContainer.class },
+                (proxy, method, args) -> {
+                    if ("getOption".equals(method.getName()) && args != null && args.length == 2) {
+                        assertEquals(Options.CaptureNetworkUseDefaultSanitizer, args[0]);
+                        assertEquals(Boolean.TRUE, args[1]);
+                        return read.get((String) args[0], args[1]);
+                    }
+                    return null;
+                }
+        );
     }
 }

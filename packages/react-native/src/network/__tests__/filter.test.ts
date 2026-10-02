@@ -14,12 +14,17 @@ interface NetworkEvent {
   id: string | null;
   url: string | null;
   method: string | null;
-  body: string | null;
-  headers: Record<string, string> | null;
+  body?: string | null;
+  headers?: Record<string, string> | null;
   mechanism: string | null;
   type: string | null;
   websocketEvent: string | null;
   responseCode: number;
+  errorDescription?: string | null;
+  errorShortMessage?: string | null;
+  statusText?: string | null;
+  redirectedFromURL?: string | null;
+  error?: Record<string, unknown> | null;
 }
 
 const ORIGINAL: NetworkEvent = {
@@ -328,6 +333,104 @@ describe('setNetworkFilter', () => {
     emit('1');
     await flush();
     expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('body null from a snapshot that omitted body is left out of the reply', async () => {
+    const { body: _body, ...withoutBody } = ORIGINAL;
+    Bugsee.setNetworkFilter((event) => ({ ...event, body: event.body ?? null }));
+    native.emitNetworkFilterRequest({
+      requestId: '1',
+      eventJson: JSON.stringify(withoutBody),
+    });
+    await flush();
+    const payload = native.replyNetworkFilter.mock.calls[0]?.[1] as string;
+    expect(payload).not.toBeNull();
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    expect(parsed.url).toBe(ORIGINAL.url);
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'body')).toBe(false);
+    expect(payload).not.toContain('"body"');
+  });
+
+  it('headers null from a snapshot that omitted headers is left out of the reply', async () => {
+    const { headers: _headers, ...withoutHeaders } = ORIGINAL;
+    Bugsee.setNetworkFilter((event) => ({ ...event, headers: event.headers ?? null }));
+    native.emitNetworkFilterRequest({
+      requestId: '1',
+      eventJson: JSON.stringify(withoutHeaders),
+    });
+    await flush();
+    const payload = native.replyNetworkFilter.mock.calls[0]?.[1] as string;
+    expect(payload).not.toBeNull();
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'headers')).toBe(false);
+    expect(payload).not.toContain('"headers"');
+  });
+
+  it('echoes android fields the snapshot sent, including null', async () => {
+    const event: NetworkEvent = {
+      ...ORIGINAL,
+      errorDescription: null,
+      errorShortMessage: 'late',
+      statusText: null,
+    };
+    Bugsee.setNetworkFilter((received) => ({ ...received }));
+    emit('1', event);
+    await flush();
+    const payload = native.replyNetworkFilter.mock.calls[0]?.[1] as string;
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    expect(parsed.errorDescription).toBeNull();
+    expect(parsed.errorShortMessage).toBe('late');
+    expect(parsed.statusText).toBeNull();
+    expect(payload).toContain('"errorDescription":null');
+    expect(payload).toContain('"statusText":null');
+  });
+
+  it('omitting an android field the snapshot sent replies null', async () => {
+    const event: NetworkEvent = {
+      ...ORIGINAL,
+      errorDescription: 'gateway',
+      errorShortMessage: null,
+      statusText: 'OK',
+    };
+    Bugsee.setNetworkFilter((received) => {
+      const next = { ...received };
+      delete (next as { statusText?: string | null }).statusText;
+      return next;
+    });
+    emit('1', event);
+    await flush();
+    expect(native.replyNetworkFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('echoes ios fields the snapshot sent, including null', async () => {
+    const event: NetworkEvent = {
+      ...ORIGINAL,
+      redirectedFromURL: null,
+      error: { domain: 'NSURLErrorDomain', code: -1009 },
+    };
+    Bugsee.setNetworkFilter((received) => ({ ...received, url: 'https://redacted.example/path' }));
+    emit('1', event);
+    await flush();
+    const payload = native.replyNetworkFilter.mock.calls[0]?.[1] as string;
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    expect(parsed.url).toBe('https://redacted.example/path');
+    expect(parsed.redirectedFromURL).toBeNull();
+    expect(parsed.error).toEqual({ domain: 'NSURLErrorDomain', code: -1009 });
+    expect(payload).toContain('"redirectedFromURL":null');
+  });
+
+  it('json null for an ios field the snapshot sent is echoed', async () => {
+    const event: NetworkEvent = {
+      ...ORIGINAL,
+      redirectedFromURL: 'https://example/old',
+      error: null,
+    };
+    Bugsee.setNetworkFilter((received) => ({ ...received, redirectedFromURL: null, error: null }));
+    emit('1', event);
+    await flush();
+    const payload = native.replyNetworkFilter.mock.calls[0]?.[1] as string;
+    expect(payload).toContain('"redirectedFromURL":null');
+    expect(payload).toContain('"error":null');
   });
 
   it('a circular replacement replies null', async () => {

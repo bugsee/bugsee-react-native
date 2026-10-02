@@ -14,12 +14,24 @@ export interface NetworkFilterEvent {
   id: string | null;
   url: string | null;
   method: string | null;
-  body: string | null;
-  headers: Record<string, string> | null;
+  /** Omitted when the native snapshot left the key out (iOS binary body). */
+  body?: string | null;
+  /** Omitted when the native snapshot left the key out. */
+  headers?: Record<string, string> | null;
   mechanism: string | null;
   type: string | null;
   websocketEvent: string | null;
   responseCode: number;
+  /** Android. Present, including `null`, when the snapshot sent the key. */
+  errorDescription?: string | null;
+  /** Android. Present, including `null`, when the snapshot sent the key. */
+  errorShortMessage?: string | null;
+  /** Android. Present, including `null`, when the snapshot sent the key. */
+  statusText?: string | null;
+  /** iOS. Present, including `null`, when the snapshot sent the key. */
+  redirectedFromURL?: string | null;
+  /** iOS. A dictionary, or `null`, when the snapshot sent the key. */
+  error?: Record<string, unknown> | null;
 }
 
 export type NetworkFilter = (
@@ -68,12 +80,16 @@ export function setNetworkFilter(callback?: NetworkFilter | null): void {
  * and waiting for the callback on this turn would block the JS thread.
  *
  * A throw, a rejection, a result that is not the event object, or a result
- * that omits a writable key the snapshot sent drops the event. Those keys
- * are `url`, and `body` or `headers` when that key was present, including
- * when the value was `null`. A `null` value on a present key is an explicit
- * clear, not a drop. A key the snapshot omitted stays omitted. A callback
- * that never settles does not reply at all — the SDK's own timeout drops
- * it. Neither path replies with the original event.
+ * that omits a writable key the snapshot sent drops the event. `url` is
+ * always one of those keys. `body`, `headers`, `errorDescription`,
+ * `errorShortMessage`, `statusText`, `redirectedFromURL`, and `error` are
+ * too, when the snapshot sent that key, including when the value was
+ * `null`. A `null` value on a key the snapshot sent is an explicit clear.
+ * A key the snapshot omitted stays omitted: a `null` the callback wrote
+ * for that key is left out of the reply, so `body: event.body ?? null`
+ * does not clear a body the snapshot never had. A callback that never
+ * settles does not reply at all — the SDK's own timeout drops it.
+ * Neither path replies with the original event.
  */
 function onNetworkFilterRequest(event: { requestId: string; eventJson: string }): void {
   const callback = current;
@@ -101,19 +117,46 @@ function onNetworkFilterRequest(event: { requestId: string; eventJson: string })
     });
 }
 
+/** Writable when the snapshot sent them. `url` is always required. */
+const OPTIONAL_WRITABLE = [
+  'body',
+  'headers',
+  'errorDescription',
+  'errorShortMessage',
+  'statusText',
+  'redirectedFromURL',
+  'error',
+] as const;
+
 /**
  * The event object, as JSON, or `null` when the result cannot be kept.
  *
  * A keep has to name every writable key the snapshot sent. Native writes
  * only keys that are present, so a partial object would leave the fields it
- * omitted on the event. `JSON.stringify` also drops `undefined`.
+ * omitted on the event. `JSON.stringify` also drops `undefined`. A `null`
+ * on a key the snapshot omitted is dropped from the reply before that, so
+ * it is not a clear.
  */
 function replacementJson(received: NetworkFilterEvent, result: unknown): string | null {
   if (!isEvent(result) || !keepsReceivedWritableKeys(received, result)) {
     return null;
   }
+  const reply: Record<string, unknown> = {};
+  for (const key of Object.keys(result)) {
+    const value = result[key];
+    // A null on a key the snapshot never sent is the callback filling in
+    // `event.body ?? null`. Native would treat a present null as a clear.
+    if (
+      key !== 'url' &&
+      value === null &&
+      !Object.prototype.hasOwnProperty.call(received, key)
+    ) {
+      continue;
+    }
+    reply[key] = value;
+  }
   try {
-    return JSON.stringify(result);
+    return JSON.stringify(reply);
   } catch {
     return null;
   }
@@ -123,16 +166,15 @@ function keepsReceivedWritableKeys(
   received: NetworkFilterEvent,
   result: Record<string, unknown>,
 ): boolean {
-  const keys: Array<'url' | 'body' | 'headers'> = ['url'];
-  if (Object.prototype.hasOwnProperty.call(received, 'body')) {
-    keys.push('body');
+  if (!Object.prototype.hasOwnProperty.call(result, 'url') || result.url === undefined) {
+    return false;
   }
-  if (Object.prototype.hasOwnProperty.call(received, 'headers')) {
-    keys.push('headers');
-  }
-  return keys.every(
-    (key) => Object.prototype.hasOwnProperty.call(result, key) && result[key] !== undefined,
-  );
+  return OPTIONAL_WRITABLE.every((key) => {
+    if (!Object.prototype.hasOwnProperty.call(received, key)) {
+      return true;
+    }
+    return Object.prototype.hasOwnProperty.call(result, key) && result[key] !== undefined;
+  });
 }
 
 function isEvent(value: unknown): value is Record<string, unknown> {

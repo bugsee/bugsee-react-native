@@ -7,6 +7,8 @@ import com.bugsee.library.Bugsee;
 import com.bugsee.library.contracts.common.Callback1;
 import com.bugsee.library.contracts.exchange.EventFilter;
 import com.bugsee.library.contracts.exchange.NetworkEvent;
+import com.bugsee.library.contracts.options.Options;
+import com.bugsee.library.contracts.options.OptionsContainer;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -24,6 +26,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * The app's network filter, as a round trip into JS.
@@ -101,6 +106,7 @@ final class NetworkFilterBridge {
     }
 
     private final Scheduler scheduler;
+    private final BooleanSupplier defaultSanitizer;
     private final AtomicReference<Sink> sink = new AtomicReference<>();
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong();
@@ -108,12 +114,18 @@ final class NetworkFilterBridge {
 
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private NetworkFilterBridge() {
-        this(new DaemonScheduler());
+        this(new DaemonScheduler(), NetworkFilterBridge::readDefaultSanitizerOption);
     }
 
-    /** Tests pass a scheduler they fire themselves. */
-    NetworkFilterBridge(@NonNull final Scheduler scheduler) {
+    /**
+     * Tests pass a scheduler they fire themselves, and whether
+     * {@link Options#CaptureNetworkUseDefaultSanitizer} is on. The production
+     * bridge reads that option; a JVM test cannot, because
+     * {@link Bugsee#getLaunchOptions()} needs an Android looper.
+     */
+    NetworkFilterBridge(@NonNull final Scheduler scheduler, @NonNull final BooleanSupplier defaultSanitizer) {
         this.scheduler = scheduler;
+        this.defaultSanitizer = defaultSanitizer;
     }
 
     private final EventFilter<NetworkEvent> filter = new EventFilter<NetworkEvent>() {
@@ -171,9 +183,10 @@ final class NetworkFilterBridge {
     /**
      * Applies JS's answer. {@code null} drops the event, while the entry is
      * still the one the SDK lent us. A JSON object may replace {@code url},
-     * {@code body} and {@code headers}; the same event is returned, so the
-     * timestamp and the stage stay. A field the entry ignores is a drop
-     * rather than an unredacted keep.
+     * {@code body}, {@code headers}, {@code errorDescription},
+     * {@code errorShortMessage} and {@code statusText}; the same event is
+     * returned, so the timestamp and the stage stay. A field the entry
+     * ignores is a drop rather than an unredacted keep.
      *
      * <p>If {@code getId()} or {@code getUrl()} is no longer the original,
      * the pooled entry has been recycled. This returns without writing and
@@ -208,6 +221,19 @@ final class NetworkFilterBridge {
             @NonNull final NetworkEvent event,
             @NonNull final Callback1<NetworkEvent> callback
     ) {
+        // setNetworkEventFilter skips DefaultNetworkDataSanitizer. The
+        // capture provider runs it only when no filter is installed, and
+        // only when CaptureNetworkUseDefaultSanitizer is on (default true).
+        // Sanitize before the snapshot and before the url is remembered, so
+        // stillBorrowed compares the url the callback actually saw.
+        try {
+            if (defaultSanitizer.getAsBoolean()) {
+                Bugsee.getDefaultNetworkSanitizer().sanitize(event);
+            }
+        } catch (final Throwable e) {
+            drop(callback);
+            return;
+        }
         final String url;
         final String id;
         try {
@@ -254,6 +280,23 @@ final class NetworkFilterBridge {
         pending.remove(id);
     }
 
+    /**
+     * The same read the capture provider uses when it decides to sanitize:
+     * {@link Options#CaptureNetworkUseDefaultSanitizer} with default
+     * {@link Boolean#TRUE}. A false value leaves the event alone.
+     */
+    private static boolean readDefaultSanitizerOption() {
+        return readDefaultSanitizerOption(Bugsee.getLaunchOptions());
+    }
+
+    static boolean readDefaultSanitizerOption(@NonNull final OptionsContainer options) {
+        final Object value = options.getOption(
+                Options.CaptureNetworkUseDefaultSanitizer,
+                Boolean.TRUE
+        );
+        return ((Boolean) value).booleanValue();
+    }
+
     /** The entry is still the SDK's borrow of the event we were asked to filter. */
     private static boolean stillBorrowed(@NonNull final Pending item) {
         try {
@@ -278,7 +321,38 @@ final class NetworkFilterBridge {
         if (object.has("body") && !applyBody(event, object)) {
             return false;
         }
+        if (object.has("errorDescription")
+                && !applyString(object, "errorDescription", event::getErrorDescription, event::setErrorDescription)) {
+            return false;
+        }
+        if (object.has("errorShortMessage")
+                && !applyString(object, "errorShortMessage", event::getErrorShortMessage, event::setErrorShortMessage)) {
+            return false;
+        }
+        if (object.has("statusText")
+                && !applyString(object, "statusText", event::getStatusText, event::setStatusText)) {
+            return false;
+        }
         return !object.has("headers") || applyHeaders(event, object);
+    }
+
+    private static boolean applyString(
+            @NonNull final JSONObject object,
+            @NonNull final String key,
+            @NonNull final Supplier<String> get,
+            @NonNull final Consumer<String> set
+    ) throws JSONException {
+        if (object.isNull(key)) {
+            set.accept(null);
+            return get.get() == null;
+        }
+        final Object raw = object.get(key);
+        if (!(raw instanceof String)) {
+            return false;
+        }
+        final String value = (String) raw;
+        set.accept(value);
+        return value.equals(get.get());
     }
 
     private static boolean applyUrl(@NonNull final NetworkEvent event, @NonNull final JSONObject object)
@@ -343,6 +417,9 @@ final class NetworkFilterBridge {
         put(object, "url", event.getUrl());
         put(object, "method", event.getMethod());
         put(object, "body", event.getBody());
+        put(object, "errorDescription", event.getErrorDescription());
+        put(object, "errorShortMessage", event.getErrorShortMessage());
+        put(object, "statusText", event.getStatusText());
         put(object, "mechanism", event.getMechanism());
         final NetworkEvent.NetworkEventStage stage = event.getNetworkEventType();
         put(object, "type", stage == null ? null : stage.toString());
