@@ -40,6 +40,7 @@ describe('addBreadcrumb', () => {
         'tapped',
         'navigation',
         null,
+        null,
       );
     },
   );
@@ -52,6 +53,7 @@ describe('addBreadcrumb', () => {
       'tapped',
       'navigation',
       null,
+      null,
     );
   });
 
@@ -63,6 +65,7 @@ describe('addBreadcrumb', () => {
       'tapped',
       'navigation',
       jsonOf({ id: 1, note: null }),
+      null,
     );
 
     native.addBreadcrumb.mockClear();
@@ -72,6 +75,7 @@ describe('addBreadcrumb', () => {
       'info',
       'tapped',
       'navigation',
+      null,
       null,
     );
   });
@@ -83,7 +87,7 @@ describe('addBreadcrumb', () => {
     bare.message = '';
     bare.type = '';
     Bugsee.addBreadcrumb(bare as typeof crumb);
-    expect(native.addBreadcrumb).toHaveBeenCalledWith('', 'debug', '', '', null);
+    expect(native.addBreadcrumb).toHaveBeenCalledWith('', 'debug', '', '', null, null);
   });
 
   it('names the kind of value that is not a crumb object', () => {

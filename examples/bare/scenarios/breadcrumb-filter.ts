@@ -8,7 +8,10 @@
  * crumb's callback never settles, so it is not recorded; this scenario does
  * not add a timeout that would pass the crumb through. A fourth crumb carries
  * a secret and `setBreadcrumbFilter(null)` is the next call, on that same
- * turn. The secret is redacted. The clear is not awaited.
+ * turn. The secret is redacted. The clear is not awaited. A fifth crumb
+ * installs a redacting filter, adds a secret, then restores a passthrough,
+ * still on that turn. The passthrough does not replace the callback that
+ * was installed for that add. The secret is redacted.
  *
  * A crumb that is not one of the probes is returned unchanged, so the SDK's
  * own breadcrumb capture still records. The upload waits long enough for the
@@ -34,7 +37,7 @@ function mark(message: string): void {
 const UPLOAD_AFTER_MS = 5_000;
 
 function probe(
-  kind: 'immediate' | 'rewrite' | 'hang' | 'cleared',
+  kind: 'immediate' | 'rewrite' | 'hang' | 'cleared' | 'restored',
   nonce: string,
 ): string {
   return `breadcrumb-filter ${kind} ${nonce}`;
@@ -89,6 +92,23 @@ export function runBreadcrumbFilterScenario(nonce: string): void {
   record('cleared', nonce);
   Bugsee.setBreadcrumbFilter(null);
   mark(`cleared same turn nonce=${nonce}`);
+  // Same turn: a redactor, the secret, then a passthrough. The passthrough
+  // must not be the callback that answers this crumb.
+  Bugsee.setBreadcrumbFilter((crumb) => {
+    const message = crumb.message ?? '';
+    if (message.includes(probe('restored', nonce))) {
+      return { ...crumb, message: message.replace('SECRET', 'REDACTED') };
+    }
+    return crumb;
+  });
+  Bugsee.addBreadcrumb({
+    category: 'e2e',
+    level: 'info',
+    message: `${probe('restored', nonce)} SECRET`,
+    type: 'user',
+  });
+  Bugsee.setBreadcrumbFilter((crumb) => crumb);
+  mark(`restored same turn nonce=${nonce}`);
   setTimeout(() => {
     Bugsee.upload(`breadcrumb-filter-${nonce}`, '');
     mark(`uploaded nonce=${nonce}`);

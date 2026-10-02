@@ -464,7 +464,8 @@ class Bugsee {
    * it does not add a timeout. A callback that throws, rejects, or never
    * settles drops the crumb. The original is not passed through. A crumb
    * already passed to `addBreadcrumb` is still offered to the callback that
-   * was installed for it when this is cleared on that same turn.
+   * was installed for it when this is cleared, or replaced with another
+   * function, on that same turn.
    *
    * Capture stays off until launch options set `captureBreadcrumbs: true`,
    * on Android and on iOS. While it is off, `addBreadcrumb` records nothing

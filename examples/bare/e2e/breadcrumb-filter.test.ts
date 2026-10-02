@@ -186,4 +186,29 @@ describeDevice(`breadcrumb filter on ${TARGET_NAME}`, () => {
     expect(uploaded.length).toBeGreaterThan(0);
     expect(cleared[0]!.index).toBeLessThan(uploaded[0]!.index);
   });
+
+  it('a crumb restored to a passthrough on the same turn is retained redacted', () => {
+    expect(bundles).toHaveLength(1);
+    const events = breadcrumbEventsOf(bundles[0]!);
+    const want = `breadcrumb-filter restored ${nonce} REDACTED`;
+    const matches = events.filter(event => messageOf(event).includes(`breadcrumb-filter restored ${nonce}`));
+    report('restored matches', matches);
+    expect(matches).toHaveLength(1);
+    const [event] = matches as [Record<string, unknown>];
+    expect(event.message).toBe(want);
+    expect(event.level).toBe('info');
+    const leaked = events.filter(event =>
+      messageOf(event).includes(`breadcrumb-filter restored ${nonce} SECRET`),
+    );
+    expect(leaked).toHaveLength(0);
+    const restored = log.all(
+      new RegExp(`BUGSEE_E2E breadcrumb-filter restored same turn nonce=${nonce}`),
+    );
+    const uploaded = log.all(
+      new RegExp(`BUGSEE_E2E breadcrumb-filter uploaded nonce=${nonce}`),
+    );
+    expect(restored.length).toBeGreaterThan(0);
+    expect(uploaded.length).toBeGreaterThan(0);
+    expect(restored[0]!.index).toBeLessThan(uploaded[0]!.index);
+  });
 });

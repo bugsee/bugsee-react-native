@@ -249,6 +249,12 @@ export interface Spec extends TurboModule {
    * maps that name to its own integer. The factory stamps the time; this
    * does not take a timestamp. `dataJson` is the crumb's `data` as JSON
    * text, or `null` when the caller supplied none.
+   *
+   * `addId` is the id JS retained for this manual add, or `null` when no
+   * filter is installed. Returns `true` only when a filter request for that
+   * id was emitted or will be emitted. `false` means JS should drop the id:
+   * capture is off, or the crumb was not built. The id is not a field of the
+   * crumb.
    */
   addBreadcrumb(
     category: string,
@@ -256,7 +262,8 @@ export interface Spec extends TurboModule {
     message: string,
     type: string,
     dataJson: string | null,
-  ): void;
+    addId: string | null,
+  ): boolean;
 
   /**
    * A breadcrumb the SDK is about to record, offered to the JS filter.
@@ -267,10 +274,15 @@ export interface Spec extends TurboModule {
    * {@link replyBreadcrumbFilter}. A request that never gets an answer is
    * not recorded; this event is not a second timeout, and the reply is never
    * the original crumb after a failed filter.
+   *
+   * `addId` is set only on the request for the manual `addBreadcrumb` that
+   * passed that id. It sits beside `crumbJson`; it is not a key inside the
+   * crumb the callback sees. An SDK crumb omits it.
    */
   readonly onBreadcrumbFilterRequest: EventEmitter<{
     requestId: string;
     crumbJson: string;
+    addId?: string;
   }>;
   /**
    * Installs or removes the native breadcrumb filter. `true` registers the

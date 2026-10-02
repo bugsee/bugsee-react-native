@@ -10,26 +10,44 @@ let current: BreadcrumbFilter | undefined;
 let subscribed = false;
 
 /**
- * Crumbs `addBreadcrumb` submitted while `current` was set. iOS records on
- * the main queue, so a clear on the same turn runs before that record asks
- * JS. The callback that was installed at the add still answers that crumb.
- * A request whose message was not one of these drops, which is the clear.
+ * One `addBreadcrumb` submitted while `current` was set. iOS records on the
+ * main queue, so a later `setBreadcrumbFilter` on that turn runs before the
+ * record asks JS. The callback installed at the add still answers that crumb.
+ * The id is not the crumb's message: two adds with the same message, and an
+ * SDK crumb that happens to repeat it, must not take each other's callback.
+ * An add native did not ask about is removed, so it cannot be claimed later.
  */
-const owed: Array<{ message: string; callback: BreadcrumbFilter }> = [];
+let nextAddId = 0;
+const owed: Array<{ id: string; callback: BreadcrumbFilter }> = [];
 
-/** Called from `addBreadcrumb` after validation, before the native call. */
-export function retainBreadcrumbFilterForAdd(message: string): void {
+/**
+ * Called from `addBreadcrumb` after validation, before the native call.
+ * Returns the id native echoes on that add's filter request, or `null` when
+ * nothing is installed and there is nothing to retain.
+ */
+export function retainBreadcrumbFilterForAdd(): string | null {
   if (current === undefined) {
-    return;
+    return null;
   }
-  owed.push({ message, callback: current });
+  nextAddId += 1;
+  const id = String(nextAddId);
+  owed.push({ id, callback: current });
+  return id;
 }
 
-function claimBreadcrumbFilter(message: string | undefined): BreadcrumbFilter | undefined {
-  if (message === undefined) {
+/** Drops an id native reported it will not ask about. */
+export function releaseBreadcrumbFilterForAdd(id: string): void {
+  const index = owed.findIndex((item) => item.id === id);
+  if (index >= 0) {
+    owed.splice(index, 1);
+  }
+}
+
+function claimBreadcrumbFilter(id: string | undefined): BreadcrumbFilter | undefined {
+  if (id === undefined || id.length === 0) {
     return undefined;
   }
-  const index = owed.findIndex((item) => item.message === message);
+  const index = owed.findIndex((item) => item.id === id);
   if (index < 0) {
     return undefined;
   }
@@ -66,9 +84,11 @@ export function setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
  *
  * The callback is read here, at dispatch, so a `setBreadcrumbFilter` made
  * while this request is in flight changes the next crumb, not this one.
- * When nothing is installed, a crumb `addBreadcrumb` submitted under a
- * filter that this turn then cleared is answered by that filter. Any other
- * request drops. The callback itself runs on a later turn.
+ * A request that carries the id from `addBreadcrumb` is answered by the
+ * callback that was installed for that add, including when this turn then
+ * cleared the filter or replaced it with another function. A request with
+ * no id is an SDK crumb: it uses whatever is installed now and does not
+ * take an owed callback. The callback itself runs on a later turn.
  *
  * A throw, a rejection, a result that is not an object, or a keep that drops
  * a writable key the snapshot sent (`category`, `level`, `message`, `type`,
@@ -77,15 +97,22 @@ export function setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
  * `timestamp` is not a writable key, and a key the snapshot omitted stays
  * omitted. `data: null` when the snapshot sent `data` clears it.
  */
-function onBreadcrumbFilterRequest(event: { requestId: string; crumbJson: string }): void {
+function onBreadcrumbFilterRequest(event: {
+  requestId: string;
+  crumbJson: string;
+  addId?: string;
+}): void {
   const { requestId } = event;
+  // Claim before parsing. A release for an add that never asked has an id
+  // and a crumb JSON that is not a snapshot; the slot has to go, and the
+  // callback must not run.
+  const reserved = claimBreadcrumbFilter(event.addId);
   const snapshot = snapshotFromJson(event.crumbJson);
   if (snapshot === null) {
     reply(requestId, null);
     return;
   }
-  const reserved = claimBreadcrumbFilter(snapshot.message);
-  const callback = current ?? reserved;
+  const callback = reserved ?? current;
   if (callback === undefined) {
     reply(requestId, null);
     return;

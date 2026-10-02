@@ -45,7 +45,15 @@ final class BreadcrumbFilterBridge {
 
     /** What the module implements to emit {@code onBreadcrumbFilterRequest}. */
     interface Sink {
-        void onBreadcrumbFilterRequest(@NonNull String requestId, @NonNull String crumbJson);
+        /**
+         * {@code addId} is the manual add in progress, or null for an SDK
+         * crumb. It is not a key of {@code crumbJson}.
+         */
+        void onBreadcrumbFilterRequest(
+                @NonNull String requestId,
+                @NonNull String crumbJson,
+                @Nullable String addId
+        );
     }
 
     private static final class Pending {
@@ -78,6 +86,13 @@ final class BreadcrumbFilterBridge {
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong();
     private final AtomicBoolean installed = new AtomicBoolean();
+    private final Object sdkLock = new Object();
+    /**
+     * The id of the manual {@code addBreadcrumb} on this thread. Set only
+     * around {@link Bugsee#addBreadcrumb}. The filter request for that add
+     * takes it; an SDK crumb on this thread does not see it afterwards.
+     */
+    private final ThreadLocal<String> manualAddId = new ThreadLocal<>();
 
     /** Tests construct their own. Production uses {@link #shared()}. */
     BreadcrumbFilterBridge() {
@@ -121,17 +136,31 @@ final class BreadcrumbFilterBridge {
         }
     }
 
+    /**
+     * Serializes {@link #setEnabled} with {@code Bugsee.addBreadcrumb}.
+     * Those two TurboModule calls run on different threads, so an add can
+     * otherwise record before a filter installed on the previous line is
+     * visible. The lock is reentrant: the filter runs inside the add.
+     */
+    void withSdkLock(@NonNull final Runnable body) {
+        synchronized (sdkLock) {
+            body.run();
+        }
+    }
+
     /** Installs the filter, or removes it. A second {@code true} is a no-op. */
     void setEnabled(final boolean enabled) {
-        if (enabled) {
-            if (installed.compareAndSet(false, true)) {
-                Bugsee.setBreadcrumbFilter(filter);
+        withSdkLock(() -> {
+            if (enabled) {
+                if (installed.compareAndSet(false, true)) {
+                    Bugsee.setBreadcrumbFilter(filter);
+                }
+                return;
             }
-            return;
-        }
-        if (installed.compareAndSet(true, false)) {
-            Bugsee.setBreadcrumbFilter(null);
-        }
+            if (installed.compareAndSet(true, false)) {
+                Bugsee.setBreadcrumbFilter(null);
+            }
+        });
     }
 
     /**
@@ -162,6 +191,22 @@ final class BreadcrumbFilterBridge {
         }
     }
 
+    /** Marks {@code addId} as the manual add on this thread, until {@link #ask} emits it. */
+    void beginManualAdd(@NonNull final String addId) {
+        manualAddId.set(addId);
+    }
+
+    /**
+     * Takes the manual id if {@link #ask} did not emit it. Null means the
+     * filter request for this add already carried the id, or none was begun.
+     */
+    @Nullable
+    String takeUnclaimedManualAdd() {
+        final String id = manualAddId.get();
+        manualAddId.remove();
+        return id;
+    }
+
     void ask(
             @NonNull final Breadcrumb event,
             @NonNull final Callback1<Breadcrumb> callback
@@ -181,8 +226,12 @@ final class BreadcrumbFilterBridge {
         final String id = Long.toString(ids.incrementAndGet());
         final Pending item = new Pending(id, event, callback, current);
         pending.put(id, item);
+        final String addId = manualAddId.get();
         try {
-            current.onBreadcrumbFilterRequest(id, json);
+            current.onBreadcrumbFilterRequest(id, json, addId);
+            if (addId != null) {
+                manualAddId.remove();
+            }
         } catch (final Throwable e) {
             if (pending.remove(id, item)) {
                 drop(callback);

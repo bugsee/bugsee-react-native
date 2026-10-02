@@ -415,6 +415,10 @@ static BOOL BGSRNBreadcrumbFilterInstalled = NO;
 static int64_t BGSRNBreadcrumbFilterGeneration = 0;
 static NSMutableDictionary<NSString *, BGSRNBreadcrumbFilterPending *> *BGSRNBreadcrumbFilterPendingTable;
 static int64_t BGSRNBreadcrumbFilterNextId = 0;
+/// The `addId` of the manual add currently inside `[Bugsee addBreadcrumb:]`.
+/// The filter block copies it onto that one request. SDK crumbs are filtered
+/// outside this window, so their requests omit it.
+static NSString *BGSRNBreadcrumbManualAddId = nil;
 
 static id BGSRNBreadcrumbFilterLock(void) {
   static id lock;
@@ -1300,7 +1304,20 @@ RCT_EXPORT_MODULE(Bugsee)
           requestId = [NSString stringWithFormat:@"%lld", BGSRNBreadcrumbFilterNextId];
           BGSRNBreadcrumbFilterPendingTable[requestId] = item;
         }
-        const BOOL delivered = [module emitBreadcrumbFilterRequest:requestId crumbJson:crumbJson];
+        NSString *manualAddId = nil;
+        @synchronized (BGSRNBreadcrumbFilterLock()) {
+          manualAddId = BGSRNBreadcrumbManualAddId;
+        }
+        const BOOL delivered = [module emitBreadcrumbFilterRequest:requestId
+                                                          crumbJson:crumbJson
+                                                              addId:manualAddId];
+        if (delivered && manualAddId != nil) {
+          @synchronized (BGSRNBreadcrumbFilterLock()) {
+            if ([BGSRNBreadcrumbManualAddId isEqualToString:manualAddId]) {
+              BGSRNBreadcrumbManualAddId = nil;
+            }
+          }
+        }
         if (!delivered) {
           BugseeBreadcrumbFilterDecisionBlock drop = nil;
           @synchronized (BGSRNBreadcrumbFilterLock()) {
@@ -1331,11 +1348,26 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
-- (BOOL)emitBreadcrumbFilterRequest:(NSString *)requestId crumbJson:(NSString *)crumbJson {
-  NSDictionary *payload = @{ @"requestId" : requestId, @"crumbJson" : crumbJson };
+- (BOOL)emitBreadcrumbFilterRequest:(NSString *)requestId
+                           crumbJson:(NSString *)crumbJson
+                               addId:(NSString * _Nullable)addId {
+  NSDictionary *payload = addId != nil
+      ? @{ @"requestId" : requestId, @"crumbJson" : crumbJson, @"addId" : addId }
+      : @{ @"requestId" : requestId, @"crumbJson" : crumbJson };
   return BGSRNGuardedEmit(^{
     [self emitOnBreadcrumbFilterRequest:payload];
   }, @"onBreadcrumbFilterRequest");
+}
+
+/// The main-queue record dropped this id (no factory, no crumb, or the filter
+/// never asked). JS drops the owed callback. `crumbJson` is empty, so the
+/// callback does not run. The request id is not in the pending table, so the
+/// reply is a no-op. There is no timer.
+- (void)releaseBreadcrumbManualAdd:(NSString *)addId {
+  if (addId.length == 0) {
+    return;
+  }
+  [self emitBreadcrumbFilterRequest:@"release" crumbJson:@"" addId:addId];
 }
 
 /// `crumbJson` nil drops. An object is written onto the same breadcrumb.
@@ -1372,14 +1404,22 @@ RCT_EXPORT_MODULE(Bugsee)
 
 /// The no-argument `createBreadcrumb` leaves the timestamp unset so the
 /// provider stamps it. `level` is the JS name, mapped to `BugseeLogLevel`.
-/// `dataJson` nil leaves data unset. On main, like every other SDK entry
-/// point. The filter install above is not: it has to be on the calling queue.
-/// A filter clear is on this queue too, behind the block queued here.
-- (void)addBreadcrumb:(NSString *)category
-                level:(NSString *)level
-              message:(NSString *)message
-                 type:(NSString *)type
-             dataJson:(NSString * _Nullable)dataJson {
+/// `dataJson` nil leaves data unset. The record itself is on main, like
+/// every other SDK entry point. Capture being off is decided here, on the
+/// calling queue, so this can return false without queueing. The filter
+/// install above is also on the calling queue. A filter clear is on the
+/// main queue, behind the block queued here.
+///
+/// Returns true only when a filter request for `addId` was emitted or will
+/// be emitted. A drop on main (no factory, no crumb, or the filter never
+/// asked) releases that id so JS does not leave it owed. `addId` is echoed
+/// only for the duration of `[Bugsee addBreadcrumb:]`.
+- (NSNumber *)addBreadcrumb:(NSString *)category
+                      level:(NSString *)level
+                    message:(NSString *)message
+                       type:(NSString *)type
+                   dataJson:(NSString * _Nullable)dataJson
+                      addId:(NSString * _Nullable)addId {
   NSDictionary *data = nil;
   const BOOL hasData = dataJson != nil;
   if (hasData) {
@@ -1388,31 +1428,31 @@ RCT_EXPORT_MODULE(Bugsee)
     if (data == nil) {
       NSLog(@"BugseeRN addBreadcrumb dropped: its data is not a JSON object: %@",
             error.localizedDescription);
-      return;
+      return @NO;
     }
   }
   NSInteger levelValue = 0;
   if (![level isKindOfClass:NSString.class]
       || !BGSRNBreadcrumbLevelFromName(level, &levelValue)) {
     NSLog(@"BugseeRN addBreadcrumb dropped: level %@ is not a breadcrumb level name", level);
-    return;
+    return @NO;
   }
+  // createBreadcrumb still returns a crumb when capture is left off, and
+  // addBreadcrumb: then records nothing. The option is the signal, and it
+  // is read here so a false return does not queue a record.
+  id capture = [Bugsee getLaunchOptions][BugseeOptionCaptureBreadcrumbs];
+  if (![capture isKindOfClass:NSNumber.class] || ![(NSNumber *)capture boolValue]) {
+    NSLog(@"BugseeRN addBreadcrumb dropped: capture is off or the SDK made no crumb");
+    return @NO;
+  }
+  __weak BugseeModule *module = self;
   BGSRNRunOnMain(^{
-    // createBreadcrumb still returns a crumb when capture is left off, and
-    // addBreadcrumb: then records nothing. The option is the signal.
-    id capture = [Bugsee getLaunchOptions][BugseeOptionCaptureBreadcrumbs];
-    if (![capture isKindOfClass:NSNumber.class] || ![(NSNumber *)capture boolValue]) {
-      NSLog(@"BugseeRN addBreadcrumb dropped: capture is off or the SDK made no crumb");
-      return;
-    }
+    BugseeModule *strong = module;
     id<BGSBugseeExchangeFactory> factory = [Bugsee getExchangeFactory];
-    if (factory == nil) {
-      NSLog(@"BugseeRN addBreadcrumb dropped: capture is off or the SDK made no crumb");
-      return;
-    }
-    id<BGSBreadcrumb> crumb = [factory createBreadcrumb];
+    id<BGSBreadcrumb> crumb = factory != nil ? [factory createBreadcrumb] : nil;
     if (crumb == nil) {
       NSLog(@"BugseeRN addBreadcrumb dropped: capture is off or the SDK made no crumb");
+      [strong releaseBreadcrumbManualAdd:addId];
       return;
     }
     crumb.category = category;
@@ -1422,8 +1462,23 @@ RCT_EXPORT_MODULE(Bugsee)
     if (hasData) {
       crumb.data = data;
     }
-    [Bugsee addBreadcrumb:crumb];
+    @synchronized (BGSRNBreadcrumbFilterLock()) {
+      BGSRNBreadcrumbManualAddId = addId;
+    }
+    @try {
+      [Bugsee addBreadcrumb:crumb];
+    } @finally {
+      NSString *leftover = nil;
+      @synchronized (BGSRNBreadcrumbFilterLock()) {
+        leftover = BGSRNBreadcrumbManualAddId;
+        BGSRNBreadcrumbManualAddId = nil;
+      }
+      if (leftover != nil) {
+        [strong releaseBreadcrumbManualAdd:leftover];
+      }
+    }
   });
+  return addId != nil ? @YES : @NO;
 }
 
 #pragma mark - Attributes and identity

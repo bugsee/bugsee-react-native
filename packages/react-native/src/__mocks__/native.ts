@@ -87,6 +87,8 @@ let logFilterRequestSubscribeCalls = 0;
 interface BreadcrumbFilterRequestEvent {
   requestId: string;
   crumbJson: string;
+  /** Present only for the manual add that passed this id. SDK crumbs omit it. */
+  addId?: string;
 }
 
 const breadcrumbFilterRequestListeners = new Set<
@@ -194,8 +196,14 @@ export const native = {
   /**
    * `level` is the name (`debug`, `info`, `warning`, `error`, `fatal`).
    * `dataJson` is JSON text, or null when the caller supplied no data.
+   * The last argument is the manual add's id, or null when no filter is
+   * installed. Returns true when a filter request for that id will be
+   * emitted. Tests that simulate capture being off return false.
    */
-  addBreadcrumb: jest.fn<void, [string, string, string, string, string | null]>(),
+  addBreadcrumb: jest.fn<
+    boolean,
+    [string, string, string, string, string | null, string | null]
+  >(() => true),
 
   /**
    * The codegen EventEmitter for a native breadcrumb-filter request. Tests

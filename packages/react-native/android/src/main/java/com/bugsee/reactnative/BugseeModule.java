@@ -618,11 +618,15 @@ public class BugseeModule extends NativeBugseeSpec
     @Override
     public void onBreadcrumbFilterRequest(
             @NonNull final String requestId,
-            @NonNull final String crumbJson
+            @NonNull final String crumbJson,
+            @Nullable final String addId
     ) {
         final WritableMap payload = Arguments.createMap();
         payload.putString("requestId", requestId);
         payload.putString("crumbJson", crumbJson);
+        if (addId != null) {
+            payload.putString("addId", addId);
+        }
         emitOnBreadcrumbFilterRequest(payload);
     }
 
@@ -648,14 +652,20 @@ public class BugseeModule extends NativeBugseeSpec
      * so the provider stamps it. {@code level} is the JS name;
      * {@link BreadcrumbFilterBridge#levelFromName} maps it to
      * {@link Breadcrumb.Level}. {@code dataJson} null leaves data unset.
+     *
+     * <p>Returns true only when a filter request for {@code addId} was
+     * emitted during {@link Bugsee#addBreadcrumb}. The filter runs before
+     * that call returns, so the id has to be visible to it for this call
+     * only. False means JS should drop the id.
      */
     @Override
-    public void addBreadcrumb(
+    public boolean addBreadcrumb(
             final String category,
             final String level,
             final String message,
             final String type,
-            @Nullable final String dataJson
+            @Nullable final String dataJson,
+            @Nullable final String addId
     ) {
         try {
             // iOS still hands back a crumb when this option is false, then
@@ -667,22 +677,22 @@ public class BugseeModule extends NativeBugseeSpec
                     : options.getOption(Options.CaptureBreadcrumbs, Boolean.FALSE);
             if (!Boolean.TRUE.equals(capture)) {
                 Log.e(TAG, "addBreadcrumb dropped: capture is off or the SDK made no crumb");
-                return;
+                return false;
             }
             final BugseeExchangeFactory factory = Bugsee.getExchangeFactory();
             if (factory == null) {
                 Log.e(TAG, "addBreadcrumb dropped: capture is off or the SDK made no crumb");
-                return;
+                return false;
             }
             final Breadcrumb crumb = factory.createBreadcrumb();
             if (crumb == null) {
                 Log.e(TAG, "addBreadcrumb dropped: capture is off or the SDK made no crumb");
-                return;
+                return false;
             }
             final Breadcrumb.Level parsed = BreadcrumbFilterBridge.levelFromName(level);
             if (parsed == null) {
                 Log.e(TAG, "addBreadcrumb dropped: level is not a breadcrumb level name");
-                return;
+                return false;
             }
             crumb.setCategory(category);
             crumb.setLevel(parsed);
@@ -691,11 +701,26 @@ public class BugseeModule extends NativeBugseeSpec
             if (dataJson != null) {
                 crumb.setData(BridgeJson.parseObject(dataJson));
             }
-            Bugsee.addBreadcrumb(crumb);
+            final boolean[] emitted = { false };
+            BreadcrumbFilterBridge.shared().withSdkLock(() -> {
+                if (addId != null) {
+                    BreadcrumbFilterBridge.shared().beginManualAdd(addId);
+                }
+                try {
+                    Bugsee.addBreadcrumb(crumb);
+                    emitted[0] = addId != null
+                            && BreadcrumbFilterBridge.shared().takeUnclaimedManualAdd() == null;
+                } finally {
+                    BreadcrumbFilterBridge.shared().takeUnclaimedManualAdd();
+                }
+            });
+            return emitted[0];
         } catch (final BridgeJson.BadJson e) {
             Log.e(TAG, "addBreadcrumb dropped: its data is not a JSON object: " + e.getMessage());
+            return false;
         } catch (final RuntimeException e) {
             Log.e(TAG, "addBreadcrumb failed", e);
+            return false;
         }
     }
 

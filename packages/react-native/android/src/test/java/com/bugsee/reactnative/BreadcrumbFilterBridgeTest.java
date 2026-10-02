@@ -55,7 +55,8 @@ public class BreadcrumbFilterBridgeTest {
         @Override
         public void onBreadcrumbFilterRequest(
                 @NonNull final String requestId,
-                @NonNull final String crumbJson
+                @NonNull final String crumbJson,
+                @Nullable final String addId
         ) {
             if (throwOnEmit) {
                 throw new IllegalStateException("emit failed");
