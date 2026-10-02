@@ -461,10 +461,13 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     /**
-     * A network event the app recorded itself. The factory stamps nothing:
-     * this bridge does, then builds the event and submits it with filtering
-     * required. A missing factory or a null event is logged and dropped.
-     * There is no timeout that would pass the original through.
+     * A network event the app recorded itself. The bridge stamps it with
+     * {@code BugseeExchangeFactory.currentTimestamp()}, the SDK capture
+     * clock, then builds the event and submits it with filtering required.
+     * A missing factory or a null event is logged and dropped. That clock
+     * is not read when the factory is missing: {@code NetworkEvents.record}
+     * returns {@code NO_EVENT} before {@code clock.now()}. There is no
+     * timeout that would pass the original through.
      */
     @Override
     public void addNetworkEvent(final String eventJson) {
@@ -472,12 +475,16 @@ public class BugseeModule extends NativeBugseeSpec
         try {
             final com.bugsee.library.contracts.exchange.BugseeExchangeFactory factory =
                     Bugsee.getExchangeFactory();
+            // A null receiver makes factory::currentTimestamp throw while the
+            // reference is created. record() never reads the clock in that
+            // case, so the stand-in is not the factory clock.
+            final NetworkEvents.Clock clock = factory == null ? () -> 0L : factory::currentTimestamp;
             outcome = NetworkEvents.record(
                     eventJson,
                     factory == null ? null : (timestamp, stage, eventId, mechanism, method) ->
                             factory.createNetworkEvent(timestamp, stage, eventId, mechanism, method),
                     (event, requiresFiltering) -> Bugsee.addNetworkEvent(event, requiresFiltering),
-                    System::currentTimeMillis
+                    clock
             );
         } catch (final Throwable e) {
             Log.w(TAG, "addNetworkEvent dropped: the SDK made no event");
