@@ -221,6 +221,16 @@ export interface Spec extends TurboModule {
    */
   replyNetworkFilter(requestId: string, eventJson: string | null): void;
   /**
+   * Records a network event the SDK did not capture.
+   *
+   * `eventJson` is the event (`url`, `method`, a stage name, and the fields
+   * a network filter may rewrite). Native stamps the timestamp, builds the
+   * event with the SDK exchange factory, and submits it with filtering
+   * required. JS does not run the filter. A factory that makes no event
+   * drops it, logged `addNetworkEvent dropped: the SDK made no event`.
+   */
+  addNetworkEvent(eventJson: string): void;
+  /**
    * A log line the SDK is about to record, offered to the JS filter.
    *
    * `requestId` is native-minted and never reused within a process. `line`

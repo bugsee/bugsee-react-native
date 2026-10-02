@@ -25,6 +25,7 @@
 #import <BugseeRNSupport/BGSRNValues.h>
 #import <BugseeRNSupport/BGSRNJSON.h>
 #import <BugseeRNSupport/BGSRNNetworkFilter.h>
+#import <BugseeRNSupport/BGSRNNetworkEvents.h>
 #import <BugseeRNSupport/BGSRNAttributes.h>
 #import <BugseeRNSupport/BGSRNDataRequestBridge.h>
 #import <BugseeRNSupport/BGSRNReactWindow.h>
@@ -47,6 +48,7 @@
 #import "BGSRNValues.h"
 #import "BGSRNJSON.h"
 #import "BGSRNNetworkFilter.h"
+#import "BGSRNNetworkEvents.h"
 #import "BGSRNAttributes.h"
 #import "BGSRNDataRequestBridge.h"
 #import "BGSRNReactWindow.h"
@@ -1164,6 +1166,32 @@ RCT_EXPORT_MODULE(Bugsee)
     return;
   }
   item.decision(item.event);
+}
+
+/// A network event the app recorded itself. The bridge stamps the time in
+/// epoch milliseconds and builds a `BugseeNetworkEvent`. Beta3's exchange
+/// factory `createNetworkEvent` always returns nil, so this does not call it.
+/// The event is submitted with filtering required. The one-argument
+/// `addNetworkEvent:` passes NO and is not used. There is no timer that
+/// would pass the original through.
+- (void)addNetworkEvent:(NSString *)eventJson {
+  NSError *error = nil;
+  NSDictionary *object = BGSRNJSONObject(eventJson, &error);
+  if (object == nil) {
+    return;
+  }
+  BGSRNNetworkEventOutcome outcome = BGSRNRecordNetworkEvent(
+      object,
+      ^(BugseeNetworkEvent *event, BOOL requiresFiltering) {
+        if (!requiresFiltering) {
+          return;
+        }
+        [Bugsee addNetworkEvent:event requiresFiltering:YES];
+      },
+      [[NSDate date] timeIntervalSince1970] * 1000.0);
+  if (outcome == BGSRNNetworkEventOutcomeNoEvent) {
+    NSLog(@"BugseeRN addNetworkEvent dropped: the SDK made no event");
+  }
 }
 
 - (void)setLogFilterEnabled:(BOOL)enabled {
