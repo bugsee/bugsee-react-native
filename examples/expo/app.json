@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "BugseeExpo",
+    "slug": "bugsee-expo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "ios": {
+      "bundleIdentifier": "com.bugsee.expoexample"
+    },
+    "android": {
+      "package": "com.bugsee.expoexample"
+    },
+    "plugins": [
+      "@bugsee/react-native"
+    ]
+  }
+}

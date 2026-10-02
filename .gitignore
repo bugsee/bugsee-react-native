@@ -9,7 +9,8 @@ coverage/
 *.log
 .DS_Store
 
-# Native build output
+# Native build output. `build/` would also hide the compiled Expo config
+# plugin, which ships in the package, so that directory is un-ignored below.
 android/build/
 android/.gradle/
 ios/build/
@@ -22,7 +23,8 @@ bugsee.properties
 .env
 .gradle/
 local.properties
-build/
+**/build/**
+!packages/react-native/plugin/build/**
 .build/
 .swiftpm/
 *.xcodeproj/
