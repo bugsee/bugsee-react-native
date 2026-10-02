@@ -9,9 +9,16 @@
     "src",
     "android",
     "ios",
+    "scripts/hermes-sourcemaps.js",
+    "scripts/compose-then-inject.js",
+    "scripts/bugsee-xcode.sh",
+    "scripts/hermesc-preserve-js.sh",
     "react-native.config.js",
     "*.podspec"
   ],
+  "dependencies": {
+    "@bugsee/cli": "0.7.11"
+  },
   "peerDependencies": {
     "react": "*",
     "react-native": ">=0.81.0"
