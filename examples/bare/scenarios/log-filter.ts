@@ -2,8 +2,9 @@
  * The log-filter scenario Task 9.2 drives on a device
  * (e2e/log-filter.test.ts).
  *
- * Installs `Bugsee.setLogFilter` before `launch()`. After `Launched` it sends
- * two `Bugsee.log` lines. The filter rewrites the first. The second's
+ * After `Launched` it installs `Bugsee.setLogFilter` and then calls
+ * `Bugsee.log` on the next line, with no await between them. That first line
+ * is rewritten. A second line is rewritten the same way. A third line's
  * callback never settles, so the SDK's own timeout drops it; this scenario
  * does not add a timeout that would pass the line through.
  *
@@ -25,17 +26,19 @@ function mark(message: string): void {
   console.log(`BUGSEE_E2E log-filter ${message}`);
 }
 
-/** How long to wait, after both lines are sent, before uploading. */
+/** How long to wait, after the lines are sent, before uploading. */
 const UPLOAD_AFTER_MS = 5_000;
 
 /**
- * Called before `launch()`. The filter has to be in place before the lines
- * below are sent. A line that is not one of the two probes is returned
- * unchanged, so the SDK's own log capture still records.
+ * A line that is not one of the probes is returned unchanged, so the SDK's
+ * own log capture still records.
  */
 export function installLogFilter(nonce: string): void {
   Bugsee.setLogFilter((line) => {
-    if (line.includes(`log-filter rewrite ${nonce}`)) {
+    if (
+      line.includes(`log-filter immediate ${nonce}`) ||
+      line.includes(`log-filter rewrite ${nonce}`)
+    ) {
       return line.replace('SECRET', 'REDACTED');
     }
     if (line.includes(`log-filter hang ${nonce}`)) {
@@ -43,11 +46,18 @@ export function installLogFilter(nonce: string): void {
     }
     return line;
   });
-  mark(`filter installed nonce=${nonce}`);
 }
 
-/** Called once the SDK reaches `Launched`. */
+/**
+ * Called once the SDK reaches `Launched`. `setLogFilter` and the first
+ * `Bugsee.log` are adjacent: nothing is awaited between them, so the native
+ * registration has to have finished before `setLogFilter` returns.
+ */
 export function runLogFilterScenario(nonce: string): void {
+  installLogFilter(nonce);
+  Bugsee.log(`log-filter immediate ${nonce} SECRET`, LogLevel.Warning);
+  mark(`filter installed nonce=${nonce}`);
+  mark(`immediate sent nonce=${nonce}`);
   Bugsee.log(`log-filter rewrite ${nonce} SECRET`, LogLevel.Warning);
   mark(`rewrite sent nonce=${nonce}`);
   Bugsee.log(`log-filter hang ${nonce} SECRET`, LogLevel.Warning);

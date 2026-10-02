@@ -797,16 +797,20 @@ RCT_EXPORT_MODULE(Bugsee)
 /// `setLogEventFilter:`, the method the iOS SDK installs a log filter with.
 /// There is no `setLogFilter:`. `enabled` registers the bridge; `NO` passes
 /// nil, which removes it. The block returns without waiting on JS.
+///
+/// Installed on the calling queue, before this method returns.
+/// `+[Bugsee setLogEventFilter:]` is `@synchronized` and does not need the
+/// main queue. An async main hop would let `wrapperLog:` on the next line
+/// record before the filter existed.
 - (void)setLogFilterEnabled:(BOOL)enabled {
-  BGSRNRunOnMain(^{
-    if (enabled) {
-      @synchronized (BGSRNLogFilterLock()) {
-        if (BGSRNLogFilterInstalled) {
-          return;
-        }
-        BGSRNLogFilterInstalled = YES;
+  if (enabled) {
+    @synchronized (BGSRNLogFilterLock()) {
+      if (BGSRNLogFilterInstalled) {
+        return;
       }
-      [Bugsee setLogEventFilter:^(BugseeLogEvent *event, BugseeLogFilterDecisionBlock decision) {
+      BGSRNLogFilterInstalled = YES;
+    }
+    [Bugsee setLogEventFilter:^(BugseeLogEvent *event, BugseeLogFilterDecisionBlock decision) {
         NSString *line = event.text;
         if (decision == nil) {
           return;
@@ -843,13 +847,12 @@ RCT_EXPORT_MODULE(Bugsee)
           }
         }
       }];
-      return;
-    }
-    @synchronized (BGSRNLogFilterLock()) {
-      BGSRNLogFilterInstalled = NO;
-    }
-    [Bugsee setLogEventFilter:nil];
-  });
+    return;
+  }
+  @synchronized (BGSRNLogFilterLock()) {
+    BGSRNLogFilterInstalled = NO;
+  }
+  [Bugsee setLogEventFilter:nil];
 }
 
 - (BOOL)emitLogFilterRequest:(NSString *)requestId line:(NSString *)line {

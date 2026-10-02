@@ -31,7 +31,6 @@ import {
 } from './harness';
 import {
   type DeviceLog,
-  type LogLine,
   Logcat,
   IosConsole,
   adb,
@@ -126,6 +125,21 @@ describeDevice(`log filter on ${TARGET_NAME}`, () => {
         }
       }
     }
+  });
+
+  it('setLogFilter then Bugsee.log, with nothing between them, rewrites the line', () => {
+    expect(bundles).toHaveLength(1);
+    const events = logEventsOf(bundles[0]!);
+    const want = `log-filter immediate ${nonce} REDACTED`;
+    const matches = events.filter(event => messageOf(event).includes(`log-filter immediate ${nonce}`));
+    report('immediate matches', matches);
+    expect(matches).toHaveLength(1);
+    const [event] = matches as [Record<string, unknown>];
+    expect(event.message).toBe(want);
+    expect(event.source).toBe(98);
+    expect(event.level).toBe(2);
+    const leaked = events.filter(event => messageOf(event).includes(`log-filter immediate ${nonce} SECRET`));
+    expect(leaked).toHaveLength(0);
   });
 
   it('a rewritten Bugsee.log line is the line in the bundle', () => {

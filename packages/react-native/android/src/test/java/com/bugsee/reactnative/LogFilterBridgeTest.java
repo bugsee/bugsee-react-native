@@ -184,9 +184,31 @@ public class LogFilterBridgeTest {
     }
 
     /**
-     * Ten seconds elapses and the message is still the original. The deadline
-     * forgets the pending and does not pass the line through. A later reply
-     * finds nothing.
+     * The deadline elapses and the message is still the original, including
+     * the same text a recycled entry would show for another line. The reply
+     * does not call {@code setMessage} or {@code callback.run}.
+     */
+    @Test
+    public void aReplyAfterTheDeadlineIsANoOpWhenTheMessageIsUnchanged() {
+        assertTrue(LogFilterBridge.BORROW_MS < 10_000L);
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        final MutableLog event = new MutableLog("secret");
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(event, callback);
+
+        scheduler.fire();
+        bridge.reply(sink.ids.get(0), "redacted");
+
+        assertEquals("secret", event.message);
+        assertEquals(0, event.setMessageCalls);
+        assertEquals(0, callback.runs);
+    }
+
+    /**
+     * The deadline elapses and the message is still the original. The
+     * deadline forgets the pending and does not pass the line through. A
+     * later reply finds nothing.
      */
     @Test
     public void aDeadlineForgetsThePendingWithoutCallingTheCallback() {

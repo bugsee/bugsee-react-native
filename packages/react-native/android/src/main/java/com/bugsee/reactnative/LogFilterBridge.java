@@ -27,14 +27,15 @@ import java.util.concurrent.atomic.AtomicReference;
  * filter, but it is not the method the 7.x SDK documents.
  *
  * <p>{@link #filter} returns without waiting. The SDK drops a line whose
- * callback is never run, and at {@link #BORROW_MS} it recycles the pooled
- * entry. This bridge forgets the pending request at that same moment without
- * calling the callback, so a later reply cannot write onto the recycled
- * entry or pass the original line through. A missing sink, a failed emit, or
- * a {@code null} reply while {@code getMessage()} is still the original line
- * pass {@code null} to the SDK, which discards the line. Once the message is
- * no longer that line, the bridge does not call {@code setMessage} or
- * {@code callback.run}.
+ * callback is never run, and at 10 seconds recycles the pooled entry. This
+ * bridge forgets the pending request at {@link #BORROW_MS}, strictly earlier,
+ * without calling the callback. A recycled entry can carry the same text, so
+ * a reply that still sees the original message must not {@code setMessage}
+ * or {@code callback.run} once that deadline has passed. A missing sink, a
+ * failed emit, or a {@code null} reply while {@code getMessage()} is still
+ * the original line and the deadline has not fired pass {@code null} to the
+ * SDK, which discards the line. Once the message is no longer that line, the
+ * bridge does not call {@code setMessage} or {@code callback.run}.
  */
 final class LogFilterBridge {
 
@@ -57,11 +58,14 @@ final class LogFilterBridge {
     }
 
     /**
-     * {@code BugseeCaptureDataProviderLog.FILTER_CALLBACK_TIMEOUT_MS}. The
-     * SDK recycles the entry at this age. Forgetting the pending here
-     * discards JS's answer; it does not pass the line through.
+     * Strictly under {@code BugseeCaptureDataProviderLog}'s 10_000 ms
+     * recycle. The SDK posts that timeout before it calls the filter, so an
+     * equal delay fires after the entry is back in the pool. A pooled entry
+     * reused for another line with the same text still looks borrowed.
+     * Forgetting the pending here discards JS's answer; it does not pass
+     * the line through.
      */
-    static final long BORROW_MS = 10_000L;
+    static final long BORROW_MS = 9_000L;
 
     private static final class Pending {
         @NonNull final String id;

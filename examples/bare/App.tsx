@@ -86,7 +86,6 @@ import {
   runReportingScenario,
 } from './scenarios/reporting';
 import {
-  installLogFilter,
   isLogFilterScenario,
   runLogFilterScenario,
 } from './scenarios/log-filter';
@@ -347,11 +346,6 @@ export default function App() {
       // the other reporting scenarios need already registered.
       if (isReportingScenario(choice.scenario)) {
         installReporting(choice.scenario, choice.nonce);
-      }
-      // Before launch(): the log filter has to be registered before the
-      // lines this scenario sends, or they are recorded unfiltered.
-      if (isLogFilterScenario(choice.scenario)) {
-        installLogFilter(choice.nonce);
       }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
