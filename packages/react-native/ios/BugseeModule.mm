@@ -393,10 +393,49 @@ static void BGSRNDropBreadcrumbFiltersOwnedBy(BugseeModule *module) {
   }
 }
 
-/// The crumb as JSON, with only the keys the SDK actually set. `level` is the
-/// same integer as Android `Breadcrumb.Level.getValue()` (0 means unset and
-/// is omitted). A zero timestamp is omitted. Nil when the crumb cannot be
-/// serialised: the caller drops it rather than sending a partial snapshot.
+/// `BugseeLogLevel`, not Android `Breadcrumb.Level.getValue()`.
+/// error 1, warning 2, info 3, debug 4. `fatal` has no rung and is stored
+/// as error (1). Verbose (5) is not a JS name; a stored verbose reads back
+/// as `debug`, which is how the bundle folds it. 0 and anything else have
+/// no name.
+static NSString *BGSRNBreadcrumbLevelName(NSInteger level) {
+  switch (level) {
+    case 1: return @"error";
+    case 2: return @"warning";
+    case 3: return @"info";
+    case 4: return @"debug";
+    case 5: return @"debug";
+    default: return nil;
+  }
+}
+
+/// The integer to store for a JS level name. `fatal` is 1. NO when `name`
+/// is not one of the names.
+static BOOL BGSRNBreadcrumbLevelFromName(NSString *name, NSInteger *out) {
+  if ([name isEqualToString:@"error"] || [name isEqualToString:@"fatal"]) {
+    *out = 1;
+    return YES;
+  }
+  if ([name isEqualToString:@"warning"]) {
+    *out = 2;
+    return YES;
+  }
+  if ([name isEqualToString:@"info"]) {
+    *out = 3;
+    return YES;
+  }
+  if ([name isEqualToString:@"debug"]) {
+    *out = 4;
+    return YES;
+  }
+  return NO;
+}
+
+/// The crumb as JSON, with only the keys the SDK actually set. `level` is
+/// the JS name (0 means unset and is omitted). An integer that has no name
+/// drops the snapshot, rather than sending that integer. A zero timestamp
+/// is omitted. Nil when the crumb cannot be serialised: the caller drops it
+/// rather than sending a partial snapshot.
 static NSString *BGSRNBreadcrumbSnapshotJson(id<BGSBreadcrumb> crumb) {
   if (crumb == nil) {
     return nil;
@@ -406,7 +445,11 @@ static NSString *BGSRNBreadcrumbSnapshotJson(id<BGSBreadcrumb> crumb) {
     object[@"category"] = crumb.category;
   }
   if (crumb.level != 0) {
-    object[@"level"] = @(crumb.level);
+    NSString *name = BGSRNBreadcrumbLevelName(crumb.level);
+    if (name == nil) {
+      return nil;
+    }
+    object[@"level"] = name;
   }
   if (crumb.message != nil) {
     object[@"message"] = crumb.message;
@@ -466,14 +509,12 @@ static BOOL BGSRNApplyBreadcrumbKeep(id<BGSBreadcrumb> breadcrumb, NSDictionary 
   }
   id level = kept[@"level"];
   if (level != nil) {
-    // JSON `true` is a CFBoolean, which is an NSNumber. It is not a level.
-    if (level == (id)kCFBooleanTrue || level == (id)kCFBooleanFalse
-        || ![level isKindOfClass:NSNumber.class]) {
+    // The keep echoes the name. An Android integer is not a level here.
+    if (![level isKindOfClass:NSString.class]) {
       return NO;
     }
-    const double number = [level doubleValue];
-    const NSInteger value = (NSInteger)number;
-    if (number < 1.0 || number > 5.0 || (double)value != number) {
+    NSInteger value = 0;
+    if (!BGSRNBreadcrumbLevelFromName((NSString *)level, &value)) {
       return NO;
     }
     breadcrumb.level = value;
@@ -1159,12 +1200,11 @@ RCT_EXPORT_MODULE(Bugsee)
 }
 
 /// The no-argument `createBreadcrumb` leaves the timestamp unset so the
-/// provider stamps it. `level` is Android `Breadcrumb.Level.getValue()`
-/// (1..5), stored as `BGSBreadcrumb.level`. `dataJson` nil leaves data unset.
-/// On main, like every other SDK entry point. The filter install above is
-/// not: it has to be on the calling queue.
+/// provider stamps it. `level` is the JS name, mapped to `BugseeLogLevel`.
+/// `dataJson` nil leaves data unset. On main, like every other SDK entry
+/// point. The filter install above is not: it has to be on the calling queue.
 - (void)addBreadcrumb:(NSString *)category
-                level:(double)level
+                level:(NSString *)level
               message:(NSString *)message
                  type:(NSString *)type
              dataJson:(NSString * _Nullable)dataJson {
@@ -1179,9 +1219,10 @@ RCT_EXPORT_MODULE(Bugsee)
       return;
     }
   }
-  const NSInteger levelValue = (NSInteger)level;
-  if (level < 1.0 || level > 5.0 || (double)levelValue != level) {
-    NSLog(@"BugseeRN addBreadcrumb dropped: level %g is not a Breadcrumb.Level value", level);
+  NSInteger levelValue = 0;
+  if (![level isKindOfClass:NSString.class]
+      || !BGSRNBreadcrumbLevelFromName(level, &levelValue)) {
+    NSLog(@"BugseeRN addBreadcrumb dropped: level %@ is not a breadcrumb level name", level);
     return;
   }
   BGSRNRunOnMain(^{

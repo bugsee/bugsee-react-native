@@ -30,28 +30,25 @@ const crumb = {
 };
 
 describe('addBreadcrumb', () => {
-  it.each([
-    ['debug', 1],
-    ['info', 2],
-    ['warning', 3],
-    ['error', 4],
-    ['fatal', 5],
-  ] as const)('maps %s to Breadcrumb.Level.getValue() %i', (level, value) => {
-    Bugsee.addBreadcrumb({ ...crumb, level });
-    expect(native.addBreadcrumb).toHaveBeenCalledWith(
-      'ui',
-      value,
-      'tapped',
-      'navigation',
-      null,
-    );
-  });
+  it.each(['debug', 'info', 'warning', 'error', 'fatal'] as const)(
+    'sends the level name %s',
+    (level) => {
+      Bugsee.addBreadcrumb({ ...crumb, level });
+      expect(native.addBreadcrumb).toHaveBeenCalledWith(
+        'ui',
+        level,
+        'tapped',
+        'navigation',
+        null,
+      );
+    },
+  );
 
   it('does not require a timestamp and does not send one', () => {
     Bugsee.addBreadcrumb({ ...crumb, timestamp: 123 });
     expect(native.addBreadcrumb).toHaveBeenCalledWith(
       'ui',
-      2,
+      'info',
       'tapped',
       'navigation',
       null,
@@ -62,7 +59,7 @@ describe('addBreadcrumb', () => {
     Bugsee.addBreadcrumb({ ...crumb, data: { id: 1, note: null } });
     expect(native.addBreadcrumb).toHaveBeenCalledWith(
       'ui',
-      2,
+      'info',
       'tapped',
       'navigation',
       jsonOf({ id: 1, note: null }),
@@ -72,7 +69,7 @@ describe('addBreadcrumb', () => {
     Bugsee.addBreadcrumb({ ...crumb, data: null });
     expect(native.addBreadcrumb).toHaveBeenCalledWith(
       'ui',
-      2,
+      'info',
       'tapped',
       'navigation',
       null,

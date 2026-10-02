@@ -1,7 +1,7 @@
 import NativeBugsee from '../NativeBugsee';
 import { encodeBridgeObject } from '../bridge/json';
 import { copyBreadcrumbData } from './data';
-import { breadcrumbLevelValue } from './types';
+import { isBreadcrumbLevel } from './types';
 import type { Breadcrumb } from './types';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -32,13 +32,13 @@ export function addBreadcrumb(crumb: Breadcrumb): void {
   const category = requireString('category', crumb.category);
   const message = requireString('message', crumb.message);
   const type = requireString('type', crumb.type);
-  const level = breadcrumbLevelValue(crumb.level);
-  if (level === undefined) {
+  if (!isBreadcrumbLevel(crumb.level)) {
     const got = typeof crumb.level === 'string' ? crumb.level : typeof crumb.level;
     throw new TypeError(
       `Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got ${got}`,
     );
   }
+  const level = crumb.level;
   let dataJson: string | null = null;
   if (crumb.data != null) {
     dataJson = encodeBridgeObject(copyBreadcrumbData(crumb.data));

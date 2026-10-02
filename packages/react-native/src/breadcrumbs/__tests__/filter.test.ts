@@ -31,14 +31,14 @@ function emit(requestId: string, crumb: Record<string, unknown>): void {
 
 const snapshot = {
   category: 'ui',
-  level: 2,
+  level: 'info',
   message: 'secret',
   type: 'navigation',
   timestamp: 50,
 };
 
 describe('setBreadcrumbFilter', () => {
-  it('sends a keep that echoes the writable keys, with level as getValue()', async () => {
+  it('sends a keep that echoes the writable keys, with level as its name', async () => {
     Bugsee.setBreadcrumbFilter((crumb) => crumb);
     emit('1', snapshot);
     await flush();
@@ -49,7 +49,7 @@ describe('setBreadcrumbFilter', () => {
         category: 'ui',
         message: 'secret',
         type: 'navigation',
-        level: 2,
+        level: 'info',
       }),
     );
     const replied = native.replyBreadcrumbFilter.mock.calls[0]?.[1] as string;
@@ -70,7 +70,7 @@ describe('setBreadcrumbFilter', () => {
         category: 'ui',
         message: 'redacted',
         type: 'navigation',
-        level: 4,
+        level: 'error',
       }),
     );
   });
@@ -85,7 +85,7 @@ describe('setBreadcrumbFilter', () => {
         category: 'ui',
         message: 'secret',
         type: 'navigation',
-        level: 2,
+        level: 'info',
         data: { id: 1 },
       }),
     );
@@ -100,7 +100,7 @@ describe('setBreadcrumbFilter', () => {
         category: 'ui',
         message: 'secret',
         type: 'navigation',
-        level: 2,
+        level: 'info',
         data: null,
       }),
     );
@@ -203,7 +203,7 @@ describe('setBreadcrumbFilter', () => {
         category: 'ui',
         message: 'second',
         type: 'navigation',
-        level: 2,
+        level: 'info',
       }),
     );
   });
@@ -258,7 +258,7 @@ describe('setBreadcrumbFilter', () => {
         category: 'ui',
         message: 'kept',
         type: 'navigation',
-        level: 2,
+        level: 'info',
       }),
     );
     expect(native.setBreadcrumbFilterEnabled).toHaveBeenCalledTimes(1);
@@ -283,13 +283,13 @@ describe('setBreadcrumbFilter', () => {
     expect(native.replyBreadcrumbFilter).toHaveBeenCalledTimes(1);
   });
 
-  it('drops a snapshot whose level is not a getValue()', async () => {
+  it('drops a snapshot whose level is not a name', async () => {
     let ran = false;
     Bugsee.setBreadcrumbFilter((crumb) => {
       ran = true;
       return crumb;
     });
-    emit('1', { ...snapshot, level: 0 });
+    emit('1', { ...snapshot, level: 2 });
     await flush();
     expect(ran).toBe(false);
     expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', null);

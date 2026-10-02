@@ -155,10 +155,10 @@ export const native = {
   replyLogFilter: jest.fn<void, [string, string | null]>(),
 
   /**
-   * `level` is `Breadcrumb.Level.getValue()`. `dataJson` is JSON text, or
-   * null when the caller supplied no data.
+   * `level` is the name (`debug`, `info`, `warning`, `error`, `fatal`).
+   * `dataJson` is JSON text, or null when the caller supplied no data.
    */
-  addBreadcrumb: jest.fn<void, [string, number, string, string, string | null]>(),
+  addBreadcrumb: jest.fn<void, [string, string, string, string, string | null]>(),
 
   /**
    * The codegen EventEmitter for a native breadcrumb-filter request. Tests

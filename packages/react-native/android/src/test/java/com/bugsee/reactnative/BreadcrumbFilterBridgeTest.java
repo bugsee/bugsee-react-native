@@ -176,7 +176,7 @@ public class BreadcrumbFilterBridgeTest {
         bridge.ask(crumb, callback);
 
         final JSONObject json = new JSONObject(sink.json.get(0));
-        assertEquals(3, json.getInt("level"));
+        assertEquals("warning", json.getString("level"));
         assertEquals("secret", json.getString("message"));
         assertFalse(json.has("category"));
         assertFalse(json.has("type"));
@@ -202,7 +202,7 @@ public class BreadcrumbFilterBridgeTest {
         bridge.ask(crumb, new RecordingCallback());
 
         final JSONObject json = new JSONObject(sink.json.get(0));
-        assertEquals(2, json.getInt("level"));
+        assertEquals("info", json.getString("level"));
         assertEquals(50L, json.getLong("timestamp"));
         assertEquals(1, json.getJSONObject("data").getInt("id"));
         assertTrue(json.getJSONObject("data").isNull("note"));
@@ -217,8 +217,8 @@ public class BreadcrumbFilterBridgeTest {
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(crumb, callback);
 
-        // 2 is INFO's getValue(). The ordinal 2 is WARNING. fromValue must win.
-        bridge.reply(sink.ids.get(0), "{\"level\":2}");
+        // The name, not getValue() 2 and not the ordinal 2 (WARNING).
+        bridge.reply(sink.ids.get(0), "{\"level\":\"info\"}");
 
         assertEquals(Breadcrumb.Level.INFO, crumb.level);
         assertEquals(1, callback.runs);
@@ -259,7 +259,7 @@ public class BreadcrumbFilterBridgeTest {
         bridge.ask(crumb, callback);
 
         bridge.reply(sink.ids.get(0),
-                "{\"category\":\"ui\",\"message\":\"redacted\",\"type\":\"navigation\",\"level\":4,\"data\":null}");
+                "{\"category\":\"ui\",\"message\":\"redacted\",\"type\":\"navigation\",\"level\":\"error\",\"data\":null}");
 
         assertEquals("redacted", crumb.message);
         assertEquals(Breadcrumb.Level.ERROR, crumb.level);
@@ -308,7 +308,7 @@ public class BreadcrumbFilterBridgeTest {
     }
 
     @Test
-    public void aLevelOutsideGetValueDropsTheCrumb() {
+    public void anIntegerLevelDropsTheCrumb() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
         final MutableCrumb crumb = new MutableCrumb();
@@ -316,7 +316,7 @@ public class BreadcrumbFilterBridgeTest {
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(crumb, callback);
 
-        bridge.reply(sink.ids.get(0), "{\"level\":9}");
+        bridge.reply(sink.ids.get(0), "{\"level\":2}");
 
         assertEquals(Breadcrumb.Level.INFO, crumb.level);
         assertTrue(callback.sawNull);

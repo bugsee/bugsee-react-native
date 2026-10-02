@@ -221,15 +221,15 @@ export interface Spec extends TurboModule {
   replyLogFilter(requestId: string, line: string | null): void;
 
   /**
-   * Records a breadcrumb the exchange factory constructs. `level` is
-   * `Breadcrumb.Level.getValue()` (1 debug .. 5 fatal), not the enum
-   * ordinal. The factory stamps the time; this does not take a timestamp.
-   * `dataJson` is the crumb's `data` as JSON text, or `null` when the caller
-   * supplied none.
+   * Records a breadcrumb the exchange factory constructs. `level` is the
+   * name `debug`, `info`, `warning`, `error`, or `fatal`. Each native side
+   * maps that name to its own integer. The factory stamps the time; this
+   * does not take a timestamp. `dataJson` is the crumb's `data` as JSON
+   * text, or `null` when the caller supplied none.
    */
   addBreadcrumb(
     category: string,
-    level: number,
+    level: string,
     message: string,
     type: string,
     dataJson: string | null,
@@ -240,7 +240,7 @@ export interface Spec extends TurboModule {
    *
    * `requestId` is native-minted and never reused within a process.
    * `crumbJson` is the snapshot: only the keys the crumb had, `level` as
-   * `getValue()`, `timestamp` when it is set. JS answers with
+   * its name, `timestamp` when it is set. JS answers with
    * {@link replyBreadcrumbFilter}. A request that never gets an answer is
    * not recorded; this event is not a second timeout, and the reply is never
    * the original crumb after a failed filter.
@@ -257,7 +257,7 @@ export interface Spec extends TurboModule {
   setBreadcrumbFilterEnabled(enabled: boolean): void;
   /**
    * Answers one {@link onBreadcrumbFilterRequest}. `crumbJson` is the keep,
-   * with every writable key the snapshot sent and `level` as `getValue()`;
+   * with every writable key the snapshot sent and `level` as its name;
    * `null` drops the crumb. A second reply for the same `requestId` is a
    * no-op. Not answering leaves the crumb unrecorded — there is no reply
    * that passes the original through.

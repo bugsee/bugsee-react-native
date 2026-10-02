@@ -1,7 +1,7 @@
 import NativeBugsee from '../NativeBugsee';
 import { encodeBridgeObject } from '../bridge/json';
 import { copyBreadcrumbData } from './data';
-import { breadcrumbLevelName, breadcrumbLevelValue } from './types';
+import { isBreadcrumbLevel } from './types';
 import type { BreadcrumbFilter, BreadcrumbSnapshot } from './types';
 
 const WRITABLE_STRINGS = ['category', 'message', 'type'] as const;
@@ -93,11 +93,10 @@ function snapshotFromJson(json: string): BreadcrumbSnapshot | null {
     snapshot[key] = value;
   }
   if (Object.hasOwn(source, 'level')) {
-    const name = breadcrumbLevelName(source.level);
-    if (name === undefined) {
+    if (!isBreadcrumbLevel(source.level)) {
       return null;
     }
-    snapshot.level = name;
+    snapshot.level = source.level;
   }
   if (Object.hasOwn(source, 'data')) {
     snapshot.data = source.data;
@@ -113,7 +112,7 @@ function snapshotFromJson(json: string): BreadcrumbSnapshot | null {
  *
  * Every writable key the snapshot has must be an own key of `result`, and
  * not `undefined`. String keys must be strings. `level` must still be a
- * level name, and is sent as `getValue()`. `data: null` is kept as `null`.
+ * level name, and that name is what is sent. `data: null` is kept as `null`.
  * `timestamp` is not copied. A key the snapshot does not have is not added.
  */
 function keptJson(snapshot: BreadcrumbSnapshot, result: unknown): string | null {
@@ -135,11 +134,10 @@ function keptJson(snapshot: BreadcrumbSnapshot, result: unknown): string | null 
     if (!Object.hasOwn(record, 'level')) {
       return null;
     }
-    const value = breadcrumbLevelValue(record.level);
-    if (value === undefined) {
+    if (!isBreadcrumbLevel(record.level)) {
       return null;
     }
-    out.level = value;
+    out.level = record.level;
   }
   if (Object.hasOwn(snapshot, 'data')) {
     if (!Object.hasOwn(record, 'data') || record.data === undefined) {

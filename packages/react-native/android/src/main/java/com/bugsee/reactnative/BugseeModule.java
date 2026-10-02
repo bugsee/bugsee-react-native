@@ -620,15 +620,14 @@ public class BugseeModule extends NativeBugseeSpec
     /**
      * Builds the crumb with {@link Bugsee#getExchangeFactory()} and records
      * it. The no-argument {@code createBreadcrumb} leaves the timestamp unset
-     * so the provider stamps it. {@code level} is
-     * {@link Breadcrumb.Level#getValue()} (1..5); {@link Breadcrumb.Level#fromValue}
-     * is that value's inverse, not the enum ordinal. {@code dataJson} null
-     * leaves data unset.
+     * so the provider stamps it. {@code level} is the JS name;
+     * {@link BreadcrumbFilterBridge#levelFromName} maps it to
+     * {@link Breadcrumb.Level}. {@code dataJson} null leaves data unset.
      */
     @Override
     public void addBreadcrumb(
             final String category,
-            final double level,
+            final String level,
             final String message,
             final String type,
             @Nullable final String dataJson
@@ -642,14 +641,9 @@ public class BugseeModule extends NativeBugseeSpec
             if (crumb == null) {
                 return;
             }
-            final double number = level;
-            if (number < 1d || number > 5d || number != Math.rint(number)) {
-                Log.e(TAG, "addBreadcrumb dropped: level is not a Breadcrumb.Level value");
-                return;
-            }
-            final Breadcrumb.Level parsed = Breadcrumb.Level.fromValue((byte) number);
+            final Breadcrumb.Level parsed = BreadcrumbFilterBridge.levelFromName(level);
             if (parsed == null) {
-                Log.e(TAG, "addBreadcrumb dropped: level is not a Breadcrumb.Level value");
+                Log.e(TAG, "addBreadcrumb dropped: level is not a breadcrumb level name");
                 return;
             }
             crumb.setCategory(category);

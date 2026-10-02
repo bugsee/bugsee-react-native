@@ -128,6 +128,7 @@ describeDevice(`breadcrumb filter on ${TARGET_NAME}`, () => {
     expect(matches).toHaveLength(1);
     const [event] = matches as [Record<string, unknown>];
     expect(event.message).toBe(want);
+    expect(event.level).toBe('info');
     const leaked = events.filter(event =>
       messageOf(event).includes(`breadcrumb-filter immediate ${nonce} SECRET`),
     );
@@ -143,6 +144,7 @@ describeDevice(`breadcrumb filter on ${TARGET_NAME}`, () => {
     expect(matches).toHaveLength(1);
     const [event] = matches as [Record<string, unknown>];
     expect(event.message).toBe(want);
+    expect(event.level).toBe('info');
   });
 
   it("an unsettled filter's crumb is absent", () => {

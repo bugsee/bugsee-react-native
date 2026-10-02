@@ -192,7 +192,9 @@ final class BreadcrumbFilterBridge {
 
     /**
      * The crumb as JSON, with only the keys the SDK actually set.
-     * {@code level} is {@link Breadcrumb.Level#getValue()}, never the ordinal.
+     * {@code level} is the JS name ({@code debug}, {@code info},
+     * {@code warning}, {@code error}, {@code fatal}), never
+     * {@link Breadcrumb.Level#getValue()} and never the ordinal.
      * A zero timestamp is the pool's unset value and is omitted.
      */
     @NonNull
@@ -202,9 +204,9 @@ final class BreadcrumbFilterBridge {
         if (category != null) {
             object.put("category", category);
         }
-        final Breadcrumb.Level level = crumb.getLevel();
+        final String level = levelName(crumb.getLevel());
         if (level != null) {
-            object.put("level", level.getValue() & 0xff);
+            object.put("level", level);
         }
         final String message = crumb.getMessage();
         if (message != null) {
@@ -303,16 +305,61 @@ final class BreadcrumbFilterBridge {
         return text.equals(crumb.getType());
     }
 
-    /** {@link Breadcrumb.Level#fromValue(byte)} is the inverse of {@code getValue()}. */
+    /**
+     * The JS name for {@code level}. {@code null} when the crumb has none.
+     * The name is what crosses the bridge. {@link Breadcrumb.Level#getValue()}
+     * stays on this side: debug 1, info 2, warning 3, error 4, fatal 5.
+     */
+    @Nullable
+    static String levelName(@Nullable final Breadcrumb.Level level) {
+        if (level == Breadcrumb.Level.DEBUG) {
+            return "debug";
+        }
+        if (level == Breadcrumb.Level.INFO) {
+            return "info";
+        }
+        if (level == Breadcrumb.Level.WARNING) {
+            return "warning";
+        }
+        if (level == Breadcrumb.Level.ERROR) {
+            return "error";
+        }
+        if (level == Breadcrumb.Level.FATAL) {
+            return "fatal";
+        }
+        return null;
+    }
+
+    /**
+     * {@code name} as a {@link Breadcrumb.Level}, or {@code null} when it is
+     * not one of the JS names. A number is not a name.
+     */
+    @Nullable
+    static Breadcrumb.Level levelFromName(@Nullable final String name) {
+        if ("debug".equals(name)) {
+            return Breadcrumb.Level.DEBUG;
+        }
+        if ("info".equals(name)) {
+            return Breadcrumb.Level.INFO;
+        }
+        if ("warning".equals(name)) {
+            return Breadcrumb.Level.WARNING;
+        }
+        if ("error".equals(name)) {
+            return Breadcrumb.Level.ERROR;
+        }
+        if ("fatal".equals(name)) {
+            return Breadcrumb.Level.FATAL;
+        }
+        return null;
+    }
+
+    /** A keep's {@code level} is the name. An integer does not stick. */
     private static boolean writeLevel(@NonNull final Breadcrumb crumb, @Nullable final Object value) {
-        if (!(value instanceof Number)) {
+        if (!(value instanceof String)) {
             return false;
         }
-        final double number = ((Number) value).doubleValue();
-        if (number < 1d || number > 5d || number != Math.rint(number)) {
-            return false;
-        }
-        final Breadcrumb.Level level = Breadcrumb.Level.fromValue((byte) number);
+        final Breadcrumb.Level level = levelFromName((String) value);
         if (level == null) {
             return false;
         }

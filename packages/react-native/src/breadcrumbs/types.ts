@@ -1,44 +1,26 @@
 /**
- * `Breadcrumb.Level.getValue()` from bugsee-android 7.3.0, not the enum
- * ordinal. iOS `BGSBreadcrumb.level` is the same `NSInteger`.
+ * The level names the bridge sends. Each native side maps a name to its own
+ * integer when it writes the crumb. Those integers are not the same:
  *
- * DEBUG 1, INFO 2, WARNING 3, ERROR 4, FATAL 5. The ordinals are 0..4.
+ * Android `Breadcrumb.Level.getValue()` is debug 1, info 2, warning 3,
+ * error 4, fatal 5 (not the enum ordinal).
+ *
+ * iOS `BGSBreadcrumb.level` is `BugseeLogLevel`: error 1, warning 2, info 3,
+ * debug 4. There is no fatal on that ladder, so iOS stores `fatal` as 1,
+ * which the bundle records as `error`. Verbose (5) is not a JS name; a
+ * stored verbose reads back as `debug`.
+ *
+ * The filter snapshot's `level` is this name, on both platforms. A keep
+ * echoes the name. Sending Android's integer to iOS records `info` as
+ * `warning`.
  */
-export const BREADCRUMB_LEVEL_VALUE = {
-  debug: 1,
-  info: 2,
-  warning: 3,
-  error: 4,
-  fatal: 5,
-} as const;
+export const BREADCRUMB_LEVELS = ['debug', 'info', 'warning', 'error', 'fatal'] as const;
 
-export type BreadcrumbLevel = keyof typeof BREADCRUMB_LEVEL_VALUE;
+export type BreadcrumbLevel = (typeof BREADCRUMB_LEVELS)[number];
 
-const LEVEL_NAMES: readonly BreadcrumbLevel[] = [
-  'debug',
-  'info',
-  'warning',
-  'error',
-  'fatal',
-];
-
-/** The numeric `getValue()` for a level name, or `undefined` when it is not one. */
-export function breadcrumbLevelValue(level: unknown): number | undefined {
-  if (typeof level !== 'string') {
-    return undefined;
-  }
-  if (!Object.hasOwn(BREADCRUMB_LEVEL_VALUE, level)) {
-    return undefined;
-  }
-  return BREADCRUMB_LEVEL_VALUE[level as BreadcrumbLevel];
-}
-
-/** The level name for a `getValue()`, or `undefined` when the number is not one. */
-export function breadcrumbLevelName(value: unknown): BreadcrumbLevel | undefined {
-  if (typeof value !== 'number' || !Number.isInteger(value)) {
-    return undefined;
-  }
-  return LEVEL_NAMES[value - 1];
+/** Whether `level` is one of the JS names. A number is not. */
+export function isBreadcrumbLevel(level: unknown): level is BreadcrumbLevel {
+  return typeof level === 'string' && (BREADCRUMB_LEVELS as readonly string[]).includes(level);
 }
 
 /**
