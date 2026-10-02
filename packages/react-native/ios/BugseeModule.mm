@@ -856,9 +856,9 @@ RCT_EXPORT_MODULE(Bugsee)
 /// should land on the nearest level, not be chopped toward one.
 - (void)wrapperLog:(NSString *)message
              level:(double)level {
-  // The equal-text echo note dies as the channel line is recorded. A stamp
-  // note stays. Bugsee.log goes through this same method and does not arm
-  // a note of its own.
+  // This filter request is the channel line (the patch, or Bugsee.log).
+  // It is kept. An equal echo that is not this request is dropped once.
+  // Bugsee.log does not arm a note of its own.
   BGSRNBeginChannelLine(message);
   [BGSRNWrapperChannelHolder.shared logMessage:message level:(NSInteger)llround(level)];
 }

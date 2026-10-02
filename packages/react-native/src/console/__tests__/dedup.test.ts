@@ -63,6 +63,31 @@ describe('console stream dedup', () => {
     expect(classifyFilterRequest("seen { a: 's3cret' }")).toBe('deliver');
   });
 
+  it('retiring one patch does not clear a different echo', () => {
+    claimEcho('other', 0);
+    protectLine('ready', 0);
+    claimEcho('ready', 0);
+
+    expect(classifyFilterRequest('ready', 1)).toBe('deliver');
+    expect(classifyFilterRequest('other', 1)).toBe('drop');
+    expect(classifyFilterRequest('ready', 1)).toBe('deliver');
+  });
+
+  it('delivering a patch that was never claimed does not drop another echo', () => {
+    claimEcho('other', 0);
+    protectLine('absent', 0);
+
+    expect(classifyFilterRequest('absent', 1)).toBe('deliver');
+    expect(classifyFilterRequest('other', 1)).toBe('drop');
+  });
+
+  it('an expired echo does not retire a later claim of the same text', () => {
+    claimEcho('ready', 0);
+    claimEcho('ready', ECHO_WINDOW_MS);
+
+    expect(classifyFilterRequest('ready', ECHO_WINDOW_MS)).toBe('drop');
+  });
+
   it('does not suppress a following line of the same text once the patch is delivered', () => {
     protectLine('ready', 0);
     claimEcho('ready', 0);
@@ -71,7 +96,7 @@ describe('console stream dedup', () => {
     expect(classifyFilterRequest('ready', 1)).toBe('deliver');
   });
 
-  it('on iOS drops the one unstamped echo and then keeps a later line of the same text', () => {
+  it('on iOS delivering the patch does not suppress a following equal line, and drops an echo once', () => {
     const reactNative = require('react-native') as { Platform: { OS: string } };
     const previous = reactNative.Platform.OS;
     reactNative.Platform.OS = 'ios';
@@ -81,8 +106,29 @@ describe('console stream dedup', () => {
       protectLine(message, 0);
       claimEcho(message, 0);
 
+      expect(classifyFilterRequest(message, 1)).toBe('deliver');
+      expect(classifyFilterRequest(message, 1)).toBe('deliver');
+
+      resetConsoleDedup();
+      protectLine(message, 0);
+      claimEcho(message, 0);
       expect(classifyFilterRequest(stamped, 1)).toBe('drop');
       expect(classifyFilterRequest(message, 1)).toBe('deliver');
+      expect(classifyFilterRequest(message, 1)).toBe('deliver');
+      expect(classifyFilterRequest(stamped, 1)).toBe('deliver');
+
+      resetConsoleDedup();
+      claimEcho(message, 0);
+      expect(classifyFilterRequest(message, 1)).toBe('drop');
+      expect(classifyFilterRequest(stamped, 1)).toBe('drop');
+      expect(classifyFilterRequest(stamped, 1)).toBe('deliver');
+      protectLine(message, 1);
+      expect(classifyFilterRequest(message, 1)).toBe('deliver');
+      expect(classifyFilterRequest(message, 1)).toBe('deliver');
+
+      resetConsoleDedup();
+      claimEcho(message, 0);
+      expect(classifyFilterRequest(stamped, 1)).toBe('drop');
       expect(classifyFilterRequest(message, 1)).toBe('drop');
       expect(classifyFilterRequest(message, 1)).toBe('deliver');
     } finally {

@@ -382,6 +382,10 @@ describe('console capture', () => {
 
     expect(echoed).toEqual(['BUGSEE_E2E dedup-line']);
     expect(forwardLog).toHaveBeenCalledTimes(1);
+    const { native } = require('../../__mocks__/native') as {
+      native: { noteConsoleEcho: jest.Mock };
+    };
+    expect(native.noteConsoleEcho).toHaveBeenCalledWith('BUGSEE_E2E dedup-line');
     expect(classifyFilterRequest('BUGSEE_E2E dedup-line')).toBe('deliver');
     expect(classifyFilterRequest('BUGSEE_E2E dedup-line')).toBe('deliver');
     const stamped =

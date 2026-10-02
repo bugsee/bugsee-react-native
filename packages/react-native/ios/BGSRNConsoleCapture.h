@@ -10,9 +10,10 @@ NS_ASSUME_NONNULL_BEGIN
  *
  * Android already receives those native lines through logcat. iOS does not:
  * the SDK's os_log capture is disabled, and RCTLog's default function writes
- * os_log. This hook is that capture. A stderr stamp of a noted console line
- * is dropped here. The unstamped stderr copy is a different string and is
- * dropped in JS, where the equal-text claim dies with that drop.
+ * only os_log of the raw message. This hook is the native capture. A stderr
+ * stamp of a noted console line is dropped here. The JS claim does not wait
+ * for an unstamped copy. One equal line that is not the channel line being
+ * recorded is the echo and is dropped once.
  */
 void BGSRNInstallConsoleCapture(void);
 
@@ -20,10 +21,10 @@ void BGSRNInstallConsoleCapture(void);
 void BGSRNNoteConsoleEcho(NSString * _Nullable message);
 
 /**
- * The wrapper channel is about to record `message`. The equal-text note is
- * cleared so a `Bugsee.log` of the same text is not dropped here. The
- * unstamped stderr echo is dropped in JS. A stamp note stays until the
- * stamp is dropped.
+ * The wrapper channel is about to record `message`. That filter request is
+ * the channel line and is kept. The echo credit stays until an equal line
+ * that is not this channel line is dropped, or the note expires. A later
+ * `Bugsee.log` is itself a channel line, so it is kept.
  */
 void BGSRNBeginChannelLine(NSString * _Nullable message);
 

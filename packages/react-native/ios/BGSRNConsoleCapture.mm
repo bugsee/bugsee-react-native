@@ -74,6 +74,8 @@ static const NSUInteger BGSRNEchoNoteCap = 32;
 @property (nonatomic, assign) NSTimeInterval expires;
 @property (nonatomic, assign) BOOL exact;
 @property (nonatomic, assign) BOOL stamp;
+/// The next equal filter request is the channel line and must be kept.
+@property (nonatomic, assign) BOOL pass;
 @end
 
 @implementation BGSRNEchoNote
@@ -149,6 +151,7 @@ void BGSRNNoteConsoleEcho(NSString *message) {
     note.expires = [NSDate date].timeIntervalSince1970 + BGSRNEchoWindowSeconds;
     note.exact = YES;
     note.stamp = YES;
+    note.pass = NO;
     [BGSRNEchoNotes addObject:note];
     while (BGSRNEchoNotes.count > BGSRNEchoNoteCap) {
       [BGSRNEchoNotes removeObjectAtIndex:0];
@@ -164,10 +167,7 @@ void BGSRNBeginChannelLine(NSString *message) {
     for (NSInteger index = 0; index < (NSInteger)BGSRNEchoNotes.count; index++) {
       BGSRNEchoNote *note = BGSRNEchoNotes[(NSUInteger)index];
       if (note.exact && [note.text isEqualToString:message]) {
-        note.exact = NO;
-        if (!note.stamp) {
-          [BGSRNEchoNotes removeObjectAtIndex:(NSUInteger)index];
-        }
+        note.pass = YES;
         return;
       }
     }
@@ -185,6 +185,20 @@ BOOL BGSRNDropConsoleEcho(NSString *line) {
       if (note.stamp && BGSRNIsConsoleStamp(line, note.text)) {
         note.stamp = NO;
         if (!note.exact) {
+          [BGSRNEchoNotes removeObjectAtIndex:(NSUInteger)index];
+        }
+        return YES;
+      }
+    }
+    for (NSInteger index = 0; index < (NSInteger)BGSRNEchoNotes.count; index++) {
+      BGSRNEchoNote *note = BGSRNEchoNotes[(NSUInteger)index];
+      if (note.exact && [note.text isEqualToString:line]) {
+        if (note.pass) {
+          note.pass = NO;
+          return NO;
+        }
+        note.exact = NO;
+        if (!note.stamp) {
           [BGSRNEchoNotes removeObjectAtIndex:(NSUInteger)index];
         }
         return YES;
