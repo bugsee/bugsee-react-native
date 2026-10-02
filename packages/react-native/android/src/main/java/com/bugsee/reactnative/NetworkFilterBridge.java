@@ -30,10 +30,11 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>Registered with {@link Bugsee#setNetworkEventFilter}. {@link #filter}
  * returns without waiting. The SDK's {@code FilterCallbackWrapper} is a pooled
- * {@link Callback1}: at {@link #BORROW_MS} it recycles the entry and a later
- * {@code run} is ignored. This bridge forgets the pending request at that
- * same moment without calling the callback, so a later reply cannot write
- * onto the recycled entry or pass the original event through. A reply after
+ * {@link Callback1}. Its 10s recycle is posted before the filter is entered,
+ * so a forget scheduled at that same delay fires after the entry is back in
+ * the pool. This bridge forgets the pending request at {@link #BORROW_MS},
+ * strictly earlier, and does not call the callback: a later reply is a
+ * no-op, and it does not pass the original event through. A reply after
  * {@link NetworkEvent#getUrl()} (or {@link NetworkEvent#getId()}) has changed
  * returns without writing and without {@code callback.run}.
  */
@@ -56,11 +57,15 @@ final class NetworkFilterBridge {
     }
 
     /**
-     * {@code BugseeCaptureDataProviderNetwork.FILTER_CALLBACK_TIMEOUT_MS}.
-     * The SDK recycles the entry at this age. Forgetting the pending here
-     * discards JS's answer; it does not pass the event through.
+     * Strictly under {@code BugseeCaptureDataProviderNetwork.FILTER_CALLBACK_TIMEOUT_MS}
+     * (10s). That timer is already running when the filter is entered, so an
+     * equal delay forgets the pending after the entry has been recycled. A
+     * reused wrapper whose url text is unchanged would then still look
+     * borrowed, and a reply would write onto whatever event owns it.
+     * Forgetting here only removes the pending; it does not pass the event
+     * through.
      */
-    static final long BORROW_MS = 10_000L;
+    static final long BORROW_MS = 9_000L;
 
     private static final class Pending {
         @NonNull final String id;

@@ -210,7 +210,7 @@ public class NetworkFilterBridgeTest {
         assertEquals("https://other.example/now", event.url);
         assertEquals(0, callback.runs);
         assertEquals(NetworkFilterBridge.BORROW_MS, scheduler.tasks.get(0).delayMs);
-        assertEquals(10_000L, NetworkFilterBridge.BORROW_MS);
+        assertTrue(NetworkFilterBridge.BORROW_MS < 10_000L);
     }
 
     @Test
