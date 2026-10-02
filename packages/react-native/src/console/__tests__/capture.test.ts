@@ -24,6 +24,7 @@ beforeEach(() => {
 
 afterEach(() => {
   restoreConsole();
+  delete (globalThis as { nativeLoggingHook?: unknown }).nativeLoggingHook;
 });
 
 function restoreConsole(): void {
@@ -36,13 +37,21 @@ function restoreConsole(): void {
 function load(): {
   installConsoleCapture: (options?: Record<string, unknown>) => void;
   forwardLog: jest.Mock;
+  classifyFilterRequest: (line: string) => 'deliver' | 'drop';
 } {
   const forwardLog = jest.fn();
   jest.doMock('../../wrapper/channel', () => ({ forwardLog }));
   const capture = require('../capture') as {
     installConsoleCapture: (options?: Record<string, unknown>) => void;
   };
-  return { installConsoleCapture: capture.installConsoleCapture, forwardLog };
+  const dedup = require('../dedup') as {
+    classifyFilterRequest: (line: string) => 'deliver' | 'drop';
+  };
+  return {
+    installConsoleCapture: capture.installConsoleCapture,
+    forwardLog,
+    classifyFilterRequest: dedup.classifyFilterRequest,
+  };
 }
 
 describe('console capture', () => {
@@ -218,6 +227,170 @@ describe('console capture', () => {
     const message = forwardLog.mock.calls[0]?.[0] as string;
     expect(message).toBe('seen [object Object]');
     expect(message).not.toContain('s3cret');
+  });
+
+  it('forwards the patch line once when RCTLog echoes a different formatting', () => {
+    const echoed: string[] = [];
+    (globalThis as { nativeLoggingHook?: (message: string, level: number) => void }).nativeLoggingHook =
+      (message: string) => {
+        echoed.push(message);
+      };
+    const { installConsoleCapture, forwardLog, classifyFilterRequest } = load();
+    console.log = ((...args: unknown[]) => {
+      const hook = (globalThis as {
+        nativeLoggingHook?: (message: string, level: number) => void;
+      }).nativeLoggingHook;
+      const text = args
+        .map((arg) => (typeof arg === 'string' ? `'${arg}'` : String(arg)))
+        .join(', ');
+      hook?.(text, 1);
+    }) as typeof console.log;
+
+    installConsoleCapture({});
+    console.log('seen', { password: 's3cret' });
+
+    expect(echoed).toEqual(["'seen', [object Object]"]);
+    expect(forwardLog).toHaveBeenCalledTimes(1);
+    expect(forwardLog).toHaveBeenCalledWith('seen [object Object]', LogLevel.Info);
+    expect(classifyFilterRequest("'seen', [object Object]")).toBe('drop');
+    expect(classifyFilterRequest('seen [object Object]')).toBe('deliver');
+    expect(String(forwardLog.mock.calls[0]?.[0])).not.toContain('s3cret');
+  });
+
+  it('does not claim a hook call that follows a console call whose original never called the hook', () => {
+    (globalThis as { nativeLoggingHook?: (message: string, level: number) => void }).nativeLoggingHook =
+      () => undefined;
+    const { installConsoleCapture, classifyFilterRequest } = load();
+    console.log = (() => undefined) as typeof console.log;
+    installConsoleCapture({});
+    console.log('silent');
+    const hook = (globalThis as {
+      nativeLoggingHook?: (message: string, level: number) => void;
+    }).nativeLoggingHook;
+    hook?.('later', 1);
+    expect(classifyFilterRequest('later')).toBe('deliver');
+  });
+
+  it('does not install a hook when React Native has not installed one', () => {
+    const host = globalThis as { nativeLoggingHook?: (message: string, level: number) => void };
+    delete host.nativeLoggingHook;
+    const { installConsoleCapture } = load();
+    installConsoleCapture({});
+    expect(host.nativeLoggingHook).toBeUndefined();
+  });
+
+  it('keeps the same hook across a second install', () => {
+    const host = globalThis as {
+      nativeLoggingHook?: ((message: string, level: number) => void) & { bugseeConsoleHook?: boolean };
+    };
+    host.nativeLoggingHook = () => undefined;
+    const { installConsoleCapture } = load();
+    installConsoleCapture({});
+    const first = host.nativeLoggingHook;
+    installConsoleCapture({});
+    expect(host.nativeLoggingHook).toBe(first);
+    expect(first?.bugseeConsoleHook).toBe(true);
+  });
+
+  it('claims only the outer hook call when the original hook re-enters', () => {
+    const host = globalThis as { nativeLoggingHook?: (message: string, level: number) => void };
+    host.nativeLoggingHook = (message: string) => {
+      if (message === 'outer') {
+        host.nativeLoggingHook?.('inner', 1);
+      }
+    };
+    const { installConsoleCapture, classifyFilterRequest } = load();
+    console.log = (() => {
+      host.nativeLoggingHook?.('outer', 1);
+    }) as typeof console.log;
+    installConsoleCapture({});
+    console.log('outer');
+    expect(classifyFilterRequest('inner')).toBe('deliver');
+    expect(classifyFilterRequest('outer')).toBe('deliver');
+    expect(classifyFilterRequest('outer')).toBe('deliver');
+  });
+
+  it('wraps the native hook once and does not claim a line it did not forward', () => {
+    const echoed: string[] = [];
+    (globalThis as { nativeLoggingHook?: (message: string, level: number) => void }).nativeLoggingHook =
+      (message: string) => {
+        echoed.push(message);
+      };
+    const { installConsoleCapture, forwardLog, classifyFilterRequest } = load();
+    console.log = ((...args: unknown[]) => {
+      const hook = (globalThis as {
+        nativeLoggingHook?: (message: string, level: number) => void;
+      }).nativeLoggingHook;
+      hook?.(String(args[0]), 1);
+    }) as typeof console.log;
+
+    installConsoleCapture({});
+    installConsoleCapture({});
+    const hook = (globalThis as {
+      nativeLoggingHook?: (message: string, level: number) => void;
+    }).nativeLoggingHook;
+    hook?.('before any console call', 1);
+    console.log('once');
+    hook?.('after the console call', 1);
+
+    expect(echoed).toEqual(['before any console call', 'once', 'after the console call']);
+    expect(forwardLog).toHaveBeenCalledTimes(1);
+    expect(classifyFilterRequest('before any console call')).toBe('deliver');
+    expect(classifyFilterRequest('once')).toBe('deliver');
+    expect(classifyFilterRequest('once')).toBe('deliver');
+    expect(classifyFilterRequest('after the console call')).toBe('deliver');
+  });
+
+  it('does not claim an echo when capture.logs is false', () => {
+    const echoed: string[] = [];
+    (globalThis as { nativeLoggingHook?: (message: string, level: number) => void }).nativeLoggingHook =
+      (message: string) => {
+        echoed.push(message);
+      };
+    const { installConsoleCapture, forwardLog, classifyFilterRequest } = load();
+    console.log = ((message: string) => {
+      const hook = (globalThis as {
+        nativeLoggingHook?: (message: string, level: number) => void;
+      }).nativeLoggingHook;
+      hook?.(message, 1);
+    }) as typeof console.log;
+
+    installConsoleCapture({ 'com.bugsee.option.capture.logs': false });
+    console.log('hidden');
+
+    expect(forwardLog).not.toHaveBeenCalled();
+    expect(classifyFilterRequest('hidden')).toBe('deliver');
+    expect(echoed).toEqual(['hidden']);
+  });
+
+  it('claims an identical RCTLog echo so the second filter request is the one dropped', () => {
+    const echoed: string[] = [];
+    (globalThis as { nativeLoggingHook?: (message: string, level: number) => void }).nativeLoggingHook =
+      (message: string) => {
+        echoed.push(message);
+      };
+    const { installConsoleCapture, forwardLog, classifyFilterRequest } = load();
+    console.log = ((...args: unknown[]) => {
+      const hook = (globalThis as {
+        nativeLoggingHook?: (message: string, level: number) => void;
+      }).nativeLoggingHook;
+      hook?.(args.map((arg) => String(arg)).join(' '), 1);
+    }) as typeof console.log;
+
+    installConsoleCapture({});
+    console.log('BUGSEE_E2E dedup-line');
+
+    expect(echoed).toEqual(['BUGSEE_E2E dedup-line']);
+    expect(forwardLog).toHaveBeenCalledTimes(1);
+    const { native } = require('../../__mocks__/native') as {
+      native: { noteConsoleEcho: jest.Mock };
+    };
+    expect(native.noteConsoleEcho).toHaveBeenCalledWith('BUGSEE_E2E dedup-line');
+    expect(classifyFilterRequest('BUGSEE_E2E dedup-line')).toBe('deliver');
+    expect(classifyFilterRequest('BUGSEE_E2E dedup-line')).toBe('deliver');
+    const stamped =
+      '2026-10-02 18:40:35.273 BareExample[60839:42420530] BUGSEE_E2E dedup-line';
+    expect(classifyFilterRequest(stamped)).toBe('drop');
   });
 
   it('a throwing forwardLog does not escape console.log', () => {
