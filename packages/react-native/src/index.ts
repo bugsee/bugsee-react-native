@@ -18,6 +18,8 @@ import { setLogFilter as installLogFilter } from './logs/filter';
 import type { LogFilter } from './logs/filter';
 import { setNetworkFilter as installNetworkFilter } from './network/filter';
 import type { NetworkFilter } from './network/filter';
+import { addNetworkEvent as recordNetworkEvent } from './network/add';
+import type { AddedNetworkEvent } from './network/add';
 import { type IssueSeverity, LogLevel } from './options/enums';
 import { labelsArgument, severityArgument } from './report/fields';
 import {
@@ -418,6 +420,25 @@ class Bugsee {
   }
 
   /**
+   * Records a network event the SDK did not capture: a stack it does not
+   * auto-instrument.
+   *
+   * `url` and `method` must be strings. `stage` names the native stage;
+   * `completed` is that stage's name here (the device test records it).
+   * Omitted, the stage is `completed`. The bridge stamps the time. The
+   * event is built with the SDK exchange factory and handed back with
+   * filtering required, so an installed {@link setNetworkFilter} still sees
+   * it. This method does not run that filter, and it does not patch
+   * `fetch` or XHR.
+   *
+   * A non-object throws `TypeError`. When the SDK makes no event the call
+   * returns and native logs `addNetworkEvent dropped: the SDK made no event`.
+   */
+  addNetworkEvent(event: AddedNetworkEvent): void {
+    recordNetworkEvent(event);
+  }
+
+  /**
    * Registers the log filter. A later call replaces it. Called with no
    * callback, or with `null`, clears it.
    *
@@ -749,6 +770,7 @@ export type { AttributeReadValue, AttributeValue } from './attributes/validate';
 
 export type { LogFilter } from './logs/filter';
 export type { NetworkFilter, NetworkFilterEvent } from './network/filter';
+export type { AddedNetworkEvent } from './network/add';
 
 export type { ExceptionOptions } from './exceptions/options';
 export { ErrorBoundary } from './exceptions/ErrorBoundary';

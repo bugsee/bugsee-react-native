@@ -460,6 +460,34 @@ public class BugseeModule extends NativeBugseeSpec
         NetworkFilterBridge.shared().reply(requestId, eventJson);
     }
 
+    /**
+     * A network event the app recorded itself. The factory stamps nothing:
+     * this bridge does, then builds the event and submits it with filtering
+     * required. A missing factory or a null event is logged and dropped.
+     * There is no timeout that would pass the original through.
+     */
+    @Override
+    public void addNetworkEvent(final String eventJson) {
+        final NetworkEvents.Outcome outcome;
+        try {
+            final com.bugsee.library.contracts.exchange.BugseeExchangeFactory factory =
+                    Bugsee.getExchangeFactory();
+            outcome = NetworkEvents.record(
+                    eventJson,
+                    factory == null ? null : (timestamp, stage, eventId, mechanism, method) ->
+                            factory.createNetworkEvent(timestamp, stage, eventId, mechanism, method),
+                    (event, requiresFiltering) -> Bugsee.addNetworkEvent(event, requiresFiltering),
+                    System::currentTimeMillis
+            );
+        } catch (final Throwable e) {
+            Log.w(TAG, "addNetworkEvent dropped: the SDK made no event");
+            return;
+        }
+        if (outcome == NetworkEvents.Outcome.NO_EVENT) {
+            Log.w(TAG, "addNetworkEvent dropped: the SDK made no event");
+        }
+    }
+
     // --- Attributes and identity ---------------------------------------
     // Everything that decides a value's shape lives in AttributeBridge, which
     // is plain Java and unit-tested; this is only the translation to and from

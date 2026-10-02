@@ -277,6 +277,13 @@ export const native = {
     jest.fn<Promise<void>, [string, string, string, string | null]>(),
   createdReportUpload: jest.fn<Promise<boolean>, [string]>(),
 
+  /**
+   * A network event the app recorded itself, as JSON text. Native builds it
+   * with the SDK exchange factory and submits it with filtering required.
+   * JS does not run the network filter.
+   */
+  addNetworkEvent: jest.fn<void, [string]>(),
+
   /** `payloadJson` / `optionsJson` are JSON text (`encodeBridgeObject` / `encodeExceptionOptions`). */
   logException: jest.fn<void, [string, string | null]>(),
   /** Resolves by default; tests that hang native replace the implementation. */
