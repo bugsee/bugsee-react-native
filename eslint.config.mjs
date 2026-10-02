@@ -63,6 +63,18 @@ export default tseslint.config(
     },
   },
   {
+    // Source-map build hooks and their Jest fixtures. The broad `**/*.js`
+    // block above only knows CommonJS; these files also run under Node.
+    files: ['packages/react-native/scripts/**/*.js'],
+    languageOptions: {
+      globals: {
+        console: 'readonly', process: 'readonly', require: 'readonly', module: 'readonly', __dirname: 'readonly',
+        describe: 'readonly', it: 'readonly', test: 'readonly', expect: 'readonly', jest: 'readonly',
+        beforeEach: 'readonly', afterEach: 'readonly', beforeAll: 'readonly', afterAll: 'readonly',
+      },
+    },
+  },
+  {
     // The example app: React Native globals plus Node for its own scripts.
     // Its RN-template .eslintrc.js linted nothing at all — `yarn lint` there
     // reported "all of the files matching the glob pattern '.' are ignored" —

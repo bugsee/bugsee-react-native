@@ -148,15 +148,17 @@ afterEvaluate {
                     def interDir = bundleTask.jsIntermediateSourceMapsDir.get().asFile
                     def hook = file("../../node_modules/@bugsee/react-native/scripts/hermes-sourcemaps.js")
                     def compose = file("../../node_modules/react-native/scripts/compose-source-maps.js")
-                    def cmd = [
-                        "node", hook.absolutePath, "finish",
+                    def cmd = []
+                    cmd.addAll(bundleTask.nodeExecutableAndArgs.get())
+                    cmd.addAll([
+                        hook.absolutePath, "finish",
                         "--bundle", preserved.absolutePath,
                         "--bytecode", new File(assetDir, asset).absolutePath,
                         "--composed", composed.absolutePath,
                         "--intermediate", new File(interDir, asset + ".compiler.map").absolutePath,
                         "--packager", new File(interDir, asset + ".packager.map").absolutePath,
                         "--compose", compose.absolutePath,
-                    ]
+                    ])
                     def hermescNote = new File(preserveDir, asset + ".bugsee-hermesc")
                     if (hermescNote.isFile()) {
                         cmd.add("--hermesc")

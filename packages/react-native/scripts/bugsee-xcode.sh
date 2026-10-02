@@ -5,6 +5,13 @@
 
 set -euo pipefail
 
+# react-native-xcode.sh cds to PROJECT_ROOT before compose. CocoaPods expands
+# REACT_NATIVE_PATH to an absolute path; SPM leaves it relative to ios/
+# (`../node_modules/react-native`). Resolve it while cwd is still SRCROOT, or
+# Node looks for the composer under the project root after that cd.
+REACT_NATIVE_PATH="$(cd "$REACT_NATIVE_PATH" && pwd)"
+export REACT_NATIVE_PATH
+
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_XCODE="$REACT_NATIVE_PATH/scripts/react-native-xcode.sh"
 BUNDLE_NAME="${BUNDLE_NAME:-main}"
