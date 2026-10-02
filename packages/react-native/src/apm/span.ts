@@ -8,8 +8,6 @@ import {
   type SpanWire,
 } from './types';
 
-const NONE = '';
-
 const live = new Map<string, SpanObject>();
 
 function dead(): never {
@@ -20,7 +18,7 @@ function dead(): never {
 }
 
 function assertText(value: unknown, method: string, field: string): string {
-  if (typeof value !== 'string' || value.length === 0 || value.trim().length === 0) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
     throw new TypeError(`Bugsee.${method} requires ${field} to be a non-empty string`);
   }
   return value;
@@ -43,8 +41,9 @@ function assertAttribute(value: unknown): SpanAttribute {
   if (typeof value === 'boolean') {
     return value;
   }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
+  // Number.isFinite is true only for finite numbers, so the typeof check is redundant.
+  if (Number.isFinite(value)) {
+    return value as number;
   }
   throw new TypeError('Bugsee span attribute must be a string, a finite number or a boolean');
 }
@@ -68,21 +67,21 @@ function assertAttributes(
 function asWire(value: unknown): SpanWire {
   const wire = value as SpanWire;
   return {
-    handle: typeof wire.handle === 'string' ? wire.handle : NONE,
+    handle: typeof wire.handle === 'string' ? wire.handle : '',
     spanId: typeof wire.spanId === 'string' ? wire.spanId : '',
     traceId: typeof wire.traceId === 'string' ? wire.traceId : '',
     operation: typeof wire.operation === 'string' ? wire.operation : '',
     description: typeof wire.description === 'string' ? wire.description : null,
     status: typeof wire.status === 'number' ? wire.status : SpanStatus.OK,
     finished: wire.finished === true,
-    attributesJson: typeof wire.attributesJson === 'string' ? wire.attributesJson : '{}',
+    attributesJson: wire.attributesJson,
     ...(typeof wire.name === 'string' ? { name: wire.name, sampled: wire.sampled === true } : {}),
   };
 }
 
 function adopt(value: unknown): SpanObject | null {
   const wire = asWire(value);
-  if (wire.handle === NONE) {
+  if (wire.handle === '') {
     return null;
   }
   const existing = live.get(wire.handle);
@@ -130,7 +129,8 @@ class SpanObject {
     this.status = wire.status;
     this.finishedFlag = wire.finished;
     this.attributes = parseAttributes(wire.attributesJson);
-    this.transactionName = typeof wire.name === 'string' ? wire.name : undefined;
+    // `asWire` already kept `name` only when it is a string.
+    this.transactionName = wire.name;
     this.transactionSampled = wire.sampled === true;
   }
 
@@ -194,12 +194,9 @@ class SpanObject {
     const wire = explicit ? assertStatus(status) : 0;
     const released = NativeBugsee.spanFinish(this.wire.handle, wire, explicit);
     markReleased(released);
-    // The handle this call asked to finish is dead here, even when native
-    // omits it from the list. A later call is what throws.
-    if (!this.dead) {
-      this.markDead();
-      live.delete(this.wire.handle);
-    }
+    // Dead even when native omits this handle. A later call is what throws.
+    this.markDead();
+    live.delete(this.wire.handle);
   }
 
   get operationName(): string {
@@ -235,24 +232,26 @@ class SpanObject {
 }
 
 function parseAttributes(json: string): Record<string, SpanAttribute> {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(json);
+    const parsed: unknown = JSON.parse(json);
+    // `null` is typeof "object"; Object.entries throws and the catch
+    // reports the same empty map a non-object would.
+    if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return Object.create(null);
+    }
+    const result: Record<string, SpanAttribute> = Object.create(null);
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'string' || typeof value === 'boolean') {
+        result[key] = value;
+      } else if (typeof value === 'number') {
+        // JSON.parse only yields finite numbers, so no separate finite check.
+        result[key] = value;
+      }
+    }
+    return result;
   } catch {
     return Object.create(null);
   }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return Object.create(null);
-  }
-  const result: Record<string, SpanAttribute> = Object.create(null);
-  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof value === 'string' || typeof value === 'boolean') {
-      result[key] = value;
-    } else if (typeof value === 'number' && Number.isFinite(value)) {
-      result[key] = value;
-    }
-  }
-  return result;
 }
 
 function optionalDescription(description: string | null | undefined): string | null {
