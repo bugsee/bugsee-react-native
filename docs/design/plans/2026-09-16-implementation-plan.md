@@ -66,7 +66,7 @@ Phases 4 and 5 are deliberately small — they settle how values cross the bridg
 
 ### Progress
 
-Updated 2026-10-02. Tasks 8.1–8.2c are on `main` at `06eea6d`. Task 8.3a cases 1–5 and 7–11 passed on the WOD_LX1; case 6 and its Green checkbox stay open because the send control has no stable `resource-id`. Task 8.3b passed on the iOS 26.5 simulator and on the iPhone XS, with case 3 `it.failing` on `source.type` `unknown` and case 6 skipped. Older unchecked boxes in Phases 1–6 were not backfilled in this pass.
+Updated 2026-10-02. Tasks 8.1–8.3a are on `main` at `6499cb8`. Task 8.3a cases 1–5 and 7–11 passed on the WOD_LX1; case 6 and its Green checkbox stay open because the send control has no stable `resource-id`. Task 8.3b passed on the iOS 26.5 simulator and on the iPhone XS, with case 3 `it.failing` on `source.type` `unknown` and case 6 skipped. Older unchecked boxes in Phases 1–6 were not backfilled in this pass.
 
 ---
 
