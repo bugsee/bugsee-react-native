@@ -1,0 +1,70 @@
+// The Android side of @bugsee/react-native-feedback.
+//
+// The TurboModule needs React Native and the generated spec. The standalone
+// repo-root build (bugsee.standalone=true) drops it and tests FeedbackBridge,
+// which is the only place this package calls Bugsee.ext(Feedback.class).
+plugins {
+    id 'com.android.library'
+}
+
+def nativeVersionsFile = { ->
+    def dir = projectDir.canonicalFile
+    while (dir != null) {
+        def candidate = new File(dir, 'native-versions.json')
+        if (candidate.isFile()) {
+            return candidate
+        }
+        dir = dir.parentFile
+    }
+    throw new GradleException(
+            "native-versions.json not found above ${projectDir.canonicalFile}. " +
+            "Every pinned native version comes from that one file.")
+}()
+def nativeVersions = new groovy.json.JsonSlurper().parse(nativeVersionsFile)
+
+def standalone = providers.gradleProperty('bugsee.standalone').getOrElse('false') == 'true'
+if (!standalone) {
+    apply plugin: 'com.facebook.react'
+}
+
+android {
+    namespace 'com.bugsee.reactnative.feedback'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 21
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    if (standalone) {
+        sourceSets {
+            main {
+                java.exclude 'com/bugsee/reactnative/feedback/BugseeFeedbackModule.java'
+                java.exclude 'com/bugsee/reactnative/feedback/BugseeFeedbackPackage.java'
+            }
+        }
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+        unitTests.all {
+            useJUnit()
+            testLogging { events 'passed', 'failed', 'skipped' }
+        }
+    }
+}
+
+dependencies {
+    api "com.bugsee:bugsee-android:${nativeVersions.android.sdk}"
+    api "com.bugsee:bugsee-android-feedback:${nativeVersions.android.sdk}"
+    implementation 'androidx.annotation:annotation:1.9.1'
+    if (!standalone) {
+        implementation 'com.facebook.react:react-android'
+    }
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}

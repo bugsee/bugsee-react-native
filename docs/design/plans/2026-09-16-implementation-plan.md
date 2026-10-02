@@ -4057,6 +4057,8 @@ The phase with the most native↔JS round-tripping, hence the most device testin
 
 `@bugsee/react-native-feedback`: `showFeedbackUI`, `setGreeting`, `setListener`, feedback appearance. Android reaches it through `Bugsee.ext(Feedback.class)`; iOS through `BugseeFeedback.shared`, a separate SPM package (`bugsee/feedback-spm`, exact `7.0.0-beta3` — in lockstep with the core pin, not `beta1`) that itself pins the core exactly — so both move in lockstep. Needs no config plugin: autolinking picks up the Gradle dependency and its podspec carries its own vendoring.
 
+- [x] **12** Package, JS API, Android `Bugsee.ext(Feedback.class)` (`showFeedbackActivity` / `setDefaultFeedbackGreeting` / `setOnNewFeedbackListener`, `FeedbackAppearance` colors) and iOS `BugseeFeedback.shared` from `bugsee/feedback-spm` exact `7.0.0-beta3`. Device run not attempted: the bare example's `@bugsee/react-native` symlink is owned by Task 9.7.
+
 ---
 
 ## Phase 13 — Build tooling

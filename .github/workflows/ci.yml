@@ -83,7 +83,7 @@ jobs:
       - run: yarn install --immutable
       - run: yarn workspace bugsee-example-bare credentials
       # The library's own unit tests, from the root build.
-      - run: ./gradlew :bugsee-android-bridge:testDebugUnitTest
+      - run: ./gradlew :bugsee-android-bridge:testDebugUnitTest :bugsee-android-feedback:testDebugUnitTest
       # The example carries its own wrapper and settings; the root build knows
       # nothing about it, so it is built from its own directory. The
       # example-only bugsee-e2e-native module (Task 7.6a) is only reachable
