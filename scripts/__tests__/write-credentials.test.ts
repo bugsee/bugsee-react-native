@@ -62,4 +62,27 @@ describe('write-credentials and the e2e scenario file', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('writes app_token and enables NDK symbol upload for React Native', () => {
+    const root = mkdtempSync(join(tmpdir(), 'write-credentials-'));
+    const androidToken = 'fake-android-token';
+    try {
+      mkdirSync(join(root, 'scripts'));
+      copyFileSync(SCRIPT, join(root, 'scripts', 'write-credentials.mjs'));
+      const output = execFileSync(process.execPath, [join(root, 'scripts', 'write-credentials.mjs')], {
+        env: { ...process.env, BUGSEE_TOKEN_IOS: '', BUGSEE_TOKEN_ANDROID: androidToken },
+        encoding: 'utf8',
+      });
+      const props = readFileSync(join(root, 'android', 'bugsee.properties'), 'utf8');
+      const lines = props.split('\n');
+      const tokenLine = lines.find((line) => line.startsWith('app_token='));
+      expect(tokenLine !== undefined).toBe(true);
+      expect(tokenLine === `app_token=${androidToken}`).toBe(true);
+      expect(lines.includes('plugin.ndk.enabled=true')).toBe(true);
+      expect(props.includes('plugin.appToken')).toBe(false);
+      expect(output.includes(androidToken)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
