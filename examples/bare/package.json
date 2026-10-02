@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@bugsee/react-native": "workspace:*",
+    "@bugsee/react-native-feedback": "workspace:*",
     "bugsee-e2e-native": "workspace:*",
     "react": "19.2.3",
     "react-native": "0.87.1"

@@ -7,7 +7,11 @@ import android.util.Base64;
 import android.util.Log;
 
 import com.bugsee.library.Bugsee;
+import com.bugsee.library.contracts.exchange.Breadcrumb;
+import com.bugsee.library.contracts.exchange.BugseeExchangeFactory;
 import com.bugsee.library.contracts.options.IssueSeverity;
+import com.bugsee.library.contracts.options.Options;
+import com.bugsee.library.contracts.options.OptionsContainer;
 import com.bugsee.library.contracts.reporting.Report;
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
@@ -41,7 +45,8 @@ import java.util.concurrent.Executors;
  */
 @ReactModule(name = BugseeModule.NAME)
 public class BugseeModule extends NativeBugseeSpec
-        implements WrapperEventBus.Sink, ReportHandlerBridge.Sink, NetworkFilterBridge.Sink, LogFilterBridge.Sink {
+        implements WrapperEventBus.Sink, ReportHandlerBridge.Sink, NetworkFilterBridge.Sink,
+            LogFilterBridge.Sink, BreadcrumbFilterBridge.Sink {
 
     public static final String NAME = "Bugsee";
 
@@ -104,6 +109,7 @@ public class BugseeModule extends NativeBugseeSpec
         DataRequestBridge.shared().attach(dataRequestSink, originTracker::currentOrigin);
         NetworkFilterBridge.shared().attach(this);
         LogFilterBridge.shared().attach(this);
+        BreadcrumbFilterBridge.shared().attach(this);
     }
 
     /**
@@ -133,6 +139,10 @@ public class BugseeModule extends NativeBugseeSpec
         // one would otherwise sit until the SDK's timeout, and a reply into
         // this module after it is gone has nowhere to land.
         LogFilterBridge.shared().detach(this);
+        // Drops every breadcrumb-filter request this module was given. An
+        // unanswered one is not recorded; a reply into this module after it
+        // is gone has nowhere to land.
+        BreadcrumbFilterBridge.shared().detach(this);
         SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
         super.invalidate();
@@ -647,6 +657,115 @@ public class BugseeModule extends NativeBugseeSpec
             return;
         }
         LogFilterBridge.shared().reply(requestId, line);
+    }
+
+    @Override
+    public void onBreadcrumbFilterRequest(
+            @NonNull final String requestId,
+            @NonNull final String crumbJson,
+            @Nullable final String addId
+    ) {
+        final WritableMap payload = Arguments.createMap();
+        payload.putString("requestId", requestId);
+        payload.putString("crumbJson", crumbJson);
+        if (addId != null) {
+            payload.putString("addId", addId);
+        }
+        emitOnBreadcrumbFilterRequest(payload);
+    }
+
+    @Override
+    public void setBreadcrumbFilterEnabled(final boolean enabled) {
+        BreadcrumbFilterBridge.shared().setEnabled(enabled);
+    }
+
+    @Override
+    public void replyBreadcrumbFilter(
+            final String requestId,
+            @Nullable final String crumbJson
+    ) {
+        if (requestId == null) {
+            return;
+        }
+        BreadcrumbFilterBridge.shared().reply(requestId, crumbJson);
+    }
+
+    /**
+     * Builds the crumb with {@link Bugsee#getExchangeFactory()} and records
+     * it. The no-argument {@code createBreadcrumb} leaves the timestamp unset
+     * so the provider stamps it. {@code level} is the JS name;
+     * {@link BreadcrumbFilterBridge#levelFromName} maps it to
+     * {@link Breadcrumb.Level}. {@code dataJson} null leaves data unset.
+     *
+     * <p>Returns true only when a filter request for {@code addId} was
+     * emitted during {@link Bugsee#addBreadcrumb}. The filter runs before
+     * that call returns, so the id has to be visible to it for this call
+     * only. False means JS should drop the id.
+     */
+    @Override
+    public boolean addBreadcrumb(
+            final String category,
+            final String level,
+            final String message,
+            final String type,
+            @Nullable final String dataJson,
+            @Nullable final String addId
+    ) {
+        try {
+            // iOS still hands back a crumb when this option is false, then
+            // records nothing. Android's factory is null in that case. Either
+            // way the call has to say so.
+            final OptionsContainer options = Bugsee.getLaunchOptions();
+            final Object capture = options == null
+                    ? Boolean.FALSE
+                    : options.getOption(Options.CaptureBreadcrumbs, Boolean.FALSE);
+            if (!Boolean.TRUE.equals(capture)) {
+                Log.e(TAG, "addBreadcrumb dropped: capture is off or the SDK made no crumb");
+                return false;
+            }
+            final BugseeExchangeFactory factory = Bugsee.getExchangeFactory();
+            if (factory == null) {
+                Log.e(TAG, "addBreadcrumb dropped: capture is off or the SDK made no crumb");
+                return false;
+            }
+            final Breadcrumb crumb = factory.createBreadcrumb();
+            if (crumb == null) {
+                Log.e(TAG, "addBreadcrumb dropped: capture is off or the SDK made no crumb");
+                return false;
+            }
+            final Breadcrumb.Level parsed = BreadcrumbFilterBridge.levelFromName(level);
+            if (parsed == null) {
+                Log.e(TAG, "addBreadcrumb dropped: level is not a breadcrumb level name");
+                return false;
+            }
+            crumb.setCategory(category);
+            crumb.setLevel(parsed);
+            crumb.setMessage(message);
+            crumb.setType(type);
+            if (dataJson != null) {
+                crumb.setData(BridgeJson.parseObject(dataJson));
+            }
+            final boolean[] emitted = { false };
+            BreadcrumbFilterBridge.shared().withSdkLock(() -> {
+                if (addId != null) {
+                    BreadcrumbFilterBridge.shared().beginManualAdd(addId);
+                }
+                try {
+                    Bugsee.addBreadcrumb(crumb);
+                    emitted[0] = addId != null
+                            && BreadcrumbFilterBridge.shared().takeUnclaimedManualAdd() == null;
+                } finally {
+                    BreadcrumbFilterBridge.shared().takeUnclaimedManualAdd();
+                }
+            });
+            return emitted[0];
+        } catch (final BridgeJson.BadJson e) {
+            Log.e(TAG, "addBreadcrumb dropped: its data is not a JSON object: " + e.getMessage());
+            return false;
+        } catch (final RuntimeException e) {
+            Log.e(TAG, "addBreadcrumb failed", e);
+            return false;
+        }
     }
 
     /** {@code { value }}, typed by {@code value}'s runtime type, or empty when absent. */

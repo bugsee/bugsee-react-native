@@ -18,8 +18,10 @@
  * `secure-component` and `view-tree` are scenarios/privacy.tsx, and
  * `exc-*` are scenarios/exceptions.tsx, `rp-*` are
  * scenarios/reporting.ts, `log-filter` is scenarios/log-filter.ts,
- * `network-filter` is scenarios/network-filter.ts, and
- * `add-network-event` is scenarios/add-network-event.ts.
+ * `breadcrumb-filter` is scenarios/breadcrumb-filter.ts,
+ * `network-filter` is scenarios/network-filter.ts,
+ * `add-network-event` is scenarios/add-network-event.ts, and
+ * `feedback` is scenarios/feedback.ts.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -96,6 +98,10 @@ import {
   runLogFilterScenario,
 } from './scenarios/log-filter';
 import {
+  isBreadcrumbFilterScenario,
+  runBreadcrumbFilterScenario,
+} from './scenarios/breadcrumb-filter';
+import {
   installNetworkFilter,
   isNetworkFilterScenario,
   runNetworkFilterScenario,
@@ -105,6 +111,7 @@ import {
   isAddNetworkEventScenario,
   runAddNetworkEventScenario,
 } from './scenarios/add-network-event';
+import { isFeedbackScenario, runFeedbackScenario } from './scenarios/feedback';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -127,10 +134,16 @@ const NON_DEFAULT_DURATION = 90;
  * SDKs disagree about the version segment. That belongs in the library, not
  * here -- this file carried its own copy of the rule until the model grew one.
  */
-function launchOptions(endpoint: string): LaunchOptions {
+function launchOptions(endpoint: string, scenario: string): LaunchOptions {
   const options = createDefaultLaunchOptions();
   options.endpoint = endpoint;
   options.duration = NON_DEFAULT_DURATION;
+  // This scenario only. Breadcrumb capture stays off on Android and on iOS
+  // until launch options set captureBreadcrumbs, so a launch that leaves it
+  // unset records no crumbs. Duration stays the app's 90.
+  if (isBreadcrumbFilterScenario(scenario)) {
+    options.captureBreadcrumbs = true;
+  }
   return BugseeLaunchOptions.serialize(options) as LaunchOptions;
 }
 
@@ -380,7 +393,7 @@ export default function App() {
         Bugsee.getStatus().then(observe).catch(() => {});
       }, 100);
       try {
-        const launched = await Bugsee.launch(token, launchOptions(endpoint));
+        const launched = await Bugsee.launch(token, launchOptions(endpoint, choice.scenario));
         console.log(`BUGSEE_E2E launch() resolved ${String(launched)}`);
 
         // Wait for Launched to be LOGGED before relaunching, so the output
@@ -424,6 +437,11 @@ export default function App() {
           return;
         }
 
+        if (isBreadcrumbFilterScenario(choice.scenario)) {
+          runBreadcrumbFilterScenario(choice.nonce);
+          return;
+        }
+
         if (isAttributeScenario(choice.scenario)) {
           runAttributeScenario(choice.scenario, choice.nonce);
           return;
@@ -461,6 +479,11 @@ export default function App() {
 
         if (isAddNetworkEventScenario(choice.scenario)) {
           runAddNetworkEventScenario(choice.nonce);
+          return;
+        }
+
+        if (isFeedbackScenario(choice.scenario)) {
+          runFeedbackScenario(choice.nonce);
           return;
         }
 
@@ -529,7 +552,7 @@ export default function App() {
         // and no other check in this repo would notice.
         let relaunchLine: string;
         try {
-          const relaunched = await Bugsee.relaunch(launchOptions(endpoint));
+          const relaunched = await Bugsee.relaunch(launchOptions(endpoint, choice.scenario));
           relaunchLine = `BUGSEE_E2E relaunch() settled resolved=${String(relaunched)}`;
         } catch (relaunchCause) {
           relaunchLine = `BUGSEE_E2E relaunch() settled rejected=${String(relaunchCause)}`;

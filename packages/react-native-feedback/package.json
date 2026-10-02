@@ -1,0 +1,41 @@
+{
+  "name": "@bugsee/react-native-feedback",
+  "version": "0.0.0",
+  "description": "In-app feedback UI for the Bugsee React Native SDK",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://www.bugsee.com",
+  "main": "src/index.ts",
+  "files": [
+    "src",
+    "android",
+    "ios",
+    "react-native.config.js",
+    "*.podspec",
+    "LICENSE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@bugsee/react-native": "*",
+    "react": "*",
+    "react-native": ">=0.81.0"
+  },
+  "devDependencies": {
+    "react-native": "0.87.1"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/cli-check-releasable-pins.ts"
+  },
+  "codegenConfig": {
+    "name": "RNBugseeFeedbackSpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.bugsee.reactnative.feedback"
+    },
+    "ios": {
+      "modulesProvider": {
+        "BugseeFeedbackModule": "BugseeFeedbackModule"
+      }
+    }
+  }
+}
