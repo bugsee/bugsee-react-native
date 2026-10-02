@@ -31,6 +31,13 @@
   [self refreshFinding:NO];
 }
 
+- (BOOL)publishCoordinates:(NSData *)coordinates forDisplay:(NSInteger)display {
+  [self refreshFindingTheRoot];
+  return [_store setCoordinates:(const int32_t *)coordinates.bytes
+                          count:coordinates.length / sizeof(int32_t)
+                     forDisplay:display];
+}
+
 - (void)refreshFinding:(BOOL)find {
   @try {
     UIView *root = _root;

@@ -106,6 +106,38 @@
   XCTAssertEqualObjects([self served], (@[@110, @70, @130, @90]));
 }
 
+/// A publish reads the window's place before it writes: a pull in between
+/// must never get the new rectangles at an origin not yet read.
+- (void)testAPublishReadsThePlaceBeforeItWritesTheRectangles {
+  BGSRNSecureRectangles *store = [[BGSRNSecureRectangles alloc] init];
+  UIView *root = _root;
+  __block NSArray<NSNumber *> *servedWhileReading = nil;
+  BGSRNReactRootOriginTracker *tracker = [[BGSRNReactRootOriginTracker alloc] initWithStore:store
+      findRoot:^UIView * {
+        return root;
+      }
+      readOrigin:^NSValue *(UIWindow *window) {
+        servedWhileReading = BGSRNServedCoordinates([store snapshotForDisplay:0]);
+        return [NSValue valueWithCGPoint:CGPointMake(100, 50)];
+      }];
+  const int32_t rects[] = {10, 20, 30, 40};
+
+  XCTAssertTrue([tracker publishCoordinates:[NSData dataWithBytes:rects length:sizeof(rects)]
+                                 forDisplay:0]);
+
+  XCTAssertEqualObjects(servedWhileReading, @[], @"written before the origin was read");
+  XCTAssertEqualObjects(BGSRNServedCoordinates([store snapshotForDisplay:0]),
+                        (@[@110, @70, @130, @90]));
+}
+
+- (void)testAPublishOfPartRectanglesIsRefused {
+  const int32_t coordinates[] = {1, 2, 3};
+
+  XCTAssertFalse([[self tracker] publishCoordinates:[NSData dataWithBytes:coordinates
+                                                                   length:sizeof(coordinates)]
+                                         forDisplay:0]);
+}
+
 /// A window off its screen for a moment (a scene disconnecting) must not
 /// throw the regions back to the window's own corner.
 - (void)testKeepsTheLastOriginWhenThePlaceCannotBeRead {

@@ -464,24 +464,23 @@ RCT_EXPORT_MODULE(Bugsee)
   // is. Rounding rather than truncating: the JS side has already rounded each
   // edge outwards, and truncating would pull an edge back inside the region it
   // was widened to cover.
-  int32_t *flat = count > 0 ? (int32_t *)malloc(count * sizeof(int32_t)) : NULL;
-  if (count > 0 && flat == NULL) {
+  NSMutableData *flat = [NSMutableData dataWithLength:count * sizeof(int32_t)];
+  if (flat == nil) {
     return;
   }
+  int32_t *values = (int32_t *)flat.mutableBytes;
   for (NSUInteger i = 0; i < count; i++) {
-    flat[i] = (int32_t)llround([coordinates[i] doubleValue]);
+    values[i] = (int32_t)llround([coordinates[i] doubleValue]);
   }
 
-  [BGSRNSecureRectangles.shared setCoordinates:flat
-                                         count:count
-                                    forDisplay:(NSInteger)display];
-  free(flat);
-  // JS measured in the React root's window; where that window sits on the
-  // screen is read on main, as Android re-reads its root's display origin on
-  // every publish.
+  // JS measured in the React root's window. The tracker reads where that
+  // window sits on the screen and only then writes the rectangles, both on
+  // main, where the SDK pulls: no pull ever serves them at an origin not yet
+  // read (see -[BGSRNReactRootOriginTracker publishCoordinates:forDisplay:]).
   BGSRNReactRootOriginTracker *tracker = BGSRNSecureOriginTracker();
+  const NSInteger target = (NSInteger)display;
   BGSRNRunOnMain(^{
-    [tracker refreshFindingTheRoot];
+    [tracker publishCoordinates:flat forDisplay:target];
   });
 }
 

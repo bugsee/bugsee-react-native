@@ -38,6 +38,18 @@ NS_ASSUME_NONNULL_BEGIN
 /// records where its window starts.
 - (void)refreshFindingTheRoot;
 
+/// A JS publish: `-refreshFindingTheRoot`, then `coordinates` (packed int32,
+/// four per rectangle, in the root's window) written to the store for
+/// `display`. In that order and on main, where the SDK pulls. Written first,
+/// the rectangles would be served at the origin the store held before for any
+/// pull between the two -- `CGPointZero` until the first one is read -- and a
+/// window away from the screen's origin would be recorded in the clear for
+/// that frame. Android has no such gap: it reads its origin on host resume and
+/// on every layout of the root, before JS can measure anything.
+///
+/// @return NO, publishing nothing, when `coordinates` is not whole rectangles.
+- (BOOL)publishCoordinates:(NSData *)coordinates forDisplay:(NSInteger)display;
+
 /// For the SDK's pulls: records where the window of the root found last starts
 /// now, without searching. A window can move (Stage Manager, Split View) with
 /// nothing published.
