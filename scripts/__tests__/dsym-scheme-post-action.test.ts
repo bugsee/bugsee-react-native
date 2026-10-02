@@ -91,8 +91,12 @@ describe('BareExample archive scheme uploads dSYMs', () => {
   // the scheme would ship the secret.
   it('supplies BUGSEE_APP_TOKEN from the environment or credentials.json', () => {
     expect(action).toBeDefined();
-    expect(script).toContain(
-      'export BUGSEE_APP_TOKEN="${BUGSEE_APP_TOKEN:-$BUGSEE_TOKEN_IOS}"',
+    // An empty export is Some("") to clap, which POSTs /apps//… instead of
+    // reporting a missing token. Export only a non-empty value, same as endpoint.
+    expect(script).not.toContain('${BUGSEE_APP_TOKEN:-$BUGSEE_TOKEN_IOS}');
+    expect(script).toMatch(/BUGSEE_TOKEN_IOS/);
+    expect(script).toMatch(
+      /if \[ -n "\$TOKEN" \]; then\n\s+export BUGSEE_APP_TOKEN="\$TOKEN"\nfi/,
     );
     expect(script).toMatch(/credentials\.json/);
     expect(script).toMatch(/-extract ios\b/);
