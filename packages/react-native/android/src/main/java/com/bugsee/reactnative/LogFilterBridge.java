@@ -7,6 +7,7 @@ import com.bugsee.library.Bugsee;
 import com.bugsee.library.contracts.common.Callback1;
 import com.bugsee.library.contracts.exchange.EventFilter;
 import com.bugsee.library.contracts.exchange.LogEvent;
+import com.bugsee.library.contracts.internal.LogSource;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -99,6 +100,7 @@ final class LogFilterBridge {
     }
 
     private final Scheduler scheduler;
+    private final ConsoleEchoDedup echoes;
     private final AtomicReference<Sink> sink = new AtomicReference<>();
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong();
@@ -106,12 +108,18 @@ final class LogFilterBridge {
 
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private LogFilterBridge() {
-        this(new DaemonScheduler());
+        this(new DaemonScheduler(), System::currentTimeMillis);
     }
 
     /** Tests pass a scheduler they fire themselves. */
     LogFilterBridge(@NonNull final Scheduler scheduler) {
+        this(scheduler, System::currentTimeMillis);
+    }
+
+    /** Tests pass a clock so an echo claim can expire without waiting. */
+    LogFilterBridge(@NonNull final Scheduler scheduler, @NonNull final ConsoleEchoDedup.Clock clock) {
         this.scheduler = scheduler;
+        this.echoes = new ConsoleEchoDedup(clock);
     }
 
     private final EventFilter<LogEvent> filter = new EventFilter<LogEvent>() {
@@ -121,7 +129,7 @@ final class LogFilterBridge {
                 @NonNull final Callback1<LogEvent> callback
         ) {
             try {
-                ask(event, callback);
+                route(event, callback);
             } catch (final Throwable e) {
                 // The SDK rethrows a filter exception, which on the wrapper
                 // channel's thread is a crash. Drop the line instead.
@@ -202,6 +210,27 @@ final class LogFilterBridge {
             return;
         }
         item.callback.run(item.event);
+    }
+
+    /**
+     * One log event from the SDK. A logcat line tagged {@code ReactNativeJS}
+     * whose text matches a wrapper-channel line noted moments ago is the
+     * console echo: it is dropped here, before {@link #ask} tells JS, so the
+     * user's filter runs once. Every other line, including the channel line
+     * itself and an RN-internal logcat line, is asked as before.
+     */
+    void route(
+            @NonNull final LogEvent event,
+            @NonNull final Callback1<LogEvent> callback
+    ) {
+        if (echoes.dropEcho(event.getLogSource(), event.getTag(), event.getMessage())) {
+            drop(callback);
+            return;
+        }
+        if (event.getLogSource() == LogSource.Custom) {
+            echoes.note(event.getMessage());
+        }
+        ask(event, callback);
     }
 
     void ask(

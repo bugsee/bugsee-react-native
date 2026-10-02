@@ -265,4 +265,69 @@ public class LogFilterBridgeTest {
         assertEquals(0, recycledCallback.runs);
         assertEquals(0, recycled.setMessageCalls);
     }
+
+    /**
+     * The channel line is asked. The logcat echo of the same text is dropped
+     * without a second ask, so the user's filter runs once.
+     */
+    @Test
+    public void routeAsksTheChannelLineAndDropsItsLogcatEcho() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        final RecordingCallback channelCallback = new RecordingCallback();
+        bridge.route(new SourcedLog(LogSource.Custom, null, "hello"), channelCallback);
+
+        assertEquals(1, sink.ids.size());
+        assertEquals(0, channelCallback.runs);
+
+        final RecordingCallback echoCallback = new RecordingCallback();
+        bridge.route(
+                new SourcedLog(LogSource.LogCat, ConsoleEchoDedup.JS_CONSOLE_TAG, "hello"),
+                echoCallback);
+
+        assertEquals(1, sink.ids.size());
+        assertEquals(1, echoCallback.runs);
+        assertTrue(echoCallback.sawNull);
+    }
+
+    /** Logcat line with a source and a tag, for the echo route. */
+    private static final class SourcedLog implements LogEvent {
+        private final LogSource source;
+        private final String tag;
+        private final String message;
+
+        SourcedLog(final LogSource source, final String tag, final String message) {
+            this.source = source;
+            this.tag = tag;
+            this.message = message;
+        }
+
+        @Override
+        public long getTimestamp() {
+            return 1L;
+        }
+
+        @Override
+        @NonNull
+        public LogSource getLogSource() {
+            return source;
+        }
+
+        @Override
+        @Nullable
+        public String getMessage() {
+            return message;
+        }
+
+        @Override
+        public LogLevel getLevel() {
+            return LogLevel.Info;
+        }
+
+        @Override
+        @Nullable
+        public String getTag() {
+            return tag;
+        }
+    }
 }

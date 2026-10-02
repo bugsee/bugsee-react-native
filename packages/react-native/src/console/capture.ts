@@ -1,5 +1,12 @@
 import { LogLevel } from '../options/enums';
 import { forwardLog } from '../wrapper/channel';
+import {
+  claimEcho,
+  protectLine,
+  readDev,
+  shouldDropConsoleEcho,
+  shouldForwardJsPatch,
+} from './dedup';
 
 /**
  * The launch option that turns console forwarding off. Absent means on,
@@ -26,6 +33,51 @@ const LEVEL_BY_METHOD: Record<ConsoleMethod, LogLevel> = {
 
 let installed = false;
 let forwardEnabled = true;
+/** Set around the original console call when this patch will also forward. */
+let expectingEcho = false;
+
+interface NativeLoggingHost {
+  nativeLoggingHook?: (message: string, level: number) => void;
+}
+
+interface WrappedHook {
+  (message: string, level: number): void;
+  bugseeConsoleHook?: boolean;
+}
+
+function loggingHost(): NativeLoggingHost {
+  return globalThis as NativeLoggingHost;
+}
+
+/**
+ * Wraps `nativeLoggingHook` once. The original hook still runs, so logcat
+ * and the Xcode console keep the line. While this patch is inside a console
+ * call it will forward, the hook's message is claimed before the original
+ * hook runs. That is before logcat is written, so the claim exists when the
+ * echo is filtered, even if the channel line has not been noted yet.
+ */
+function installNativeHook(): void {
+  const host = loggingHost();
+  const current = host.nativeLoggingHook;
+  if (typeof current !== 'function' || isWrappedHook(current)) {
+    return;
+  }
+  const wrapped: WrappedHook = (message: string, level: number): void => {
+    if (expectingEcho) {
+      expectingEcho = false;
+      claimEcho(message);
+    }
+    current(message, level);
+  };
+  wrapped.bugseeConsoleHook = true;
+  host.nativeLoggingHook = wrapped;
+}
+
+function isWrappedHook(
+  hook: (message: string, level: number) => void,
+): hook is WrappedHook {
+  return (hook as WrappedHook).bugseeConsoleHook === true;
+}
 
 /**
  * One argument, via `String`. That is the success path, including functions.
@@ -60,14 +112,35 @@ function patch(method: ConsoleMethod): void {
   const level = LEVEL_BY_METHOD[method];
   const original = console[method].bind(console);
   const wrapped = (...args: unknown[]): void => {
-    original(...args);
-    if (!forwardEnabled) {
+    const dev = readDev();
+    const owns = forwardEnabled && shouldForwardJsPatch(dev);
+    const dropEcho = shouldDropConsoleEcho(dev, owns);
+    let line: string | undefined;
+    if (owns) {
+      try {
+        line = formatConsoleLine(args);
+      } catch {
+        line = undefined;
+      }
+    }
+    if (dropEcho && line !== undefined) {
+      expectingEcho = true;
+    }
+    try {
+      original(...args);
+    } finally {
+      expectingEcho = false;
+    }
+    if (!owns || line === undefined) {
       return;
     }
     // Formatting or the channel can throw. The original call has already
     // run; this wrap must not turn that into an uncaught exception.
     try {
-      forwardLog(formatConsoleLine(args), level);
+      if (dropEcho) {
+        protectLine(line);
+      }
+      forwardLog(line, level);
     } catch {
       // Drop the line. The console call itself succeeded.
     }
@@ -78,9 +151,11 @@ function patch(method: ConsoleMethod): void {
 /**
  * Patches `console.log`, `console.info`, `console.warn`, `console.error`
  * and `console.debug`. Each call still performs the original console call,
- * then forwards one line through `forwardLog` — the only native route.
- * The app's log filter is not run here: every channel line is filtered
- * natively, once.
+ * then forwards one line through `forwardLog` — the only native route for
+ * the patch. The app's log filter is not run here. Under `__DEV__` the
+ * same call also reaches `RCTLog`; that echo is claimed so the filter
+ * runs once. The patch still forwards in release: `RCTLog` does not carry
+ * `console.*` there.
  *
  * Idempotent. A second call does not wrap the already-patched functions.
  * It does re-read `com.bugsee.option.capture.logs`: `false` stops
@@ -90,6 +165,7 @@ function patch(method: ConsoleMethod): void {
  */
 export function installConsoleCapture(options: Record<string, unknown> = {}): void {
   forwardEnabled = options[CAPTURE_LOGS_OPTION] !== false;
+  installNativeHook();
   if (installed) {
     return;
   }

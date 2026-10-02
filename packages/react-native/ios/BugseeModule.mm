@@ -1,4 +1,5 @@
 #import "BugseeModule.h"
+#import "BGSRNConsoleCapture.h"
 
 // Header imports, not `@import`. This file is ObjC++, and neither delivery path
 // turns on C++ modules — CocoaPods sets CLANG_ENABLE_MODULES for ObjC only, and
@@ -410,6 +411,7 @@ RCT_EXPORT_MODULE(Bugsee)
 - (instancetype)init {
   if ((self = [super init])) {
     BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithoutJsRuntime], YES);
+    BGSRNInstallConsoleCapture();
   }
   return self;
 }

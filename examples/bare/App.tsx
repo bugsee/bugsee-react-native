@@ -54,6 +54,7 @@ import {
   runChannelScenario,
 } from './scenarios/channel';
 import { isConsoleScenario, runConsoleScenario } from './scenarios/console';
+import { isConsoleDedupScenario, runConsoleDedupScenario } from './scenarios/console-dedup';
 import {
   isDataScenario,
   preLaunchDataProbe,
@@ -400,6 +401,11 @@ export default function App() {
 
         if (isConsoleScenario(choice.scenario)) {
           runConsoleScenario(choice.nonce);
+          return;
+        }
+
+        if (isConsoleDedupScenario(choice.scenario)) {
+          runConsoleDedupScenario(choice.nonce);
           return;
         }
 
