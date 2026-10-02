@@ -66,7 +66,7 @@ Phases 4 and 5 are deliberately small — they settle how values cross the bridg
 
 ### Progress
 
-Updated 2026-10-01. Phases 1–6 are on `main` (`7b40eb6`), except the Phase 6 Modal follow-up, which is not merged (iOS blackout still sees each `console.log` twice). Phase 7 is complete through its review gate on `feat/phase-7-5b` at `fb9449b`. Task 8.1 is complete and reviewed on `feat/phase-8-1` at `c437703`. Task 8.2a is complete and reviewed at `cd79431` on `feat/phase-8-2a`. Task 8.2b is complete and re-reviewed at `0542501` on `feat/phase-8-2b`. Task 8.2c is complete and re-reviewed at `a05df5a` on `feat/phase-8-2c`. Task 8.3a stopped at Step 0: the send control has no stable `resource-id`. The two bridges are still on separate branches. Task 8.3b has not started. Older unchecked boxes in Phases 1–6 were not backfilled in this pass.
+Updated 2026-10-02. Tasks 8.1–8.2c are on `main` at `06eea6d`. Task 8.3a is in progress with case 6 blocked: the dialog send control has no stable `resource-id`, so cases 1–5 and 7–11 were run on the WOD_LX1 and case 6 was not. Task 8.3b has not started. Older unchecked boxes in Phases 1–6 were not backfilled in this pass.
 
 ---
 
@@ -3965,15 +3965,15 @@ FOUNDATION_EXPORT const NSUInteger BGSRNCreatedReportAttachmentMaxBytes;   // 31
 10. `created-report attachment limits` — **Android:** `extra1 ok` and `extra2 ok`, and case 7's bundle has 4 attachments.
 11. `a handler attaches a file by copy and by move` — `exists copy=true move=false`. Exactly one bundle with summary `att-<n>`, whose `attachmentsOf` has both names with contents `copy <n>` and `move <n>`, and `mimeType === 'text/plain'` on both.
 
-- [ ] **Step 0** — as above. Record the result. *2026-10-01, WOD_LX1 `AMRJCP4718402860`, nonce `cae20c890381`: the dialog was on screen (`BeforeReportShown`, fields pre-filled). The submit control is a clickable `TextView`, text `Отправить` (`bugsee_send`), `resource-id=""`, bounds `[464,51][656,163]`. The only ids in the dump are `android:id/content` and `android:id/statusBarBackground`. Android SDK 7.3.0 builds that button with `ResourceIdentifiers.POSITIVE_BUTTON = View.generateViewId()`, so uiautomator has no stable resource name to pin. Stopped. Nothing was tapped. Cases 1–11 were not run. No commit.*
-- [ ] **Red** — write the tests and scenarios. Run once before wiring `App.tsx` → FAIL at the first marker.
+- [ ] **Step 0** — as above. Record the result. *2026-10-01, WOD_LX1 `AMRJCP4718402860`, nonce `cae20c890381`: the dialog was on screen (`BeforeReportShown`, fields pre-filled). The submit control is a clickable `TextView`, text `Отправить` (`bugsee_send`), `resource-id=""`, bounds `[464,51][656,163]`. The only ids in the dump are `android:id/content` and `android:id/statusBarBackground`. Android SDK 7.3.0 builds that button with `ResourceIdentifiers.POSITIVE_BUTTON = View.generateViewId()`, so uiautomator has no stable resource name to pin. Stopped. Nothing was tapped. Cases 1–11 were not run. No commit. On 2026-10-02, cases 1–5 and 7–11 were run on WOD_LX1 `AMRJCP4718402860` and passed; case 6 was not run.*
+- [x] **Red** — write the tests and scenarios. Run once before wiring `App.tsx` → FAIL at the first marker.
 - [ ] **Green** — cases 1–11 pass on the WOD_LX1.
-- [ ] **Mutate**
+- [x] **Mutate**
   - (1) Map the Android severity by ordinal. Case 1 must fail on `up3`.
   - (2) Pass `move = false` from `ReportOps.addFile`'s caller. Case 11 must fail on `move=true`.
   - (3) Make `CreatedReports.reserve()` always `true`. Case 9 must fail.
   - Revert and record.
-- [ ] **Commit** — `test(e2e): upload, the dialog, createReport and attachments in Android bundles`. The body records the banner, `S`, the Step 0 excerpt, and one `request.json` verbatim.
+- [x] **Commit** — `test(e2e): upload, the dialog, createReport and attachments in Android bundles`. The body records the banner, `S`, the Step 0 excerpt, and one `request.json` verbatim.
 
 ---
 
