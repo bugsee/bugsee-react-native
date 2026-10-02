@@ -21,10 +21,15 @@ export interface AddedNetworkEvent {
   body?: string | null;
   headers?: Record<string, string> | null;
   responseCode?: number;
+  /** Android stores this. iOS drops it. The event is still recorded. */
   statusText?: string | null;
+  /** Android stores this. iOS drops it. The event is still recorded. */
   errorDescription?: string | null;
+  /** Android stores this. iOS drops it. The event is still recorded. */
   errorShortMessage?: string | null;
+  /** iOS stores this. Android does not. The event is still recorded. */
   redirectedFromURL?: string | null;
+  /** iOS stores this. Android does not. The event is still recorded. */
   error?: Record<string, unknown> | null;
 }
 
