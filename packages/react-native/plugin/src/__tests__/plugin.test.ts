@@ -572,6 +572,28 @@ describe('Android Gradle edits', () => {
     expect(ensureAppAppliesPlugin(off, null)).toBe(off);
   });
 
+  it('rewrites a finish hook that still calls project.exec', () => {
+    const current = ensureAppAppliesPlugin(expoSdk57AppBuildGradle(), versions.sdk);
+    const stale = current
+      .replace(
+        'bundleTask.services.get(org.gradle.process.ExecOperations).exec {',
+        'project.exec {',
+      )
+      .replace(
+        'apply plugin: "com.facebook.react"',
+        'apply plugin: "com.facebook.react"\nproject.exec {\n    commandLine "other"\n}',
+      );
+    expect(stale).toContain('Bugsee preserve directory is the packaged asset directory');
+    expect(stale).toContain('project.exec {');
+
+    const next = ensureAppAppliesPlugin(stale, versions.sdk);
+    const hook = next.slice(next.lastIndexOf('// After compose-source-maps.js'));
+    expect(hook).toContain('bundleTask.services.get(org.gradle.process.ExecOperations).exec {');
+    expect(hook).not.toContain('project.exec');
+    expect(next).toContain('project.exec {\n    commandLine "other"\n}');
+    expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
+  });
+
   it('finds hermesc nested under react-native when the app sibling package is missing', () => {
     const app = mkdtempSync(join(tmpdir(), 'bugsee-hermesc-'));
     try {

@@ -17,7 +17,9 @@
  * requires `Status.Launched`.
  *
  * iOS Simulator cannot retain the exception payload: the SDK compiles
- * `logException` out there. A Debug simulator run is not this proof.
+ * `logException` out there. A Debug simulator run is not this proof. An iOS
+ * device run is skipped unless `BUGSEE_COMPOSED_MAP` names the composed map;
+ * this file does not default that path to the Android release map.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,9 +45,15 @@ const UUID_RE =
 
 const RELEASE = process.env.E2E_RELEASE === '1';
 const ON_IOS_SIM = ON_IOS && iosTarget() === 'simulator';
-/** Simulator `logException` is compiled out, so it cannot report `debug_ids`. */
+const HAS_COMPOSED_MAP =
+  process.env.BUGSEE_COMPOSED_MAP !== undefined && process.env.BUGSEE_COMPOSED_MAP !== '';
+/**
+ * Simulator `logException` is compiled out, so it cannot report `debug_ids`.
+ * An iOS device run reads whatever map `BUGSEE_COMPOSED_MAP` names; without
+ * that path the describe is skipped rather than opening the Android map.
+ */
 const describeReleaseProof =
-  RELEASE && (ON_ANDROID || (ON_IOS && !ON_IOS_SIM)) ? describe : describe.skip;
+  RELEASE && (ON_ANDROID || (ON_IOS && !ON_IOS_SIM && HAS_COMPOSED_MAP)) ? describe : describe.skip;
 
 jest.setTimeout(20 * 60_000);
 
