@@ -47,21 +47,20 @@ const withBugsee = (config, props) => {
         (0, bundle_phase_1.rewriteProjectBundlePhase)(cfg.modResults);
         return cfg;
     });
-    if (options.uploadSymbols !== false) {
-        config = (0, config_plugins_1.withDangerousMod)(config, [
-            'ios',
-            async (cfg) => {
-                for (const schemePath of listSchemes(cfg.modRequest.platformProjectRoot)) {
-                    const xml = await (0, promises_1.readFile)(schemePath, 'utf8');
-                    const next = (0, scheme_1.insertDsymPostAction)(xml);
-                    if (next !== xml) {
-                        await (0, promises_1.writeFile)(schemePath, next);
-                    }
+    config = (0, config_plugins_1.withDangerousMod)(config, [
+        'ios',
+        async (cfg) => {
+            const edit = options.uploadSymbols === false ? scheme_1.removeDsymPostAction : scheme_1.insertDsymPostAction;
+            for (const schemePath of listSchemes(cfg.modRequest.platformProjectRoot)) {
+                const xml = await (0, promises_1.readFile)(schemePath, 'utf8');
+                const next = edit(xml);
+                if (next !== xml) {
+                    await (0, promises_1.writeFile)(schemePath, next);
                 }
-                return cfg;
-            },
-        ]);
-    }
+            }
+            return cfg;
+        },
+    ]);
     return config;
 };
 function listSchemes(iosRoot) {

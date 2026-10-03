@@ -7,7 +7,10 @@ export interface BugseePluginProps {
      * debug ids on the composed map and does not execute the upload.
      */
     uploadSourcemaps?: boolean;
-    /** Defaults on. `false` skips the Archive dSYM post-action. */
+    /**
+     * Defaults on. `false` removes the Archive dSYM post-action, including
+     * one left by an earlier prebuild without `--clean`.
+     */
     uploadSymbols?: boolean;
     /**
      * Defaults on. Writes `plugin.ndk.enabled=true` for a real token, adds

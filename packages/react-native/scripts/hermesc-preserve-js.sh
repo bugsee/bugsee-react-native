@@ -67,6 +67,21 @@ find_hermesc() {
     Darwin) osbin="osx-bin" ;;
     MINGW*|MSYS*|CYGWIN*) osbin="win64-bin"; bin="hermesc.exe" ;;
   esac
+  # Expo SDK 57 resolves hermes-compiler from the react-native package, so a
+  # pnpm or Yarn workspace install under node_modules/react-native/node_modules
+  # is found. A $PWD/node_modules sibling walk misses that layout.
+  local pkg=""
+  if command -v node >/dev/null 2>&1; then
+    pkg="$(node --print "require.resolve('hermes-compiler/package.json', { paths: [require.resolve('react-native/package.json')] })" 2>/dev/null)" || pkg=""
+  fi
+  if [[ -n "$pkg" ]]; then
+    local resolved
+    resolved="$(dirname "$pkg")/hermesc/${osbin}/${bin}"
+    if [[ -x "$resolved" ]]; then
+      echo "$resolved"
+      return
+    fi
+  fi
   local candidate
   for candidate in \
     "$PWD/node_modules/hermes-compiler/hermesc/${osbin}/${bin}" \

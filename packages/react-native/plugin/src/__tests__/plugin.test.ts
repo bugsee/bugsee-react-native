@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -9,7 +9,7 @@ import { rewriteBundlePhase, BARE_BUNDLE_SCRIPT } from '../bundle-phase';
 import { decodePbxString, encodePbxString } from '../pbx-string';
 import { bugseePropertiesText, isPlaceholderToken } from '../properties';
 import { ensureAppAppliesPlugin, ensureGradlePluginDeclared, ensureMavenCentral } from '../gradle';
-import { insertDsymPostAction } from '../scheme';
+import { insertDsymPostAction, removeDsymPostAction } from '../scheme';
 import {
   DSYM_POST_ACTION_SCRIPT,
   RESOLVE_BUGSEE_CLI_PACKAGE,
@@ -570,6 +570,48 @@ describe('Android Gradle edits', () => {
     expect(ensureAppAppliesPlugin(off, null)).toBe(off);
   });
 
+  it('finds hermesc nested under react-native when the app sibling package is missing', () => {
+    const app = mkdtempSync(join(tmpdir(), 'bugsee-hermesc-'));
+    try {
+      const osbin =
+        process.platform === 'linux' ? 'linux64-bin' : process.platform === 'win32' ? 'win64-bin' : 'osx-bin';
+      const bin = process.platform === 'win32' ? 'hermesc.exe' : 'hermesc';
+      const nested = join(app, 'node_modules/react-native/node_modules/hermes-compiler');
+      mkdirSync(join(nested, 'hermesc', osbin), { recursive: true });
+      writeFileSync(join(app, 'node_modules/react-native/package.json'), '{"name":"react-native"}\n');
+      writeFileSync(join(nested, 'package.json'), '{"name":"hermes-compiler"}\n');
+      const hermesc = join(nested, 'hermesc', osbin, bin);
+      writeFileSync(hermesc, '#!/bin/sh\nexit 0\n');
+      chmodSync(hermesc, 0o755);
+
+      const sibling = join(app, 'node_modules/hermes-compiler/hermesc', osbin, bin);
+      expect(existsSync(sibling)).toBe(false);
+      expect(existsSync(join(app, 'node_modules/hermes-compiler'))).toBe(false);
+
+      const jsDir = join(app, 'android/app/build/generated/assets/createBundleReleaseJsAndAssets');
+      mkdirSync(jsDir, { recursive: true });
+      const js = join(jsDir, 'index.android.bundle');
+      writeFileSync(js, 'console.log("app");\n');
+
+      const script = join(repoRoot, 'packages/react-native/scripts/hermesc-preserve-js.sh');
+      const result = spawnSync('bash', [script, '-out', join(app, 'out.hbc'), js], {
+        cwd: app,
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr ?? '').not.toContain('hermesc binary not found');
+
+      const note = join(
+        app,
+        'android/app/build/intermediates/bugsee-sourcemaps/createBundleReleaseJsAndAssets/index.android.bundle.bugsee-hermesc',
+      );
+      const found = readFileSync(note, 'utf8').trim();
+      expect(realpathSync(found)).toBe(realpathSync(hermesc));
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
   it('leaves a hand-written ndk block when native crash reporting is off', () => {
     const template = expoSdk57AppBuildGradle().replace(
       '        debug {\n            signingConfig signingConfigs.debug\n        }',
@@ -712,6 +754,75 @@ describe('scheme post-action', () => {
     expect(archive.match(/<ExecutionAction\b/g)).toHaveLength(2);
     expect(next).not.toContain('<PostActions>\n      <PostActions>');
     expect(insertDsymPostAction(next, DSYM_POST_ACTION_SCRIPT)).toBe(next);
+  });
+
+  it('removes the Bugsee action from an existing Archive PostActions element and keeps the sibling', () => {
+    const scheme = `<?xml version="1.0" encoding="UTF-8"?>
+<Scheme version = "1.3">
+   <BuildAction>
+      <BuildActionEntries>
+         <BuildActionEntry>
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
+               BuildableName = "BugseeExpo.app"
+               BlueprintName = "BugseeExpo"
+               ReferencedContainer = "container:BugseeExpo.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <ArchiveAction
+      buildConfiguration = "Release"
+      revealArchiveInOrganizer = "YES">
+      <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Notify"
+               scriptText = "echo archive-finished">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
+                     BuildableName = "BugseeExpo.app"
+                     BlueprintName = "BugseeExpo"
+                     ReferencedContainer = "container:BugseeExpo.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
+   </ArchiveAction>
+</Scheme>
+`;
+    const inserted = insertDsymPostAction(scheme, DSYM_POST_ACTION_SCRIPT);
+    expect(inserted).toContain('title = "Upload dSYMs"');
+    expect(inserted).toContain('xcode post-action');
+    const next = removeDsymPostAction(inserted);
+    expect(next).not.toContain('xcode post-action');
+    expect(next).not.toContain('title = "Upload dSYMs"');
+    expect(next).toContain('title = "Notify"');
+    expect(next).toContain('echo archive-finished');
+    const archive = next.match(/<ArchiveAction\b[\s\S]*?<\/ArchiveAction>/)?.[0] ?? '';
+    expect(archive.match(/<PostActions>/g)).toHaveLength(1);
+    expect(archive.match(/<\/PostActions>/g)).toHaveLength(1);
+    expect(archive.match(/<ExecutionAction\b/g)).toHaveLength(1);
+    expect(removeDsymPostAction(next)).toBe(next);
+  });
+
+  it('drops PostActions when the Bugsee action was the only child', () => {
+    const inserted = insertDsymPostAction(scheme, DSYM_POST_ACTION_SCRIPT);
+    expect(inserted).toContain('<PostActions>');
+    expect(inserted).toContain('xcode post-action');
+    const next = removeDsymPostAction(inserted);
+    expect(next).not.toContain('xcode post-action');
+    expect(next).not.toContain('Upload dSYMs');
+    expect(next).not.toContain('<PostActions');
+    expect(next).toContain('<ArchiveAction');
+    expect(next).toContain('</ArchiveAction>');
+    expect(next).toContain('BuildableName = "BugseeExpo.app"');
+    expect(removeDsymPostAction(next)).toBe(next);
   });
 });
 

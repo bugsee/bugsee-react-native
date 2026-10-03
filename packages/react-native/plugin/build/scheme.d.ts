@@ -8,3 +8,11 @@ export declare function encodeXmlAttr(value: string): string;
  * it. A wrapping PostActions is emitted only when ArchiveAction has none.
  */
 export declare function insertDsymPostAction(scheme: string, script?: string): string;
+/**
+ * Removes the Archive post-action this plugin inserted. A later prebuild
+ * with `uploadSymbols: false` has to undo an earlier default-on edit,
+ * because insert is otherwise one-way. A sibling ExecutionAction stays.
+ * When the Bugsee action was the only child, the wrapping PostActions
+ * element goes too, so the scheme stays valid.
+ */
+export declare function removeDsymPostAction(scheme: string): string;

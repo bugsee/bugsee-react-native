@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DSYM_POST_ACTION_SCRIPT = void 0;
 exports.encodeXmlAttr = encodeXmlAttr;
 exports.insertDsymPostAction = insertDsymPostAction;
+exports.removeDsymPostAction = removeDsymPostAction;
 const dsym_script_1 = require("./dsym-script");
 Object.defineProperty(exports, "DSYM_POST_ACTION_SCRIPT", { enumerable: true, get: function () { return dsym_script_1.DSYM_POST_ACTION_SCRIPT; } });
 function encodeXmlAttr(value) {
@@ -63,5 +64,33 @@ function insertArchiveExecution(archive, execution) {
     }
     const block = ['      <PostActions>', execution, '      </PostActions>'].join('\n');
     return archive.replace('</ArchiveAction>', `${block}\n   </ArchiveAction>`);
+}
+const EXECUTION_ACTION = /[ \t]*<ExecutionAction\b[\s\S]*?<\/ExecutionAction>\n?/g;
+const EMPTY_POST_ACTIONS = /\n[ \t]*<PostActions\b[^>]*>\s*<\/PostActions>/g;
+/**
+ * Removes the Archive post-action this plugin inserted. A later prebuild
+ * with `uploadSymbols: false` has to undo an earlier default-on edit,
+ * because insert is otherwise one-way. A sibling ExecutionAction stays.
+ * When the Bugsee action was the only child, the wrapping PostActions
+ * element goes too, so the scheme stays valid.
+ */
+function removeDsymPostAction(scheme) {
+    const archive = scheme.match(/<ArchiveAction\b[\s\S]*?<\/ArchiveAction>/);
+    if (!archive?.[0] || archive.index === undefined) {
+        return scheme;
+    }
+    let removed = false;
+    let archiveXml = archive[0].replace(EXECUTION_ACTION, (block) => {
+        if (!block.includes('xcode post-action')) {
+            return block;
+        }
+        removed = true;
+        return '';
+    });
+    if (!removed) {
+        return scheme;
+    }
+    archiveXml = archiveXml.replace(EMPTY_POST_ACTIONS, '');
+    return scheme.slice(0, archive.index) + archiveXml + scheme.slice(archive.index + archive[0].length);
 }
 //# sourceMappingURL=scheme.js.map

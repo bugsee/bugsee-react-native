@@ -20,7 +20,7 @@ import { ensureAppAppliesPlugin, ensureGradlePluginDeclared, ensureMavenCentral 
 import { manifestAutoLaunchToken } from './manifest';
 import { loadNativeVersions } from './native-versions';
 import { bugseePropertiesText } from './properties';
-import { insertDsymPostAction } from './scheme';
+import { insertDsymPostAction, removeDsymPostAction } from './scheme';
 
 export interface BugseePluginProps {
   /** Unprefixed `app_token` in android/bugsee.properties. */
@@ -30,7 +30,10 @@ export interface BugseePluginProps {
    * debug ids on the composed map and does not execute the upload.
    */
   uploadSourcemaps?: boolean;
-  /** Defaults on. `false` skips the Archive dSYM post-action. */
+  /**
+   * Defaults on. `false` removes the Archive dSYM post-action, including
+   * one left by an earlier prebuild without `--clean`.
+   */
   uploadSymbols?: boolean;
   /**
    * Defaults on. Writes `plugin.ndk.enabled=true` for a real token, adds
@@ -100,21 +103,20 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
     return cfg;
   });
 
-  if (options.uploadSymbols !== false) {
-    config = withDangerousMod(config, [
-      'ios',
-      async (cfg) => {
-        for (const schemePath of listSchemes(cfg.modRequest.platformProjectRoot)) {
-          const xml = await readFile(schemePath, 'utf8');
-          const next = insertDsymPostAction(xml);
-          if (next !== xml) {
-            await writeFile(schemePath, next);
-          }
+  config = withDangerousMod(config, [
+    'ios',
+    async (cfg) => {
+      const edit = options.uploadSymbols === false ? removeDsymPostAction : insertDsymPostAction;
+      for (const schemePath of listSchemes(cfg.modRequest.platformProjectRoot)) {
+        const xml = await readFile(schemePath, 'utf8');
+        const next = edit(xml);
+        if (next !== xml) {
+          await writeFile(schemePath, next);
         }
-        return cfg;
-      },
-    ]);
-  }
+      }
+      return cfg;
+    },
+  ]);
 
   return config;
 };
