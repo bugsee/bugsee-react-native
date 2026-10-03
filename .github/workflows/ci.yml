@@ -184,14 +184,28 @@ jobs:
       - name: Build for the simulator
         working-directory: examples/bare/ios
         run: |
+          # CODE_SIGNING_ALLOWED=NO leaves a linker-signed slice the simulator
+          # keychain rejects with errSecMissingEntitlement (-34018) on
+          # bugseeDeviceId; capture then never reaches Launched. Ad-hoc sign
+          # instead: no Apple ID, but enough for SecItemAdd on the simulator.
           xcodebuild \
             -workspace BareExample.xcworkspace \
             -scheme BareExample \
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -configuration Debug \
             -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
             build
+          APP=build/Build/Products/Debug-iphonesimulator/BareExample.app
+          if [ -d "$APP/Frameworks" ]; then
+            find "$APP/Frameworks" -depth \( -name "*.framework" -o -name "*.dylib" \) -print0 \
+              | while IFS= read -r -d '' item; do
+                  codesign --force --sign - --timestamp=none "$item"
+                done
+          fi
+          codesign --force --sign - --timestamp=none "$APP"
 
       - name: Install the app
         run: |
