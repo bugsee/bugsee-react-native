@@ -159,6 +159,20 @@ describe('setLogFilter', () => {
     expect(native.logFilterRequestSubscribeCallCount()).toBe(1);
   });
 
+  it('subscribes once, and before the native filter is installed', () => {
+    const original = native.onLogFilterRequest.bind(native);
+    native.onLogFilterRequest = (listener) => {
+      expect(native.setLogFilterEnabled).not.toHaveBeenCalled();
+      return original(listener);
+    };
+    Bugsee.setLogFilter((line) => line);
+    expect(native.setLogFilterEnabled).toHaveBeenCalledWith(true);
+    Bugsee.setLogFilter((line) => line);
+    Bugsee.setLogFilter();
+    Bugsee.setLogFilter((line) => line);
+    expect(native.logFilterRequestSubscribeCallCount()).toBe(1);
+  });
+
   it('rejects a non-function and keeps the filter already installed', async () => {
     Bugsee.setLogFilter((line) => `kept:${line}`);
     const set = Bugsee.setLogFilter as (callback?: unknown) => void;
