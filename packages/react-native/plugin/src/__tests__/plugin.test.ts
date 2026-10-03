@@ -583,6 +583,10 @@ describe('Android Gradle edits', () => {
       const hermesc = join(nested, 'hermesc', osbin, bin);
       writeFileSync(hermesc, '#!/bin/sh\nexit 0\n');
       chmodSync(hermesc, 0o755);
+      const shipped = join(app, 'node_modules/react-native/sdks/hermesc', osbin, bin);
+      mkdirSync(join(app, 'node_modules/react-native/sdks/hermesc', osbin), { recursive: true });
+      writeFileSync(shipped, '#!/bin/sh\nexit 0\n');
+      chmodSync(shipped, 0o755);
 
       const sibling = join(app, 'node_modules/hermes-compiler/hermesc', osbin, bin);
       expect(existsSync(sibling)).toBe(false);
@@ -606,7 +610,47 @@ describe('Android Gradle edits', () => {
         'android/app/build/intermediates/bugsee-sourcemaps/createBundleReleaseJsAndAssets/index.android.bundle.bugsee-hermesc',
       );
       const found = readFileSync(note, 'utf8').trim();
+      expect(existsSync(shipped)).toBe(true);
       expect(realpathSync(found)).toBe(realpathSync(hermesc));
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  it('finds the shipped sdks/hermesc binary when hermes-compiler is absent', () => {
+    const app = mkdtempSync(join(tmpdir(), 'bugsee-hermesc-081-'));
+    try {
+      const osbin =
+        process.platform === 'linux' ? 'linux64-bin' : process.platform === 'win32' ? 'win64-bin' : 'osx-bin';
+      const bin = process.platform === 'win32' ? 'hermesc.exe' : 'hermesc';
+      const rn = join(app, 'node_modules/react-native');
+      mkdirSync(join(rn, 'sdks/hermesc', osbin), { recursive: true });
+      writeFileSync(join(rn, 'package.json'), '{"name":"react-native"}\n');
+      const hermesc = join(rn, 'sdks/hermesc', osbin, bin);
+      writeFileSync(hermesc, '#!/bin/sh\nexit 0\n');
+      chmodSync(hermesc, 0o755);
+
+      expect(existsSync(join(app, 'node_modules/hermes-compiler'))).toBe(false);
+      expect(existsSync(join(rn, 'node_modules/hermes-compiler'))).toBe(false);
+
+      const jsDir = join(app, 'android/app/build/generated/assets/createBundleReleaseJsAndAssets');
+      mkdirSync(jsDir, { recursive: true });
+      const js = join(jsDir, 'index.android.bundle');
+      writeFileSync(js, 'console.log("app");\n');
+
+      const script = join(repoRoot, 'packages/react-native/scripts/hermesc-preserve-js.sh');
+      const result = spawnSync('bash', [script, '-out', join(app, 'out.hbc'), js], {
+        cwd: app,
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr ?? '').not.toContain('hermesc binary not found');
+
+      const note = join(
+        app,
+        'android/app/build/intermediates/bugsee-sourcemaps/createBundleReleaseJsAndAssets/index.android.bundle.bugsee-hermesc',
+      );
+      expect(realpathSync(readFileSync(note, 'utf8').trim())).toBe(realpathSync(hermesc));
     } finally {
       rmSync(app, { recursive: true, force: true });
     }
