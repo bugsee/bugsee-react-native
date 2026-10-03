@@ -2342,31 +2342,46 @@ static NSString *BGSRNHexFromColor(UIColor *color) {
 }
 
 /// iOS 7.0.0-beta3 returns without invoking `completion` when the SDK is
-/// not stopped, so the promise would otherwise never settle. The call is
-/// still the SDK's own method; the early `false` is that missing completion.
-/// Status, the SDK call, and that early resolve run on the main queue:
-/// TurboModule calls arrive off main. The completion may run off main too,
-/// so its resolve hops back before it writes `settled`.
+/// not stopped, so a launched call resolves `false` immediately. That is the
+/// missing completion, not a wait. Stopped, including a nil instance, still
+/// calls the SDK method and settles through `BGSRNSettleOnce`: the
+/// completion's success, or `false` if the deadline fires first. Status and
+/// both SDK calls run on the main queue. A completion that arrives off main
+/// hops back before it writes the result the settler resolves.
 - (void)deleteCollectedDataOnDevice:(BOOL)includingIntermediate
                             resolve:(RCTPromiseResolveBlock)resolve
                              reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
     Bugsee *instance = [Bugsee sharedInstance];
     BugseeStatus status = instance != nil ? instance.status : BugseeStatusStopped;
-    __block BOOL settled = NO;
+    if (status != BugseeStatusStopped) {
+      __block BOOL settled = NO;
+      [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
+        BGSRNRunOnMain(^{
+          if (settled) {
+            return;
+          }
+          settled = YES;
+          resolve(@(success));
+        });
+      }];
+      if (!settled) {
+        settled = YES;
+        resolve(@NO);
+      }
+      return;
+    }
+    __block NSNumber *result = @NO;
+    dispatch_block_t done =
+        BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs, dispatch_get_main_queue(), ^{
+          resolve(result);
+        });
     [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
       BGSRNRunOnMain(^{
-        if (settled) {
-          return;
-        }
-        settled = YES;
-        resolve(@(success));
+        result = @(success);
+        done();
       });
     }];
-    if (status != BugseeStatusStopped && !settled) {
-      settled = YES;
-      resolve(@NO);
-    }
   });
 }
 

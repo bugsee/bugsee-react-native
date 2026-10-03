@@ -8,8 +8,9 @@ import NativeBugsee from '../NativeBugsee';
  * Android values are the `ReportAppearance` constants in bugsee-android 7.3.0
  * (`setColor(ReportAppearance.X, int)`). iOS values are writable report color
  * properties on `BugseeTheme` in the vendored 7.0.0-beta3 header. A name that
- * exists on only one platform has only that side; setting it on the other
+ * exists on only one platform has only that side. Setting it on the other
  * throws, so a color that will not be applied is not stored as if it had been.
+ * Reading it returns `undefined` and does not call native.
  *
  * String placeholders (`Report::SummaryPlaceholder`, `reportSummaryPlaceholder`)
  * are not colors. Android sets them with `setString`, not `setColor`, so they
@@ -88,27 +89,20 @@ function unknownKey(name: string): RangeError {
   return new RangeError(`Bugsee appearance ${name} is not a report color`);
 }
 
-function nativeKey(name: ReportAppearanceName, platform: string): string {
+function bindingKey(
+  name: ReportAppearanceName,
+  platform: string,
+): string | undefined {
   const binding: { readonly android?: string; readonly ios?: string } =
     REPORT_APPEARANCE[name];
-  const key = platform === 'android' ? binding.android : binding.ios;
-  if (key === undefined) {
-    throw new RangeError(
-      `Bugsee appearance ${name} is not available on ${platform}`,
-    );
-  }
-  return key;
-}
-
-function assertName(name: string): ReportAppearanceName {
-  if (!Object.prototype.hasOwnProperty.call(REPORT_APPEARANCE, name)) {
-    throw unknownKey(name);
-  }
-  return name as ReportAppearanceName;
+  return platform === 'android' ? binding.android : binding.ios;
 }
 
 function read(name: ReportAppearanceName): string | undefined {
-  const key = nativeKey(name, Platform.OS);
+  const key = bindingKey(name, Platform.OS);
+  if (key === undefined) {
+    return undefined;
+  }
   const hex = NativeBugsee.getAppearanceColor(key);
   if (typeof hex !== 'string' || hex.length === 0) {
     return undefined;
@@ -128,7 +122,12 @@ function write(name: ReportAppearanceName, color: string): void {
       `Bugsee appearance ${name} requires a hex color, got ${JSON.stringify(color)}`,
     );
   }
-  const key = nativeKey(name, Platform.OS);
+  const key = bindingKey(name, Platform.OS);
+  if (key === undefined) {
+    throw new RangeError(
+      `Bugsee appearance ${name} is not available on ${Platform.OS}`,
+    );
+  }
   const applied = NativeBugsee.setAppearanceColor(
     key,
     parsed.r,
@@ -142,19 +141,30 @@ function write(name: ReportAppearanceName, color: string): void {
 }
 
 export function createAppearance(): ReportAppearance {
-  return new Proxy({} as ReportAppearance, {
-    get(_target, prop) {
-      if (typeof prop !== 'string') {
-        return undefined;
-      }
-      return read(assertName(prop));
-    },
-    set(_target, prop, value: string) {
-      if (typeof prop !== 'string') {
+  const target = {} as ReportAppearance;
+  const names = Object.keys(REPORT_APPEARANCE) as ReportAppearanceName[];
+  for (const name of names) {
+    Object.defineProperty(target, name, {
+      enumerable: true,
+      configurable: false,
+      get: () => read(name),
+      set: (color: string) => {
+        write(name, color);
+      },
+    });
+  }
+  // Known colors are own properties, so `Object.keys` and `in` see them and
+  // `constructor` / `toString` / `then` stay on the prototype. The trap only
+  // refuses a name that is not a report color.
+  return new Proxy(target, {
+    set(obj, prop, value: string) {
+      if (
+        typeof prop !== 'string' ||
+        !Object.prototype.hasOwnProperty.call(REPORT_APPEARANCE, prop)
+      ) {
         throw unknownKey(String(prop));
       }
-      write(assertName(prop), value);
-      return true;
+      return Reflect.set(obj, prop, value);
     },
   });
 }

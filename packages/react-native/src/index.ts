@@ -796,8 +796,9 @@ class Bugsee {
   /**
    * Report UI colors. One camelCase surface: Android applies
    * `setColor(ReportAppearance.X, int)`, iOS sets the matching property on
-   * `BugseeTheme`. A name that exists on only one platform throws on the
-   * other. Reading a color returns what the SDK has stored.
+   * `BugseeTheme`. Setting a name that exists on only one platform throws on
+   * the other. Reading a color this platform does not have returns
+   * `undefined`. Reading a color it does have returns what the SDK stored.
    */
   get appearance(): ReportAppearance {
     return reportAppearance;

@@ -131,6 +131,24 @@ describe('report appearance mapping', () => {
     expect(native.setAppearanceColor).not.toHaveBeenCalled();
   });
 
+  it('reads a color the current platform does not have as undefined', () => {
+    expect(Bugsee.appearance.cellBackgroundColor).toBeUndefined();
+    expect(native.getAppearanceColor).not.toHaveBeenCalled();
+    (Platform as { OS: string }).OS = 'ios';
+    expect(Bugsee.appearance.actionBarColor).toBeUndefined();
+    expect(native.getAppearanceColor).not.toHaveBeenCalled();
+  });
+
+  it('lists the report colors and leaves inspection properties alone', () => {
+    expect(Object.keys(Bugsee.appearance).sort()).toEqual(PUBLIC_KEYS);
+    expect('backgroundColor' in Bugsee.appearance).toBe(true);
+    expect(Bugsee.appearance.constructor).toBe(Object);
+    expect(typeof Bugsee.appearance.toString).toBe('function');
+    expect(() => Bugsee.appearance.toString()).not.toThrow();
+    expect((Bugsee.appearance as { then?: unknown }).then).toBeUndefined();
+    expect(native.getAppearanceColor).not.toHaveBeenCalled();
+  });
+
   it('refuses a bad color before calling native', () => {
     expect(() => {
       Bugsee.appearance.backgroundColor = 'red';
@@ -152,25 +170,36 @@ describe('deleteCollectedDataOnDevice', () => {
     expect(native.deleteCollectedDataOnDevice).toHaveBeenCalledWith(false);
   });
 
-  it('reads status and calls the SDK on the async main hop', () => {
+  it('refuses immediately while launched and settles the Stopped path', () => {
     const source = readFileSync(join(__dirname, '../../../ios/BugseeModule.mm'), 'utf8');
     const start = source.indexOf('- (void)deleteCollectedDataOnDevice:');
     const end = source.indexOf('- (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:', start);
     const method = source.slice(start, end);
     const hop = method.indexOf('BGSRNRunOnMain(');
     const status = method.indexOf('instance.status');
+    const nilStopped = method.indexOf('BugseeStatusStopped');
+    const launched = method.indexOf('status != BugseeStatusStopped');
     const call = method.indexOf('[Bugsee deleteCollectedDataOnDevice:includingIntermediate');
-    const completion = method.indexOf('completion:', call);
-    const completionHop = method.indexOf('BGSRNRunOnMain(', completion);
-    const successResolve = method.indexOf('resolve(@(success))');
     const earlyResolve = method.indexOf('resolve(@NO)');
+    const launchedReturn = method.indexOf('\n      return;', earlyResolve);
+    const settle = method.indexOf('BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs');
+    const stoppedCall = method.indexOf(
+      '[Bugsee deleteCollectedDataOnDevice:includingIntermediate',
+      settle,
+    );
     expect(hop).toBeGreaterThan(-1);
     expect(method).not.toContain('BGSRNRunOnMainSync');
     expect(status).toBeGreaterThan(hop);
-    expect(call).toBeGreaterThan(status);
-    expect(completionHop).toBeGreaterThan(completion);
-    expect(successResolve).toBeGreaterThan(completionHop);
+    expect(nilStopped).toBeGreaterThan(status);
+    expect(launched).toBeGreaterThan(nilStopped);
+    expect(call).toBeGreaterThan(launched);
     expect(earlyResolve).toBeGreaterThan(call);
+    expect(launchedReturn).toBeGreaterThan(earlyResolve);
+    expect(settle).toBeGreaterThan(launchedReturn);
+    expect(method.slice(0, settle)).not.toContain('BGSRNSettleOnce');
+    expect(method.slice(0, settle)).not.toContain('BGSRNUnhandledCompletionDeadlineMs');
+    expect(stoppedCall).toBeGreaterThan(settle);
+    expect(method.slice(settle)).toContain('@(success)');
     expect(method).toContain('includingIntermediate');
   });
 });

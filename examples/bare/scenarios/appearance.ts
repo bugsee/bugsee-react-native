@@ -9,7 +9,7 @@
  */
 import Bugsee from '@bugsee/react-native';
 
-export const APPEARANCE_SCENARIOS = ['appearance'] as const;
+export const APPEARANCE_SCENARIOS = ['appearance', 'appearance-stopped'] as const;
 
 export type AppearanceScenario = (typeof APPEARANCE_SCENARIOS)[number];
 
@@ -19,7 +19,18 @@ export function isAppearanceScenario(name: string): name is AppearanceScenario {
 
 const COLOR = '#ff0000ff';
 
-export async function runAppearanceScenario(nonce: string): Promise<void> {
+export async function runAppearanceScenario(
+  scenario: AppearanceScenario,
+  nonce: string,
+): Promise<void> {
+  if (scenario === 'appearance-stopped') {
+    await Bugsee.stop();
+    const deleted = await Bugsee.deleteCollectedDataOnDevice(true);
+    console.log(
+      `BUGSEE_E2E appearance nonce=${nonce} stopped=true includingIntermediate=true deleted=${String(deleted)}`,
+    );
+    return;
+  }
   Bugsee.appearance.backgroundColor = COLOR;
   const read = Bugsee.appearance.backgroundColor ?? 'unread';
   const deleted = await Bugsee.deleteCollectedDataOnDevice(true);

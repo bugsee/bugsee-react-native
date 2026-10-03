@@ -501,7 +501,7 @@ export default function App() {
         }
 
         if (isAppearanceScenario(choice.scenario)) {
-          await runAppearanceScenario(choice.nonce);
+          await runAppearanceScenario(choice.scenario, choice.nonce);
           return;
         }
 
