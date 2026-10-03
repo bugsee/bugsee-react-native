@@ -1,6 +1,9 @@
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { Platform } from 'react-native';
 import Bugsee from '../../index';
 import { native } from '../../__mocks__/native';
@@ -147,5 +150,27 @@ describe('deleteCollectedDataOnDevice', () => {
     native.deleteCollectedDataOnDevice.mockResolvedValue(false);
     await expect(Bugsee.deleteCollectedDataOnDevice(false)).resolves.toBe(false);
     expect(native.deleteCollectedDataOnDevice).toHaveBeenCalledWith(false);
+  });
+
+  it('reads status and calls the SDK on the async main hop', () => {
+    const source = readFileSync(join(__dirname, '../../../ios/BugseeModule.mm'), 'utf8');
+    const start = source.indexOf('- (void)deleteCollectedDataOnDevice:');
+    const end = source.indexOf('- (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:', start);
+    const method = source.slice(start, end);
+    const hop = method.indexOf('BGSRNRunOnMain(');
+    const status = method.indexOf('instance.status');
+    const call = method.indexOf('[Bugsee deleteCollectedDataOnDevice:includingIntermediate');
+    const completion = method.indexOf('completion:', call);
+    const completionHop = method.indexOf('BGSRNRunOnMain(', completion);
+    const successResolve = method.indexOf('resolve(@(success))');
+    const earlyResolve = method.indexOf('resolve(@NO)');
+    expect(hop).toBeGreaterThan(-1);
+    expect(method).not.toContain('BGSRNRunOnMainSync');
+    expect(status).toBeGreaterThan(hop);
+    expect(call).toBeGreaterThan(status);
+    expect(completionHop).toBeGreaterThan(completion);
+    expect(successResolve).toBeGreaterThan(completionHop);
+    expect(earlyResolve).toBeGreaterThan(call);
+    expect(method).toContain('includingIntermediate');
   });
 });

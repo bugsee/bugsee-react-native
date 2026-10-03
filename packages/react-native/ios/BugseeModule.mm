@@ -2344,23 +2344,30 @@ static NSString *BGSRNHexFromColor(UIColor *color) {
 /// iOS 7.0.0-beta3 returns without invoking `completion` when the SDK is
 /// not stopped, so the promise would otherwise never settle. The call is
 /// still the SDK's own method; the early `false` is that missing completion.
+/// Status, the SDK call, and that early resolve run on the main queue:
+/// TurboModule calls arrive off main. The completion may run off main too,
+/// so its resolve hops back before it writes `settled`.
 - (void)deleteCollectedDataOnDevice:(BOOL)includingIntermediate
                             resolve:(RCTPromiseResolveBlock)resolve
                              reject:(RCTPromiseRejectBlock)reject {
-  Bugsee *instance = [Bugsee sharedInstance];
-  BugseeStatus status = instance != nil ? instance.status : BugseeStatusStopped;
-  __block BOOL settled = NO;
-  [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
-    if (settled) {
-      return;
+  BGSRNRunOnMain(^{
+    Bugsee *instance = [Bugsee sharedInstance];
+    BugseeStatus status = instance != nil ? instance.status : BugseeStatusStopped;
+    __block BOOL settled = NO;
+    [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
+      BGSRNRunOnMain(^{
+        if (settled) {
+          return;
+        }
+        settled = YES;
+        resolve(@(success));
+      });
+    }];
+    if (status != BugseeStatusStopped && !settled) {
+      settled = YES;
+      resolve(@NO);
     }
-    settled = YES;
-    resolve(@(success));
-  }];
-  if (status != BugseeStatusStopped && !settled) {
-    settled = YES;
-    resolve(@NO);
-  }
+  });
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
