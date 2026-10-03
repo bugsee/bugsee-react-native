@@ -76,7 +76,13 @@ echo "    getPublicInstanceFromInternalInstanceHandle is defined and reachable t
 # non-space characters `//` or `*`, covering both `//` line comments and a
 # `/** … */`/JSDoc block's continuation lines) are filtered out first.
 assigns_handle() {
-  grep -v -E '^[[:space:]]*(//|\*)' "$1" | grep -qE '\.__internalInstanceHandle[[:space:]]*=([^=]|$)'
+  # Do not use grep -q on this pipe. It exits at the first match and closes
+  # the read end; under pipefail, grep -v then dies with SIGPIPE and a real
+  # assignment near the start of a large file is reported as a miss. Reading
+  # the filtered text to completion keeps the same pattern and the same
+  # comment-line filter.
+  grep -v -E '^[[:space:]]*(//|\*)' "$1" \
+    | grep -E '\.__internalInstanceHandle[[:space:]]*=([^=]|$)' >/dev/null
 }
 
 ELEMENT_FILE="$RN_SRC/src/private/webapis/dom/nodes/ReactNativeElement.js"

@@ -9,6 +9,8 @@
     "src",
     "android",
     "ios",
+    "app.plugin.js",
+    "plugin/build",
     "scripts/hermes-sourcemaps.js",
     "scripts/compose-then-inject.js",
     "scripts/bugsee-xcode.sh",
@@ -17,7 +19,8 @@
     "*.podspec"
   ],
   "dependencies": {
-    "@bugsee/cli": "0.7.11"
+    "@bugsee/cli": "0.7.11",
+    "@expo/config-plugins": "~57.0.9"
   },
   "peerDependencies": {
     "react": "*",
@@ -27,6 +30,7 @@
     "react-native": "0.87.1"
   },
   "scripts": {
+    "build:plugin": "node ../../node_modules/typescript/lib/tsc.js -p plugin/tsconfig.json && node plugin/bake-native-versions.js",
     "prepack": "node ../../scripts/cli-check-releasable-pins.ts"
   },
   "codegenConfig": {
