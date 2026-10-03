@@ -550,6 +550,8 @@ describe('Android Gradle edits', () => {
     expect(hook).toContain('Bugsee preserve directory is the packaged asset directory');
     expect(hook).toContain('/intermediates/bugsee-sourcemaps/');
     expect(hook).toContain('Upload is not invoked.');
+    expect(hook).toContain('bundleTask.services.get(org.gradle.process.ExecOperations).exec');
+    expect(hook).not.toContain('project.exec');
     expect(hook).not.toContain('../../node_modules');
     expect(hook).not.toContain('bugsee-cli');
     expect(hook).not.toContain('debug-files');

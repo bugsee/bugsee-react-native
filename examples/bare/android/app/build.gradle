@@ -181,7 +181,8 @@ afterEvaluate {
                         cmd.add("--hermes-arg")
                         cmd.add(flag)
                     }
-                    project.exec {
+                    // Gradle 9 removed Project.exec. ExecOperations is the task service that replaced it.
+                    bundleTask.services.get(org.gradle.process.ExecOperations).exec {
                         commandLine cmd
                     }
                 }
