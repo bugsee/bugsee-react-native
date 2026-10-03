@@ -1,3 +1,4 @@
+#import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
@@ -5,8 +6,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// The regions the app has asked Bugsee not to record, in the form the SDK
 /// pulls them.
 ///
-/// The SDK does not subscribe to changes. It asks, 2-3 times a second and on
-/// the MAIN thread, for a packed buffer of little-endian `int32`
+/// The SDK does not subscribe to changes. It asks on the MAIN thread, once per
+/// captured frame and per report screenshot (and from the touch filter, at
+/// most every 100 ms, while nothing captures), for a packed buffer of
+/// little-endian `int32`
 /// `[version, count, left, top, right, bottom, ...]`, and re-reads the
 /// rectangles only when the version differs from the one it saw last. Two
 /// properties follow, and both are load-bearing rather than cosmetic:
@@ -47,8 +50,27 @@ NS_ASSUME_NONNULL_BEGIN
                  count:(NSUInteger)count
             forDisplay:(NSInteger)display;
 
-/// The buffer for `display`. A display nothing has secured reports an empty
-/// set rather than nil, so the SDK always has a version to compare against.
+/// Records where the window JS measures in sits on `display`'s screen, in
+/// points, and serves every rectangle of that display moved by it.
+///
+/// JS measures with `measureInWindow`, in the window's points. The SDK wants
+/// the screen's points (`BGSContracts.h`) and composes every window of the app
+/// on the screen, so in a window away from the screen's origin (iPad Stage
+/// Manager, the right-hand side of Split View, iPhone Duo side by side) an
+/// unmoved rectangle lands that far up and left of the view it covers, and
+/// the view is recorded in the clear. Android moves its rectangles by the
+/// React root's display origin the same way.
+///
+/// The origin can be fractional. Left and top edges are moved and rounded
+/// down, right and bottom ones up: a rectangle may grow by under a point,
+/// never shrink. Edges saturate at the int32 range rather than wrap. The
+/// version moves only when the served rectangles change, so re-recording the
+/// same origin costs the SDK nothing.
+- (void)setOrigin:(CGPoint)origin forDisplay:(NSInteger)display;
+
+/// The buffer for `display`, every rectangle moved by its origin. A display
+/// nothing has secured reports an empty set rather than nil, so the SDK always
+/// has a version to compare against.
 - (NSData *)snapshotForDisplay:(NSInteger)display;
 
 @end

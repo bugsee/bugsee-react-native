@@ -19,6 +19,8 @@
 #import <BugseeRNSupport/BGSRNWrapperChannelHolder.h>
 #import <BugseeRNSupport/BGSRNStatusMapper.h>
 #import <BugseeRNSupport/BGSRNSecureRectangles.h>
+#import <BugseeRNSupport/BGSRNSecureRectanglePulls.h>
+#import <BugseeRNSupport/BGSRNReactRootOriginTracker.h>
 #import <BugseeRNSupport/BGSRNEventBus.h>
 #import <BugseeRNSupport/BGSRNTokens.h>
 #import <BugseeRNSupport/BGSRNReportHandlerBridge.h>
@@ -43,6 +45,8 @@
 #import "BGSRNWrapperChannelHolder.h"
 #import "BGSRNStatusMapper.h"
 #import "BGSRNSecureRectangles.h"
+#import "BGSRNSecureRectanglePulls.h"
+#import "BGSRNReactRootOriginTracker.h"
 #import "BGSRNEventBus.h"
 #import "BGSRNTokens.h"
 #import "BGSRNReportHandlerBridge.h"
@@ -62,6 +66,9 @@
 #import "BGSRNCreatedReportOps.h"
 #import "BGSRNSpanHandles.h"
 #endif
+
+/// Defined below, beside the React root lookup it closes over.
+static BGSRNReactRootOriginTracker *BGSRNSecureOriginTracker(void);
 
 /// The conformance lives here rather than in the Support package so that the
 /// package stays buildable and testable without the SDK's headers. BGSRNWrapper
@@ -95,15 +102,19 @@
 }
 
 /// The packed buffer the SDK expects: `[version, count, l,t,r,b, ...]` as
-/// little-endian int32.
+/// little-endian int32, every rectangle moved from the React root's window to
+/// the screen.
 ///
 /// Read from the process-wide store rather than from this instance. The SDK
-/// pulls 2-3 times a second on the MAIN thread, and the wrapper it pulls
+/// pulls on the MAIN thread once per captured frame, and the wrapper it pulls
 /// through is replaced when `setWrapperInfo` runs — regions the app marked
 /// secret must survive that swap. See `BGSRNSecureRectangles` for the version
-/// contract, which is what makes the SDK notice a change at all.
+/// contract, which is what makes the SDK notice a change at all. The pull
+/// also re-reads the window's place on the screen
+/// (`BGSRNSecureRectanglePulls`): a window can move with nothing published.
 - (NSData *)secureRectanglesForDisplay:(NSInteger)display {
-  return [BGSRNSecureRectangles.shared snapshotForDisplay:display];
+  (void)BGSRNSecureOriginTracker();  // installs the pulls' refresher on first use
+  return [BGSRNSecureRectanglePulls.shared pullForDisplay:display];
 }
 
 /// Through the data request bridge, for the same reason lifecycle events go
@@ -203,20 +214,18 @@ static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper, BOOL onlyIfAbse
   }
 }
 
-/// The `vh` origin: the `frame.origin` (points) of the window hosting the
-/// React root, among the windows the SDK's own view-hierarchy walk visits --
-/// the offset the SDK adds to every native node, so the two trees share one
-/// space by construction (see `BGSRNReactWindow.h`). nil without one, or off
-/// main: the SDK asks on main, and UIKit must not be read anywhere else.
+/// The `vh` origin: where the window hosting the React root starts in the
+/// frame the SDK records (points), among the windows the SDK's own
+/// view-hierarchy walk visits -- the space the SDK places every native node
+/// in, so the two trees share one space by construction (see
+/// `BGSRNReactWindow.h`). nil without one, or off main: the SDK asks on main,
+/// and UIKit must not be read anywhere else.
 ///
 /// The root is recognised by class name, not by import: `RCTSurfaceHostingView`
 /// is the new architecture's root (the template's `RCTRootView` is its
 /// `RCTSurfaceHostingProxyRootView` subclass); the legacy `RCTRootView` class
 /// is matched too for interop hosts.
-static NSValue *_Nullable BGSRNReactOrigin(void) {
-  if (!NSThread.isMainThread) {
-    return nil;
-  }
+static BOOL BGSRNIsReactRoot(UIView *view) {
   static Class surfaceHostingView;
   static Class legacyRootView;
   static dispatch_once_t once;
@@ -224,11 +233,50 @@ static NSValue *_Nullable BGSRNReactOrigin(void) {
     surfaceHostingView = NSClassFromString(@"RCTSurfaceHostingView");
     legacyRootView = NSClassFromString(@"RCTRootView");
   });
+  return (surfaceHostingView != Nil && [view isKindOfClass:surfaceHostingView]) ||
+         (legacyRootView != Nil && [view isKindOfClass:legacyRootView]);
+}
+
+static NSValue *_Nullable BGSRNReactOrigin(void) {
+  if (!NSThread.isMainThread) {
+    return nil;
+  }
   UIWindow *keyWindow = BGSRNSdkKeyWindow();
   return BGSRNReactRootOrigin(keyWindow, BGSRNSdkWalkedWindows(keyWindow), ^BOOL(UIView *view) {
-    return (surfaceHostingView != Nil && [view isKindOfClass:surfaceHostingView]) ||
-           (legacyRootView != Nil && [view isKindOfClass:legacyRootView]);
+    return BGSRNIsReactRoot(view);
   });
+}
+
+/// Keeps the secure rectangles on the window JS measures them in: the iOS
+/// peer of Android's `ReactRootOriginTracker` (see
+/// `BGSRNReactRootOriginTracker`). Process-wide, like the store and the pulls
+/// it feeds: the window lookup reads only UIKit, nothing of one module.
+/// Created by the first pull or publish, which also installs it as the pulls'
+/// refresher.
+static BGSRNReactRootOriginTracker *BGSRNSecureOriginTracker(void) {
+  static BGSRNReactRootOriginTracker *tracker = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    tracker = [[BGSRNReactRootOriginTracker alloc]
+        initWithStore:BGSRNSecureRectangles.shared
+             findRoot:^UIView *_Nullable {
+               UIWindow *keyWindow = BGSRNSdkKeyWindow();
+               return BGSRNReactRootView(keyWindow,
+                                         BGSRNSdkWalkedWindows(keyWindow),
+                                         ^BOOL(UIView *view) {
+                                           return BGSRNIsReactRoot(view);
+                                         },
+                                         BGSRNReactRootSearchBudget);
+             }
+           readOrigin:^NSValue *_Nullable(UIWindow *window) {
+             return BGSRNWindowRecordedOrigin(window);
+           }];
+    BGSRNReactRootOriginTracker *installed = tracker;
+    BGSRNSecureRectanglePulls.shared.refresher = ^{
+      [installed refresh];
+    };
+  });
+  return tracker;
 }
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
@@ -954,18 +1002,24 @@ RCT_EXPORT_MODULE(Bugsee)
   // is. Rounding rather than truncating: the JS side has already rounded each
   // edge outwards, and truncating would pull an edge back inside the region it
   // was widened to cover.
-  int32_t *flat = count > 0 ? (int32_t *)malloc(count * sizeof(int32_t)) : NULL;
-  if (count > 0 && flat == NULL) {
+  NSMutableData *flat = [NSMutableData dataWithLength:count * sizeof(int32_t)];
+  if (flat == nil) {
     return;
   }
+  int32_t *values = (int32_t *)flat.mutableBytes;
   for (NSUInteger i = 0; i < count; i++) {
-    flat[i] = (int32_t)llround([coordinates[i] doubleValue]);
+    values[i] = (int32_t)llround([coordinates[i] doubleValue]);
   }
 
-  [BGSRNSecureRectangles.shared setCoordinates:flat
-                                         count:count
-                                    forDisplay:(NSInteger)display];
-  free(flat);
+  // JS measured in the React root's window. The tracker reads where that
+  // window sits on the screen and only then writes the rectangles, both on
+  // main, where the SDK pulls: no pull ever serves them at an origin not yet
+  // read (see -[BGSRNReactRootOriginTracker publishCoordinates:forDisplay:]).
+  BGSRNReactRootOriginTracker *tracker = BGSRNSecureOriginTracker();
+  const NSInteger target = (NSInteger)display;
+  BGSRNRunOnMain(^{
+    [tracker publishCoordinates:flat forDisplay:target];
+  });
 }
 
 #pragma mark - Blackout and view-hierarchy capture (design doc §4.1)

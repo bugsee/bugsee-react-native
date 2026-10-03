@@ -10,10 +10,10 @@
 @implementation BGSRNFakeReactRoot
 @end
 
-/// The `vh` origin must be the offset the SDK itself adds to every native
-/// node -- the hosting window's `frame.origin`
-/// (`BGSCaptureViewHierarchyEngine.m:334-336`) -- so the React tree and the
-/// native tree share one space by construction.
+/// The `vh` origin must put the React tree where the SDK places its native
+/// nodes -- on iOS on the screen, through the screen's fixed space
+/// (`+[BGSTrackerApplication screenRectForRect:inView:]`) -- so the two trees
+/// share one space by construction.
 @interface BGSRNReactWindowTests : XCTestCase
 @end
 
@@ -44,19 +44,39 @@
   return window;
 }
 
-- (void)testTheOriginIsTheHostingWindowsFrameOrigin {
+/// The SDK's placement of `rect` in `view` on iOS, as
+/// `+[BGSTrackerApplication screenRectForRect:inView:]` computes it.
+- (CGRect)sdkScreenRectForRect:(CGRect)rect inView:(UIView *)view {
+  UIWindow *window = [view isKindOfClass:UIWindow.class] ? (UIWindow *)view : view.window;
+  UIScreen *screen = window.windowScene.screen;
+  id<UICoordinateSpace> fixedSpace = screen.fixedCoordinateSpace;
+  return [fixedSpace convertRect:[view convertRect:rect toCoordinateSpace:fixedSpace]
+               toCoordinateSpace:screen.coordinateSpace];
+}
+
+- (void)skipWithoutAScreenFor:(UIWindow *)window {
+  if (window.windowScene.screen == nil) {
+    XCTSkip(@"The test runner put the window on no screen");
+  }
+}
+
+- (void)testTheOriginIsWhereTheHostingWindowStartsOnTheScreen {
   UIWindow *key = [self windowAt:CGRectMake(0, 0, 390, 844) hostingAtDepth:NSNotFound];
   UIWindow *hosting = [self windowAt:CGRectMake(120.5, 64, 300, 400) hostingAtDepth:3];
+  [self skipWithoutAScreenFor:hosting];
 
   NSValue *origin = BGSRNReactRootOrigin(key, @[ key, hosting ], _isReactRoot);
 
-  XCTAssertEqualObjects(origin, [NSValue valueWithCGPoint:CGPointMake(120.5, 64)]);
+  XCTAssertEqualObjects(origin, BGSRNWindowRecordedOrigin(hosting));
+  XCTAssertTrue(CGPointEqualToPoint(origin.CGPointValue,
+                                    [self sdkScreenRectForRect:hosting.bounds inView:hosting].origin));
 }
 
 /// What JS computes (`measureInWindow` + origin) is what the SDK computes for
-/// the same view (window-relative rect + `window.frame.origin`).
+/// the same view (its rect on the screen).
 - (void)testANodePlusTheOriginLandsWhereTheSdkPutsIt {
   UIWindow *window = [self windowAt:CGRectMake(40, 30, 300, 400) hostingAtDepth:0];
+  [self skipWithoutAScreenFor:window];
   UIView *container = [[UIView alloc] initWithFrame:CGRectMake(10, 20, 200, 200)];
   UIView *view = [[UIView alloc] initWithFrame:CGRectMake(5, 7, 50, 60)];
   [container addSubview:view];
@@ -64,28 +84,17 @@
 
   const CGPoint origin = BGSRNReactRootOrigin(window, @[ window ], _isReactRoot).CGPointValue;
   const CGRect inWindow = [view convertRect:view.bounds toView:nil];
-  CGRect sdk = [view.window convertRect:view.frame fromView:view.superview];
-  sdk.origin.x += view.window.frame.origin.x;
-  sdk.origin.y += view.window.frame.origin.y;
+  const CGRect sdk = [self sdkScreenRectForRect:view.frame inView:view.superview];
 
-  XCTAssertEqual(inWindow.origin.x + origin.x, sdk.origin.x);
-  XCTAssertEqual(inWindow.origin.y + origin.y, sdk.origin.y);
-  XCTAssertEqual(sdk.origin.x, 55);
-  XCTAssertEqual(sdk.origin.y, 57);
+  XCTAssertEqualWithAccuracy(inWindow.origin.x + origin.x, sdk.origin.x, 0.001);
+  XCTAssertEqualWithAccuracy(inWindow.origin.y + origin.y, sdk.origin.y, 0.001);
 }
 
-/// Not the window's position in the screen's coordinate space, which can
-/// differ from `frame.origin` (iPad multitasking; here, a transformed window,
-/// the one case a unit test can construct): the SDK adds `frame.origin`.
-- (void)testTheOriginIsTheFrameOriginNotTheScreenSpacePosition {
-  UIWindow *window = [self windowAt:CGRectMake(10, 20, 100, 200) hostingAtDepth:0];
-  window.transform = CGAffineTransformMakeRotation(M_PI);
-  const CGPoint screenSpace = [window convertPoint:CGPointZero toCoordinateSpace:window.screen.coordinateSpace];
-  XCTAssertFalse(CGPointEqualToPoint(screenSpace, window.frame.origin), @"the fixture must tell the two apart");
+- (void)testAHostingWindowOnNoScreenIsNoOrigin {
+  UIWindow *window = [self windowAt:CGRectMake(40, 30, 300, 400) hostingAtDepth:0];
+  window.windowScene = nil;
 
-  NSValue *origin = BGSRNReactRootOrigin(window, @[ window ], _isReactRoot);
-
-  XCTAssertEqualObjects(origin, [NSValue valueWithCGPoint:window.frame.origin]);
+  XCTAssertNil(BGSRNReactRootOrigin(window, @[ window ], _isReactRoot));
 }
 
 - (void)testTheKeyWindowIsPreferredWhenSeveralHost {
@@ -119,6 +128,45 @@
 
 - (void)testTheSdkWalkedWindowsAreEmptyWithoutAKeyWindow {
   XCTAssertEqualObjects(BGSRNSdkWalkedWindows(nil), @[]);
+}
+
+/// The tracker keeps the root view itself, so the search hands it back.
+- (void)testTheSearchReturnsTheRootView {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 10, 10)];
+  UIView *container = [UIView new];
+  BGSRNFakeReactRoot *root = [BGSRNFakeReactRoot new];
+  [container addSubview:root];
+  [window addSubview:container];
+
+  XCTAssertEqual(BGSRNReactRootView(window, @[], _isReactRoot, BGSRNReactRootSearchBudget), root);
+  XCTAssertNil(BGSRNReactRootView(nil, @[], _isReactRoot, BGSRNReactRootSearchBudget));
+}
+
+/// A window that is not on a screen has no place on one; the tracker then
+/// keeps the last origin rather than serve the rectangles at {0, 0}.
+- (void)testAWindowOnNoScreenHasNoScreenOrigin {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(37, 53, 100, 100)];
+  window.windowScene = nil;
+
+  XCTAssertNil(BGSRNWindowRecordedOrigin(window));
+}
+
+/// The test runner's scene fills its iPhone screen, so a window placed at
+/// {37, 53} in it starts at {37, 53} on the screen. A window side by side or
+/// in Stage Manager adds its scene's place, which only a device shows.
+- (void)testAWindowStartsOnTheScreenWhereItSitsInAFullScreenScene {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(37, 53, 100, 100)];
+  UIWindowScene *scene = window.windowScene;
+  if (scene == nil
+      || !CGRectEqualToRect(scene.coordinateSpace.bounds, scene.screen.bounds)) {
+    XCTSkip(@"The test runner has no scene filling its screen");
+  }
+
+  NSValue *origin = BGSRNWindowRecordedOrigin(window);
+
+  XCTAssertNotNil(origin);
+  XCTAssertEqualWithAccuracy(origin.CGPointValue.x, 37, 0.5);
+  XCTAssertEqualWithAccuracy(origin.CGPointValue.y, 53, 0.5);
 }
 
 @end

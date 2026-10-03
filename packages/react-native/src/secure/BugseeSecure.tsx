@@ -24,8 +24,11 @@ export interface BugseeSecureProps extends ViewProps {
  * Fails closed: a measurement that throws or is rejected leaves the last
  * rectangle published. Only unmounting or `enabled={false}` removes it.
  *
- * The rectangle is in the main React root's window. Android adds that root's
- * display origin to `measureInWindow`. A React Native `<Modal>` is its own
+ * The rectangle is in the main React root's window. Native moves it onto the
+ * screen before the SDK reads it: Android by that root's display origin, iOS
+ * by the window's place on its screen (Stage Manager, Split View, iPhone Duo
+ * side by side), re-read on the SDK's pulls as the window moves. A React
+ * Native `<Modal>` is its own
  * window (an Android `Dialog`), so a secure view inside one is not placed on
  * the sheet. Same limit for `managed` nodes measured the same way.
  *

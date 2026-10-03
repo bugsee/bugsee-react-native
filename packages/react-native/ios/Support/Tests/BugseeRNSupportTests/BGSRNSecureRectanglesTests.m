@@ -1,9 +1,9 @@
 @import XCTest;
 @import BugseeRNSupport;
 
-/// The SDK PULLS this buffer 2-3 times a second — on iOS from the MAIN thread —
-/// and re-reads the rectangles only when the version differs from the one it
-/// saw last. Two properties follow, and both are load-bearing:
+/// The SDK PULLS this buffer once per captured frame — on iOS from the MAIN
+/// thread — and re-reads the rectangles only when the version differs from the
+/// one it saw last. Two properties follow, and both are load-bearing:
 ///
 ///  * a change MUST move the version, or the SDK goes on redacting the region
 ///    the app has stopped considering secret and, worse, records a newly
@@ -30,7 +30,8 @@
   for (NSUInteger i = 0; i < count; i++) {
     int32_t value = 0;
     [data getBytes:&value range:NSMakeRange(i * sizeof(int32_t), sizeof(int32_t))];
-    [out addObject:@(CFSwapInt32LittleToHost((uint32_t)value))];
+    // Signed, as the SDK reads them: an edge may be negative.
+    [out addObject:@((int32_t)CFSwapInt32LittleToHost((uint32_t)value))];
   }
   return out;
 }
@@ -143,6 +144,123 @@
   NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
   XCTAssertEqualObjects(packed[1], @0, @"a rejected write must not publish anything");
 }
+
+#pragma mark - The window's place on the screen
+
+/// JS measures in its window; the SDK draws in the screen. A window at
+/// {100, 50} on the screen (Stage Manager, the right of Split View) puts the
+/// view JS measured at {10, 20} at {110, 70}.
+- (void)testServesTheRectanglesMovedByTheOrigin {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+
+  [_store setOrigin:CGPointMake(100, 50) forDisplay:0];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[@110, @70, @130, @90]));
+}
+
+/// The origin is usually read before JS has measured anything.
+- (void)testAnOriginRecordedFirstAppliesToWhatIsPublishedLater {
+  [_store setOrigin:CGPointMake(100, 50) forDisplay:0];
+  const int32_t rects[] = {10, 20, 30, 40};
+
+  [_store setCoordinates:rects count:4 forDisplay:0];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[@110, @70, @130, @90]));
+}
+
+/// A window dragged across the screen moves nothing JS measures: only the
+/// origin changes, and the SDK must re-read the rectangles.
+- (void)testMovesTheVersionWhenTheOriginMoves {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+  NSNumber *before = [self unpack:[_store snapshotForDisplay:0]][0];
+
+  [_store setOrigin:CGPointMake(100, 50) forDisplay:0];
+
+  XCTAssertNotEqualObjects(before, [self unpack:[_store snapshotForDisplay:0]][0]);
+}
+
+/// The origin is re-read on every pull; the same place must not make the SDK
+/// re-read the rectangles every time.
+- (void)testHoldsTheVersionWhenTheOriginStaysPut {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+  [_store setOrigin:CGPointMake(100, 50) forDisplay:0];
+  NSNumber *settled = [self unpack:[_store snapshotForDisplay:0]][0];
+
+  [_store setOrigin:CGPointMake(100, 50) forDisplay:0];
+
+  XCTAssertEqualObjects(settled, [self unpack:[_store snapshotForDisplay:0]][0]);
+}
+
+/// Before anything is secured the display reports the empty set at its
+/// initial version, wherever the window is.
+- (void)testAnOriginAloneLeavesTheEmptySetAsItWas {
+  NSNumber *before = [self unpack:[_store snapshotForDisplay:0]][0];
+
+  [_store setOrigin:CGPointMake(100, 50) forDisplay:0];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertEqualObjects(packed[0], before);
+  XCTAssertEqualObjects(packed[1], @0);
+}
+
+/// A window can sit at half a point. Rounding the edges to the nearest point
+/// could pull one inside the view and leave a strip of it in the clear.
+- (void)testAFractionalOriginOnlyEverGrowsTheRectangle {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+
+  [_store setOrigin:CGPointMake(0.5, 71.5) forDisplay:0];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[@10, @91, @31, @112]));
+}
+
+/// A window dragged partly off the top and left of the screen: the edges
+/// still round outward.
+- (void)testANegativeOriginOnlyEverGrowsTheRectangle {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+
+  [_store setOrigin:CGPointMake(-0.5, -30.5) forDisplay:0];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[@9, @(-11), @30, @10]));
+}
+
+/// Wrapping would throw an edge to the other end of the range.
+- (void)testEdgesSaturateRatherThanWrap {
+  const int32_t rects[] = {INT32_MIN + 1, 0, INT32_MAX - 1, 10};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+
+  [_store setOrigin:CGPointMake(-10, 0) forDisplay:0];
+  XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][2], @(INT32_MIN));
+
+  [_store setOrigin:CGPointMake(10, 0) forDisplay:0];
+  XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][4], @(INT32_MAX));
+}
+
+- (void)testAnOriginMovesOnlyItsOwnDisplay {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+  [_store setCoordinates:rects count:4 forDisplay:1];
+
+  [_store setOrigin:CGPointMake(100, 50) forDisplay:0];
+
+  NSArray *other = [self unpack:[_store snapshotForDisplay:1]];
+  XCTAssertEqualObjects([other subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[@10, @20, @30, @40]));
+}
+
+#pragma mark - Identity
 
 /// The shared store outlives any one wrapper: the init provider registers one
 /// before launch and setWrapperInfo swaps in another, and the regions the app

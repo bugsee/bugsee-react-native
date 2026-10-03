@@ -49,7 +49,9 @@ export interface Spec extends TurboModule {
   setWrapperInfo(identity: UnsafeObject): void;
   /**
    * Publishes the regions the SDK must not record, for one display, as a flat
-   * list of four-number rectangles: `[left, top, right, bottom, ...]`.
+   * list of four-number rectangles: `[left, top, right, bottom, ...]`, in the
+   * React root's window (`measureInWindow`). Native moves them onto the
+   * screen, where the SDK wants them, by the window's place there.
    *
    * Synchronous and fire-and-forget. The SDK PULLS these 2-3 times a second
    * from its own thread; a promise would put a JS round trip on a path that
