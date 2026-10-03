@@ -4045,6 +4045,12 @@ The phase with the most native↔JS round-tripping, hence the most device testin
 
 `notify(title, body, severity, fields, urgent)`; `startTransaction`, `startSpan`, `getActiveSpan`. Spans are objects with lifetime, so the bridge must not leak them — tests pin that a finished span is released. Device test: a notification arrives; a transaction appears in a report.
 
+Device: WOD_LX1 `AMRJCP4718402860`, Debug, logged `BUGSEE_E2E apm notify=notify-63127dab6203 txn=txn-63127dab6203` (pass: the relay held the notification, and the report's performance capture held the transaction and its child span). iOS Simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957`, Debug, logged `BUGSEE_E2E apm notify=notify-19d207323e5d txn=txn-19d207323e5d` (pass, same two artifacts). iPhone XS (KRSFT) was already running BareExample (pid 43437); waited and retried once, and that process was still there, so that run was not taken.
+
+Setter fix: the four span setters return a boolean so codegen runs them on the JS thread, ahead of `finish`. WOD_LX1 `AMRJCP4718402860`, Debug, logged `BUGSEE_E2E apm notify=notify-f70ead5fa74c txn=txn-f70ead5fa74c` (pass: the child span's attributes held `attr-f70ead5fa74c`). iOS Simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957`, Debug, logged `BUGSEE_E2E apm notify=notify-c88c83270b1d txn=txn-c88c83270b1d` (pass, same attribute). KRSFT was still that same BareExample process, so the handset was not run again.
+
+Review fix: `finish` drops the handle it was called with even when `isFinished` stays false, and the first JS `finish` returns. WOD_LX1 `AMRJCP4718402860`, Debug, logged `BUGSEE_E2E apm notify=notify-fca865f68ae1 txn=txn-fca865f68ae1` (pass). iOS Simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957`, Debug, logged `BUGSEE_E2E apm notify=notify-c852b4eca69d txn=txn-c852b4eca69d` (pass). KRSFT was still pid 43437, so the handset was not run.
+
 ---
 
 ## Phase 11 — Appearance & data

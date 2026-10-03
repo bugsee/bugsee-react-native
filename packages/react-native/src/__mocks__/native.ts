@@ -342,6 +342,17 @@ export const native = {
   /** Resolves by default; tests that hang native replace the implementation. */
   logUnhandledException: jest.fn<Promise<void>, [string]>(),
 
+  notify: jest.fn<void, [string, string | null, number, string | null, boolean]>(),
+  startTransaction: jest.fn<Record<string, unknown>, [string, string, string | null]>(),
+  startSpan: jest.fn<Record<string, unknown>, [string, string | null]>(),
+  getActiveSpan: jest.fn<Record<string, unknown>, []>(),
+  spanSetName: jest.fn<boolean, [string, string]>(),
+  spanSetDescription: jest.fn<boolean, [string, string | null]>(),
+  spanSetAttribute: jest.fn<boolean, [string, string, string]>(),
+  spanSetStatus: jest.fn<boolean, [string, number]>(),
+  spanStartChild: jest.fn<Record<string, unknown>, [string, string, string | null]>(),
+  spanFinish: jest.fn<string[], [string, number, boolean]>(),
+
   /**
    * Resets every mock on this object, found rather than listed.
    *

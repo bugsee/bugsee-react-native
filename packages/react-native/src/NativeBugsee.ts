@@ -463,6 +463,66 @@ export interface Spec extends TurboModule {
   logException(payloadJson: string, optionsJson: string | null): void;
   /** An unhandled JS exception. Resolves once the SDK has the report; never rejects. */
   logUnhandledException(payloadJson: string): Promise<void>;
+
+  /**
+   * Queues a notification for the app's messaging integrations. Not a bug
+   * report. `severity` `0` means unset (Android passes null; iOS passes 0,
+   * which the SDK omits). `fieldsJson` is a JSON object of strings, or null.
+   * `urgent` false is the shorter overloads. Does nothing useful before
+   * launch; the SDK ignores it.
+   */
+  notify(
+    title: string,
+    body: string | null,
+    severity: number,
+    fieldsJson: string | null,
+    urgent: boolean,
+  ): void;
+
+  /**
+   * Starts a transaction and retains it. The snapshot's `handle` is the
+   * bridge id. `attributesJson` null is the two-argument SDK overload.
+   * Calls stay on one thread: the active span is thread-local on both SDKs.
+   */
+  startTransaction(
+    name: string,
+    operation: string,
+    attributesJson: string | null,
+  ): UnsafeObject;
+  /** Starts a span under the active span on this thread and retains it. */
+  startSpan(operation: string, description: string | null): UnsafeObject;
+  /**
+   * The active span on this thread, or a snapshot whose `handle` is `''`
+   * when there is none. A span this bridge already holds comes back with
+   * the same handle.
+   */
+  getActiveSpan(): UnsafeObject;
+  /**
+   * `setName`, which sets the operation on both SDKs.
+   *
+   * Returns whether the live span accepted the value. The return is what
+   * keeps the call on the JS thread: codegen queues a `void` TurboModule
+   * method, and a setter then `spanFinish` in one turn would release the
+   * handle before the setter ran. Same for the three setters below.
+   */
+  spanSetName(handle: string, name: string): boolean;
+  spanSetDescription(handle: string, description: string | null): boolean;
+  /** `valueJson` is one JSON value: a string, number or boolean. */
+  spanSetAttribute(handle: string, key: string, valueJson: string): boolean;
+  spanSetStatus(handle: string, status: number): boolean;
+  spanStartChild(
+    handle: string,
+    operation: string,
+    description: string | null,
+  ): UnsafeObject;
+  /**
+   * Finishes the span and releases every retained span that is now
+   * finished, including children a parent finish cancelled. `statusSet`
+   * false is the no-arg `finish` (status OK). The returned handles are
+   * the ones dropped. Empty means the handle was already gone. The name
+   * is `statusSet` because `explicit` is a keyword in the ObjC++ spec.
+   */
+  spanFinish(handle: string, status: number, statusSet: boolean): string[];
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Bugsee');

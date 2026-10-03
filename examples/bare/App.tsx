@@ -20,8 +20,8 @@
  * scenarios/reporting.ts, `log-filter` is scenarios/log-filter.ts,
  * `breadcrumb-filter` is scenarios/breadcrumb-filter.ts,
  * `network-filter` is scenarios/network-filter.ts,
- * `add-network-event` is scenarios/add-network-event.ts, and
- * `feedback` is scenarios/feedback.ts.
+ * `add-network-event` is scenarios/add-network-event.ts,
+ * `feedback` is scenarios/feedback.ts, and `apm` is scenarios/apm.ts.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -112,6 +112,7 @@ import {
   runAddNetworkEventScenario,
 } from './scenarios/add-network-event';
 import { isFeedbackScenario, runFeedbackScenario } from './scenarios/feedback';
+import { isApmScenario, runApmScenario } from './scenarios/apm';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -144,7 +145,13 @@ function launchOptions(endpoint: string, scenario: string): LaunchOptions {
   if (isBreadcrumbFilterScenario(scenario)) {
     options.captureBreadcrumbs = true;
   }
-  return BugseeLaunchOptions.serialize(options) as LaunchOptions;
+  const serialized = BugseeLaunchOptions.serialize(options) as LaunchOptions;
+  // This scenario only. APM is on by default; setting the key makes the
+  // launch explicit about the capture this scenario is here to produce.
+  if (isApmScenario(scenario)) {
+    serialized['com.bugsee.option.performance.enabled'] = true;
+  }
+  return serialized;
 }
 
 function appToken(): string {
@@ -484,6 +491,11 @@ export default function App() {
 
         if (isFeedbackScenario(choice.scenario)) {
           runFeedbackScenario(choice.nonce);
+          return;
+        }
+
+        if (isApmScenario(choice.scenario)) {
+          runApmScenario(choice.nonce);
           return;
         }
 
