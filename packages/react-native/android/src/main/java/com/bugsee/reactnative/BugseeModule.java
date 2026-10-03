@@ -1546,6 +1546,45 @@ public class BugseeModule extends NativeBugseeSpec
         }
     }
 
+    // --- Appearance and collected data (Phase 11) ---------------------------
+    // set/get return a value so codegen runs them on the JS thread, ahead of
+    // the read that follows a write in the same turn.
+
+    @Override
+    public boolean setAppearanceColor(
+            final String name,
+            final double r,
+            final double g,
+            final double b,
+            final double a
+    ) {
+        AppearanceBridge.setColor(
+                name,
+                (int) Math.round(r),
+                (int) Math.round(g),
+                (int) Math.round(b),
+                (int) Math.round(a)
+        );
+        return true;
+    }
+
+    @Override
+    @NonNull
+    public String getAppearanceColor(final String name) {
+        return AppearanceBridge.toHex(AppearanceBridge.getColor(name));
+    }
+
+    @Override
+    public void deleteCollectedDataOnDevice(
+            final boolean includingIntermediate,
+            final Promise promise
+    ) {
+        Bugsee.deleteCollectedDataOnDevice(
+                includingIntermediate,
+                success -> promise.resolve(Boolean.TRUE.equals(success))
+        );
+    }
+
     /** One JSON value, or null when it is missing, null, an object or an array. */
     @Nullable
     private static Object jsonValue(@Nullable final String json) {

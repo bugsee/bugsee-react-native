@@ -1,0 +1,151 @@
+jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
+jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
+
+import { Platform } from 'react-native';
+import Bugsee from '../../index';
+import { native } from '../../__mocks__/native';
+import { REPORT_APPEARANCE, type ReportAppearanceName } from '../report';
+
+/**
+ * `ReportAppearance` constants in bugsee-android 7.3.0. The 6.x names
+ * (`ReportActionBarColor`, no `Report::` prefix) are not these.
+ */
+const ANDROID_ENUM: Record<string, string> = {
+  actionBarButtonBackgroundClickedColor: 'Report::ActionBarButtonBackgroundClickedColor',
+  actionBarColor: 'Report::ActionBarColor',
+  actionBarTextColor: 'Report::ActionBarTextColor',
+  backgroundColor: 'Report::BackgroundColor',
+  editTextBackgroundColor: 'Report::EditTextBackgroundColor',
+  hintColor: 'Report::HintColor',
+  severityLabelActiveColor: 'Report::SeverityLabelActiveColor',
+  textColor: 'Report::TextColor',
+  versionColor: 'Report::VersionColor',
+};
+
+/**
+ * Writable report color properties on `BugseeTheme` in the vendored
+ * 7.0.0-beta3 header. Feedback properties and the readonly palette are not
+ * report appearance.
+ */
+const IOS_PROPERTY: Record<string, string> = {
+  backgroundColor: 'reportBackgroundColor',
+  cellBackgroundColor: 'reportCellBackgroundColor',
+  closeButtonColor: 'reportCloseButtonColor',
+  navigationBarColor: 'reportNavigationBarColor',
+  placeholderColor: 'reportPlaceholderColor',
+  sendButtonColor: 'reportSendButtonColor',
+  textColor: 'reportTextColor',
+  versionColor: 'reportVersionColor',
+};
+
+const PUBLIC_KEYS = Object.keys(REPORT_APPEARANCE).sort();
+
+beforeEach(() => {
+  native.reset();
+  native.setAppearanceColor.mockReturnValue(true);
+  native.getAppearanceColor.mockReturnValue('');
+  (Platform as { OS: string }).OS = 'android';
+});
+
+describe('report appearance mapping', () => {
+  it.each(PUBLIC_KEYS)('%s maps to the Android enum and the iOS property', (key) => {
+    const binding = REPORT_APPEARANCE[key as ReportAppearanceName] as {
+      readonly android?: string;
+      readonly ios?: string;
+    };
+    expect(binding.android).toBe(ANDROID_ENUM[key]);
+    expect(binding.ios).toBe(IOS_PROPERTY[key]);
+  });
+
+  it('covers every 7.x report color and no 6.x Android name', () => {
+    expect(PUBLIC_KEYS).toEqual(
+      [...new Set([...Object.keys(ANDROID_ENUM), ...Object.keys(IOS_PROPERTY)])].sort(),
+    );
+    const androidValues = PUBLIC_KEYS.map(
+      (key) =>
+        (REPORT_APPEARANCE[key as ReportAppearanceName] as { android?: string }).android,
+    ).filter((value): value is string => value !== undefined);
+    expect(androidValues.every((value) => value.startsWith('Report::'))).toBe(true);
+    expect(androidValues).not.toContain('ReportActionBarColor');
+    expect(androidValues).not.toContain('ReportBackgroundColor');
+  });
+
+  it('sends the Android enum and the parsed components', () => {
+    Bugsee.appearance.backgroundColor = '#11223344';
+    expect(native.setAppearanceColor).toHaveBeenCalledWith(
+      'Report::BackgroundColor',
+      0x11,
+      0x22,
+      0x33,
+      0x44,
+    );
+  });
+
+  it('sends the iOS property name on iOS', () => {
+    (Platform as { OS: string }).OS = 'ios';
+    Bugsee.appearance.backgroundColor = '#abcdef';
+    expect(native.setAppearanceColor).toHaveBeenCalledWith(
+      'reportBackgroundColor',
+      0xab,
+      0xcd,
+      0xef,
+      255,
+    );
+  });
+
+  it('reads the color the SDK reports', () => {
+    native.getAppearanceColor.mockReturnValue('#11223344');
+    expect(Bugsee.appearance.backgroundColor).toBe('#11223344');
+    expect(native.getAppearanceColor).toHaveBeenCalledWith('Report::BackgroundColor');
+  });
+
+  it('rejects an unknown key the same way on both platforms', () => {
+    const messages: string[] = [];
+    for (const os of ['android', 'ios']) {
+      (Platform as { OS: string }).OS = os;
+      expect(() => {
+        (Bugsee.appearance as Record<string, string>).notAReportColor = '#ffffff';
+      }).toThrow(RangeError);
+      try {
+        (Bugsee.appearance as Record<string, string>).notAReportColor = '#ffffff';
+      } catch (error) {
+        messages.push((error as Error).message);
+      }
+    }
+    expect(messages[0]).toBe(messages[1]);
+    expect(messages[0]).toMatch(/notAReportColor/);
+    expect(native.setAppearanceColor).not.toHaveBeenCalled();
+  });
+
+  it('refuses a color the current platform does not have', () => {
+    expect(() => {
+      Bugsee.appearance.cellBackgroundColor = '#ffffff';
+    }).toThrow(/not available on android/);
+    (Platform as { OS: string }).OS = 'ios';
+    expect(() => {
+      Bugsee.appearance.actionBarColor = '#ffffff';
+    }).toThrow(/not available on ios/);
+    expect(native.setAppearanceColor).not.toHaveBeenCalled();
+  });
+
+  it('refuses a bad color before calling native', () => {
+    expect(() => {
+      Bugsee.appearance.backgroundColor = 'red';
+    }).toThrow(RangeError);
+    expect(native.setAppearanceColor).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteCollectedDataOnDevice', () => {
+  it('passes includingIntermediate true through', async () => {
+    native.deleteCollectedDataOnDevice.mockResolvedValue(true);
+    await expect(Bugsee.deleteCollectedDataOnDevice(true)).resolves.toBe(true);
+    expect(native.deleteCollectedDataOnDevice).toHaveBeenCalledWith(true);
+  });
+
+  it('passes includingIntermediate false through', async () => {
+    native.deleteCollectedDataOnDevice.mockResolvedValue(false);
+    await expect(Bugsee.deleteCollectedDataOnDevice(false)).resolves.toBe(false);
+    expect(native.deleteCollectedDataOnDevice).toHaveBeenCalledWith(false);
+  });
+});
