@@ -22,9 +22,11 @@ let subscribed = false;
  * `undefined` or `null` clears it, which tells native to uninstall the filter
  * so lines are recorded without one.
  *
- * The native request is subscribed to once and stays subscribed: clearing the
- * callback stops native from asking, and a later callback must still be able
- * to answer.
+ * The JS listener is subscribed before the native filter is installed, so a
+ * line filtered on the installing turn still has a listener. On iOS a request
+ * emitted in that gap stays in the pending table until process death. The
+ * subscription stays: clearing the callback stops native from asking, and a
+ * later callback must still be able to answer.
  */
 export function setLogFilter(callback?: LogFilter | null): void {
   if (callback != null && typeof callback !== 'function') {
@@ -32,12 +34,12 @@ export function setLogFilter(callback?: LogFilter | null): void {
       `Bugsee.setLogFilter requires a function, got ${typeof callback}`,
     );
   }
+  if (callback != null && !subscribed) {
+    NativeBugsee.onLogFilterRequest(onLogFilterRequest);
+    subscribed = true;
+  }
   current = callback ?? undefined;
   NativeBugsee.setLogFilterEnabled(current !== undefined);
-  if (current !== undefined && !subscribed) {
-    subscribed = true;
-    NativeBugsee.onLogFilterRequest(onLogFilterRequest);
-  }
 }
 
 /**
