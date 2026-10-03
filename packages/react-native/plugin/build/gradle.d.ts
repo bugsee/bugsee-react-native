@@ -13,5 +13,13 @@ export declare function ensureGradlePluginDeclared(projectBuildGradle: string, v
  * configuration exclude does not drop a direct dependency. A later run
  * with the option omitted or on removes that exclude and adds the
  * implementation line. The wrapper `api` itself is left in place.
+ *
+ * On (omitted or a version) also writes `debugSymbolLevel 'SYMBOL_TABLE'`
+ * on existing debug and release build types when that block is absent.
+ * Off removes only the block this plugin inserted. Maven Hermes and
+ * `libreactnative.so` are pre-stripped; the comment does not claim those
+ * two are symbolicated. The Hermes preserve command and the finish hook
+ * are the JS source-map path, so they are written either way. The hook
+ * does not upload.
  */
 export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string;

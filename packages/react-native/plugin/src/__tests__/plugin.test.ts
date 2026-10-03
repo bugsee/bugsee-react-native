@@ -19,6 +19,56 @@ import { manifestAutoLaunchToken } from '../manifest';
 import { loadNativeVersions } from '../native-versions';
 
 const repoRoot = join(__dirname, '..', '..', '..', '..', '..');
+
+function expoSdk57AppBuildGradle(): string {
+  const tarball = join(repoRoot, 'examples/expo/node_modules/expo/template.tgz');
+  const result = spawnSync('tar', ['-xOf', tarball, 'package/android/app/build.gradle'], {
+    encoding: 'utf8',
+  });
+  if (result.status !== 0 || !result.stdout) {
+    throw new Error(result.stderr || `could not read Expo SDK 57 app/build.gradle from ${tarball}`);
+  }
+  return result.stdout;
+}
+
+function buildTypeBody(source: string, name: string): string {
+  const extentStart = source.indexOf('buildTypes {');
+  if (extentStart < 0) {
+    throw new Error('buildTypes missing');
+  }
+  const openBuild = source.indexOf('{', extentStart);
+  let depth = 0;
+  let buildEnd = -1;
+  for (let i = openBuild; i < source.length; i += 1) {
+    if (source[i] === '{') {
+      depth += 1;
+    } else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        buildEnd = i;
+        break;
+      }
+    }
+  }
+  const region = source.slice(openBuild + 1, buildEnd);
+  const match = new RegExp(`(?:^|\\n)[ \\t]*${name}[ \\t]*\\{`).exec(region);
+  if (!match || match.index === undefined) {
+    throw new Error(`${name} build type missing`);
+  }
+  const openRel = match.index + match[0].length - 1;
+  let inner = 0;
+  for (let i = openRel; i < region.length; i += 1) {
+    if (region[i] === '{') {
+      inner += 1;
+    } else if (region[i] === '}') {
+      inner -= 1;
+      if (inner === 0) {
+        return region.slice(openRel + 1, i);
+      }
+    }
+  }
+  throw new Error(`${name} build type unclosed`);
+}
 const barePbx = join(
   repoRoot,
   'examples/bare/ios/BareExample.xcodeproj/project.pbxproj',
@@ -456,6 +506,96 @@ describe('Android Gradle edits', () => {
     expect(next).toContain(`implementation "com.bugsee:bugsee-android-ndk:${versions.sdk}"`);
     expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
   });
+
+  it('writes Expo SDK 57 symbol hooks and drops them when native crash reporting is off', () => {
+    const template = expoSdk57AppBuildGradle();
+    expect(template).toContain('hermes-compiler/package.json');
+    expect(template).not.toContain('hermesc-preserve-js.sh');
+    expect(template).not.toContain('SYMBOL_TABLE');
+
+    const next = ensureAppAppliesPlugin(template, versions.sdk);
+    expect(next).toContain('apply plugin: "com.bugsee.android.gradle"');
+    expect(next).toContain(`implementation "com.bugsee:bugsee-android-ndk:${versions.sdk}"`);
+    expect(next.match(/com\.bugsee\.android\.gradle/g)).toHaveLength(1);
+
+    const debug = buildTypeBody(next, 'debug');
+    const release = buildTypeBody(next, 'release');
+    for (const body of [debug, release]) {
+      expect(body.match(/debugSymbolLevel 'SYMBOL_TABLE'/g)).toHaveLength(1);
+      expect(body.match(/\bndk\s*\{/g)).toHaveLength(1);
+      expect(body).toContain('bugsee-symbol-table:');
+      expect(body).toContain('AGP defaults this to NONE');
+      expect(body).toContain('Maven Hermes and libreactnative.so are pre-stripped');
+      expect(body).toContain('this level does not symbolicate those two');
+    }
+    expect(next.match(/debugSymbolLevel 'SYMBOL_TABLE'/g)).toHaveLength(2);
+
+    const hermes = next.split('\n').filter((line) => /^\s*hermesCommand\s*=/.test(line));
+    expect(hermes).toEqual([
+      '    hermesCommand = new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/scripts/hermesc-preserve-js.sh"',
+    ]);
+    expect(hermes[0]).not.toContain('../../node_modules');
+    expect(hermes[0]).not.toContain('hermes-compiler');
+    expect(next).toContain('// hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"');
+
+    const hook = next.slice(next.lastIndexOf('// After compose-source-maps.js'));
+    expect(next.match(/afterEvaluate/g)).toHaveLength(1);
+    expect(hook).toContain(
+      'def bugseeHermesSourcemaps = new File(new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/hermes-sourcemaps.js")',
+    );
+    expect(hook).toContain(
+      'def bugseeComposeSourceMaps = new File(new File(["node", "--print", "require.resolve(\'react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/compose-source-maps.js")',
+    );
+    expect(hook).toContain('hook.absolutePath, "finish"');
+    expect(hook).toContain('Bugsee preserve directory is the packaged asset directory');
+    expect(hook).toContain('/intermediates/bugsee-sourcemaps/');
+    expect(hook).toContain('Upload is not invoked.');
+    expect(hook).not.toContain('../../node_modules');
+    expect(hook).not.toContain('bugsee-cli');
+    expect(hook).not.toContain('debug-files');
+    expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
+
+    const off = ensureAppAppliesPlugin(next, null);
+    expect(off).not.toContain('bugsee-symbol-table:');
+    expect(off).not.toContain('SYMBOL_TABLE');
+    expect(off).not.toMatch(/implementation\s+["']com\.bugsee:bugsee-android-ndk:/);
+    expect(off).toContain("exclude group: 'com.bugsee', module: 'bugsee-android-ndk'");
+    expect(buildTypeBody(off, 'debug')).toContain('signingConfig signingConfigs.debug');
+    expect(buildTypeBody(off, 'release')).toContain('minifyEnabled enableMinifyInReleaseBuilds');
+    expect(buildTypeBody(off, 'debug')).not.toContain('ndk');
+    expect(buildTypeBody(off, 'release')).not.toContain('ndk');
+    expect(off).toContain('hermesc-preserve-js.sh');
+    expect(off).toContain('Bugsee preserve directory is the packaged asset directory');
+    expect(off.match(/afterEvaluate/g)).toHaveLength(1);
+    expect(ensureAppAppliesPlugin(off, null)).toBe(off);
+  });
+
+  it('leaves a hand-written ndk block when native crash reporting is off', () => {
+    const template = expoSdk57AppBuildGradle().replace(
+      '        debug {\n            signingConfig signingConfigs.debug\n        }',
+      [
+        '        debug {',
+        '            signingConfig signingConfigs.debug',
+        '            ndk {',
+        "                debugSymbolLevel 'FULL'",
+        '            }',
+        '        }',
+      ].join('\n'),
+    );
+    const enabled = ensureAppAppliesPlugin(template, versions.sdk);
+    expect(buildTypeBody(enabled, 'debug')).toContain("debugSymbolLevel 'FULL'");
+    expect(buildTypeBody(enabled, 'debug')).not.toContain('SYMBOL_TABLE');
+    expect(buildTypeBody(enabled, 'debug')).not.toContain('bugsee-symbol-table:');
+    expect(buildTypeBody(enabled, 'release')).toContain("debugSymbolLevel 'SYMBOL_TABLE'");
+    expect(buildTypeBody(enabled, 'release').match(/\bndk\s*\{/g)).toHaveLength(1);
+
+    const off = ensureAppAppliesPlugin(enabled, null);
+    expect(buildTypeBody(off, 'debug')).toContain("debugSymbolLevel 'FULL'");
+    expect(buildTypeBody(off, 'debug')).not.toContain('bugsee-symbol-table:');
+    expect(off).not.toContain('SYMBOL_TABLE');
+    expect(off).not.toContain('bugsee-symbol-table:');
+    expect(off).not.toMatch(/implementation\s+["']com\.bugsee:bugsee-android-ndk:/);
+  });
 });
 
 describe('published native versions', () => {
@@ -507,13 +647,70 @@ describe('scheme post-action', () => {
 
   it('inserts the copied script on Archive and keeps the app target', () => {
     const next = insertDsymPostAction(scheme, DSYM_POST_ACTION_SCRIPT);
-    expect(next).toContain('<PostActions>');
+    expect(next.match(/<PostActions>/g)).toHaveLength(1);
+    expect(next.match(/<\/PostActions>/g)).toHaveLength(1);
     expect(next).toContain('title = "Upload dSYMs"');
     const encoded = next.match(/\bscriptText\s*=\s*"([^"]*)"/)?.[1];
     expect(encoded).toEqual(expect.any(String));
     expect(decodeXml(encoded ?? '')).toBe(DSYM_POST_ACTION_SCRIPT);
     expect(next).toContain('BlueprintName = "BugseeExpo"');
     expect(next).not.toContain('BareExample');
+    expect(insertDsymPostAction(next, DSYM_POST_ACTION_SCRIPT)).toBe(next);
+  });
+
+  it('inserts the Bugsee action into an existing Archive PostActions element', () => {
+    const scheme = `<?xml version="1.0" encoding="UTF-8"?>
+<Scheme version = "1.3">
+   <BuildAction>
+      <BuildActionEntries>
+         <BuildActionEntry>
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
+               BuildableName = "BugseeExpo.app"
+               BlueprintName = "BugseeExpo"
+               ReferencedContainer = "container:BugseeExpo.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <ArchiveAction
+      buildConfiguration = "Release"
+      revealArchiveInOrganizer = "YES">
+      <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Notify"
+               scriptText = "echo archive-finished">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
+                     BuildableName = "BugseeExpo.app"
+                     BlueprintName = "BugseeExpo"
+                     ReferencedContainer = "container:BugseeExpo.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
+   </ArchiveAction>
+</Scheme>
+`;
+    const next = insertDsymPostAction(scheme, DSYM_POST_ACTION_SCRIPT);
+    expect(next.match(/<PostActions>/g)).toHaveLength(1);
+    expect(next.match(/<\/PostActions>/g)).toHaveLength(1);
+    const archive = next.match(/<ArchiveAction\b[\s\S]*?<\/ArchiveAction>/)?.[0] ?? '';
+    const open = archive.indexOf('<PostActions>');
+    const close = archive.indexOf('</PostActions>');
+    const inner = archive.slice(open, close);
+    expect(inner.match(/<PostActions>/g)).toHaveLength(1);
+    expect(inner).toContain('title = "Notify"');
+    expect(inner).toContain('echo archive-finished');
+    expect(inner).toContain('title = "Upload dSYMs"');
+    expect(archive.match(/<ExecutionAction\b/g)).toHaveLength(2);
+    expect(next).not.toContain('<PostActions>\n      <PostActions>');
     expect(insertDsymPostAction(next, DSYM_POST_ACTION_SCRIPT)).toBe(next);
   });
 });

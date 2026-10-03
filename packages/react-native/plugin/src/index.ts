@@ -33,9 +33,11 @@ export interface BugseePluginProps {
   /** Defaults on. `false` skips the Archive dSYM post-action. */
   uploadSymbols?: boolean;
   /**
-   * Defaults on. Writes `plugin.ndk.enabled=true` for a real token and adds
-   * `com.bugsee:bugsee-android-ndk`. `false` skips both and excludes the
-   * wrapper's NDK AAR from the app.
+   * Defaults on. Writes `plugin.ndk.enabled=true` for a real token, adds
+   * `com.bugsee:bugsee-android-ndk`, and sets `debugSymbolLevel 'SYMBOL_TABLE'`
+   * on existing debug and release build types. `false` skips the flag, strips
+   * that direct dependency, excludes the wrapper's NDK AAR, and removes the
+   * symbol block this plugin inserted. JS source-map hooks stay either way.
    */
   nativeCrashReporting?: boolean;
   /** Defaults to native-versions.json `android.gradlePlugin`. */

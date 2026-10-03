@@ -22,21 +22,8 @@ function appBuildableReference(scheme) {
     }
     return app;
 }
-/**
- * Inserts the Archive post-action. The EnvironmentBuildable is the scheme's
- * own app target, so ARCHIVE_PATH is provided.
- */
-function insertDsymPostAction(scheme, script = dsym_script_1.DSYM_POST_ACTION_SCRIPT) {
-    if (scheme.includes('xcode post-action')) {
-        return scheme;
-    }
-    const archive = scheme.match(/<ArchiveAction\b[\s\S]*?<\/ArchiveAction>/);
-    if (!archive?.[0]) {
-        throw new Error('ArchiveAction missing');
-    }
-    const reference = appBuildableReference(scheme);
-    const block = [
-        '      <PostActions>',
+function executionActionXml(reference, script) {
+    return [
         '         <ExecutionAction',
         '            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">',
         '            <ActionContent',
@@ -47,9 +34,34 @@ function insertDsymPostAction(scheme, script = dsym_script_1.DSYM_POST_ACTION_SC
         '               </EnvironmentBuildable>',
         '            </ActionContent>',
         '         </ExecutionAction>',
-        '      </PostActions>',
     ].join('\n');
-    const updated = archive[0].replace('</ArchiveAction>', `${block}\n   </ArchiveAction>`);
-    return scheme.replace(archive[0], updated);
+}
+/**
+ * Inserts the Archive post-action. The EnvironmentBuildable is the scheme's
+ * own app target, so ARCHIVE_PATH is provided. Xcode allows one PostActions
+ * element; a scheme that already has one gets another ExecutionAction inside
+ * it. A wrapping PostActions is emitted only when ArchiveAction has none.
+ */
+function insertDsymPostAction(scheme, script = dsym_script_1.DSYM_POST_ACTION_SCRIPT) {
+    if (scheme.includes('xcode post-action')) {
+        return scheme;
+    }
+    const archive = scheme.match(/<ArchiveAction\b[\s\S]*?<\/ArchiveAction>/);
+    if (!archive?.[0] || archive.index === undefined) {
+        throw new Error('ArchiveAction missing');
+    }
+    const execution = executionActionXml(appBuildableReference(scheme), script);
+    const updated = insertArchiveExecution(archive[0], execution);
+    return scheme.slice(0, archive.index) + updated + scheme.slice(archive.index + archive[0].length);
+}
+function insertArchiveExecution(archive, execution) {
+    const open = /<PostActions\b[^>]*>/.exec(archive);
+    const closeAt = archive.indexOf('</PostActions>');
+    if (open && closeAt > open.index) {
+        const lineStart = archive.lastIndexOf('\n', closeAt - 1) + 1;
+        return archive.slice(0, lineStart) + execution + '\n' + archive.slice(lineStart);
+    }
+    const block = ['      <PostActions>', execution, '      </PostActions>'].join('\n');
+    return archive.replace('</ArchiveAction>', `${block}\n   </ArchiveAction>`);
 }
 //# sourceMappingURL=scheme.js.map
