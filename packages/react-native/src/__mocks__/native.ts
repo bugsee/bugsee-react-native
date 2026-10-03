@@ -15,6 +15,12 @@ const EMPTY_REPORT_SNAPSHOT = {
 };
 
 /** What a freshly reset mock resolves, for the calls that return something. */
+/** Synchronous returns. A Promise default would make a boolean read back a Promise. */
+const SYNC_RETURNS: Record<string, unknown> = {
+  setAppearanceColor: true,
+  getAppearanceColor: '',
+};
+
 const DEFAULTS: Record<string, unknown> = {
   launch: true,
   relaunch: true,
@@ -353,6 +359,10 @@ export const native = {
   spanStartChild: jest.fn<Record<string, unknown>, [string, string, string | null]>(),
   spanFinish: jest.fn<string[], [string, number, boolean]>(),
 
+  setAppearanceColor: jest.fn<boolean, [string, number, number, number, number]>(),
+  getAppearanceColor: jest.fn<string, [string]>(),
+  deleteCollectedDataOnDevice: jest.fn<Promise<boolean>, [boolean]>(),
+
   /**
    * Resets every mock on this object, found rather than listed.
    *
@@ -379,6 +389,8 @@ export const native = {
         fn.mockReset();
         if (name in DEFAULTS) {
           fn.mockResolvedValue(DEFAULTS[name]);
+        } else if (name in SYNC_RETURNS) {
+          fn.mockReturnValue(SYNC_RETURNS[name]);
         }
       }
     }

@@ -113,6 +113,7 @@ import {
 } from './scenarios/add-network-event';
 import { isFeedbackScenario, runFeedbackScenario } from './scenarios/feedback';
 import { isApmScenario, runApmScenario } from './scenarios/apm';
+import { isAppearanceScenario, runAppearanceScenario } from './scenarios/appearance';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -496,6 +497,11 @@ export default function App() {
 
         if (isApmScenario(choice.scenario)) {
           runApmScenario(choice.nonce);
+          return;
+        }
+
+        if (isAppearanceScenario(choice.scenario)) {
+          await runAppearanceScenario(choice.scenario, choice.nonce);
           return;
         }
 

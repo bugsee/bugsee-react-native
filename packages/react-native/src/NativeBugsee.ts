@@ -523,6 +523,32 @@ export interface Spec extends TurboModule {
    * is `statusSet` because `explicit` is a keyword in the ObjC++ spec.
    */
   spanFinish(handle: string, status: number, statusSet: boolean): string[];
+
+  /**
+   * One report color. `name` is already the platform's native key
+   * (`Report::BackgroundColor` on Android, `reportBackgroundColor` on iOS).
+   * Components are 0–255.
+   *
+   * Returns whether the SDK accepted it. The return keeps the call on the
+   * JS thread: codegen queues a `void` TurboModule method, and a set then
+   * a read in one turn would read the color before the set ran.
+   */
+  setAppearanceColor(name: string, r: number, g: number, b: number, a: number): boolean;
+  /**
+   * The color the SDK has stored for `name`, as `#rrggbbaa`, or `''` when
+   * none is stored. Same thread rule as {@link setAppearanceColor}.
+   */
+  getAppearanceColor(name: string): string;
+  /**
+   * Deletes collected data on the device. `includingIntermediate` is the
+   * SDK's own flag: Android `Bugsee.deleteCollectedDataOnDevice` and iOS
+   * `deleteCollectedDataOnDevice:completion:`.
+   *
+   * Resolves to the SDK's completion value. Both platforms refuse the
+   * deletion while launched; the promise still settles (`false`) so a
+   * caller is not left waiting on a completion the SDK does not invoke.
+   */
+  deleteCollectedDataOnDevice(includingIntermediate: boolean): Promise<boolean>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Bugsee');

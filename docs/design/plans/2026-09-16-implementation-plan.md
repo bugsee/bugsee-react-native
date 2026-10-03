@@ -4057,6 +4057,10 @@ Review fix: `finish` drops the handle it was called with even when `isFinished` 
 
 `appearance` over two mapping tables — Android is keyed (`setColor(ReportAppearance.X, int)`), iOS is property-based on `BugseeTheme`. `deleteCollectedDataOnDevice(includingIntermediate)`. Feedback appearance is **not** here; it ships with the feedback package, since `FeedbackAppearance` lives in the feedback artifact on Android.
 
+The tables are the 7.x report colors: Android `Report::…` constants from bugsee-android 7.3.0 (`ReportAppearance`), iOS writable `report*Color` properties on `BugseeTheme` in the vendored 7.0.0-beta3 header. The 6.x Android names (`ReportBackgroundColor`, no `Report::` prefix) are not used. String placeholders stay off this surface (`setString`, not `setColor`).
+
+Device: WOD_LX1 `AMRJCP4718402860`, Debug, logged `BUGSEE_E2E appearance nonce=97aed4863fa7 background=#ff0000ff includingIntermediate=true deleted=false` (pass: the SDK read `#ff0000ff` back). iOS Simulator `6FA9B3E8-26C7-4232-AA2C-537D9DF32957`, Debug, logged `BUGSEE_E2E appearance nonce=603f8a16a924 background=#ff0000ff includingIntermediate=true deleted=false` (pass, same read-back; SDK `7.0.0-beta3` `0d9c9d0a-9`). `deleted=false` is the SDK refusing the deletion while launched. iPhone XS (KRSFT) was already running BareExample (pid 43437); waited and retried once, and that process was still there, so that run was not taken.
+
 ---
 
 ## Phase 12 — Feedback package

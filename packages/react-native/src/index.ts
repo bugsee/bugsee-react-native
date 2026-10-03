@@ -61,6 +61,8 @@ import {
 } from './apm/span';
 import type { BugseeSpan, BugseeTransaction } from './apm/span';
 import type { SpanAttribute } from './apm/types';
+import { appearance as reportAppearance } from './appearance/report';
+import type { ReportAppearance } from './appearance/report';
 
 const DETECT_CRASH_OPTION = 'com.bugsee.option.detect.crash';
 
@@ -789,6 +791,30 @@ class Bugsee {
    */
   getActiveSpan(): BugseeSpan | null {
     return readActiveSpan();
+  }
+
+  /**
+   * Report UI colors. One camelCase surface: Android applies
+   * `setColor(ReportAppearance.X, int)`, iOS sets the matching property on
+   * `BugseeTheme`. Setting a name that exists on only one platform throws on
+   * the other. Reading a color this platform does not have returns
+   * `undefined`. Reading a color it does have returns what the SDK stored.
+   */
+  get appearance(): ReportAppearance {
+    return reportAppearance;
+  }
+
+  /**
+   * Deletes collected data stored on the device.
+   *
+   * `includingIntermediate` crosses unchanged: `true` also deletes
+   * intermediate capture data (snapshots, partial bundles); `false` deletes
+   * only fully processed data. The SDK must be stopped for the deletion to
+   * succeed. While launched, both platforms refuse it and this resolves
+   * `false`.
+   */
+  deleteCollectedDataOnDevice(includingIntermediate: boolean): Promise<boolean> {
+    return NativeBugsee.deleteCollectedDataOnDevice(includingIntermediate);
   }
 }
 

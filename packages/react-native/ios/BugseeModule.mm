@@ -2261,6 +2261,130 @@ RCT_EXPORT_MODULE(Bugsee)
   return released;
 }
 
+/// Writable report colors on BugseeTheme (7.0.0-beta3). Feedback properties
+/// and the readonly palette are not report appearance. KVC with any other
+/// name throws NSUnknownKeyException.
+static NSSet<NSString *> *BGSRNReportColorKeys(void) {
+  static NSSet<NSString *> *keys;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    keys = [NSSet setWithArray:@[
+      @"reportBackgroundColor",
+      @"reportCellBackgroundColor",
+      @"reportCloseButtonColor",
+      @"reportNavigationBarColor",
+      @"reportPlaceholderColor",
+      @"reportSendButtonColor",
+      @"reportTextColor",
+      @"reportVersionColor",
+    ]];
+  });
+  return keys;
+}
+
+static BOOL BGSRNColorComponentOK(double value) {
+  return value >= 0.0 && value <= 255.0 && value == floor(value);
+}
+
+static NSString *BGSRNHexFromColor(UIColor *color) {
+  if (![color isKindOfClass:[UIColor class]]) {
+    return @"";
+  }
+  CGFloat r = 0, g = 0, b = 0, a = 0;
+  if (![color getRed:&r green:&g blue:&b alpha:&a]) {
+    return @"";
+  }
+  int ri = (int)llround(r * 255.0);
+  int gi = (int)llround(g * 255.0);
+  int bi = (int)llround(b * 255.0);
+  int ai = (int)llround(a * 255.0);
+  ri = MAX(0, MIN(255, ri));
+  gi = MAX(0, MIN(255, gi));
+  bi = MAX(0, MIN(255, bi));
+  ai = MAX(0, MIN(255, ai));
+  return [NSString stringWithFormat:@"#%02x%02x%02x%02x", ri, gi, bi, ai];
+}
+
+- (NSNumber *)setAppearanceColor:(NSString *)name
+                               r:(double)r
+                               g:(double)g
+                               b:(double)b
+                               a:(double)a {
+  if (![BGSRNReportColorKeys() containsObject:name]) {
+    return @NO;
+  }
+  if (!BGSRNColorComponentOK(r) || !BGSRNColorComponentOK(g) ||
+      !BGSRNColorComponentOK(b) || !BGSRNColorComponentOK(a)) {
+    return @NO;
+  }
+  UIColor *color = [UIColor colorWithRed:(CGFloat)(r / 255.0)
+                                    green:(CGFloat)(g / 255.0)
+                                     blue:(CGFloat)(b / 255.0)
+                                    alpha:(CGFloat)(a / 255.0)];
+  __block BOOL applied = NO;
+  BGSRNRunOnMainSync(^{
+    [[Bugsee getAppearance] setValue:color forKey:name];
+    applied = YES;
+  });
+  return @(applied);
+}
+
+- (NSString *)getAppearanceColor:(NSString *)name {
+  if (![BGSRNReportColorKeys() containsObject:name]) {
+    return @"";
+  }
+  __block NSString *hex = @"";
+  BGSRNRunOnMainSync(^{
+    id value = [[Bugsee getAppearance] valueForKey:name];
+    hex = BGSRNHexFromColor(value);
+  });
+  return hex;
+}
+
+/// iOS 7.0.0-beta3 returns without invoking `completion` when the SDK is
+/// not stopped, so a launched call resolves `false` immediately. That is the
+/// missing completion, not a wait. Stopped, including a nil instance, still
+/// calls the SDK method and settles through `BGSRNSettleOnce`: the
+/// completion's success, or `false` if the deadline fires first. Status and
+/// both SDK calls run on the main queue. A completion that arrives off main
+/// hops back before it writes the result the settler resolves.
+- (void)deleteCollectedDataOnDevice:(BOOL)includingIntermediate
+                            resolve:(RCTPromiseResolveBlock)resolve
+                             reject:(RCTPromiseRejectBlock)reject {
+  BGSRNRunOnMain(^{
+    Bugsee *instance = [Bugsee sharedInstance];
+    BugseeStatus status = instance != nil ? instance.status : BugseeStatusStopped;
+    if (status != BugseeStatusStopped) {
+      __block BOOL settled = NO;
+      [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
+        BGSRNRunOnMain(^{
+          if (settled) {
+            return;
+          }
+          settled = YES;
+          resolve(@(success));
+        });
+      }];
+      if (!settled) {
+        settled = YES;
+        resolve(@NO);
+      }
+      return;
+    }
+    __block NSNumber *result = @NO;
+    dispatch_block_t done =
+        BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs, dispatch_get_main_queue(), ^{
+          resolve(result);
+        });
+    [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
+      BGSRNRunOnMain(^{
+        result = @(success);
+        done();
+      });
+    }];
+  });
+}
+
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams &)params {
   auto module = std::make_shared<facebook::react::NativeBugseeSpecJSI>(params);
