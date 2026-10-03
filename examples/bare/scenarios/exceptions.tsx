@@ -5,8 +5,10 @@
  * Every value carries the run's nonce. Before the first throw, the scenario
  * registers `globalThis._bugseeDebugIds` from inside a function in this file
  * (its top frame shares the bundle with every throw site), simulating Phase
- * 13's inject stub. The app-level ErrorUtils handler is installed before
- * `launch()` so Bugsee's handler chains to it (case 9).
+ * 13's inject stub. `exc-map-id` does not: a release bundle already carries
+ * the inject stub, and replacing it would hide that UUID. The app-level
+ * ErrorUtils handler is installed before `launch()` so Bugsee's handler
+ * chains to it (case 9).
  *
  * Markers (console.log → ReactNativeJS on Android):
  *   BUGSEE_E2E exc handled-sent nonce=<n>
@@ -28,6 +30,7 @@ export const EXCEPTION_SCENARIOS = [
   'exc-root',
   'exc-prelaunch',
   'exc-observe',
+  'exc-map-id',
 ] as const;
 
 export type ExceptionScenario = (typeof EXCEPTION_SCENARIOS)[number];
@@ -146,6 +149,20 @@ export function runExceptionScenario(
     return;
   }
   if (scenario === 'exc-prelaunch') {
+    return;
+  }
+
+  // The release proof. `registerDebugIds` replaces the whole registration
+  // with a synthetic id, which would hide the UUID `sourcemaps inject` wrote
+  // into this bundle. Leave `globalThis._bugseeDebugIds` as the inject stub
+  // filled it.
+  if (scenario === 'exc-map-id') {
+    try {
+      throw new Error(`E2E map-id ${nonce}`);
+    } catch (e) {
+      Bugsee.logException(e);
+    }
+    mark(`map-id-sent nonce=${nonce}`);
     return;
   }
 

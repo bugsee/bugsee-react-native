@@ -359,7 +359,8 @@ const HERMES_FINISH_HOOK = [
     '                        cmd.add("--hermes-arg")',
     '                        cmd.add(flag)',
     '                    }',
-    '                    project.exec {',
+    '                    // Gradle 9 removed Project.exec.',
+    '                    bundleTask.services.get(org.gradle.process.ExecOperations).exec {',
     '                        commandLine cmd',
     '                    }',
     '                }',
@@ -378,10 +379,56 @@ function rewriteHermesCommand(source) {
         return `${indent}hermesCommand = ${HERMES_COMMAND_EXPR}`;
     });
 }
+const FINISH_EXEC_LINE = 'bundleTask.services.get(org.gradle.process.ExecOperations).exec {';
+/**
+ * Gradle 9 removed `Project.exec`. A finish hook written before that still
+ * calls it from the `doLast` that runs `hermes-sourcemaps.js finish`. Replace
+ * only that line, keeping its indentation. Any other `project.exec` in the
+ * file stays. A hook that already uses ExecOperations is unchanged.
+ */
+function migrateFinishHookExec(source) {
+    const marker = source.indexOf(PRESERVE_REFUSAL);
+    if (marker < 0) {
+        return source;
+    }
+    const finishCall = source.indexOf('"finish"', marker);
+    if (finishCall < 0) {
+        return source;
+    }
+    const doLastAt = source.lastIndexOf('bundleTask.doLast {', finishCall);
+    if (doLastAt < 0) {
+        return source;
+    }
+    const open = source.indexOf('{', doLastAt);
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < source.length; i += 1) {
+        const ch = source[i];
+        if (ch === '{') {
+            depth += 1;
+        }
+        else if (ch === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                end = i;
+                break;
+            }
+        }
+    }
+    if (end < 0 || finishCall > end) {
+        return source;
+    }
+    const region = source.slice(finishCall, end + 1);
+    const replaced = region.replace(/^([ \t]*)project\.exec \{$/m, `$1${FINISH_EXEC_LINE}`);
+    if (replaced === region) {
+        return source;
+    }
+    return source.slice(0, finishCall) + replaced + source.slice(end + 1);
+}
 function ensureHermesHooks(source) {
     const rewritten = rewriteHermesCommand(source);
     if (rewritten.includes(PRESERVE_REFUSAL)) {
-        return rewritten;
+        return migrateFinishHookExec(rewritten);
     }
     return `${rewritten.replace(/\s*$/, '')}\n\n${HERMES_FINISH_HOOK}\n`;
 }
