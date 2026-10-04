@@ -3,16 +3,16 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ensureMavenCentral = ensureMavenCentral;
 exports.ensureGradlePluginDeclared = ensureGradlePluginDeclared;
 exports.ensureAppAppliesPlugin = ensureAppAppliesPlugin;
+exports.ensureSymbolUploads = ensureSymbolUploads;
+exports.applyUploadSourcemapsProperty = applyUploadSourcemapsProperty;
 const PLUGIN_ID = 'com.bugsee.android.gradle';
 function blockExtent(source, keyword) {
     const start = source.indexOf(keyword);
     if (start < 0) {
         return null;
     }
+    // No brace after the keyword: the loop finds none and returns null.
     const open = source.indexOf('{', start);
-    if (open < 0) {
-        return null;
-    }
     let depth = 0;
     for (let i = open; i < source.length; i += 1) {
         const ch = source[i];
@@ -54,10 +54,10 @@ function ensureMavenCentral(settingsGradle) {
     }
     const repositories = blockExtent(body, 'repositories');
     if (repositories) {
-        const insertAt = extent.bodyStart + repositories.bodyEnd;
-        return (settingsGradle.slice(0, insertAt) +
-            '\n        mavenCentral()' +
-            settingsGradle.slice(insertAt));
+        // After the last entry, so the closing brace keeps its own line.
+        const inner = body.slice(repositories.bodyStart, repositories.bodyEnd);
+        const insertAt = extent.bodyStart + repositories.bodyStart + inner.trimEnd().length;
+        return `${settingsGradle.slice(0, insertAt)}\n        mavenCentral()${settingsGradle.slice(insertAt)}`;
     }
     const addition = [
         '',
@@ -70,31 +70,31 @@ function ensureMavenCentral(settingsGradle) {
     ].join('\n');
     return (settingsGradle.slice(0, extent.bodyEnd) + addition + settingsGradle.slice(extent.bodyEnd));
 }
+const DECLARED_VERSION = /(id\s*\(?\s*['"]com\.bugsee\.android\.gradle['"]\s*\)?\s+version\s*\(?\s*['"])([^'"]*)(['"])/;
+/**
+ * Declares the plugin `apply false` on the root project. A declaration from
+ * an earlier prebuild gets this version written over its own, so a
+ * `--no-clean` prebuild after a wrapper bump does not keep the old pin.
+ */
 function ensureGradlePluginDeclared(projectBuildGradle, version) {
     if (!/^[0-9A-Za-z.+_-]+$/.test(version)) {
         throw new Error(`refusing Gradle plugin version ${version}`);
     }
     if (projectBuildGradle.includes(PLUGIN_ID)) {
-        return projectBuildGradle;
+        return projectBuildGradle.replace(DECLARED_VERSION, `$1${version}$3`);
     }
     // apply false: the plugin has to be applied on the application module.
     // Applied to the root project it fails configuration, because it hangs
     // its tasks off an Android variant.
-    const declaration = [
-        '',
-        'plugins {',
-        `    id '${PLUGIN_ID}' version '${version}' apply false`,
-        '}',
-        '',
-    ].join('\n');
+    const declaration = `plugins {\n    id '${PLUGIN_ID}' version '${version}' apply false\n}\n`;
     // plugins {} has to stay with the buildscript block. A later allprojects
     // or apply statement makes Gradle reject the block.
     const buildscript = blockExtent(projectBuildGradle, 'buildscript');
     if (buildscript) {
         const at = buildscript.bodyEnd + 1;
-        return projectBuildGradle.slice(0, at) + declaration + projectBuildGradle.slice(at);
+        return `${projectBuildGradle.slice(0, at)}\n${declaration}${projectBuildGradle.slice(at)}`;
     }
-    return declaration + projectBuildGradle;
+    return `${declaration}\n${projectBuildGradle}`;
 }
 const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
 /**
@@ -135,12 +135,13 @@ function ensureAppAppliesPlugin(appBuildGradle, ndkVersion) {
     next = ensureSymbolTable(next, ndkVersion !== null);
     return ensureHermesHooks(next);
 }
+const NDK_IMPLEMENTATION_VERSION = /(implementation\s+["']com\.bugsee:bugsee-android-ndk:)([^"']*)(["'])/;
 function ensureNdkImplementation(source, ndkVersion) {
-    if (/implementation\s+["']com\.bugsee:bugsee-android-ndk:/.test(source)) {
-        return source;
-    }
     if (!/^[0-9A-Za-z.+_-]+$/.test(ndkVersion)) {
         throw new Error(`refusing NDK artifact version ${ndkVersion}`);
+    }
+    if (NDK_IMPLEMENTATION_VERSION.test(source)) {
+        return source.replace(NDK_IMPLEMENTATION_VERSION, `$1${ndkVersion}$3`);
     }
     const dep = `    implementation "com.bugsee:bugsee-android-ndk:${ndkVersion}"`;
     const deps = source.indexOf('dependencies {');
@@ -174,16 +175,13 @@ function dropNdkExclude(source) {
     if (at < 0) {
         return source;
     }
-    let start = at;
-    if (start > 0 && source[start - 1] === '\n') {
-        start -= 1;
-    }
+    // ensureHermesHooks normalises the file's trailing whitespace afterwards.
+    const start = source[at - 1] === '\n' ? at - 1 : at;
     let end = at + NDK_EXCLUDE_BLOCK.length;
-    while (end < source.length && source[end] === '\n') {
+    while (source[end] === '\n') {
         end += 1;
     }
-    const next = source.slice(0, start) + source.slice(end);
-    return next.endsWith('\n') || next.length === 0 ? next : `${next}\n`;
+    return source.slice(0, start) + source.slice(end);
 }
 /** Identifies the ndk block this plugin inserted, so a user's block stays. */
 const SYMBOL_TABLE_MARKER = 'bugsee-symbol-table:';
@@ -245,7 +243,7 @@ function buildTypeSpans(source) {
 function indentBlock(block, indent) {
     return block
         .split('\n')
-        .map((line) => (line.length === 0 ? line : indent + line))
+        .map((line) => indent + line)
         .join('\n');
 }
 function insertSymbolTable(source, span) {
@@ -255,14 +253,14 @@ function insertSymbolTable(source, span) {
         /\bndk\s*\{/.test(body)) {
         return source;
     }
-    const closing = /\n([ \t]*)$/.exec(body);
-    const closingIndent = closing?.[1] ?? '';
-    const block = indentBlock(SYMBOL_TABLE_BLOCK, `${closingIndent}    `);
-    if (!closing) {
-        return `${source.slice(0, span.close)}\n${block}\n${source.slice(span.close)}`;
-    }
-    const indentStart = span.close - closingIndent.length;
-    return `${source.slice(0, indentStart)}${block}\n${closingIndent}${source.slice(span.close)}`;
+    // The block goes last, one level deeper than the line the build type opens
+    // on, and the closing brace gets its own line at that line's indentation.
+    // A one-line `release { minifyEnabled true }` is split the same way.
+    const lineStart = source.lastIndexOf('\n', span.open) + 1;
+    const line = source.slice(lineStart, span.open);
+    const lineIndent = line.slice(0, line.length - line.trimStart().length);
+    const block = indentBlock(SYMBOL_TABLE_BLOCK, `${lineIndent}    `);
+    return `${source.slice(0, span.close).trimEnd()}\n${block}\n${lineIndent}${source.slice(span.close)}`;
 }
 function ensureSymbolTable(source, enabled) {
     if (!enabled) {
@@ -271,47 +269,59 @@ function ensureSymbolTable(source, enabled) {
     const spans = buildTypeSpans(source).sort((a, b) => b.open - a.open);
     return spans.reduce((current, span) => insertSymbolTable(current, span), source);
 }
+/**
+ * Index of the `}` closing the `ndk {` block that follows the marker's
+ * comment lines, or null when the marker does not start such a block.
+ */
+function insertedBlockEnd(lines, start) {
+    let j = start;
+    while (j < lines.length && lines[j].trim().startsWith('//')) {
+        j += 1;
+    }
+    const open = lines[j];
+    if (open?.trim() !== 'ndk {') {
+        return null;
+    }
+    // The block this plugin writes closes at the indentation it opened at.
+    const closing = `${open.slice(0, open.indexOf('ndk {'))}}`;
+    const close = lines.findIndex((line, k) => k > j && line.trimEnd() === closing);
+    // An unclosed block is left alone rather than cut to the end of the file.
+    return close < 0 ? null : close;
+}
 function removeInsertedSymbolTable(source) {
     const lines = source.split('\n');
     const kept = [];
-    let i = 0;
-    while (i < lines.length) {
+    for (let i = 0; i < lines.length; i += 1) {
         const line = lines[i];
-        if (line === undefined || !line.includes(SYMBOL_TABLE_MARKER)) {
-            if (line !== undefined) {
-                kept.push(line);
-            }
-            i += 1;
-            continue;
+        const end = line.includes(SYMBOL_TABLE_MARKER) ? insertedBlockEnd(lines, i) : null;
+        if (end === null) {
+            kept.push(line);
         }
-        let j = i;
-        while (j < lines.length && (lines[j] ?? '').trim().startsWith('//')) {
-            j += 1;
+        else {
+            i = end;
         }
-        if ((lines[j] ?? '').trim() === 'ndk {') {
-            j += 1;
-            while (j < lines.length && (lines[j] ?? '').trim() !== '}') {
-                j += 1;
-            }
-            if ((lines[j] ?? '').trim() === '}') {
-                j += 1;
-            }
-            i = j;
-            continue;
-        }
-        kept.push(line);
-        i += 1;
     }
     return kept.join('\n');
 }
 const HERMES_COMMAND_EXPR = 'new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/scripts/hermesc-preserve-js.sh"';
 const PRESERVE_REFUSAL = 'Bugsee preserve directory is the packaged asset directory';
+/** First line of the finish hook; marks it for replacement. */
+const FINISH_HOOK_MARKER = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
 const HERMES_FINISH_HOOK = [
-    '// After compose-source-maps.js. Release variants only; debug does not bundle.',
-    '// Upload is not invoked.',
+    FINISH_HOOK_MARKER,
+    '// finish injects the debug id into the composed map and the bytecode, then',
+    '// uploads that map (hermes-sourcemaps.js runs the CLI) when android/bugsee.properties (or',
+    '// BUGSEE_APP_TOKEN) holds a real token. bugseeUploadSourcemaps=false in',
+    '// gradle.properties, or BUGSEE_UPLOAD_SOURCEMAPS=false, turns the upload off;',
+    '// a placeholder or missing token skips it with one line. A failed upload',
+    '// warns and the build goes on.',
     'def bugseeHermesSourcemaps = new File(new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/hermes-sourcemaps.js")',
     'def bugseeComposeSourceMaps = new File(new File(["node", "--print", "require.resolve(\'react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/compose-source-maps.js")',
     'afterEvaluate {',
+    "    def bugseeUploadSourcemaps = String.valueOf(findProperty('bugseeUploadSourcemaps') ?: 'true')",
+    "    def bugseeAppVersion = String.valueOf(android.defaultConfig.versionName ?: '')",
+    "    def bugseeAppBuild = String.valueOf(android.defaultConfig.versionCode ?: '')",
+    '    def bugseeProperties = rootProject.file("bugsee.properties")',
     '    tasks.matching { task ->',
     '        task.name.startsWith("createBundle") && task.name.endsWith("JsAndAssets")',
     '    }.configureEach { bundleTask ->',
@@ -327,6 +337,7 @@ const HERMES_FINISH_HOOK = [
     `                throw new GradleException("${PRESERVE_REFUSAL}")`,
     '            }',
     '            def preserved = new File(preserveDir, asset + ".bugsee-js-source")',
+    '            def hermescNote = new File(preserveDir, asset + ".bugsee-hermesc")',
     '            def packagedCopies = [',
     '                new File(assetDir, asset + ".bugsee-js-source"),',
     '                new File(assetDir, asset + ".bugsee-hermesc"),',
@@ -334,7 +345,13 @@ const HERMES_FINISH_HOOK = [
     '                new File(assetDir, asset + ".bugsee-recompile.map"),',
     '            ]',
     '            try {',
-    '                if (preserved.isFile()) {',
+    '                if (!bundleTask.hermesEnabled.get()) {',
+    '                    // hermesc did not run, so a preserve file here is an earlier build\'s.',
+    '                    bundleTask.logger.lifecycle("bugsee: Hermes is off for ${bundleTask.name}; no debug id is injected")',
+    '                } else if (!preserved.isFile()) {',
+    '                    bundleTask.logger.warn("bugsee: ${bundleTask.name} ran hermesc without hermesc-preserve-js.sh " +',
+    '                        "(check react.hermesCommand); no debug id is injected and no source map is uploaded")',
+    '                } else {',
     '                    def composed = new File(bundleTask.jsSourceMapsDir.get().asFile, asset + ".map")',
     '                    def interDir = bundleTask.jsIntermediateSourceMapsDir.get().asFile',
     '                    def hook = bugseeHermesSourcemaps',
@@ -349,8 +366,12 @@ const HERMES_FINISH_HOOK = [
     '                        "--intermediate", new File(interDir, asset + ".compiler.map").absolutePath,',
     '                        "--packager", new File(interDir, asset + ".packager.map").absolutePath,',
     '                        "--compose", compose.absolutePath,',
+    '                        "--platform", "android",',
+    '                        "--properties", bugseeProperties.absolutePath,',
+    '                        "--upload-sourcemaps", bugseeUploadSourcemaps,',
+    '                        "--app-version", bugseeAppVersion,',
+    '                        "--app-build", bugseeAppBuild,',
     '                    ])',
-    '                    def hermescNote = new File(preserveDir, asset + ".bugsee-hermesc")',
     '                    if (hermescNote.isFile()) {',
     '                        cmd.add("--hermesc")',
     '                        cmd.add(hermescNote.getText("UTF-8").trim())',
@@ -366,6 +387,9 @@ const HERMES_FINISH_HOOK = [
     '                }',
     '            } finally {',
     '                packagedCopies.each { copy -> copy.delete() }',
+    '                // This build\'s only: a later build must never recompile them.',
+    '                preserved.delete()',
+    '                hermescNote.delete()',
     '            }',
     '        }',
     '    }',
@@ -379,57 +403,70 @@ function rewriteHermesCommand(source) {
         return `${indent}hermesCommand = ${HERMES_COMMAND_EXPR}`;
     });
 }
-const FINISH_EXEC_LINE = 'bundleTask.services.get(org.gradle.process.ExecOperations).exec {';
 /**
- * Gradle 9 removed `Project.exec`. A finish hook written before that still
- * calls it from the `doLast` that runs `hermes-sourcemaps.js finish`. Replace
- * only that line, keeping its indentation. Any other `project.exec` in the
- * file stays. A hook that already uses ExecOperations is unchanged.
+ * The hook runs from its marker comment to the brace closing the first
+ * `afterEvaluate {` after it. A hook an earlier version wrote (without the
+ * upload, or still calling `project.exec`, which Gradle 9 removed) is
+ * replaced whole. Returns null when there is no complete hook.
  */
-function migrateFinishHookExec(source) {
-    const marker = source.indexOf(PRESERVE_REFUSAL);
-    if (marker < 0) {
-        return source;
+function finishHookExtent(source) {
+    const start = source.indexOf(FINISH_HOOK_MARKER);
+    if (start < 0) {
+        return null;
     }
-    const finishCall = source.indexOf('"finish"', marker);
-    if (finishCall < 0) {
-        return source;
+    const open = source.indexOf('afterEvaluate {', start);
+    if (open < 0) {
+        return null;
     }
-    const doLastAt = source.lastIndexOf('bundleTask.doLast {', finishCall);
-    if (doLastAt < 0) {
-        return source;
-    }
-    const open = source.indexOf('{', doLastAt);
-    let depth = 0;
-    let end = -1;
-    for (let i = open; i < source.length; i += 1) {
-        const ch = source[i];
-        if (ch === '{') {
-            depth += 1;
-        }
-        else if (ch === '}') {
-            depth -= 1;
-            if (depth === 0) {
-                end = i;
-                break;
-            }
-        }
-    }
-    if (end < 0 || finishCall > end) {
-        return source;
-    }
-    const region = source.slice(finishCall, end + 1);
-    const replaced = region.replace(/^([ \t]*)project\.exec \{$/m, `$1${FINISH_EXEC_LINE}`);
-    if (replaced === region) {
-        return source;
-    }
-    return source.slice(0, finishCall) + replaced + source.slice(end + 1);
+    const close = matchingBrace(source, source.indexOf('{', open));
+    return close === null ? null : { start, end: close + 1 };
 }
 function ensureHermesHooks(source) {
     const rewritten = rewriteHermesCommand(source);
-    if (rewritten.includes(PRESERVE_REFUSAL)) {
-        return migrateFinishHookExec(rewritten);
+    const extent = finishHookExtent(rewritten);
+    if (extent) {
+        return rewritten.slice(0, extent.start) + HERMES_FINISH_HOOK + rewritten.slice(extent.end);
     }
     return `${rewritten.replace(/\s*$/, '')}\n\n${HERMES_FINISH_HOOK}\n`;
+}
+const UPLOADS_OFF_MARKER = '// bugsee-upload-symbols-off:';
+const UPLOADS_OFF_BLOCK = [
+    `${UPLOADS_OFF_MARKER} uploadSymbols is false in the Expo config. The Bugsee`,
+    '// Gradle plugin 4.0.7 has no switch for its mapping, NDK symbol and build',
+    '// uploads, so their tasks are turned off here.',
+    "tasks.matching { it.name.startsWith('uploadBugsee') }.configureEach { enabled = false }",
+].join('\n');
+/**
+ * `uploadSymbols: false` on Android: disables every `uploadBugsee*` task
+ * (mapping, NDK symbols, build info) inside a marked block. On again
+ * removes exactly that block.
+ */
+function ensureSymbolUploads(appBuildGradle, enabled) {
+    const at = appBuildGradle.indexOf(UPLOADS_OFF_BLOCK);
+    if (enabled) {
+        if (at < 0) {
+            return appBuildGradle;
+        }
+        const before = appBuildGradle.slice(0, at).replace(/\n+$/, '\n');
+        const after = appBuildGradle.slice(at + UPLOADS_OFF_BLOCK.length).replace(/^\n+/, '');
+        return before + after;
+    }
+    if (at >= 0) {
+        return appBuildGradle;
+    }
+    return `${appBuildGradle.replace(/\s*$/, '')}\n\n${UPLOADS_OFF_BLOCK}\n`;
+}
+const UPLOAD_SOURCEMAPS_KEY = 'bugseeUploadSourcemaps';
+/**
+ * `uploadSourcemaps: false` writes `bugseeUploadSourcemaps=false` into
+ * android/gradle.properties, which the finish hook reads. On (the default)
+ * removes that key.
+ */
+function applyUploadSourcemapsProperty(properties, enabled) {
+    const kept = properties.filter((item) => !(item.type === 'property' && item.key === UPLOAD_SOURCEMAPS_KEY));
+    if (enabled) {
+        return kept;
+    }
+    return [...kept, { type: 'property', key: UPLOAD_SOURCEMAPS_KEY, value: 'false' }];
 }
 //# sourceMappingURL=gradle.js.map

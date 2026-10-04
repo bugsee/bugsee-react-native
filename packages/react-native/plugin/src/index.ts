@@ -8,6 +8,7 @@ import {
   withAndroidManifest,
   withAppBuildGradle,
   withDangerousMod,
+  withGradleProperties,
   withProjectBuildGradle,
   withSettingsGradle,
   withXcodeProject,
@@ -16,23 +17,48 @@ import type { ConfigPlugin } from '@expo/config-plugins';
 
 import type { XcodeProjectLike } from './bundle-phase';
 import { rewriteProjectBundlePhase } from './bundle-phase';
-import { ensureAppAppliesPlugin, ensureGradlePluginDeclared, ensureMavenCentral } from './gradle';
+import { dsymPostActionScript } from './dsym-script';
+import {
+  applyUploadSourcemapsProperty,
+  ensureAppAppliesPlugin,
+  ensureGradlePluginDeclared,
+  ensureMavenCentral,
+  ensureSymbolUploads,
+} from './gradle';
 import { manifestAutoLaunchToken } from './manifest';
 import { loadNativeVersions } from './native-versions';
 import { bugseePropertiesText } from './properties';
 import { insertDsymPostAction, removeDsymPostAction } from './scheme';
 
+export type AppTokenOption = string | { ios?: string; android?: string };
+
 export interface BugseePluginProps {
-  /** Unprefixed `app_token` in android/bugsee.properties. */
-  appToken?: string;
   /**
-   * Accepted for the spec's option list. The settled Xcode hook injects
-   * debug ids on the composed map and does not execute the upload.
+   * Bugsee app tokens are per platform. A string is used for both; an
+   * object sets each one. Android: the unprefixed `app_token` in
+   * android/bugsee.properties. iOS: written into the Archive dSYM
+   * post-action and the bundle phase (BUGSEE_PLUGIN_APP_TOKEN), so an
+   * Archive from the Xcode GUI works without a shell environment;
+   * BUGSEE_APP_TOKEN, BUGSEE_TOKEN_IOS and credentials.json still apply
+   * when it is not set.
+   */
+  appToken?: AppTokenOption;
+  /**
+   * Defaults on. After the debug id is injected, both platforms upload the
+   * composed source map with bugsee-cli when a real app token is
+   * configured; a placeholder or missing token skips with one build-log
+   * line, and a failed upload warns without failing the build. `false`
+   * writes `bugseeUploadSourcemaps=false` into android/gradle.properties and
+   * `BUGSEE_UPLOAD_SOURCEMAPS=false` into the iOS bundle phase.
    */
   uploadSourcemaps?: boolean;
   /**
-   * Defaults on. `false` removes the Archive dSYM post-action, including
-   * one left by an earlier prebuild without `--clean`.
+   * Defaults on. `false` keeps native symbols offline on both platforms:
+   * iOS loses the Archive dSYM post-action (including one an earlier
+   * prebuild left), and Android disables the Bugsee Gradle plugin's
+   * `uploadBugsee*` tasks (R8 mapping, NDK symbols, build info) in a marked
+   * block a later prebuild removes again. Source maps follow
+   * `uploadSourcemaps`.
    */
   uploadSymbols?: boolean;
   /**
@@ -49,8 +75,29 @@ export interface BugseePluginProps {
   autoLaunch?: boolean;
 }
 
+const TOKEN_SHAPE = /^[0-9A-Za-z._-]+$/;
+
+/** The token for one platform, or undefined. Refuses anything that is not token-shaped. */
+export function platformToken(
+  appToken: AppTokenOption | undefined,
+  platform: 'ios' | 'android',
+): string | undefined {
+  const token = typeof appToken === 'string' ? appToken : appToken?.[platform];
+  if (token === undefined || token === '') {
+    return undefined;
+  }
+  if (typeof token !== 'string' || !TOKEN_SHAPE.test(token)) {
+    throw new Error(`@bugsee/react-native: the ${platform} appToken is not a Bugsee app token`);
+  }
+  return token;
+}
+
 const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   const options: BugseePluginProps = props ?? {};
+  const androidToken = platformToken(options.appToken, 'android');
+  const iosToken = platformToken(options.appToken, 'ios');
+  const uploadSourcemaps = options.uploadSourcemaps !== false;
+  const uploadSymbols = options.uploadSymbols !== false;
   const versions = loadNativeVersions(__dirname);
   const gradlePluginVersion = options.gradlePluginVersion ?? versions.gradlePlugin;
   const ndkVersion = options.nativeCrashReporting === false ? null : versions.sdk;
@@ -69,7 +116,15 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   });
 
   config = withAppBuildGradle(config, (cfg) => {
-    cfg.modResults.contents = ensureAppAppliesPlugin(cfg.modResults.contents, ndkVersion);
+    cfg.modResults.contents = ensureSymbolUploads(
+      ensureAppAppliesPlugin(cfg.modResults.contents, ndkVersion),
+      uploadSymbols,
+    );
+    return cfg;
+  });
+
+  config = withGradleProperties(config, (cfg) => {
+    cfg.modResults = applyUploadSourcemapsProperty(cfg.modResults, uploadSourcemaps);
     return cfg;
   });
 
@@ -78,14 +133,17 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
     async (cfg) => {
       await writeFile(
         join(cfg.modRequest.platformProjectRoot, 'bugsee.properties'),
-        bugseePropertiesText(options),
+        bugseePropertiesText({
+          appToken: androidToken,
+          nativeCrashReporting: options.nativeCrashReporting,
+        }),
       );
       return cfg;
     },
   ]);
 
   config = withAndroidManifest(config, (cfg) => {
-    const token = manifestAutoLaunchToken(options);
+    const token = manifestAutoLaunchToken({ appToken: androidToken, autoLaunch: options.autoLaunch });
     if (!token) {
       return cfg;
     }
@@ -99,17 +157,20 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   });
 
   config = withXcodeProject(config, (cfg) => {
-    rewriteProjectBundlePhase(cfg.modResults as unknown as XcodeProjectLike);
+    rewriteProjectBundlePhase(cfg.modResults as unknown as XcodeProjectLike, {
+      uploadSourcemaps,
+      iosAppToken: iosToken,
+    });
     return cfg;
   });
 
   config = withDangerousMod(config, [
     'ios',
     async (cfg) => {
-      const edit = options.uploadSymbols === false ? removeDsymPostAction : insertDsymPostAction;
+      const script = dsymPostActionScript(iosToken);
       for (const schemePath of listSchemes(cfg.modRequest.platformProjectRoot)) {
         const xml = await readFile(schemePath, 'utf8');
-        const next = edit(xml);
+        const next = uploadSymbols ? insertDsymPostAction(xml, script) : removeDsymPostAction(xml);
         if (next !== xml) {
           await writeFile(schemePath, next);
         }
@@ -121,7 +182,8 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   return config;
 };
 
-function listSchemes(iosRoot: string): string[] {
+/** Shared schemes of every .xcodeproj under ios/. Throws when there are none. */
+export function listSchemes(iosRoot: string): string[] {
   let entries: string[];
   try {
     entries = readdirSync(iosRoot);

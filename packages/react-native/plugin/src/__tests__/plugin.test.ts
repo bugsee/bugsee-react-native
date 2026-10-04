@@ -5,14 +5,27 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { isPlaceholderToken as exampleIsPlaceholderToken } from '../../../../../examples/bare/endpoint';
-import { rewriteBundlePhase, BARE_BUNDLE_SCRIPT } from '../bundle-phase';
+import {
+  BARE_BUNDLE_SCRIPT,
+  UNRECOGNISED_BUNDLE_PHASE,
+  rewriteBundlePhase,
+  rewriteProjectBundlePhase,
+} from '../bundle-phase';
 import { decodePbxString, encodePbxString } from '../pbx-string';
 import { bugseePropertiesText, isPlaceholderToken } from '../properties';
-import { ensureAppAppliesPlugin, ensureGradlePluginDeclared, ensureMavenCentral } from '../gradle';
+import {
+  applyUploadSourcemapsProperty,
+  ensureAppAppliesPlugin,
+  ensureGradlePluginDeclared,
+  ensureMavenCentral,
+  ensureSymbolUploads,
+} from '../gradle';
+import type { GradleProperty } from '../gradle';
 import { insertDsymPostAction, removeDsymPostAction } from '../scheme';
 import {
   DSYM_POST_ACTION_SCRIPT,
   RESOLVE_BUGSEE_CLI_PACKAGE,
+  dsymPostActionScript,
   resolveNativeCliPackageSource,
 } from '../dsym-script';
 import { manifestAutoLaunchToken } from '../manifest';
@@ -549,7 +562,16 @@ describe('Android Gradle edits', () => {
     expect(hook).toContain('hook.absolutePath, "finish"');
     expect(hook).toContain('Bugsee preserve directory is the packaged asset directory');
     expect(hook).toContain('/intermediates/bugsee-sourcemaps/');
-    expect(hook).toContain('Upload is not invoked.');
+    expect(hook).not.toContain('Upload is not invoked.');
+    expect(hook).toContain("def bugseeUploadSourcemaps = String.valueOf(findProperty('bugseeUploadSourcemaps') ?: 'true')");
+    expect(hook).toContain('"--upload-sourcemaps", bugseeUploadSourcemaps,');
+    expect(hook).toContain('"--platform", "android",');
+    expect(hook).toContain('def bugseeProperties = rootProject.file("bugsee.properties")');
+    expect(hook).toContain('"--properties", bugseeProperties.absolutePath,');
+    expect(hook).toContain("def bugseeAppVersion = String.valueOf(android.defaultConfig.versionName ?: '')");
+    expect(hook).toContain("def bugseeAppBuild = String.valueOf(android.defaultConfig.versionCode ?: '')");
+    expect(hook).toContain('"--app-version", bugseeAppVersion,');
+    expect(hook).toContain('"--app-build", bugseeAppBuild,');
     expect(hook).toContain('bundleTask.services.get(org.gradle.process.ExecOperations).exec');
     expect(hook).not.toContain('project.exec');
     expect(hook).not.toContain('../../node_modules');
@@ -894,11 +916,339 @@ describe('scheme post-action', () => {
   });
 });
 
+describe('scheme post-action replacement', () => {
+  const scheme = `<?xml version="1.0" encoding="UTF-8"?>
+<Scheme version = "1.3">
+   <BuildAction>
+      <BuildActionEntries>
+         <BuildActionEntry>
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
+               BuildableName = "BugseeExpo.app"
+               BlueprintName = "BugseeExpo"
+               ReferencedContainer = "container:BugseeExpo.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <ArchiveAction
+      buildConfiguration = "Release"
+      revealArchiveInOrganizer = "YES">
+   </ArchiveAction>
+</Scheme>
+`;
+
+  it('replaces an earlier Bugsee action so a new token lands, once', () => {
+    const first = insertDsymPostAction(scheme, dsymPostActionScript('tok-1'));
+    const second = insertDsymPostAction(first, dsymPostActionScript('tok-2'));
+    expect(second).toBe(insertDsymPostAction(scheme, dsymPostActionScript('tok-2')));
+    expect(second).not.toContain('tok-1');
+    expect(second.match(/xcode post-action/g)).toHaveLength(2);
+    expect(second.match(/<ExecutionAction\b/g)).toHaveLength(1);
+    expect(insertDsymPostAction(second, dsymPostActionScript('tok-2'))).toBe(second);
+    expect(insertDsymPostAction(second)).toBe(insertDsymPostAction(scheme));
+  });
+});
+
 describe('manifest auto-launch', () => {
   it('writes the meta-data value only when autoLaunch is set and the token is real', () => {
     expect(manifestAutoLaunchToken({ appToken: REAL_TOKEN, autoLaunch: true })).toBe(REAL_TOKEN);
     expect(manifestAutoLaunchToken({ appToken: REAL_TOKEN })).toBeNull();
     expect(manifestAutoLaunchToken({ appToken: PLACEHOLDER, autoLaunch: true })).toBeNull();
     expect(manifestAutoLaunchToken({ appToken: '', autoLaunch: true })).toBeNull();
+  });
+});
+
+describe('finish hook guards and upgrade', () => {
+  const versions = loadNativeVersions(join(__dirname, '..', '..', 'build'));
+  const oldHook = readFileSync(join(__dirname, 'fixtures', 'finish-hook-0.0.0.gradle'), 'utf8');
+
+  function hookOf(source: string): string {
+    return source.slice(source.lastIndexOf('// After compose-source-maps.js'));
+  }
+
+  it('warns when Hermes is on and no preserve file exists, and never recompiles a stale one', () => {
+    const hook = hookOf(ensureAppAppliesPlugin(expoSdk57AppBuildGradle(), versions.sdk));
+    const hermesOff = hook.indexOf('if (!bundleTask.hermesEnabled.get()) {');
+    const missing = hook.indexOf('} else if (!preserved.isFile()) {');
+    const finish = hook.indexOf('hook.absolutePath, "finish"');
+    expect(hermesOff).toBeGreaterThan(-1);
+    expect(missing).toBeGreaterThan(hermesOff);
+    expect(finish).toBeGreaterThan(missing);
+    expect(hook).toContain(
+      'bundleTask.logger.warn("bugsee: ${bundleTask.name} ran hermesc without hermesc-preserve-js.sh " +',
+    );
+    expect(hook).toContain(
+      '"(check react.hermesCommand); no debug id is injected and no source map is uploaded")',
+    );
+    expect(hook).toContain(
+      'bundleTask.logger.lifecycle("bugsee: Hermes is off for ${bundleTask.name}; no debug id is injected")',
+    );
+    const cleanup = hook.slice(hook.indexOf('} finally {'));
+    expect(cleanup).toContain('packagedCopies.each { copy -> copy.delete() }');
+    expect(cleanup).toContain('preserved.delete()');
+    expect(cleanup).toContain('hermescNote.delete()');
+  });
+
+  it('replaces a hook an earlier plugin version wrote', () => {
+    const template = expoSdk57AppBuildGradle();
+    const stale = `${ensureAppAppliesPlugin(template, versions.sdk).slice(
+      0,
+      ensureAppAppliesPlugin(template, versions.sdk).lastIndexOf('// After compose-source-maps.js'),
+    )}${oldHook}`;
+    expect(stale).toContain('Upload is not invoked.');
+
+    const next = ensureAppAppliesPlugin(stale, versions.sdk);
+    expect(next).not.toContain('Upload is not invoked.');
+    expect(next).toContain('"--upload-sourcemaps", bugseeUploadSourcemaps,');
+    expect(next.match(/afterEvaluate/g)).toHaveLength(1);
+    expect(next.match(/def bugseeHermesSourcemaps/g)).toHaveLength(1);
+    expect(next).toBe(ensureAppAppliesPlugin(template, versions.sdk));
+    expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
+  });
+
+  it('keeps what follows the hook when replacing it', () => {
+    const current = ensureAppAppliesPlugin(expoSdk57AppBuildGradle(), versions.sdk);
+    const withTail = `${current}\n// user tail\ntask hello {}\n`;
+    const next = ensureAppAppliesPlugin(withTail, versions.sdk);
+    expect(next).toBe(withTail);
+    expect(next.endsWith('// user tail\ntask hello {}\n')).toBe(true);
+  });
+
+  it('appends a fresh hook when a marker has no complete afterEvaluate block', () => {
+    const marker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
+    for (const broken of [`${marker}\n`, `${marker}\nafterEvaluate {\n`]) {
+      const next = ensureAppAppliesPlugin(`apply plugin: "com.facebook.react"\n${broken}`, versions.sdk);
+      expect(next.match(/"--upload-sourcemaps"/g)).toHaveLength(1);
+      expect(next.trimEnd().endsWith('}')).toBe(true);
+    }
+  });
+});
+
+describe('native pins after a wrapper bump (--no-clean)', () => {
+  it('rewrites the declared Gradle plugin version in place', () => {
+    const project = [
+      'buildscript {',
+      '}',
+      '',
+      'plugins {',
+      "    id 'com.bugsee.android.gradle' version '4.0.7' apply false",
+      '}',
+      '',
+    ].join('\n');
+    const next = ensureGradlePluginDeclared(project, '4.0.8');
+    expect(next).toBe(project.replace("version '4.0.7'", "version '4.0.8'"));
+    expect(ensureGradlePluginDeclared(next, '4.0.8')).toBe(next);
+    const kotlinStyle = 'plugins {\n    id("com.bugsee.android.gradle") version "4.0.7" apply false\n}\n';
+    expect(ensureGradlePluginDeclared(kotlinStyle, '4.0.9')).toBe(
+      'plugins {\n    id("com.bugsee.android.gradle") version "4.0.9" apply false\n}\n',
+    );
+    const classpathOnly = 'buildscript { dependencies { classpath "com.bugsee.android.gradle:x:1" } }\n';
+    expect(ensureGradlePluginDeclared(classpathOnly, '4.0.9')).toBe(classpathOnly);
+  });
+
+  it('rewrites the bugsee-android-ndk line in place', () => {
+    const app = [
+      'apply plugin: "com.facebook.react"',
+      'apply plugin: "com.bugsee.android.gradle"',
+      '',
+      'dependencies {',
+      '    implementation "com.bugsee:bugsee-android-ndk:7.3.0"',
+      '}',
+      '',
+    ].join('\n');
+    const next = ensureAppAppliesPlugin(app, '7.4.0');
+    expect(next).toContain('    implementation "com.bugsee:bugsee-android-ndk:7.4.0"');
+    expect(next).not.toContain('7.3.0');
+    expect(next.match(/bugsee-android-ndk:/g)).toHaveLength(1);
+    const single = ensureAppAppliesPlugin(app.replace(/"com\.bugsee:bugsee-android-ndk:7\.3\.0"/, "'com.bugsee:bugsee-android-ndk:7.3.0'"), '7.4.0');
+    expect(single).toContain("implementation 'com.bugsee:bugsee-android-ndk:7.4.0'");
+    expect(() => ensureAppAppliesPlugin(app, '7.4.0"; evil')).toThrow('refusing NDK artifact version');
+  });
+});
+
+describe('Android symbol uploads switch', () => {
+  const app = 'apply plugin: "com.facebook.react"\n\ndependencies {\n}\n';
+  const line = "tasks.matching { it.name.startsWith('uploadBugsee') }.configureEach { enabled = false }";
+
+  it('disables every uploadBugsee task inside a marked block and removes it again', () => {
+    const off = ensureSymbolUploads(app, false);
+    expect(off).toContain(line);
+    expect(off).toContain('// bugsee-upload-symbols-off: uploadSymbols is false in the Expo config.');
+    expect(off.startsWith(app.trimEnd())).toBe(true);
+    expect(off.endsWith(`${line}\n`)).toBe(true);
+    expect(ensureSymbolUploads(off, false)).toBe(off);
+    expect(ensureSymbolUploads(off, true)).toBe(app);
+    expect(ensureSymbolUploads(app, true)).toBe(app);
+  });
+
+  it('removes the block from the middle of a file without joining its neighbours', () => {
+    const off = `${ensureSymbolUploads(app, false)}\n// after\n`;
+    expect(ensureSymbolUploads(off, true)).toBe(`${app}// after\n`);
+  });
+});
+
+describe('uploadSourcemaps gradle property', () => {
+  it('writes bugseeUploadSourcemaps=false only when off, and removes it when on', () => {
+    const base: GradleProperty[] = [
+      { type: 'comment', value: 'x' },
+      { type: 'property', key: 'hermesEnabled', value: 'true' },
+    ];
+    const off = applyUploadSourcemapsProperty(base, false);
+    expect(off).toEqual([...base, { type: 'property', key: 'bugseeUploadSourcemaps', value: 'false' }]);
+    expect(applyUploadSourcemapsProperty(off, false)).toEqual(off);
+    expect(applyUploadSourcemapsProperty(off, true)).toEqual(base);
+    expect(applyUploadSourcemapsProperty(base, true)).toEqual(base);
+    const comment: GradleProperty[] = [{ type: 'comment', value: 'bugseeUploadSourcemaps=false' }];
+    expect(applyUploadSourcemapsProperty(comment, true)).toEqual(comment);
+  });
+});
+
+describe('bundle phase settings and refusals', () => {
+  const expo = [
+    'export PROJECT_ROOT="$PROJECT_DIR"/..',
+    '`"$NODE_BINARY" --print "require(\'path\').dirname(require.resolve(\'react-native/package.json\')) + \'/scripts/react-native-xcode.sh\'"`',
+    '',
+  ].join('\n');
+
+  it('refuses a phase it does not recognise instead of guessing', () => {
+    expect(UNRECOGNISED_BUNDLE_PHASE).toContain('Run bugsee-xcode.sh from that phase yourself');
+    for (const odd of [
+      '../node_modules/react-native/scripts/react-native-xcode.sh\n',
+      'echo bundling elsewhere\n',
+      '',
+    ]) {
+      expect(() => rewriteBundlePhase(odd)).toThrow(UNRECOGNISED_BUNDLE_PHASE);
+    }
+  });
+
+  it('prepends one settings block for the token and the off switch, and replaces it on the next run', () => {
+    const plain = rewriteBundlePhase(expo);
+    expect(plain).not.toContain('bugsee settings');
+    expect(rewriteBundlePhase(expo, { uploadSourcemaps: true })).toBe(plain);
+
+    const set = rewriteBundlePhase(expo, { uploadSourcemaps: false, iosAppToken: 'tok-1' });
+    expect(set).toBe(
+      [
+        '# >>> bugsee settings, written by the @bugsee/react-native config plugin',
+        'export BUGSEE_UPLOAD_SOURCEMAPS=false',
+        "export BUGSEE_PLUGIN_APP_TOKEN='tok-1'",
+        '# <<< bugsee settings',
+        plain,
+      ].join('\n'),
+    );
+    expect(rewriteBundlePhase(set, { uploadSourcemaps: false, iosAppToken: 'tok-1' })).toBe(set);
+
+    const changed = rewriteBundlePhase(set, { iosAppToken: 'tok-2' });
+    expect(changed).toBe(
+      [
+        '# >>> bugsee settings, written by the @bugsee/react-native config plugin',
+        "export BUGSEE_PLUGIN_APP_TOKEN='tok-2'",
+        '# <<< bugsee settings',
+        plain,
+      ].join('\n'),
+    );
+    expect(rewriteBundlePhase(changed, {})).toBe(plain);
+  });
+
+  it('leaves a lone begin marker alone rather than cutting the script', () => {
+    const odd = `# >>> bugsee settings, written by the @bugsee/react-native config plugin\n${rewriteBundlePhase(expo)}`;
+    expect(rewriteBundlePhase(odd)).toBe(odd);
+  });
+
+  it('rewrites every bundle phase of a project and refuses a project without one', () => {
+    const project = {
+      hash: {
+        project: {
+          objects: {
+            PBXShellScriptBuildPhase: {
+              A: { isa: 'PBXShellScriptBuildPhase', name: '"Bundle React Native code and images"', shellScript: encodePbxString(expo) },
+              A_comment: 'Bundle React Native code and images',
+              B: { isa: 'PBXShellScriptBuildPhase', name: 'Other', shellScript: 'echo other' },
+              C: undefined,
+            },
+          },
+        },
+      },
+    };
+    rewriteProjectBundlePhase(project, { iosAppToken: 'tok' });
+    const phases = project.hash.project.objects.PBXShellScriptBuildPhase;
+    expect(decodePbxString(phases.A.shellScript)).toBe(rewriteBundlePhase(expo, { iosAppToken: 'tok' }));
+    expect(phases.B.shellScript).toBe('echo other');
+
+    const unquoted = {
+      hash: { project: { objects: { PBXShellScriptBuildPhase: { A: { name: 'Bundle React Native code and images', shellScript: expo } } } } },
+    };
+    rewriteProjectBundlePhase(unquoted);
+    expect(unquoted.hash.project.objects.PBXShellScriptBuildPhase.A.shellScript).toBe(rewriteBundlePhase(expo));
+
+    expect(() => rewriteProjectBundlePhase({})).toThrow('PBXShellScriptBuildPhase is missing from the Xcode project');
+    expect(() =>
+      rewriteProjectBundlePhase({ hash: { project: { objects: { PBXShellScriptBuildPhase: { B: { name: 'Other' } } } } } }),
+    ).toThrow('Bundle React Native code and images build phase not found');
+    expect(() =>
+      rewriteProjectBundlePhase({
+        hash: { project: { objects: { PBXShellScriptBuildPhase: { A: { name: 'Bundle React Native code and images' } } } } },
+      }),
+    ).toThrow('Bundle React Native code and images has no shellScript');
+  });
+});
+
+describe('baked iOS token in the Archive post-action', () => {
+  it('is the same script as before without a token', () => {
+    expect(dsymPostActionScript()).toBe(DSYM_POST_ACTION_SCRIPT);
+    expect(dsymPostActionScript('')).toBe(DSYM_POST_ACTION_SCRIPT);
+    expect(DSYM_POST_ACTION_SCRIPT.split('\n').slice(0, 2)).toEqual([
+      'CREDS="${PROJECT_DIR}/../credentials.json"',
+      'TOKEN="$BUGSEE_APP_TOKEN"',
+    ]);
+  });
+
+  it('puts the baked token first and keeps the env and credentials fallbacks after it', () => {
+    const script = dsymPostActionScript('tok-ios');
+    expect(script.split('\n').slice(0, 9)).toEqual([
+      'CREDS="${PROJECT_DIR}/../credentials.json"',
+      "TOKEN='tok-ios'",
+      'if [ -z "$TOKEN" ]; then',
+      '  TOKEN="$BUGSEE_APP_TOKEN"',
+      'fi',
+      'if [ -z "$TOKEN" ]; then',
+      '  TOKEN="$BUGSEE_TOKEN_IOS"',
+      'fi',
+      'if [ -z "$TOKEN" ] && [ -f "$CREDS" ]; then',
+    ]);
+    expect(script.slice(script.indexOf('if [ -n "$TOKEN" ]; then'))).toBe(
+      DSYM_POST_ACTION_SCRIPT.slice(DSYM_POST_ACTION_SCRIPT.indexOf('if [ -n "$TOKEN" ]; then')),
+    );
+  });
+
+  it('exports the baked token to bugsee-cli when the script runs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bugsee-dsym-token-'));
+    try {
+      const bin = join(dir, 'node_modules/@bugsee/react-native');
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, 'package.json'), '{"name":"@bugsee/react-native"}');
+      const cliDir = join(dir, 'node_modules/@bugsee/cli');
+      mkdirSync(join(cliDir, 'bin'), { recursive: true });
+      writeFileSync(join(cliDir, 'package.json'), JSON.stringify({ name: '@bugsee/cli', bin: { 'bugsee-cli': 'bin/cli.js' } }));
+      const seen = join(dir, 'seen');
+      writeFileSync(
+        join(cliDir, 'bin', 'cli.js'),
+        `require('fs').writeFileSync(${JSON.stringify(seen)}, process.env.BUGSEE_APP_TOKEN + ' ' + process.argv.slice(2).join(' '));`,
+      );
+      mkdirSync(join(dir, 'ios'));
+      const run = (script: string, extra: Record<string, string> = {}) =>
+        spawnSync('/bin/sh', ['-c', script], {
+          encoding: 'utf8',
+          env: { PATH: '/usr/bin:/bin', PROJECT_DIR: join(dir, 'ios'), NODE_BINARY: process.execPath, ...extra },
+        });
+      expect(run(dsymPostActionScript('tok-baked'), { BUGSEE_APP_TOKEN: 'from-env' }).status).toBe(0);
+      expect(readFileSync(seen, 'utf8')).toBe('tok-baked xcode post-action');
+      expect(run(DSYM_POST_ACTION_SCRIPT, { BUGSEE_APP_TOKEN: 'from-env' }).status).toBe(0);
+      expect(readFileSync(seen, 'utf8')).toBe('from-env xcode post-action');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

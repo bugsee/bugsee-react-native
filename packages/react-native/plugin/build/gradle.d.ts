@@ -1,9 +1,15 @@
+import type { AndroidConfig } from '@expo/config-plugins';
 /**
  * The plugin marker is on Maven Central, not the Plugin Portal. Declaring
  * any repositories block replaces Gradle's implicit Plugin Portal, so a
  * missing block gets the portal, Google, and Maven Central together.
  */
 export declare function ensureMavenCentral(settingsGradle: string): string;
+/**
+ * Declares the plugin `apply false` on the root project. A declaration from
+ * an earlier prebuild gets this version written over its own, so a
+ * `--no-clean` prebuild after a wrapper bump does not keep the old pin.
+ */
 export declare function ensureGradlePluginDeclared(projectBuildGradle: string, version: string): string;
 /**
  * `ndkVersion` is the baked `android.sdk`, or null when native crash
@@ -23,3 +29,16 @@ export declare function ensureGradlePluginDeclared(projectBuildGradle: string, v
  * does not upload.
  */
 export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string;
+/**
+ * `uploadSymbols: false` on Android: disables every `uploadBugsee*` task
+ * (mapping, NDK symbols, build info) inside a marked block. On again
+ * removes exactly that block.
+ */
+export declare function ensureSymbolUploads(appBuildGradle: string, enabled: boolean): string;
+export type GradleProperty = AndroidConfig.Properties.PropertiesItem;
+/**
+ * `uploadSourcemaps: false` writes `bugseeUploadSourcemaps=false` into
+ * android/gradle.properties, which the finish hook reads. On (the default)
+ * removes that key.
+ */
+export declare function applyUploadSourcemapsProperty(properties: GradleProperty[], enabled: boolean): GradleProperty[];
