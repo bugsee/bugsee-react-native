@@ -20,6 +20,9 @@ const SYNC_RETURNS: Record<string, unknown> = {
   noteConsoleEcho: true,
   setAppearanceColor: true,
   getAppearanceColor: '',
+  // An unresolvable view: the main surface, and no origin of its own.
+  secureSurfaceKey: 0,
+  secureSurfaceOrigin: [],
 };
 
 const DEFAULTS: Record<string, unknown> = {
@@ -108,6 +111,9 @@ let breadcrumbFilterRequestSubscribeCalls = 0;
 export const native = {
   setWrapperInfo: jest.fn<void, [Record<string, unknown>]>(),
   setSecureRectangles: jest.fn<void, [number, number[]]>(),
+  setSecureRectanglesOnSurface: jest.fn<void, [number, number, number[]]>(),
+  secureSurfaceKey: jest.fn<number, [number]>(),
+  secureSurfaceOrigin: jest.fn<number[], [number]>(),
   startBlackout: jest.fn<void, []>(),
   endBlackout: jest.fn<void, []>(),
   isBlackout: jest.fn<Promise<boolean>, []>(),

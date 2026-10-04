@@ -13,8 +13,12 @@ import { secureRectangleScale } from './unit';
  */
 export type SecureOwner = object | `manual:${number}`;
 
+/** The activity React root's surface; matches native `MAIN_SURFACE`. */
+export const MAIN_SURFACE = 0;
+
 interface OwnerEntry {
   readonly display: number;
+  readonly surface: number;
   readonly rectangles: readonly SecureRectangle[];
 }
 
@@ -22,20 +26,24 @@ interface OwnerEntry {
 const owners = new Map<SecureOwner, OwnerEntry>();
 
 /**
- * What last reached the bridge, per display. A display missing here has never
- * been published to by this JS runtime, so its first publish always crosses,
- * even an empty one: the native store outlives a JS reload and may still hold
- * a set this runtime knows nothing about.
+ * What last reached the bridge, per display and surface. A missing entry has
+ * never been published by this JS runtime, so its first publish always
+ * crosses, even an empty one: the native store outlives a JS reload and may
+ * still hold a set this runtime knows nothing about.
  */
-const published = new Map<number, readonly number[]>();
+const published = new Map<string, readonly number[]>();
+
+function publishKey(display: number, surface: number): string {
+  return `${display}:${surface}`;
+}
 
 function sameList(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 /**
- * Publishes the union of every owner's rectangles on `display`, if it differs
- * from what was last published there.
+ * Publishes the union of every owner's rectangles on `display` for each
+ * surface that has (or had) owners there.
  *
  * Re-flattened every time rather than cached per owner: the pixel ratio is
  * read per publish (see `secureRectangleScale`), so a ratio change reaches the
@@ -45,29 +53,37 @@ function sameList(a: readonly number[], b: readonly number[]): boolean {
  * already keep their version still for a no-op write. It saves a bridge hop
  * on every 100 ms re-measure that found nothing moved.
  */
-function publish(display: number): void {
-  const union: SecureRectangle[] = [];
-  for (const entry of owners.values()) {
-    if (entry.display === display) {
-      union.push(...entry.rectangles);
+function publish(display: number, surfaces: ReadonlySet<number>): void {
+  const scale = secureRectangleScale();
+  for (const surface of surfaces) {
+    const union: SecureRectangle[] = [];
+    for (const entry of owners.values()) {
+      if (entry.display === display && entry.surface === surface) {
+        union.push(...entry.rectangles);
+      }
     }
-  }
 
-  const flat = flattenSecureRectangles(union, secureRectangleScale());
-  const last = published.get(display);
-  if (last !== undefined && sameList(last, flat)) {
-    return;
-  }
+    const flat = flattenSecureRectangles(union, scale);
+    const key = publishKey(display, surface);
+    const last = published.get(key);
+    if (last !== undefined && sameList(last, flat)) {
+      continue;
+    }
 
-  NativeBugsee.setSecureRectangles(display, flat);
-  // Only after the call returned: a publish that threw was not published, and
-  // recording it would skip the retry as "unchanged".
-  published.set(display, flat);
+    if (surface === MAIN_SURFACE) {
+      NativeBugsee.setSecureRectangles(display, flat);
+    } else {
+      NativeBugsee.setSecureRectanglesOnSurface(display, surface, flat);
+    }
+    // Only after the call returned: a publish that threw was not published, and
+    // recording it would skip the retry as "unchanged".
+    published.set(key, flat);
+  }
 }
 
 /**
- * Replaces `owner`'s rectangles with `rectangles` on `display` and publishes
- * that display's union.
+ * Replaces `owner`'s rectangles with `rectangles` on `display`/`surface` and
+ * publishes that lane's union.
  *
  * Throws, changing nothing, if any rectangle is malformed. The owner's
  * previous rectangles stay published: a bad call never uncovers a region.
@@ -76,6 +92,7 @@ export function setOwnerRectangles(
   owner: SecureOwner,
   display: number,
   rectangles: readonly SecureRectangle[],
+  surface: number = MAIN_SURFACE,
 ): void {
   // Validation first, before the entry changes.
   flattenSecureRectangles(rectangles, secureRectangleScale());
@@ -85,13 +102,18 @@ export function setOwnerRectangles(
   // must not change what a later publish for some other owner sends.
   owners.set(owner, {
     display,
+    surface,
     rectangles: rectangles.map(({ x, y, width, height }) => ({ x, y, width, height })),
   });
 
+  const surfaces = new Set<number>([surface]);
+  if (previous !== undefined) {
+    surfaces.add(previous.surface);
+  }
   // The new display is covered before the old one is uncovered.
-  publish(display);
+  publish(display, surfaces);
   if (previous !== undefined && previous.display !== display) {
-    publish(previous.display);
+    publish(previous.display, new Set([previous.surface]));
   }
 }
 
@@ -102,5 +124,5 @@ export function clearOwner(owner: SecureOwner): void {
     return;
   }
   owners.delete(owner);
-  publish(previous.display);
+  publish(previous.display, new Set([previous.surface]));
 }

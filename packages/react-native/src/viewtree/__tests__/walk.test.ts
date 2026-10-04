@@ -779,6 +779,77 @@ describe('buildViewTree', () => {
     expect(node?.bounds).toEqual([11.13, 22.67, 5.56, 6.45]);
   });
 
+  // A <Modal> is its own React root (an Android Dialog): measureInWindow is
+  // relative to it, so its nodes take that root's origin, not the request's.
+  describe('a node on another React surface', () => {
+    const tagged = (tag: number) => (fiber: FiberLike): number | null =>
+      (fiber.memoizedProps as { tag?: number } | null)?.tag === tag ? tag : null;
+    const sheet = (): FiberSpec => host('Sheet', { x: 10, y: 20, width: 5, height: 5 }, [], { tag: 77 });
+
+    it('Android: takes the origin native resolves for its tag', () => {
+      const originForNativeTag = jest.fn((tag: number) => (tag === 77 ? { x: 40, y: 200 } : null));
+      const tree = buildViewTree(
+        [fiberRoot(fragment([host('Main', { x: 10, y: 20, width: 5, height: 5 }), sheet()]))],
+        makeEnv({ platform: 'android', scale: 2, originX: 0, originY: 63, nativeTagOf: tagged(77), originForNativeTag }),
+      );
+
+      const [main, modal] = tree?.subitems?.[0]?.subitems ?? [];
+      expect(main?.bounds).toEqual([20, 103, 10, 10]);
+      expect(modal?.bounds).toEqual([60, 240, 10, 10]);
+      expect(originForNativeTag).toHaveBeenCalledTimes(1);
+      expect(originForNativeTag).toHaveBeenCalledWith(77);
+    });
+
+    it('iOS: takes the origin native resolves for its tag', () => {
+      const tree = buildViewTree(
+        [fiberRoot(sheet())],
+        makeEnv({ platform: 'ios', originX: 1, originY: 2, nativeTagOf: tagged(77), originForNativeTag: () => ({ x: 3.5, y: 4 }) }),
+      );
+
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([13.5, 24, 5, 5]);
+    });
+
+    it('falls back to the request origin when native knows no origin for the tag', () => {
+      const tree = buildViewTree(
+        [fiberRoot(sheet())],
+        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, nativeTagOf: tagged(77), originForNativeTag: () => null }),
+      );
+
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([17, 29, 5, 5]);
+    });
+
+    it('asks nothing for a node without a tag', () => {
+      const originForNativeTag = jest.fn(() => ({ x: 40, y: 200 }));
+      const tree = buildViewTree(
+        [fiberRoot(sheet())],
+        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, nativeTagOf: () => null, originForNativeTag }),
+      );
+
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([17, 29, 5, 5]);
+      expect(originForNativeTag).not.toHaveBeenCalled();
+    });
+
+    it('uses the request origin when the env has no tag reader', () => {
+      const originForNativeTag = jest.fn(() => ({ x: 40, y: 200 }));
+      const tree = buildViewTree(
+        [fiberRoot(sheet())],
+        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, originForNativeTag }),
+      );
+
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([17, 29, 5, 5]);
+      expect(originForNativeTag).not.toHaveBeenCalled();
+    });
+
+    it('uses the request origin when the env has no origin resolver', () => {
+      const tree = buildViewTree(
+        [fiberRoot(sheet())],
+        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, nativeTagOf: tagged(77) }),
+      );
+
+      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([17, 29, 5, 5]);
+    });
+  });
+
   it('stops at exactly VH_MAX_NODES nodes emitted in total — root and surface reserved up front, not overshot', () => {
     const children = Array.from({ length: VH_MAX_NODES + 5 }, (_, i) => host(`Child${i}`, RECT));
     const tree = buildViewTree([fiberRoot(fragment(children))], makeEnv());

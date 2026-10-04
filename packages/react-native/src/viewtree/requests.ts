@@ -202,8 +202,39 @@ function buildEnv(event: DataRequestEvent): WalkEnv {
     scale: secureRectangleScale(),
     originX: event.originX,
     originY: event.originY,
+    nativeTagOf: nativeTagOfFiber,
+    originForNativeTag: (tag) => {
+      try {
+        const origin: unknown = NativeBugsee.secureSurfaceOrigin(tag);
+        // Number.isFinite never coerces, so a missing element fails it too.
+        if (Array.isArray(origin) && Number.isFinite(origin[0]) && Number.isFinite(origin[1])) {
+          return { x: origin[0] as number, y: origin[1] as number };
+        }
+      } catch {
+        // Fall back to the activity / main origin from the request.
+      }
+      return null;
+    },
     now: monotonicNow,
   };
+}
+
+/**
+ * Fabric public instances carry `__nativeTag`. Used to resolve the hosting
+ * React root's display origin for a measured host (Modal vs activity).
+ */
+function nativeTagOfFiber(fiber: FiberLike): number | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- same lazy require as measureHostFiber.
+    const rendererProxy = require('react-native/Libraries/ReactNative/RendererProxy') as {
+      getPublicInstanceFromInternalInstanceHandle: (fiber: unknown) => unknown;
+    };
+    const publicInstance = rendererProxy.getPublicInstanceFromInternalInstanceHandle(fiber);
+    const tag = (publicInstance as { __nativeTag?: unknown } | null)?.__nativeTag;
+    return Number.isFinite(tag) ? (tag as number) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

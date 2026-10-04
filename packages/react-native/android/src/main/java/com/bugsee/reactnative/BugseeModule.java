@@ -3,8 +3,10 @@ package com.bugsee.reactnative;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import android.graphics.Point;
 import android.util.Base64;
 import android.util.Log;
+import android.view.View;
 
 import com.bugsee.library.Bugsee;
 import com.bugsee.library.contracts.exchange.Breadcrumb;
@@ -23,10 +25,14 @@ import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableMapKeySetIterator;
 import com.facebook.react.bridge.ReadableType;
-import com.facebook.react.bridge.WritableArray;
+import com.facebook.react.bridge.UIManager;
 import com.facebook.react.bridge.UiThreadUtil;
+import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.module.annotations.ReactModule;
+import com.facebook.react.uimanager.RootView;
+import com.facebook.react.uimanager.RootViewUtil;
+import com.facebook.react.uimanager.UIManagerHelper;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -35,7 +41,10 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -246,6 +255,16 @@ public class BugseeModule extends NativeBugseeSpec
 
     @Override
     public void setSecureRectangles(final double display, final ReadableArray coordinates) {
+        publishSecure(display, SecureRectangleStore.MAIN_SURFACE, coordinates);
+    }
+
+    @Override
+    public void setSecureRectanglesOnSurface(
+            final double display, final double surface, final ReadableArray coordinates) {
+        publishSecure(display, (int) Math.round(surface), coordinates);
+    }
+
+    private void publishSecure(final double display, final int surface, final ReadableArray coordinates) {
         // A void TurboModule method: anything thrown here has no promise to
         // reject and crashes the host app, over a call JS already validated.
         try {
@@ -258,16 +277,17 @@ public class BugseeModule extends NativeBugseeSpec
             for (int i = 0; i < flat.length; i++) {
                 flat[i] = (int) Math.round(coordinates.getDouble(i));
             }
-            // Stored as measured (relative to React Native's viewport
-            // offset); the store serves them moved to the React root's
-            // display origin, which the tracker keeps current. Re-read now
-            // too, in case the window moved without a layout pass.
-            if (!SecureRectangleStore.shared().publishOrLog((int) display, flat)) {
+            // Stored as measured (relative to that surface's viewport
+            // offset); the store serves them moved by that surface's display
+            // origin, which the tracker keeps current. Re-read now too, in
+            // case the window moved without a layout pass.
+            if (!SecureRectangleStore.shared().publishOrLog((int) display, surface, flat)) {
                 return;
             }
             originTracker.refreshSoon();
             if (Log.isLoggable(TAG, Log.DEBUG)) {
                 Log.d(TAG, "secure published display=" + (int) display
+                        + " surface=" + surface
                         + " raw=" + Arrays.toString(flat)
                         + " served=" + Arrays.toString(SecureRectangleStore.shared().snapshot((int) display)));
             }
@@ -275,6 +295,111 @@ public class BugseeModule extends NativeBugseeSpec
             Log.e(TAG, "setSecureRectangles failed; the previous set stays published: "
                     + e.getClass().getName());
         }
+    }
+
+    @Override
+    public double secureSurfaceKey(final double viewTag) {
+        return resolveOnUiThread(
+                SecureRectangleStore.MAIN_SURFACE,
+                () -> surfaceKeyForViewTag((int) Math.round(viewTag)));
+    }
+
+    @Override
+    public WritableArray secureSurfaceOrigin(final double viewTag) {
+        final int[] origin = resolveOnUiThread(
+                null,
+                () -> surfaceOriginForViewTag((int) Math.round(viewTag)));
+        final WritableArray out = Arguments.createArray();
+        if (origin != null) {
+            out.pushDouble(origin[0]);
+            out.pushDouble(origin[1]);
+        }
+        return out;
+    }
+
+    @Nullable
+    private int[] surfaceOriginForViewTag(final int viewTag) {
+        final View rootView = rootViewForTag(viewTag);
+        if (rootView == null) {
+            return null;
+        }
+        final int[] onScreen = new int[2];
+        rootView.getLocationOnScreen(onScreen);
+        final Point viewport = RootViewUtil.getViewportOffset(rootView);
+        return SecureRectangleStore.displayOrigin(onScreen, viewport.x, viewport.y);
+    }
+
+    private int surfaceKeyForViewTag(final int viewTag) {
+        final View rootView = rootViewForTag(viewTag);
+        if (rootView == null) {
+            return SecureRectangleStore.MAIN_SURFACE;
+        }
+        final ReactRootOriginTracker.RootHandle handle = ReactRootOriginTracker.handleFor(rootView);
+        if (handle == null) {
+            return SecureRectangleStore.MAIN_SURFACE;
+        }
+        originTracker.watchNow(handle);
+        return handle.surfaceKey();
+    }
+
+    @Nullable
+    private View rootViewForTag(final int viewTag) {
+        final ReactApplicationContext context = getReactApplicationContext();
+        if (context == null || !context.hasActiveReactInstance()) {
+            return null;
+        }
+        try {
+            final UIManager uiManager = UIManagerHelper.getUIManagerForReactTag(context, viewTag);
+            if (uiManager == null) {
+                return null;
+            }
+            final View view = uiManager.resolveView(viewTag);
+            if (view == null) {
+                return null;
+            }
+            final RootView root = RootViewUtil.getRootView(view);
+            return root instanceof View ? (View) root : null;
+        } catch (Throwable t) {
+            Log.w(TAG, "secure surface: could not resolve the React root ("
+                    + t.getClass().getSimpleName() + ")");
+            return null;
+        }
+    }
+
+    /**
+     * Runs {@code work} on the UI thread and returns its result. View and
+     * RootView access is not safe off the UI thread; {@code
+     * secureSurfaceKey}/{@code secureSurfaceOrigin} are sync TurboModule
+     * methods called from the JS thread during measure.
+     */
+    private <T> T resolveOnUiThread(final T fallback, final java.util.concurrent.Callable<T> work) {
+        if (UiThreadUtil.isOnUiThread()) {
+            try {
+                return work.call();
+            } catch (Exception e) {
+                Log.w(TAG, "secure surface resolve failed (" + e.getClass().getSimpleName() + ")");
+                return fallback;
+            }
+        }
+        final AtomicReference<T> result = new AtomicReference<>(fallback);
+        final CountDownLatch done = new CountDownLatch(1);
+        UiThreadUtil.runOnUiThread(() -> {
+            try {
+                result.set(work.call());
+            } catch (Exception e) {
+                Log.w(TAG, "secure surface resolve failed (" + e.getClass().getSimpleName() + ")");
+            } finally {
+                done.countDown();
+            }
+        });
+        try {
+            if (!done.await(2, TimeUnit.SECONDS)) {
+                Log.w(TAG, "secure surface resolve timed out");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return result.get();
     }
 
     // --- Blackout and view-hierarchy capture (design doc §4.1) -----------

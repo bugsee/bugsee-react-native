@@ -281,3 +281,93 @@ describe('<BugseeSecure>', () => {
     expect(inner?.props.testID).toBe('inner');
   });
 });
+
+// Fabric measureInWindow is relative to the React root that holds the view;
+// a <Modal> is its own root. The rectangle goes out under that root's surface
+// key, which native resolves from the view's tag.
+describe('<BugseeSecure> surfaces', () => {
+  function renderWithNode(element: ReactElement, node: Record<string, unknown>): ReactTestRenderer {
+    let renderer: ReactTestRenderer | undefined;
+    act(() => {
+      renderer = create(element, {
+        createNodeMock: () => ({ measureInWindow, ...node }),
+        unstable_isConcurrent: true,
+      } as Parameters<typeof create>[1]);
+    });
+    mounted.push(renderer as ReactTestRenderer);
+    return renderer as ReactTestRenderer;
+  }
+
+  it('publishes on the surface native resolves for its tag', () => {
+    native.secureSurfaceKey.mockReturnValue(42);
+
+    renderWithNode(<BugseeSecure />, { __nativeTag: 77 });
+
+    expect(native.secureSurfaceKey).toHaveBeenCalledWith(77);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, 42, MEASURED);
+    expect(native.setSecureRectangles).not.toHaveBeenCalled();
+  });
+
+  it('a tag that resolves to the main surface publishes there', () => {
+    native.secureSurfaceKey.mockReturnValue(0);
+
+    renderWithNode(<BugseeSecure />, { __nativeTag: 77 });
+
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, MEASURED);
+    expect(native.setSecureRectanglesOnSurface).not.toHaveBeenCalled();
+  });
+
+  it('removes its rectangle from that surface on unmount', () => {
+    native.secureSurfaceKey.mockReturnValue(42);
+    const renderer = renderWithNode(<BugseeSecure />, { __nativeTag: 77 });
+
+    act(() => renderer.unmount());
+
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, 42, []);
+  });
+
+  it.each([
+    ['no tag', {}],
+    ['a NaN tag', { __nativeTag: Number.NaN }],
+    ['an infinite tag', { __nativeTag: Number.POSITIVE_INFINITY }],
+    ['a string tag', { __nativeTag: '77' }],
+  ])('%s asks nothing and publishes on the main surface', (_name, node) => {
+    renderWithNode(<BugseeSecure />, node);
+
+    expect(native.secureSurfaceKey).not.toHaveBeenCalled();
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, MEASURED);
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['a fraction', 1.5],
+    ['a non-number', '42'],
+    ['undefined', undefined],
+  ])('a surface key that is %s publishes on the main surface', (_name, key) => {
+    native.secureSurfaceKey.mockReturnValue(key as never);
+
+    renderWithNode(<BugseeSecure />, { __nativeTag: 77 });
+
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, MEASURED);
+    expect(native.setSecureRectanglesOnSurface).not.toHaveBeenCalled();
+  });
+
+  // Same as any failed measurement: the last good rectangle stands.
+  it('a throwing surface lookup keeps the last rectangle', () => {
+    native.secureSurfaceKey.mockReturnValue(42);
+    renderWithNode(<BugseeSecure />, { __nativeTag: 77 });
+    const failure = new Error('no root');
+    native.secureSurfaceKey.mockImplementation(() => {
+      throw failure;
+    });
+    native.setSecureRectanglesOnSurface.mockClear();
+    measureInWindow.mockImplementation(measuresAt(10, 70, 30, 40));
+
+    tick(2);
+
+    expect(native.setSecureRectanglesOnSurface).not.toHaveBeenCalled();
+    expect(native.setSecureRectangles).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[Bugsee] BugseeSecure could not measure', failure);
+  });
+});

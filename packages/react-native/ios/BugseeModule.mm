@@ -65,6 +65,10 @@
 #import "BGSRNErrorMessage.h"
 #endif
 
+/// Forward-declared: the wrapper's pull path refreshes the origin before the
+/// function's definition later in this file.
+static NSValue *_Nullable BGSRNReactOrigin(void);
+
 /// The conformance lives here rather than in the Support package so that the
 /// package stays buildable and testable without the SDK's headers. BGSRNWrapper
 /// already declares every property the protocol requires; this states that it
@@ -105,6 +109,20 @@
 /// secret must survive that swap. See `BGSRNSecureRectangles` for the version
 /// contract, which is what makes the SDK notice a change at all.
 - (NSData *)secureRectanglesForDisplay:(NSInteger)display {
+  // Refresh the main surface origin on each pull so a window move still
+  // updates without waiting for the next JS publish — same reason Android
+  // refreshes at pull time. iOS Fabric Modal shares this window
+  // (`presentViewController:`), so one origin serves both.
+  if (NSThread.isMainThread) {
+    NSValue *origin = BGSRNReactOrigin();
+    if (origin != nil) {
+      CGPoint p = origin.CGPointValue;
+      [BGSRNSecureRectangles.shared setOriginX:(int32_t)llround(p.x)
+                                       originY:(int32_t)llround(p.y)
+                                    forDisplay:display
+                                       surface:BGSRNSecureMainSurface];
+    }
+  }
   return [BGSRNSecureRectangles.shared snapshotForDisplay:display];
 }
 
@@ -957,6 +975,14 @@ RCT_EXPORT_MODULE(Bugsee)
 
 - (void)setSecureRectangles:(double)display
                 coordinates:(NSArray *)coordinates {
+  [self setSecureRectanglesOnSurface:display
+                             surface:BGSRNSecureMainSurface
+                         coordinates:coordinates];
+}
+
+- (void)setSecureRectanglesOnSurface:(double)display
+                             surface:(double)surface
+                         coordinates:(NSArray *)coordinates {
   const NSUInteger count = coordinates.count;
   // Codegen hands numbers across as double, because that is what a JS number
   // is. Rounding rather than truncating: the JS side has already rounded each
@@ -972,8 +998,46 @@ RCT_EXPORT_MODULE(Bugsee)
 
   [BGSRNSecureRectangles.shared setCoordinates:flat
                                          count:count
-                                    forDisplay:(NSInteger)display];
+                                    forDisplay:(NSInteger)display
+                                       surface:(NSInteger)llround(surface)];
   free(flat);
+}
+
+/// The store key for the React root that hosts `viewTag`. On iOS Fabric a
+/// `<Modal>` is presented in the same `UIWindow` as the main surface
+/// (`RCTModalHostViewComponentView` uses `presentViewController:`), so both
+/// publish on the main surface. Fabric `measureInWindow` for modal content
+/// stops at `ModalHostView`'s `RootNodeKind` with an identity transform
+/// (`LayoutableShadowNode.cpp`, `ModalHostViewShadowNode.h`), which is
+/// already that window's coordinate space; the origin is the window's
+/// `frame.origin` (what the SDK adds to every native node — see
+/// `BGSRNReactWindow.h`).
+- (NSNumber *)secureSurfaceKey:(double)viewTag {
+  (void)viewTag;
+  BGSRNRunOnMainSync(^{
+    NSValue *origin = BGSRNReactOrigin();
+    if (origin != nil) {
+      CGPoint p = origin.CGPointValue;
+      [BGSRNSecureRectangles.shared setOriginX:(int32_t)llround(p.x)
+                                       originY:(int32_t)llround(p.y)
+                                    forDisplay:0
+                                       surface:BGSRNSecureMainSurface];
+    }
+  });
+  return @(BGSRNSecureMainSurface);
+}
+
+- (NSArray<NSNumber *> *)secureSurfaceOrigin:(double)viewTag {
+  (void)viewTag;
+  __block NSArray<NSNumber *> *origin = @[];
+  BGSRNRunOnMainSync(^{
+    NSValue *value = BGSRNReactOrigin();
+    if (value != nil) {
+      CGPoint p = value.CGPointValue;
+      origin = @[ @(p.x), @(p.y) ];
+    }
+  });
+  return origin;
 }
 
 #pragma mark - Blackout and view-hierarchy capture (design doc §4.1)

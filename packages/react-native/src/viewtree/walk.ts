@@ -66,6 +66,14 @@ export interface WalkEnv {
   scale: number;
   originX: number;
   originY: number;
+  /**
+   * Display origin of the React root that hosts `nativeTag`, when known.
+   * A `<Modal>`'s dialog root must not inherit the activity root's origin.
+   * Falls back to {@link originX}/{@link originY} when absent or null.
+   */
+  originForNativeTag?: (nativeTag: number) => { x: number; y: number } | null;
+  /** Native tag of a host fiber's public instance, when measurable. */
+  nativeTagOf?: (fiber: FiberLike) => number | null;
   /** ms; the budget is measured from this function's first call. */
   now(): number;
 }
@@ -121,26 +129,40 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function androidBounds(rect: WindowRect, env: WalkEnv): Bounds {
+function androidBounds(rect: WindowRect, env: WalkEnv, originX: number, originY: number): Bounds {
   return [
-    Math.round(rect.x * env.scale) + env.originX,
-    Math.round(rect.y * env.scale) + env.originY,
+    Math.round(rect.x * env.scale) + originX,
+    Math.round(rect.y * env.scale) + originY,
     Math.round(rect.width * env.scale),
     Math.round(rect.height * env.scale),
   ];
 }
 
-function iosBounds(rect: WindowRect, env: WalkEnv): Bounds {
+function iosBounds(rect: WindowRect, env: WalkEnv, originX: number, originY: number): Bounds {
   return [
-    round2(rect.x + env.originX),
-    round2(rect.y + env.originY),
+    round2(rect.x + originX),
+    round2(rect.y + originY),
     round2(rect.width),
     round2(rect.height),
   ];
 }
 
-function toBounds(rect: WindowRect, env: WalkEnv): Bounds {
-  return env.platform === 'android' ? androidBounds(rect, env) : iosBounds(rect, env);
+function originForFiber(fiber: FiberLike, env: WalkEnv): { x: number; y: number } {
+  const tag = env.nativeTagOf?.(fiber) ?? null;
+  if (tag != null && env.originForNativeTag) {
+    const resolved = env.originForNativeTag(tag);
+    if (resolved != null) {
+      return resolved;
+    }
+  }
+  return { x: env.originX, y: env.originY };
+}
+
+function toBounds(rect: WindowRect, env: WalkEnv, fiber: FiberLike): Bounds {
+  const origin = originForFiber(fiber, env);
+  return env.platform === 'android'
+    ? androidBounds(rect, env, origin.x, origin.y)
+    : iosBounds(rect, env, origin.x, origin.y);
 }
 
 function unionBounds(boxes: readonly Bounds[], env: WalkEnv): Bounds {
@@ -635,7 +657,7 @@ function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
         const child = linkOf(fiber.child);
         const atDepthLimit = child !== null && depthRemaining <= 1;
         const depthCut = atDepthLimit && hasVisibleContentChild(child as FiberLike);
-        const bounds = toBounds(rect, ctx.env);
+        const bounds = toBounds(rect, ctx.env, fiber);
         const tagOpts = secureHere ? {} : tagOptions(fiber);
         const className = safeHostClassName(fiber);
 
