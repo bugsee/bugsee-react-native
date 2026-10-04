@@ -12,6 +12,8 @@ export function encodeXmlAttr(value: string): string {
     .replace(/\n/g, '&#10;');
 }
 
+const ARCHIVE_ACTION = /<ArchiveAction\b[\s\S]*?<\/ArchiveAction>/;
+
 function appBuildableReference(scheme: string): string {
   const refs = scheme.match(/<BuildableReference\b[\s\S]*?<\/BuildableReference>/g) ?? [];
   const app = refs.find((ref) => /BuildableName\s*=\s*"[^"]+\.app"/.test(ref));
@@ -19,6 +21,17 @@ function appBuildableReference(scheme: string): string {
     throw new Error('scheme has no .app BuildableReference');
   }
   return app;
+}
+
+/**
+ * The reference is copied from the BuildAction, where it sits at another
+ * depth; shift it so it nests under EnvironmentBuildable.
+ */
+function nestReference(reference: string, indent: string): string {
+  const refLines = reference.split('\n');
+  const closing = refLines[refLines.length - 1] ?? '';
+  const depth = closing.length - closing.trimStart().length;
+  return refLines.map((line, i) => indent + (i === 0 ? line : line.slice(depth))).join('\n');
 }
 
 function executionActionXml(reference: string, script: string): string {
@@ -29,7 +42,7 @@ function executionActionXml(reference: string, script: string): string {
     '               title = "Upload dSYMs"',
     `               scriptText = "${encodeXmlAttr(script)}">`,
     '               <EnvironmentBuildable>',
-    reference.trimEnd(),
+    nestReference(reference, '                  '),
     '               </EnvironmentBuildable>',
     '            </ActionContent>',
     '         </ExecutionAction>',
@@ -41,13 +54,13 @@ function executionActionXml(reference: string, script: string): string {
  * own app target, so ARCHIVE_PATH is provided. Xcode allows one PostActions
  * element; a scheme that already has one gets another ExecutionAction inside
  * it. A wrapping PostActions is emitted only when ArchiveAction has none.
+ * An action an earlier prebuild inserted is replaced, so a changed token
+ * reaches the scheme.
  */
 export function insertDsymPostAction(scheme: string, script: string = DSYM_POST_ACTION_SCRIPT): string {
-  if (scheme.includes('xcode post-action')) {
-    return scheme;
-  }
-  const archive = scheme.match(/<ArchiveAction\b[\s\S]*?<\/ArchiveAction>/);
-  if (!archive?.[0] || archive.index === undefined) {
+  scheme = removeDsymPostAction(scheme);
+  const archive = ARCHIVE_ACTION.exec(scheme);
+  if (!archive) {
     throw new Error('ArchiveAction missing');
   }
   const execution = executionActionXml(appBuildableReference(scheme), script);
@@ -63,7 +76,7 @@ function insertArchiveExecution(archive: string, execution: string): string {
     return archive.slice(0, lineStart) + execution + '\n' + archive.slice(lineStart);
   }
   const block = ['      <PostActions>', execution, '      </PostActions>'].join('\n');
-  return archive.replace('</ArchiveAction>', `${block}\n   </ArchiveAction>`);
+  return archive.replace(/[ \t]*<\/ArchiveAction>/, `${block}\n   </ArchiveAction>`);
 }
 
 const EXECUTION_ACTION = /[ \t]*<ExecutionAction\b[\s\S]*?<\/ExecutionAction>\n?/g;
@@ -77,8 +90,8 @@ const EMPTY_POST_ACTIONS = /\n[ \t]*<PostActions\b[^>]*>\s*<\/PostActions>/g;
  * element goes too, so the scheme stays valid.
  */
 export function removeDsymPostAction(scheme: string): string {
-  const archive = scheme.match(/<ArchiveAction\b[\s\S]*?<\/ArchiveAction>/);
-  if (!archive?.[0] || archive.index === undefined) {
+  const archive = ARCHIVE_ACTION.exec(scheme);
+  if (!archive) {
     return scheme;
   }
   let removed = false;

@@ -6,6 +6,8 @@ export declare function encodeXmlAttr(value: string): string;
  * own app target, so ARCHIVE_PATH is provided. Xcode allows one PostActions
  * element; a scheme that already has one gets another ExecutionAction inside
  * it. A wrapping PostActions is emitted only when ArchiveAction has none.
+ * An action an earlier prebuild inserted is replaced, so a changed token
+ * reaches the scheme.
  */
 export declare function insertDsymPostAction(scheme: string, script?: string): string;
 /**
