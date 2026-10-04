@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "yarn",
+  "testRunner": "jest",
+  "jest": {
+    "projectType": "custom",
+    "configFile": "package.json"
+  },
+  "reporters": [
+    "clear-text",
+    "progress"
+  ],
+  "coverageAnalysis": "perTest",
+  "ignoreStatic": true,
+  "mutate": [
+    "packages/react-native/plugin/src/**/*.ts",
+    "packages/react-native/scripts/hermes-sourcemaps.js",
+    "packages/react-native/scripts/compose-then-inject.js",
+    "!**/__tests__/**"
+  ],
+  "thresholds": {
+    "high": 100,
+    "low": 97,
+    "break": 97
+  },
+  "timeoutMS": 60000,
+  "inPlace": true,
+  "tempDirName": ".stryker-tmp",
+  "disableTypeChecks": "packages/react-native/plugin/src/**/*.ts"
+}

@@ -40,12 +40,16 @@ jobs:
     # those were 64% of the mutants and 99% of the run time. src keeps its
     # static mutants: they are mostly killed, and without them it scores 92.
     # The configs cap concurrency at 3 for laptops; a runner has 4 vCPUs.
+    # The plugin gate (the Expo config plugin and the Hermes source-map
+    # scripts, which decide whether a debug id, a dSYM action or a source-map
+    # upload reaches a customer build) runs in place: its tests need the
+    # workspace's nested node_modules, which a Stryker sandbox never copies.
     name: mutation (${{ matrix.gate }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        gate: [src, scripts]
+        gate: [src, scripts, plugin]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
