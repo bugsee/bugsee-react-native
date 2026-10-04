@@ -226,4 +226,13 @@ public class AttributeBridgeTest {
         assertNull(AttributeBridge.identifier(""));
         assertEquals("alice", AttributeBridge.identifier("alice"));
     }
+
+    // --- failureMessage ----------------------------------------------------
+
+    /** What a throwing attribute operation rejects with: the operation, nothing of the exception. */
+    @Test
+    public void failureMessageNamesOnlyTheOperation() {
+        assertEquals("getAttribute failed", AttributeBridge.failureMessage("getAttribute"));
+        assertEquals("clearAllAttributes failed", AttributeBridge.failureMessage("clearAllAttributes"));
+    }
 }

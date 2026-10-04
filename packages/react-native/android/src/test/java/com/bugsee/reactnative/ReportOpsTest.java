@@ -86,6 +86,22 @@ public class ReportOpsTest {
         assertEquals(Collections.emptyList(), state.mutations());
     }
 
+    /**
+     * The rejection never echoes the value a caller sent: anything JSON allows
+     * can arrive, and rendering it into the message would carry a user value
+     * back through the rejection.
+     */
+    @Test
+    public void severityRejectionNeverEchoesTheOffendingValue() {
+        final String hostile = "s3cret-severity-value";
+        try {
+            ReportOps.apply(report, patch("severity", hostile));
+            fail("expected BadArgument");
+        } catch (final ReportOps.BadArgument expected) {
+            assertEquals("severity must be an integer 1..5", expected.getMessage());
+        }
+    }
+
     /** A valid field next to an invalid one must not land on its own. */
     @Test
     public void patchIsAllOrNothing() {
@@ -301,5 +317,28 @@ public class ReportOpsTest {
         assertEquals(Long.valueOf(-9_007_199_254_740_992L), state.attributes.get("minSafe"));
         assertEquals(Double.valueOf(2.5), state.attributes.get("frac"));
         assertEquals(Double.valueOf(1e300), state.attributes.get("huge"));
+    }
+
+    /**
+     * Through the real call path: the rejection names where the text broke,
+     * never the text itself.
+     */
+    @Test
+    public void applyJsonRejectionNeverEchoesTheMalformedText() {
+        try {
+            ReportOps.applyJson(report, "{\"summary\": \"s3cret-do-not-leak");
+            fail("expected BadArgument");
+        } catch (final ReportOps.BadArgument expected) {
+            assertTrue(expected.getMessage(),
+                    expected.getMessage().startsWith("update() patch is not a JSON object: malformed JSON"));
+            assertFalse(expected.getMessage().contains("s3cret"));
+        }
+    }
+
+    /** What an unexpected fault in a report operation rejects with: the operation, nothing of the fault. */
+    @Test
+    public void failureMessageNamesOnlyTheOperation() {
+        assertEquals("reportRead failed", ReportOps.failureMessage("reportRead"));
+        assertEquals("createdReportUpload failed", ReportOps.failureMessage("createdReportUpload"));
     }
 }

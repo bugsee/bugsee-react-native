@@ -225,7 +225,8 @@ final class ReportOps {
                 return IssueSeverity.fromIntValue((int) number);
             }
         }
-        throw new BadArgument("severity must be an integer 1..5, got " + value);
+        // Never the value itself: anything JSON allows can arrive here.
+        throw new BadArgument("severity must be an integer 1..5");
     }
 
     @NonNull
@@ -271,5 +272,16 @@ final class ReportOps {
     private static boolean isFinite(@NonNull final Number number) {
         final double d = number.doubleValue();
         return !Double.isNaN(d) && !Double.isInfinite(d);
+    }
+
+    /**
+     * The message a promise rejects with when a report operation faults with
+     * anything other than a {@link BadArgument}. Named by the operation only
+     * -- never the fault's own message, which can echo report content (a
+     * summary, an attribute value, a file path, an attachment name).
+     */
+    @NonNull
+    static String failureMessage(@NonNull final String operation) {
+        return operation + " failed";
     }
 }

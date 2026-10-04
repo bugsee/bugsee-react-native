@@ -194,4 +194,16 @@ final class AttributeBridge {
     static String identifier(@Nullable final String raw) {
         return raw == null || raw.isEmpty() ? null : raw;
     }
+
+    /**
+     * The message a promise rejects with when {@code operation} (e.g.
+     * {@code "getAttribute"}) throws. Named by the operation only -- never
+     * the exception's own message, which can echo the attribute name or
+     * value that made the SDK throw. {@link BugseeModule} logs the
+     * exception's class name, never its message.
+     */
+    @NonNull
+    static String failureMessage(@NonNull final String operation) {
+        return operation + " failed";
+    }
 }

@@ -54,7 +54,8 @@ public final class ReactNativeWrapperInitProvider extends BugseeExtensionInitPro
         try {
             register.set(BugseeReactNativeWrapper.withoutJsRuntime());
         } catch (Throwable t) {
-            Log.e(TAG, "could not register the React Native wrapper at process start", t);
+            Log.e(TAG, "could not register the React Native wrapper at process start: "
+                    + t.getClass().getName());
         }
     }
 }

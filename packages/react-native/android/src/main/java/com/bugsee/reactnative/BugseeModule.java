@@ -272,7 +272,8 @@ public class BugseeModule extends NativeBugseeSpec
                         + " served=" + Arrays.toString(SecureRectangleStore.shared().snapshot((int) display)));
             }
         } catch (RuntimeException e) {
-            Log.e(TAG, "setSecureRectangles failed; the previous set stays published", e);
+            Log.e(TAG, "setSecureRectangles failed; the previous set stays published: "
+                    + e.getClass().getName());
         }
     }
 
@@ -386,7 +387,7 @@ public class BugseeModule extends NativeBugseeSpec
                 Log.i(TAG, "exception handled sent bytes="
                         + (payloadJson == null ? 0 : payloadJson.length()));
             } catch (final RuntimeException e) {
-                Log.e(TAG, "logException failed", e);
+                Log.e(TAG, "logException failed: " + e.getClass().getName());
             }
         });
     }
@@ -430,7 +431,7 @@ public class BugseeModule extends NativeBugseeSpec
                     ReportArgs.severity((int) severity),
                     ReportArgs.labels(labels == null ? null : labels.toArrayList()));
         } catch (final RuntimeException e) {
-            Log.e(TAG, "upload failed", e);
+            Log.e(TAG, "upload failed: " + e.getClass().getName());
         }
     }
 
@@ -455,11 +456,11 @@ public class BugseeModule extends NativeBugseeSpec
                 try {
                     Bugsee.showReportDialog(summary, description, sev, labelList);
                 } catch (final RuntimeException e) {
-                    Log.e(TAG, "showReportDialog failed", e);
+                    Log.e(TAG, "showReportDialog failed: " + e.getClass().getName());
                 }
             });
         } catch (final RuntimeException e) {
-            Log.e(TAG, "showReportDialog failed", e);
+            Log.e(TAG, "showReportDialog failed: " + e.getClass().getName());
         }
     }
 
@@ -592,8 +593,21 @@ public class BugseeModule extends NativeBugseeSpec
                         "attribute \"" + name + "\" was not kept by the SDK");
             }
         } catch (final RuntimeException e) {
-            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+            rejectAttributeFailure(promise, "setAttribute", e);
         }
+    }
+
+    /**
+     * Rejects {@code E_ATTRIBUTE_REJECTED} after an attribute or identity
+     * operation throws. The message names the operation only
+     * ({@link AttributeBridge#failureMessage}); the exception's message can
+     * echo the attribute name or value that made the SDK throw, so only its
+     * class name is logged.
+     */
+    private static void rejectAttributeFailure(
+            final Promise promise, final String operation, final RuntimeException e) {
+        Log.e(TAG, operation + " failed: " + e.getClass().getName());
+        promise.reject(E_ATTRIBUTE_REJECTED, AttributeBridge.failureMessage(operation));
     }
 
     @Override
@@ -601,7 +615,7 @@ public class BugseeModule extends NativeBugseeSpec
         try {
             promise.resolve(attributeValueMap(AttributeBridge.readOne(ATTRIBUTE_SDK, name)));
         } catch (final RuntimeException e) {
-            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+            rejectAttributeFailure(promise, "getAttribute", e);
         }
     }
 
@@ -615,7 +629,7 @@ public class BugseeModule extends NativeBugseeSpec
             }
             promise.resolve(result);
         } catch (final RuntimeException e) {
-            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+            rejectAttributeFailure(promise, "getAllAttributes", e);
         }
     }
 
@@ -625,7 +639,7 @@ public class BugseeModule extends NativeBugseeSpec
             Bugsee.clearAttribute(name);
             promise.resolve(null);
         } catch (final RuntimeException e) {
-            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+            rejectAttributeFailure(promise, "clearAttribute", e);
         }
     }
 
@@ -635,7 +649,7 @@ public class BugseeModule extends NativeBugseeSpec
             Bugsee.clearAllAttributes();
             promise.resolve(null);
         } catch (final RuntimeException e) {
-            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+            rejectAttributeFailure(promise, "clearAllAttributes", e);
         }
     }
 
@@ -654,7 +668,7 @@ public class BugseeModule extends NativeBugseeSpec
             }
             promise.resolve(result);
         } catch (final RuntimeException e) {
-            promise.reject(E_ATTRIBUTE_REJECTED, e.getMessage());
+            rejectAttributeFailure(promise, "getUserIdentifier", e);
         }
     }
 
@@ -788,7 +802,7 @@ public class BugseeModule extends NativeBugseeSpec
             Log.e(TAG, "addBreadcrumb dropped: its data is not a JSON object: " + e.getMessage());
             return false;
         } catch (final RuntimeException e) {
-            Log.e(TAG, "addBreadcrumb failed", e);
+            Log.e(TAG, "addBreadcrumb failed: " + e.getClass().getName());
             return false;
         }
     }
@@ -853,7 +867,7 @@ public class BugseeModule extends NativeBugseeSpec
             Log.e(TAG, "event \"" + name + "\" dropped: its params are not a JSON object: "
                     + e.getMessage());
         } catch (RuntimeException e) {
-            Log.e(TAG, "event failed", e);
+            Log.e(TAG, "event failed: " + e.getClass().getName());
         }
     }
 
@@ -863,7 +877,7 @@ public class BugseeModule extends NativeBugseeSpec
         try {
             Bugsee.trace(name, value);
         } catch (RuntimeException e) {
-            Log.e(TAG, "traceNumber failed", e);
+            Log.e(TAG, "traceNumber failed: " + e.getClass().getName());
         }
     }
 
@@ -873,7 +887,7 @@ public class BugseeModule extends NativeBugseeSpec
         try {
             Bugsee.trace(name, value);
         } catch (RuntimeException e) {
-            Log.e(TAG, "traceString failed", e);
+            Log.e(TAG, "traceString failed: " + e.getClass().getName());
         }
     }
 
@@ -887,7 +901,7 @@ public class BugseeModule extends NativeBugseeSpec
         try {
             Bugsee.trace(name, Boolean.valueOf(value));
         } catch (RuntimeException e) {
-            Log.e(TAG, "traceBoolean failed", e);
+            Log.e(TAG, "traceBoolean failed: " + e.getClass().getName());
         }
     }
 
@@ -934,7 +948,7 @@ public class BugseeModule extends NativeBugseeSpec
         try {
             promise.resolve(snapshotToWritableMap(ReportOps.read(report)));
         } catch (final Throwable e) {
-            promise.reject(e);
+            rejectReportFailure(promise, "reportRead", e);
         }
     }
 
@@ -953,7 +967,7 @@ public class BugseeModule extends NativeBugseeSpec
         } catch (final ReportOps.BadArgument e) {
             promise.reject(E_REPORT_BAD_ARGUMENT, e.getMessage());
         } catch (final Throwable e) {
-            promise.reject(e);
+            rejectReportFailure(promise, "reportUpdate", e);
         }
     }
 
@@ -974,7 +988,7 @@ public class BugseeModule extends NativeBugseeSpec
         try {
             settleAttachment(handleId, ReportOps.addFile(report, path, name, mimeType, move), promise);
         } catch (final Throwable e) {
-            promise.reject(e);
+            rejectReportFailure(promise, "reportAddFileAttachment", e);
         }
     }
 
@@ -1001,7 +1015,7 @@ public class BugseeModule extends NativeBugseeSpec
         try {
             settleAttachment(handleId, ReportOps.addData(report, data, name, mimeType), promise);
         } catch (final Throwable e) {
-            promise.reject(e);
+            rejectReportFailure(promise, "reportAddDataAttachment", e);
         }
     }
 
@@ -1028,7 +1042,7 @@ public class BugseeModule extends NativeBugseeSpec
             // The SDK threw before the listener ran. The stamp no-ops once
             // this reservation has been cleared and another one opened.
             registry.fulfil(stamp, null);
-            promise.reject(thrown);
+            rejectReportFailure(promise, "createReport", thrown);
         }
     }
 
@@ -1059,7 +1073,7 @@ public class BugseeModule extends NativeBugseeSpec
             } else {
                 registry.fulfil(stamp, null);
             }
-            promise.reject(thrown);
+            rejectReportFailure(promise, "createReport", thrown);
         }
     }
 
@@ -1073,7 +1087,7 @@ public class BugseeModule extends NativeBugseeSpec
         try {
             promise.resolve(snapshotToWritableMap(ReportOps.read(report)));
         } catch (final Throwable e) {
-            promise.reject(e);
+            rejectReportFailure(promise, "createdReportRead", e);
         }
     }
 
@@ -1094,7 +1108,7 @@ public class BugseeModule extends NativeBugseeSpec
         } catch (final ReportOps.BadArgument e) {
             promise.reject(E_REPORT_BAD_ARGUMENT, e.getMessage());
         } catch (final Throwable e) {
-            promise.reject(e);
+            rejectReportFailure(promise, "createdReportUpdate", e);
         }
     }
 
@@ -1122,7 +1136,7 @@ public class BugseeModule extends NativeBugseeSpec
             settleCreatedAttachment(
                     handleId, ReportOps.addData(report, data, name, mimeType), promise);
         } catch (final Throwable e) {
-            promise.reject(e);
+            rejectReportFailure(promise, "createdReportAddDataAttachment", e);
         }
     }
 
@@ -1146,7 +1160,7 @@ public class BugseeModule extends NativeBugseeSpec
                     ReportOps.addFile(report, path, name, mimeType, false),
                     promise);
         } catch (final Throwable e) {
-            promise.reject(e);
+            rejectReportFailure(promise, "createdReportAddFileAttachment", e);
         }
     }
 
@@ -1167,12 +1181,29 @@ public class BugseeModule extends NativeBugseeSpec
                     Log.i(TAG, "created report " + handleId + " uploaded ok=" + ok);
                     promise.resolve(ok);
                 } catch (final Throwable thrown) {
-                    promise.reject(thrown);
+                    rejectReportFailure(promise, "createdReportUpload", thrown);
                 }
             });
         } catch (final Throwable thrown) {
-            promise.reject(thrown);
+            rejectReportFailure(promise, "createdReportUpload", thrown);
         }
+    }
+
+    /**
+     * Rejects after a report operation faults with anything it does not
+     * validate itself. The code stays React Native's own default
+     * ({@code EUNSPECIFIED}, what {@code reject(Throwable)} produced): an
+     * unexpected fault is not one of the codes the JS contract names. The
+     * message names the operation only ({@link ReportOps#failureMessage}) --
+     * the fault's own message can echo report content (a summary, an
+     * attribute value, a file path, an attachment name), and passing the
+     * Throwable would also send its message and stack to JS. Only its class
+     * name is logged.
+     */
+    private static void rejectReportFailure(
+            final Promise promise, final String operation, final Throwable e) {
+        Log.e(TAG, operation + " failed: " + e.getClass().getName());
+        promise.reject((String) null, ReportOps.failureMessage(operation));
     }
 
     /**
@@ -1433,7 +1464,7 @@ public class BugseeModule extends NativeBugseeSpec
         final SpanStatus parsed = SpanHandles.status((int) status);
         if (live == null || parsed == null) {
             if (parsed == null) {
-                Log.w(TAG, "span status " + (int) status + " is outside 0..5");
+                Log.w(TAG, "span status is outside 0..5");
             }
             return false;
         }
@@ -1465,7 +1496,7 @@ public class BugseeModule extends NativeBugseeSpec
         final WritableArray released = Arguments.createArray();
         final SpanStatus parsed = statusSet ? SpanHandles.status((int) status) : null;
         if (statusSet && parsed == null) {
-            Log.w(TAG, "span finish status " + (int) status + " is outside 0..5");
+            Log.w(TAG, "span finish status is outside 0..5");
             return released;
         }
         for (final String id : spanHandles.finish(handle, parsed)) {

@@ -41,7 +41,8 @@ final class WrapperChannelHolder {
     }
 
     private static final WrapperChannelHolder SHARED =
-            new WrapperChannelHolder((message, error) -> Log.w(TAG, message, error));
+            new WrapperChannelHolder((message, error) ->
+                    Log.w(TAG, message + ": " + error.getClass().getName()));
 
     @NonNull
     static WrapperChannelHolder shared() {

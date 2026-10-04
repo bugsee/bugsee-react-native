@@ -87,7 +87,7 @@ final class ExceptionBridge {
         try {
             sdk.logException(new ReactNativeWebException(payloadJson), opts);
         } catch (final RuntimeException e) {
-            Log.e(TAG, "logException failed", e);
+            Log.e(TAG, "logException failed: " + e.getClass().getName());
         }
     }
 
@@ -96,7 +96,7 @@ final class ExceptionBridge {
         try {
             sdk.logUnhandledException(new ReactNativeWebException(payloadJson), null);
         } catch (final RuntimeException e) {
-            Log.e(TAG, "logUnhandledException failed", e);
+            Log.e(TAG, "logUnhandledException failed: " + e.getClass().getName());
         }
     }
 

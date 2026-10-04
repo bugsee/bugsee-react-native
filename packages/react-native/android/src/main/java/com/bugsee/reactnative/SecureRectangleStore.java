@@ -147,7 +147,8 @@ final class SecureRectangleStore {
             set(display, coordinates);
             return true;
         } catch (IllegalArgumentException e) {
-            Log.e(TAG, "setSecureRectangles rejected; the previous set stays published", e);
+            Log.e(TAG, "setSecureRectangles rejected; the previous set stays published: "
+                    + e.getClass().getName());
             return false;
         }
     }

@@ -35,7 +35,9 @@ final class ReportArgs {
         if (wire >= 1 && wire <= 5) {
             return IssueSeverity.fromIntValue(wire);
         }
-        Log.w(TAG, "severity " + wire + " is outside 1..5; the SDK default applies");
+        // Never the value itself: a severity is app data, and this line reaches the
+        // SDK's own log capture.
+        Log.w(TAG, "severity is outside 1..5; the SDK default applies");
         return null;
     }
 
