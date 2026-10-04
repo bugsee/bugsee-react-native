@@ -69,7 +69,8 @@ public class AppearanceBridgeTest {
             AppearanceBridge.setColor(ReportAppearance.TextColor, 256, 0, 0, 255);
             throw new AssertionError("expected IllegalArgumentException");
         } catch (final IllegalArgumentException expected) {
-            assertTrue(expected.getMessage().contains("256"));
+            // The range, never the component that was out of it.
+            assertEquals("color component out of range 0..255", expected.getMessage());
         }
         assertEquals(before, Bugsee.getAppearance().getColor(ReportAppearance.TextColor));
     }

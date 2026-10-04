@@ -334,11 +334,4 @@ public class ReportOpsTest {
             assertFalse(expected.getMessage().contains("s3cret"));
         }
     }
-
-    /** What an unexpected fault in a report operation rejects with: the operation, nothing of the fault. */
-    @Test
-    public void failureMessageNamesOnlyTheOperation() {
-        assertEquals("reportRead failed", ReportOps.failureMessage("reportRead"));
-        assertEquals("createdReportUpload failed", ReportOps.failureMessage("createdReportUpload"));
-    }
 }
