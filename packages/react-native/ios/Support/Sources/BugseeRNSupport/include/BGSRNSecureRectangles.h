@@ -2,6 +2,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/// The activity / main React root's surface key. Legacy writers that do not
+/// name a surface land here.
+FOUNDATION_EXPORT const NSInteger BGSRNSecureMainSurface;
+
 /// The regions the app has asked Bugsee not to record, in the form the SDK
 /// pulls them.
 ///
@@ -20,6 +24,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// The version is kept per display, because the SDK's freshness comparison is
 /// per display: a change on one screen must not invalidate another's.
 ///
+/// Fabric `measureInWindow` is relative to the measured node's nearest
+/// `RootNodeKind` ancestor. On Android a `<Modal>` dialog is a second
+/// surface key with its own origin; rectangles are stored under the surface
+/// they were measured in and served translated by that surface's origin. On
+/// iOS a Fabric Modal is `presentViewController:` on the same `UIWindow`, so
+/// it publishes on `BGSRNSecureMainSurface` with that window's
+/// `frame.origin` — not a second origin lane.
+///
 /// ## Threading
 ///
 /// Writes arrive on the JS thread; the pull is on the main thread. Every
@@ -37,8 +49,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// forgotten when that happens.
 @property (class, readonly) BGSRNSecureRectangles *shared;
 
-/// Publishes `coordinates` as the secure set for `display`, as a flat list of
-/// four-`int32` rectangles.
+/// Publishes `coordinates` as the secure set for `display`'s main surface.
 ///
 /// @param coordinates may be NULL only when `count` is 0.
 /// @param count number of int32s, which must be a multiple of 4.
@@ -46,6 +57,23 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)setCoordinates:(nullable const int32_t *)coordinates
                  count:(NSUInteger)count
             forDisplay:(NSInteger)display;
+
+/// Publishes `coordinates` for one surface on `display`. Other surfaces keep
+/// their rectangles and origins.
+- (BOOL)setCoordinates:(nullable const int32_t *)coordinates
+                 count:(NSUInteger)count
+            forDisplay:(NSInteger)display
+               surface:(NSInteger)surface;
+
+/// Records where the main React root's viewport origin sits on `display`.
+- (void)setOriginX:(int32_t)originX originY:(int32_t)originY forDisplay:(NSInteger)display;
+
+/// Records where one surface's origin sits on `display`. Only that surface's
+/// rectangles move.
+- (void)setOriginX:(int32_t)originX
+           originY:(int32_t)originY
+        forDisplay:(NSInteger)display
+           surface:(NSInteger)surface;
 
 /// The buffer for `display`. A display nothing has secured reports an empty
 /// set rather than nil, so the SDK always has a version to compare against.

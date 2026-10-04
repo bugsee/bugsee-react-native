@@ -144,6 +144,48 @@
   XCTAssertEqualObjects(packed[1], @0, @"a rejected write must not publish anything");
 }
 
+/// An origin-only write that leaves the served buffer empty must keep the
+/// snapshot at the empty-set version (1), not message-nil's 0. Android's
+/// empty snapshot stays at version 1 the same way.
+- (void)testAnOriginOnlyWriteThatLeavesServedEmptyKeepsVersionOne {
+  [_store setOriginX:0 originY:96 forDisplay:0];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertEqualObjects(packed[0], @1,
+                        @"origin-only with no rectangles must not report version 0");
+  XCTAssertEqualObjects(packed[1], @0);
+}
+
+/// The main origin must not move another surface's rectangle, and that
+/// surface's own origin must.
+- (void)testTheMainOriginDoesNotMoveAnotherSurfacesRectangle {
+  const int32_t mainRects[] = {10, 20, 30, 40};
+  const int32_t modalRects[] = {100, 200, 150, 250};
+  [_store setCoordinates:mainRects count:4 forDisplay:0 surface:BGSRNSecureMainSurface];
+  [_store setCoordinates:modalRects count:4 forDisplay:0 surface:42];
+  [_store setOriginX:0 originY:96 forDisplay:0 surface:BGSRNSecureMainSurface];
+  [_store setOriginX:0 originY:0 forDisplay:0 surface:42];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertEqualObjects(packed[1], @2);
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 8)],
+                        (@[ @10, @116, @30, @136, @100, @200, @150, @250 ]));
+}
+
+- (void)testAnotherSurfacesOwnOriginMovesOnlyItsRectangle {
+  const int32_t mainRects[] = {10, 20, 30, 40};
+  const int32_t modalRects[] = {100, 200, 150, 250};
+  [_store setCoordinates:mainRects count:4 forDisplay:0 surface:BGSRNSecureMainSurface];
+  [_store setCoordinates:modalRects count:4 forDisplay:0 surface:42];
+  [_store setOriginX:0 originY:96 forDisplay:0 surface:BGSRNSecureMainSurface];
+  [_store setOriginX:7 originY:40 forDisplay:0 surface:42];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertEqualObjects(packed[1], @2);
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 8)],
+                        (@[ @10, @116, @30, @136, @107, @240, @157, @290 ]));
+}
+
 /// The shared store outlives any one wrapper: the init provider registers one
 /// before launch and setWrapperInfo swaps in another, and the regions the app
 /// marked secret must survive that.
