@@ -59,6 +59,20 @@ jobs:
       - run: yarn install --immutable
       - run: yarn stryker run stryker.${{ matrix.gate }}.json --concurrency 4
 
+  expo-prebuild:
+    name: expo prebuild (config plugin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: corepack enable
+      - run: yarn install --immutable
+      # Spec §13: the plugin's edits survive `expo prebuild --clean`, and a
+      # second prebuild changes nothing. No pods, no build.
+      - run: ./scripts/check-expo-prebuild.sh
+
   compat:
     name: rn compat (${{ matrix.react-native }})
     runs-on: ubuntu-latest
