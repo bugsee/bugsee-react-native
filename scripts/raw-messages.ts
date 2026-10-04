@@ -28,12 +28,15 @@
  *     nothing else -- because every site that BUILDS one is itself checked
  *     (next rule). The same whitelist applies to a parameter or local declared
  *     as `Throwable`/`*Exception`/`*Error` outside a catch.
- *   - `new BadArgument(...)`/`new BadJson(...)` messages may only concatenate
- *     literals, constants, the identifier `key`, `entry.getKey()`, the audited
+ *   - Every exception construction (`new XException(...)`, `new XError(...)`,
+ *     `new BadArgument/BadJson(...)`; not `ReactNativeWebException`, which IS
+ *     the JS exception report) may only concatenate literals, constants, the
+ *     identifier `key`, `entry.getKey()`, a size (`x.length`), the audited
  *     `malformedJsonMessage(...)`, or a `BadJson`/`BadArgument` catch
  *     variable's own `getMessage()`.
  *   - `.reject(...)` arguments may only be literals, constants, the
- *     identifiers `name`/`operation`, a `*.failureMessage(...)` result, or a
+ *     identifiers `name`/`operation`, `*.failureMessage(operation)` (or of a
+ *     literal), or a
  *     `BadJson`/`BadArgument` catch variable's `getMessage()`; a reject with a
  *     single non-literal argument (the `reject(Throwable)` overload) and any
  *     non-null argument past code and message are violations.
@@ -65,7 +68,8 @@
  *     non-nil `NSError` has its `userInfo` serialised to JS), and the first
  *     two may only be literals, constants, the identifiers `name`/`operation`/
  *     `code`, `BGSRNErrorMessage(...)`, `BGSRNReportErrorWireCode(...)` or
- *     `[BGSRNReportOps failureMessageForOperation:...]`.
+ *     `[BGSRNReportOps failureMessageForOperation:operation]` (or of a
+ *     literal).
  *   - Every `NSError` the code builds is checked where it is built, because
  *     `BGSRNErrorMessage` hands an own-domain error's description on: an
  *     `errorWithDomain:`/`initWithDomain:` construction's `userInfo` is
@@ -75,7 +79,8 @@
  *     `BGSRNErrorIdentifierKey` entry holds the identifier `key`.
  *
  * TypeScript (`.ts`, `.tsx`, the packages' `src`): every argument of
- * `new XError(...)`, `badArgument(...)`, `reject(...)` and `console.x(...)`
+ * `new XError(...)`, `badArgument(...)`, `reject(...)`, `console.x(...)` and
+ * `console['x'](...)`
  * may only concatenate literals, constants, `Enum.Member`, `typeof X`,
  * `describeType(X)`, `errorName(X)`, `exceptionOptionsMessage(X)` (the
  * package's own options-validation text, matched by error identity) and the
@@ -83,6 +88,26 @@
  * `TS_IDENTIFIER_NAMES`, including inside `${...}`. `toReportError` and
  * `toAttributeError` are exempt: they forward a native rejection's message,
  * which the native rules above keep value-free.
+ *
+ * `throw { ... }` is flagged outright: an object literal's fields are not
+ * checked.
+ *
+ * WHAT IS SCANNED (`scanPackages`): every package under `packages/`, by its
+ * own `files` list (or, with none, every top-level directory). `android/`,
+ * `ios/` and `src/` are walked whole; `plugin/` and `scripts/` are build-time
+ * only; any other shipped directory is refused. Under `android/` only `.java`
+ * is understood; under `ios/`, `.h`/`.m`/`.mm`; under `src/`, `.ts`/`.tsx`.
+ * Kotlin (`.kt`, `.kts`), Swift, C and C++ (and `.h` under `android/`) are
+ * refused wherever they appear, except the build scripts `build.gradle.kts`,
+ * `settings.gradle.kts` and `Package.swift`; build configuration and data
+ * (`.gradle`, `.pro`, `.xml`, `.properties`, `.json`, `.resolved`) are
+ * skipped; anything else is refused until someone decides. Skipped: build
+ * output beside the build file that makes it (`build`, `.gradle`, `.cxx`
+ * beside `build.gradle`; `.build`, `.swiftpm` beside `Package.swift`) and
+ * `node_modules`. Test source sets (Gradle `src/test*`/`src/androidTest*`,
+ * SwiftPM `Tests`, Jest `__tests__`/`__mocks__`) get the language check but
+ * not the leak rules: they never run in an app, and they must read exception
+ * messages to assert that those messages are value-free.
  *
  * KNOWN GAPS (stated, not hidden):
  *   - Kotlin (`.kt`) and Swift (`.swift`) are NOT understood: string
@@ -100,9 +125,23 @@
  *   - The identifier allowlists are by NAME (`key`, `name`, ...). A variable
  *     with an allowlisted name that holds a value would pass.
  *   - Reflection/KVC (`valueForKey:@"userInfo"`) and macros are not seen.
+ *   - Java: a Throwable reached through an expression rather than a variable,
+ *     outside a catch -- `future.getException().getMessage()`,
+ *     `Log.w(TAG, msg, task.getError())` (review probes J21, J26).
+ *   - Objective-C: an `NSError` aliased through `id` (`id obj = error`) or
+ *     held in a property (`self.lastError`) and then formatted (O07, O16):
+ *     only variables declared `NSError *`/`NSException *` are followed.
+ *   - TypeScript: a message assigned after construction (`e.message = v`), an
+ *     aliased console method (`const log = console.warn; log(v)`) and fields
+ *     added to an error (`Object.assign(new Error('x'), { v })`) (T11, T14,
+ *     T18). `breadcrumbs/data.ts` rewrites its own validation message with
+ *     `error.message = ...replaceAll(...)`, which is why T11 is not flagged.
+ *   - A package's top-level shipped files (not directories) are not scanned:
+ *     today those are build-time config (`app.plugin.js`,
+ *     `react-native.config.js`, podspecs) and docs.
  */
-import { readdirSync, statSync } from 'node:fs';
-import { basename, extname, join } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { basename, extname, join, relative } from 'node:path';
 
 export interface Violation {
   file: string;
@@ -571,15 +610,16 @@ export function scanJava(path: string, raw: string): Violation[] {
     return safeCatches.some((c) => c.name === owner && within([c], at));
   };
   violations.push(
-    ...checkCallArguments(src, /\bnew\s+(?:\w+\.)?(?:BadArgument|BadJson)\s*\(/g, {
+    ...checkCallArguments(src, /\bnew\s+(?:\w+\.)*(?!ReactNativeWebException\b)\w*(?:Exception|Error|BadArgument|BadJson)\s*\(/g, {
       lang: 'java',
       identifiers: new Set(['key']),
-      extra: (op, at) => op === 'entry.getKey()' || /^malformedJsonMessage\([\w\s,.()]*\)$/.test(op) || safeMessage(op, at),
-    }, 'a BadArgument/BadJson message built from something other than literals and identifiers'),
+      extra: (op, at) => op === 'entry.getKey()' || /^\w+\.length$/.test(op) ||
+        /^malformedJsonMessage\([\w\s,.()]*\)$/.test(op) || safeMessage(op, at),
+    }, 'an exception message built from something other than literals, identifiers and sizes'),
     ...checkCallArguments(src, /\.reject\s*\(/g, {
       lang: 'java',
       identifiers: new Set(['name', 'operation']),
-      extra: (op, at) => /^(?:\w+\.)?failureMessage\(\w+\)$/.test(op) || safeMessage(op, at),
+      extra: (op, at) => /^(?:\w+\.)?failureMessage\((?:operation|"[^"]*")\)$/.test(op) || safeMessage(op, at),
     }, 'a reject argument other than a literal, an identifier or a fixed failure message'),
   );
 
@@ -838,66 +878,160 @@ const TS_IDENTIFIER_NAMES = new Set(['name', 'key', 'field', 'method', 'kind', '
  */
 const TS_AUDITED_FUNCTIONS = ['toReportError', 'toAttributeError', 'badArgument'];
 
-const TS_SINKS = /\bnew\s+\w*Error\s*\(|\bbadArgument\s*\(|\breject\s*\(|\bconsole\s*\.\s*\w+\s*\(/g;
+const TS_SINKS =
+  /\bnew\s+\w*Error\s*\(|\bbadArgument\s*\(|\breject\s*\(|\bconsole\s*(?:\.\s*\w+|\[[^\]]*\])\s*\(/g;
 
 export function scanTs(path: string, raw: string): Violation[] {
   const src: Source = { path, raw, masked: mask(raw, 'ts') };
   const audited = TS_AUDITED_FUNCTIONS.map((name) => functionBody(src.masked, `\\bfunction\\s+${name}`))
     .filter((span): span is Span => span !== undefined);
-  return checkCallArguments(src, TS_SINKS, { lang: 'ts', identifiers: TS_IDENTIFIER_NAMES, extra: () => false },
-    'an error or console message built from something other than literals, identifiers and type names', audited);
+  return [
+    ...checkCallArguments(src, TS_SINKS, { lang: 'ts', identifiers: TS_IDENTIFIER_NAMES, extra: () => false },
+      'an error or console message built from something other than literals, identifiers and type names', audited),
+    ...patternViolations(src, [[/\bthrow\s*\{/g, 'a thrown object literal (its fields are not checked)']]),
+  ];
 }
 
 // ---------------------------------------------------------------------------
 // The trees
 // ---------------------------------------------------------------------------
 
-/** Never scanned: tests, mocks, and build output a local build can leave under a root. */
-export const SKIP_DIRECTORIES = new Set(['__tests__', '__mocks__', 'Tests', '.swiftpm', '.build', 'build', 'Pods', 'node_modules']);
+/** What a scanned root holds: an Android library, an iOS (CocoaPods/SwiftPM) tree, or the TypeScript sources. */
+export type RootKind = 'android' | 'ios' | 'src';
 
-const SCANNERS: Record<string, Scanner> = {
-  '.java': scanJava,
-  '.m': scanObjC,
-  '.mm': scanObjC,
-  '.h': scanObjC,
-  '.ts': scanTs,
-  '.tsx': scanTs,
+const SCANNERS: Record<RootKind, Record<string, Scanner>> = {
+  android: { '.java': scanJava },
+  ios: { '.h': scanObjC, '.m': scanObjC, '.mm': scanObjC },
+  src: { '.ts': scanTs, '.tsx': scanTs },
 };
 
-/** Data files a scanned root holds: not runtime code. */
-const NON_SOURCE_EXTENSIONS = new Set(['.resolved', '.json']);
+/** Build configuration and data a root holds: not runtime code, not scanned. */
+const NON_SOURCE: Record<RootKind, ReadonlySet<string>> = {
+  android: new Set(['.gradle', '.pro', '.xml', '.properties', '.json']),
+  ios: new Set(['.resolved', '.json']),
+  src: new Set(['.json']),
+};
 
-const NOT_UNDERSTOOD = new Map([
+/** Gradle and SwiftPM build scripts, which configure the build and never run in the app. */
+const BUILD_SCRIPTS = new Set(['build.gradle.kts', 'settings.gradle.kts', 'Package.swift']);
+
+/** Languages this scanner cannot read; a source in one fails the tree scan wherever it sits. */
+const NOT_UNDERSTOOD: ReadonlyMap<string, string> = new Map([
   ['.kt', 'Kotlin'],
+  ['.kts', 'Kotlin'],
   ['.swift', 'Swift'],
+  ['.c', 'C'],
+  ['.cc', 'C++'],
+  ['.cpp', 'C++'],
+  ['.cxx', 'C++'],
 ]);
 
 /**
- * The scanner for `file`; null for a file that is not runtime code (a data
- * file, a SwiftPM manifest named exactly `Package.swift`); or, as a string,
- * why the file cannot be scanned -- which fails the tree test.
+ * The scanner for `file` in a root of `kind`; null for build configuration
+ * and data (`BUILD_SCRIPTS`, `NON_SOURCE`); or, as a string, why the file
+ * cannot be scanned -- which fails the tree scan. A `.h` under `android/` is
+ * C or C++ (JNI), not Objective-C, and is refused there.
  */
-export function scannerFor(file: string): Scanner | string | null {
+export function scannerFor(file: string, kind: RootKind): Scanner | string | null {
   const ext = extname(file);
-  const scanner = SCANNERS[ext];
+  const scanner = SCANNERS[kind][ext];
   if (scanner !== undefined) return scanner;
-  if (basename(file) === 'Package.swift' || NON_SOURCE_EXTENSIONS.has(ext)) return null;
-  const language = NOT_UNDERSTOOD.get(ext);
+  if (BUILD_SCRIPTS.has(basename(file)) || NON_SOURCE[kind].has(ext)) return null;
+  const language = NOT_UNDERSTOOD.get(ext) ?? (ext === '.h' ? 'C' : undefined);
   if (language !== undefined) {
     return `${language} source: the raw-message scanner does not understand ${language} yet ` +
       '(string interpolation, catch syntax), so it cannot vouch for this file';
   }
-  return `unknown file kind "${ext}": decide whether it is runtime code and teach the scanner`;
+  return `unknown file kind "${ext}" under ${kind}/: decide whether it is runtime code and teach the scanner`;
 }
 
-/** Every file under `dir`, skipping `SKIP_DIRECTORIES`. */
-export function walk(dir: string): string[] {
-  const found: string[] = [];
-  for (const name of readdirSync(dir)) {
-    if (SKIP_DIRECTORIES.has(name)) continue;
+/** A file under a root, and whether it sits in a test source set (language census only, not leak-scanned). */
+export interface TreeFile {
+  path: string;
+  test: boolean;
+}
+
+/** Build output beside the build file that makes it: Gradle's next to `build.gradle(.kts)`, SwiftPM's next to `Package.swift`. */
+const OUTPUT_BESIDE: ReadonlyArray<[string, ReadonlySet<string>]> = [
+  ['build.gradle', new Set(['build', '.gradle', '.cxx'])],
+  ['build.gradle.kts', new Set(['build', '.gradle', '.cxx'])],
+  ['Package.swift', new Set(['.build', '.swiftpm'])],
+];
+
+/**
+ * Whether `name`, a directory inside `dir`, is a test source set: Gradle's
+ * `src/test*` and `src/androidTest*` beside a `build.gradle`, SwiftPM's
+ * `Tests` beside a `Package.swift`, Jest's `__tests__`/`__mocks__` anywhere.
+ */
+function isTestDirectory(dir: string, name: string, siblings: readonly string[]): boolean {
+  if (name === '__tests__' || name === '__mocks__') return true;
+  if (name === 'Tests') return siblings.includes('Package.swift');
+  const gradleSourceRoot = basename(dir) === 'src' &&
+    readdirSync(join(dir, '..')).some((entry) => entry === 'build.gradle' || entry === 'build.gradle.kts');
+  return gradleSourceRoot && /^(?:test|androidTest)/.test(name);
+}
+
+/**
+ * Every file under `dir`. Skips `node_modules` and the build output named in
+ * `OUTPUT_BESIDE`, only where its build file says it is output -- a runtime
+ * directory that happens to be named `build` elsewhere is still walked.
+ */
+export function walk(dir: string, test = false): TreeFile[] {
+  const names = readdirSync(dir);
+  const output = new Set<string>(['node_modules']);
+  for (const [buildFile, dirs] of OUTPUT_BESIDE) {
+    if (names.includes(buildFile)) dirs.forEach((d) => output.add(d));
+  }
+  const found: TreeFile[] = [];
+  for (const name of names) {
     const path = join(dir, name);
-    if (statSync(path).isDirectory()) found.push(...walk(path));
-    else found.push(path);
+    if (!statSync(path).isDirectory()) found.push({ path, test });
+    else if (!output.has(name)) found.push(...walk(path, test || isTestDirectory(dir, name, names)));
   }
   return found;
+}
+
+/** Shipped directories that run only at build time, on the developer's machine: never scanned. */
+const BUILD_TIME_DIRECTORIES = new Set(['plugin', 'scripts']);
+
+/** The outcome of scanning every package: what was scanned, what could not be, and every violation. */
+export interface TreeScan {
+  roots: string[];
+  refused: string[];
+  violations: Violation[];
+}
+
+/**
+ * Every package under `packagesDir`, as npm ships it. Each `files` entry (or,
+ * with no `files`, each top-level directory) is a root (`android`, `ios`,
+ * `src`), a build-time directory (`BUILD_TIME_DIRECTORIES`), a plain file or
+ * glob -- or an unscanned shipped directory, which is refused. Paths in the
+ * result are relative to `base`.
+ */
+export function scanPackages(packagesDir: string, base: string): TreeScan {
+  const result: TreeScan = { roots: [], refused: [], violations: [] };
+  for (const pkg of readdirSync(packagesDir).sort()) {
+    const dir = join(packagesDir, pkg);
+    const manifest = join(dir, 'package.json');
+    if (!existsSync(manifest)) continue;
+    const { files } = JSON.parse(readFileSync(manifest, 'utf8')) as { files?: string[] };
+    const entries = files ?? readdirSync(dir).filter((name) => name !== 'node_modules');
+    for (const entry of entries) {
+      const top = entry.split('/')[0] as string;
+      const path = join(dir, top);
+      if (entry.includes('*') || !existsSync(path) || !statSync(path).isDirectory() || BUILD_TIME_DIRECTORIES.has(top)) continue;
+      if (top !== 'android' && top !== 'ios' && top !== 'src') {
+        result.refused.push(`${relative(base, path)}: a shipped directory the raw-message scanner does not cover`);
+        continue;
+      }
+      result.roots.push(relative(base, path));
+      for (const file of walk(path)) {
+        const shown = relative(base, file.path);
+        const scanner = scannerFor(file.path, top);
+        if (typeof scanner === 'string') result.refused.push(`${shown}: ${scanner}`);
+        else if (scanner !== null && !file.test) result.violations.push(...scanner(shown, readFileSync(file.path, 'utf8')));
+      }
+    }
+  }
+  return result;
 }

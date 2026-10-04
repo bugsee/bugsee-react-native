@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
-import { SKIP_DIRECTORIES, mask, scanJava, scanObjC, scanTs, scannerFor, walk } from '../raw-messages';
+import { mask, scanJava, scanObjC, scanPackages, scanTs, scannerFor, walk } from '../raw-messages';
 
 /**
  * One fixture per shape: every leak shape the three reviews probed (flagged)
@@ -18,7 +18,7 @@ const J = {
     `caught ${types} \`${name}\` used other than by its class name or an audited helper`,
   declared: (type: string, name: string): string =>
     `${type} \`${name}\` used other than by its class name or an audited helper`,
-  construct: 'a BadArgument/BadJson message built from something other than literals and identifiers',
+  construct: 'an exception message built from something other than literals, identifiers and sizes',
   rejectArg: 'a reject argument other than a literal, an identifier or a fixed failure message',
   rejectShape: 'reject(Throwable), or a reject carrying more than a code and a message',
   log3: 'Log call with a bare Throwable last argument (prints its message and stack)',
@@ -201,6 +201,13 @@ describe('scanJava', () => {
   flagged('a number followed by more', 'throw new BadArgument(3 + value.length());', [J.construct]);
   flagged('a malformedJsonMessage that is only a prefix', 'throw new BadJson(malformedJsonMessage(e, n) + text);', [J.construct]);
   flagged('a getMessage that is only a prefix', javaCatch('throw new BadArgument(e.getMessage().trim());', 'BadJson'), [J.construct]);
+  // Review M2 (J24) and M1 (J25).
+  flagged('a failureMessage for something other than the operation', 'promise.reject("E", ReportOps.failureMessage(summary));', [J.rejectArg]);
+  flagged('any exception built from a value', 'throw new IllegalArgumentException("color component out of range: " + value);', [J.construct]);
+  flagged('a qualified exception built from a value', 'throw new java.lang.IllegalStateException(value);\nthrow new org.json.JSONException("bad " + text);', [J.construct, J.construct]);
+  allowed('a failureMessage for a literal operation', 'promise.reject(C, ReportOps.failureMessage("reportRead"));');
+  allowed('an exception built from literals and a size', 'throw new IllegalArgumentException("need 4 coordinates each, got " + coordinates.length);\nthrow new JSONException("data key is not a string");');
+  allowed('the JS exception report itself', 'sdk.logException(new ReactNativeWebException(payloadJson), opts);');
   allowed('an allowed argument after a nested call', javaCatch('rejectReportFailure(promise, names.of(op), e);'));
   allowed('a parenthesised message', 'throw new BadArgument(("attribute " + key) + " must be a string");');
   allowed('a class name of a long-named exception', javaCatch('promise.reject("C", boom.getClass().getName() + boom?.getClass().getSimpleName());', 'RuntimeException', 'boom'));
@@ -226,7 +233,7 @@ describe('scanJava', () => {
       'Throwable `t` used other than by its class name or an audited helper',
     ]);
     expect(rulesOf(scanJava('A.java', 'throw new BadArgument("got " + value);'))).toEqual([
-      'a BadArgument/BadJson message built from something other than literals and identifiers',
+      'an exception message built from something other than literals, identifiers and sizes',
     ]);
     expect(rulesOf(scanJava('A.java', 'promise.reject(message);'))).toEqual([
       'a reject argument other than a literal, an identifier or a fixed failure message',
@@ -339,6 +346,14 @@ describe('scanObjC', () => {
   allowed('an error domain and code', 'NSError *error = nil;\nNSLog(@"%@ %ld", error.domain, (long)[error code]);');
   allowed('an out-parameter inside a format call', 'NSError *error = nil;\nNSLog(@"%@", Parse(json, &error));');
   allowed('the audited helper in BGSRNErrorMessage.m', 'NSString *BGSRNErrorMessage(NSError *error) {\n  return error.userInfo[NSLocalizedDescriptionKey] ?: error.localizedDescription;\n}', 'BGSRNErrorMessage.m');
+  flagged('a userInfo built elsewhere, after a nested send and call', '[NSError errorWithDomain:[self domain] code:Code(a, b) userInfo:info];\n[NSError errorWithDomain : D code:1 userInfo:info];', [O.opaqueUserInfo, O.opaqueUserInfo]);
+  flagged('an unspaced identifier entry holding a value', 'x = @{NSLocalizedDescriptionKey : @"a {identifier}", BGSRNErrorIdentifierKey:value};', [O.identifier]);
+  flagged('a description whose value runs on past a nested call', 'x = @{NSLocalizedDescriptionKey : Pick(@"a", value), K : v};', [O.errorDescription]);
+  flagged('an audited reject helper that is only a suffix', 'reject(code, flag ?: BGSRNErrorMessage(error), nil);\nreject(nil, flag ?: [BGSRNReportOps failureMessageForOperation:operation], nil);\nreject(nil, [BGSRNReportOps failureMessageForOperation:operation].uppercaseString, nil);', [O.rejectArg, O.rejectArg, O.rejectArg]);
+  allowed('a parenthesised literal description before another entry', '[NSError errorWithDomain:D code:1 userInfo:@{NSLocalizedDescriptionKey : (@"a"), NSUnderlyingErrorKey : Make(a, b)}];');
+  allowed('a description in a nested dictionary entry', 'x = @{K : @[ @{NSLocalizedDescriptionKey : @"a"} ], NSLocalizedDescriptionKey : @"b"};');
+  allowed('a construction with no userInfo', '[[NSError alloc] initWithDomain:D code:1];');
+  allowed('a reject passing the operation through', 'reject(nil, operation, nil);');
   allowed('a literal description', 'Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain\n    code:BGSRNReportErrorBadArgument\n    userInfo:@{NSLocalizedDescriptionKey : @"labels must all be strings"}]);');
   allowed('a description that is a named constant', '[NSError errorWithDomain:D code:1 userInfo:@{ NSLocalizedDescriptionKey : kMalformedJSON }];');
   allowed('an identifier entry naming the key, and an underlying error', '[NSError errorWithDomain:D code:1 userInfo:@{\n  NSLocalizedDescriptionKey : @"unknown key \\"{identifier}\\"",\n  BGSRNErrorIdentifierKey : key,\n  NSUnderlyingErrorKey : parseError ?: NSNull.null,\n}];');
@@ -406,6 +421,16 @@ describe('scanObjC', () => {
   allowed('a class or domain read with spaces', 'NSError *error;\nNSLog(@"%@ %@", error .  domain, [  error   code  ]);');
   allowed('the audited helper in BGSRNErrorMessage.m with a nested path', 'NSString *BGSRNErrorMessage(NSError *error) {\n  return error.userInfo[NSLocalizedDescriptionKey];\n}', 'Support/Sources/BGSRNErrorMessage.m');
 
+  it('reports the raw source of each construction rule', () => {
+    expect(scanObjC('A.m', '[NSError errorWithDomain:D code:1 userInfo:info];\nx = @{NSLocalizedDescriptionKey : v, BGSRNErrorIdentifierKey : v};\nreject(c, @"m", e);')).toEqual([
+      expect.objectContaining({ line: 3, snippet: 'reject(c, @"m", e)', rule: O.thirdArgument }),
+      expect.objectContaining({ line: 3, snippet: 'reject(c, @"m", e)', rule: O.rejectArg }),
+      expect.objectContaining({ line: 1, snippet: 'errorWithDomain:' }),
+      expect.objectContaining({ line: 2, snippet: 'NSLocalizedDescriptionKey' }),
+      expect.objectContaining({ line: 2, snippet: 'BGSRNErrorIdentifierKey :' }),
+    ]);
+  });
+
   it('reports the line and the raw source of a whitelist violation', () => {
     expect(scanObjC('A.m', objcCatch('NSLog(@"s3cret: %@", exception);'))[0]).toEqual({
       file: 'A.m',
@@ -439,6 +464,9 @@ describe('scanTs', () => {
   flagged('a file path, which is not an identifier', 'throw new Error(`bad ${path}`);', [T.sink]);
   flagged('another function forwarding a message', 'function other(error: unknown): unknown {\n  return new BugseeReportError(code, message);\n}', [T.sink]);
 
+  flagged('a thrown object literal', 'throw { message: value };\nthrow{ message: v };', ['a thrown object literal (its fields are not checked)', 'a thrown object literal (its fields are not checked)']);
+  flagged('console called by subscript', "console['warn']('x', value);\nconsole [ 'error' ] (value);", [T.sink, T.sink]);
+  allowed('console taken by subscript, not called', 'const original = console[method].bind(console);\nconsole[method] = wrapped;');
   allowed('typeof in an interpolation', 'throw new TypeError(`got ${typeof value}`);');
   allowed('describeType in an interpolation', 'throw new TypeError(`got ${describeType(value)}`);');
   allowed('errorName for console', "console.warn('[Bugsee] threw', errorName(error));");
@@ -478,36 +506,60 @@ describe('scanTs', () => {
 });
 
 describe('scannerFor', () => {
-  it('routes each understood language to its scanner', () => {
-    expect(scannerFor('A.java')).toBe(scanJava);
-    expect(scannerFor('a/B.m')).toBe(scanObjC);
-    expect(scannerFor('B.mm')).toBe(scanObjC);
-    expect(scannerFor('B.h')).toBe(scanObjC);
-    expect(scannerFor('c.ts')).toBe(scanTs);
-    expect(scannerFor('c.tsx')).toBe(scanTs);
+  it('routes each understood language to its scanner, by root', () => {
+    expect(scannerFor('a/A.java', 'android')).toBe(scanJava);
+    expect(scannerFor('a/B.m', 'ios')).toBe(scanObjC);
+    expect(scannerFor('B.mm', 'ios')).toBe(scanObjC);
+    expect(scannerFor('B.h', 'ios')).toBe(scanObjC);
+    expect(scannerFor('c.ts', 'src')).toBe(scanTs);
+    expect(scannerFor('c.tsx', 'src')).toBe(scanTs);
   });
 
-  it('skips data files and a SwiftPM manifest named exactly Package.swift', () => {
-    expect(scannerFor('ios/Package.swift')).toBeNull();
-    expect(scannerFor('ios/Package.resolved')).toBeNull();
-    expect(scannerFor('src/options/keys.json')).toBeNull();
+  it('skips build scripts and data files', () => {
+    for (const [file, kind] of [
+      ['ios/Package.swift', 'ios'],
+      ['ios/Package.resolved', 'ios'],
+      ['android/build.gradle', 'android'],
+      ['android/build.gradle.kts', 'android'],
+      ['android/settings.gradle.kts', 'android'],
+      ['android/proguard-rules.pro', 'android'],
+      ['android/src/main/AndroidManifest.xml', 'android'],
+      ['android/gradle.properties', 'android'],
+      ['android/x.json', 'android'],
+      ['ios/x.json', 'ios'],
+      ['src/options/keys.json', 'src'],
+    ] as const) {
+      expect([file, scannerFor(file, kind)]).toEqual([file, null]);
+    }
   });
 
-  it('refuses Kotlin and Swift sources, saying the scanner does not understand them', () => {
-    expect(scannerFor('ios/Bridge.swift')).toBe(
+  it('refuses the languages it does not understand, wherever they sit', () => {
+    expect(scannerFor('ios/Bridge.swift', 'ios')).toBe(
       'Swift source: the raw-message scanner does not understand Swift yet ' +
         '(string interpolation, catch syntax), so it cannot vouch for this file',
     );
-    expect(scannerFor('ios/MyPackage.swift')).toMatch(/^Swift source/);
-    expect(scannerFor('android/Bridge.kt')).toMatch(/^Kotlin source: the raw-message scanner does not understand Kotlin yet/);
+    expect(scannerFor('android/MyPackage.swift', 'android')).toMatch(/^Swift source/);
+    expect(scannerFor('android/src/main/kotlin/A.kt', 'android')).toMatch(/^Kotlin source: .* does not understand Kotlin yet/);
+    expect(scannerFor('android/src/main/kotlin/Gen.kts', 'android')).toMatch(/^Kotlin source/);
+    expect(scannerFor('android/src/main/cpp/a.c', 'android')).toMatch(/^C source/);
+    expect(scannerFor('android/src/main/cpp/jni.h', 'android')).toMatch(/^C source/);
+    for (const ext of ['.cc', '.cpp', '.cxx']) {
+      expect(scannerFor(`ios/glue${ext}`, 'ios')).toMatch(/^C\+\+ source/);
+      expect(scannerFor(`android/glue${ext}`, 'android')).toMatch(/^C\+\+ source/);
+    }
   });
 
   it('refuses any other file kind until someone decides', () => {
-    expect(scannerFor('ios/glue.cpp')).toBe('unknown file kind ".cpp": decide whether it is runtime code and teach the scanner');
+    expect(scannerFor('ios/thing.plist', 'ios')).toBe(
+      'unknown file kind ".plist" under ios/: decide whether it is runtime code and teach the scanner',
+    );
+    expect(scannerFor('src/index.js', 'src')).toMatch(/^unknown file kind "\.js" under src\//);
+    expect(scannerFor('android/A.m', 'android')).toMatch(/^unknown file kind "\.m" under android\//);
+    expect(scannerFor('android/x.ts', 'android')).toMatch(/^unknown/);
   });
 });
 
-describe('walk', () => {
+describe('walk and scanPackages', () => {
   let root: string;
 
   beforeEach(() => {
@@ -518,20 +570,119 @@ describe('walk', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('lists every file and skips tests, mocks and build output', () => {
-    mkdirSync(join(root, 'a', 'b'), { recursive: true });
-    writeFileSync(join(root, 'top.m'), '');
-    writeFileSync(join(root, 'a', 'b', 'deep.java'), '');
-    for (const skipped of SKIP_DIRECTORIES) {
-      mkdirSync(join(root, 'a', skipped), { recursive: true });
-      writeFileSync(join(root, 'a', skipped, 'hidden.ts'), '');
-    }
-    expect(walk(root).map((file) => relative(root, file)).sort()).toEqual([join('a', 'b', 'deep.java'), 'top.m']);
+  const put = (path: string, text = ''): void => {
+    mkdirSync(join(root, path, '..'), { recursive: true });
+    writeFileSync(join(root, path), text);
+  };
+
+  const listed = (dir: string): string[] =>
+    walk(join(root, dir)).map((f) => `${relative(root, f.path)}${f.test ? ' (test)' : ''}`).sort();
+
+  it('skips build output only beside the build file that makes it, and node_modules anywhere', () => {
+    put('android/build.gradle');
+    put('android/build/out.java');
+    put('android/.gradle/x.java');
+    put('android/.cxx/x.cpp');
+    put('android/src/main/java/com/x/build/Runtime.java');
+    put('android/src/main/java/node_modules/x.java');
+    put('ios/Support/Package.swift');
+    put('ios/Support/.build/x.m');
+    put('ios/Support/.swiftpm/x.m');
+    put('ios/build/Runtime.m');
+    put('ios/Tests/NotATestBundle.m');
+    put('kts/build.gradle.kts');
+    put('kts/build/out.java');
+    put('kts/.gradle/x.java');
+    put('kts/.cxx/x.cpp');
+    put('kts/src/main/java/A.java');
+    expect(listed('android')).toEqual([
+      'android/build.gradle',
+      'android/src/main/java/com/x/build/Runtime.java',
+    ]);
+    expect(listed('ios')).toEqual(['ios/Support/Package.swift', 'ios/Tests/NotATestBundle.m', 'ios/build/Runtime.m']);
+    expect(listed('kts')).toEqual(['kts/build.gradle.kts', 'kts/src/main/java/A.java']);
   });
 
-  it('skips exactly the test, mock and build directories', () => {
-    expect([...SKIP_DIRECTORIES].sort()).toEqual(
-      ['.build', '.swiftpm', 'Pods', 'Tests', '__mocks__', '__tests__', 'build', 'node_modules'].sort(),
-    );
+  it('marks test source sets: Gradle src/test* and src/androidTest*, SwiftPM Tests, Jest __tests__/__mocks__', () => {
+    put('android/build.gradle.kts');
+    put('android/src/test/java/T.java');
+    put('android/src/testDebug/java/T.java');
+    put('android/src/androidTest/java/T.java');
+    put('android/src/main/java/com/x/test/Runtime.java');
+    put('android/src/latest/java/Runtime.java');
+    put('android/test/Runtime.java');
+    put('ios/Support/Package.swift');
+    put('ios/Support/Tests/T.m');
+    put('ios/Support/Sources/Tests/Runtime.m');
+    put('src/a/__tests__/a.test.ts');
+    put('src/__mocks__/m.ts');
+    put('src/testSupport/s.ts');
+    expect(listed('android')).toEqual([
+      'android/build.gradle.kts',
+      'android/src/androidTest/java/T.java (test)',
+      'android/src/latest/java/Runtime.java',
+      'android/src/main/java/com/x/test/Runtime.java',
+      'android/src/test/java/T.java (test)',
+      'android/src/testDebug/java/T.java (test)',
+      'android/test/Runtime.java',
+    ]);
+    expect(listed('ios')).toEqual([
+      'ios/Support/Package.swift',
+      'ios/Support/Sources/Tests/Runtime.m',
+      'ios/Support/Tests/T.m (test)',
+    ]);
+    expect(listed('src')).toEqual(['src/__mocks__/m.ts (test)', 'src/a/__tests__/a.test.ts (test)', 'src/testSupport/s.ts']);
+  });
+
+  const leakyJava = 'try { a(); } catch (RuntimeException e) { p.reject("E", e.getMessage()); }';
+
+  // Review I1: the reviewer's three scratch cases, which passed the old roots.
+  it('refuses Kotlin in src/main/kotlin, flags a leak in src/newarch, refuses an unscanned shipped cpp/', () => {
+    put('packages/lib/package.json', JSON.stringify({ files: ['src', 'android', 'ios', 'cpp', 'plugin/build', 'scripts/x.js', '*.podspec', 'README.md'] }));
+    put('packages/lib/android/build.gradle');
+    put('packages/lib/android/src/main/java/com/x/C.java', 'class C {}');
+    put('packages/lib/android/src/main/kotlin/com/x/A.kt', 'catch (e: Exception) { Log.w("T", "x $e") }');
+    put('packages/lib/android/src/newarch/java/com/x/B.java', leakyJava);
+    put('packages/lib/cpp/D.cpp', 'printf("%s", e.what());');
+    put('packages/lib/plugin/build/index.js', 'console.log(process.argv[2]);');
+    put('packages/lib/scripts/x.js', 'console.log(process.argv[2]);');
+    put('packages/lib/README.md');
+    const scan = scanPackages(join(root, 'packages'), root);
+    expect(scan.roots).toEqual(['packages/lib/android']);
+    expect(scan.refused).toEqual([
+      expect.stringMatching(/^packages\/lib\/android\/src\/main\/kotlin\/com\/x\/A\.kt: Kotlin source/),
+      'packages/lib/cpp: a shipped directory the raw-message scanner does not cover',
+    ]);
+    expect(scan.violations.map((v) => `${v.file}:${v.line}`)).toEqual([
+      'packages/lib/android/src/newarch/java/com/x/B.java:1',
+      'packages/lib/android/src/newarch/java/com/x/B.java:1',
+    ]);
+  });
+
+  it('takes every top-level directory of a package without a files list, and skips non-packages', () => {
+    put('packages/bare/package.json', '{}');
+    put('packages/bare/src/a.ts', 'throw new Error(`x ${value}`);');
+    put('packages/bare/cpp/D.cpp');
+    put('packages/bare/node_modules/dep/index.js');
+    put('packages/bare/index.js');
+    put('packages/not-a-package/src/a.ts', 'throw new Error(`x ${value}`);');
+    const scan = scanPackages(join(root, 'packages'), root);
+    expect(scan.roots).toEqual(['packages/bare/src']);
+    expect(scan.refused).toEqual(['packages/bare/cpp: a shipped directory the raw-message scanner does not cover']);
+    expect(scan.violations.map((v) => v.file)).toEqual(['packages/bare/src/a.ts']);
+  });
+
+  it('checks the language of a test source set but does not leak-scan it', () => {
+    put('packages/lib/package.json', JSON.stringify({ files: ['android', 'ios', 'src'] }));
+    put('packages/lib/android/build.gradle');
+    put('packages/lib/android/src/test/java/T.java', leakyJava);
+    put('packages/lib/android/src/test/kotlin/T.kt');
+    put('packages/lib/ios/Package.swift');
+    put('packages/lib/ios/Tests/T.m', 'NSString *m = error.localizedDescription;');
+    put('packages/lib/src/__tests__/a.test.ts', "console.warn('x', error);");
+    const scan = scanPackages(join(root, 'packages'), root);
+    expect(scan.roots).toEqual(['packages/lib/android', 'packages/lib/ios', 'packages/lib/src']);
+    expect(scan.refused).toEqual([expect.stringMatching(/^packages\/lib\/android\/src\/test\/kotlin\/T\.kt: Kotlin source/)]);
+    expect(scan.violations).toEqual([]);
   });
 });
