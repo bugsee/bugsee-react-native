@@ -14,7 +14,8 @@
     "mutate": "yarn mutate:src && yarn mutate:scripts",
     "assert:ios-embed": "node scripts/cli-assert-framework-embedded.ts",
     "mutate:src": "stryker run stryker.src.json",
-    "mutate:scripts": "stryker run stryker.scripts.json"
+    "mutate:scripts": "stryker run stryker.scripts.json",
+    "mutate:plugin": "stryker run stryker.plugin.json; status=$?; chmod 755 packages/react-native/scripts/compose-then-inject.js; exit $status"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
