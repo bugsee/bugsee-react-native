@@ -44,9 +44,11 @@ describe('forwardLog', () => {
     expect(native.wrapperLog).not.toHaveBeenCalled();
   });
 
-  // A caller in untyped JS needs to see what it actually passed.
-  it('names the rejected value', () => {
-    expect(() => forwardLog('a line', 6 as LogLevel)).toThrow('LogLevel (1-5), got 6');
+  // The type of what an untyped caller passed, never the value itself.
+  it('names the rejected type, never the value', () => {
+    expect(() => forwardLog('a line', 6 as LogLevel)).toThrow(
+      new RangeError('forwardLog requires a LogLevel (1-5)'),
+    );
     expect(() => forwardLog(42 as unknown as string)).toThrow('a string, got number');
   });
 

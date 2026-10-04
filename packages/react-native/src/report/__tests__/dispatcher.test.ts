@@ -160,7 +160,7 @@ describe('setReportHandler', () => {
     expect(native.completeReportHandler).toHaveBeenCalledTimes(1);
     expect(errorSpy).toHaveBeenCalledWith(
       '[Bugsee] report handler threw',
-      expect.any(Error),
+      'Error',
     );
     errorSpy.mockRestore();
   });
@@ -220,7 +220,7 @@ describe('setReportHandler', () => {
     expect(native.completeReportHandler).toHaveBeenCalledTimes(1);
     expect(errorSpy).toHaveBeenCalledWith(
       '[Bugsee] could not complete the report handler',
-      failure,
+      failure.name,
     );
     errorSpy.mockRestore();
   });

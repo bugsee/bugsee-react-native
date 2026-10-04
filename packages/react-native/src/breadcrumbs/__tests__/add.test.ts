@@ -150,13 +150,13 @@ describe('addBreadcrumb', () => {
     expect(native.addBreadcrumb).not.toHaveBeenCalled();
   });
 
-  it('names a level that is not one of the five strings', () => {
+  it('rejects a level that is not one of the five strings, naming only its type', () => {
     const add = Bugsee.addBreadcrumb as (crumb?: unknown) => void;
     expect(() => add({ ...crumb, level: 'verbose' })).toThrow(
-      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got verbose',
+      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got string',
     );
     expect(() => add({ ...crumb, level: '' })).toThrow(
-      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got ',
+      'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got string',
     );
     expect(() => add({ ...crumb, level: 2 })).toThrow(
       'Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got number',

@@ -124,3 +124,11 @@ describe('the endpoint accessor on each options class', () => {
     expect(BugseeLaunchOptions.serialize(options)).toEqual({});
   });
 });
+
+describe('endpointFor(unknown platform)', () => {
+  it('names the two platforms, never the value it got', () => {
+    expect(() => endpointFor('s3cret' as never, 'https://e2e.example')).toThrow(
+      new Error('endpointFor expects "ios" or "android"'),
+    );
+  });
+});

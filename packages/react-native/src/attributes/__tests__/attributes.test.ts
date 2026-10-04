@@ -180,7 +180,7 @@ describe('setAttribute', () => {
   it('names the exact message for an over-long string', async () => {
     const error = await Bugsee.setAttribute('k', 'a'.repeat(1025)).catch((e: unknown) => e);
     expect((error as Error).message).toBe(
-      'attribute value must be at most 1024 UTF-16 units, got 1025',
+      'attribute value must be at most 1024 UTF-16 units',
     );
   });
 

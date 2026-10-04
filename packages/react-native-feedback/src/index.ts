@@ -98,11 +98,8 @@ export function setGreeting(greeting: string | null): void {
  */
 export function setListener(listener: FeedbackListener | null): void {
   if (listener !== null && (typeof listener !== 'object' || Array.isArray(listener))) {
-    throw new TypeError(
-      `setListener requires a listener object or null, got ${
-        Array.isArray(listener) ? 'array' : typeof listener
-      }`,
-    );
+    const kind = Array.isArray(listener) ? 'array' : typeof listener;
+    throw new TypeError(`setListener requires a listener object or null, got ${kind}`);
   }
   current = listener;
   if (listener === null) {

@@ -97,17 +97,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-/** One rejected value, at `path`, as a `TypeError` naming what it actually was. */
-function rejectValue(path: string, value: unknown): never {
+/** One rejected value, at `keyPath`, as a `TypeError` naming what it actually was. */
+function rejectValue(keyPath: string, value: unknown): never {
   throw new TypeError(
-    `${path} must be a plain object, an array, a string, a finite number, ` +
+    `${keyPath} must be a plain object, an array, a string, a finite number, ` +
       `a boolean or null; got ${describeType(value)}`,
   );
 }
 
 function copyValue(
   value: unknown,
-  path: string,
+  keyPath: string,
   depth: number,
   ancestors: Set<object>,
 ): unknown {
@@ -119,39 +119,39 @@ function copyValue(
     // a number this size rounds -- see {@link BUNDLE_NUMBER_LIMIT_DECIMAL}.
     // The path is still named.
     if (!Number.isFinite(value)) {
-      throw new RangeError(`${path} must be a finite number`);
+      throw new RangeError(`${keyPath} must be a finite number`);
     }
     if (!isWithinBundleNumberLimit(value)) {
       throw new RangeError(
-        `${path} must be smaller than 2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`,
+        `${keyPath} must be smaller than 2^63 (${BUNDLE_NUMBER_LIMIT_DECIMAL}) in magnitude`,
       );
     }
     return value;
   }
   if (kind === 'object') {
     if (Array.isArray(value)) {
-      return copyArray(value, path, depth, ancestors);
+      return copyArray(value, keyPath, depth, ancestors);
     }
     if (isPlainObject(value)) {
-      return copyObject(value, path, depth, ancestors);
+      return copyObject(value, keyPath, depth, ancestors);
     }
   }
-  return rejectValue(path, value);
+  return rejectValue(keyPath, value);
 }
 
 function copyObject(
   obj: Record<string, unknown>,
-  path: string,
+  keyPath: string,
   depth: number,
   ancestors: Set<object>,
 ): Record<string, unknown> {
   if (depth > EVENT_PARAMS_MAX_DEPTH) {
     throw new RangeError(
-      `${path} nests deeper than the maximum of ${EVENT_PARAMS_MAX_DEPTH}`,
+      `${keyPath} nests deeper than the maximum of ${EVENT_PARAMS_MAX_DEPTH}`,
     );
   }
   if (ancestors.has(obj)) {
-    throw new TypeError(`${path} is a cycle: it contains itself`);
+    throw new TypeError(`${keyPath} is a cycle: it contains itself`);
   }
   ancestors.add(obj);
   try {
@@ -166,7 +166,7 @@ function copyObject(
       // Omitted, as JSON.stringify does -- not an error. An array element
       // gets no such pass, since an array has no key to drop.
       if (value === undefined) continue;
-      result[key] = copyValue(value, `${path}.${key}`, depth + 1, ancestors);
+      result[key] = copyValue(value, `${keyPath}.${key}`, depth + 1, ancestors);
     }
     return result;
   } finally {
@@ -176,17 +176,17 @@ function copyObject(
 
 function copyArray(
   arr: readonly unknown[],
-  path: string,
+  keyPath: string,
   depth: number,
   ancestors: Set<object>,
 ): unknown[] {
   if (depth > EVENT_PARAMS_MAX_DEPTH) {
     throw new RangeError(
-      `${path} nests deeper than the maximum of ${EVENT_PARAMS_MAX_DEPTH}`,
+      `${keyPath} nests deeper than the maximum of ${EVENT_PARAMS_MAX_DEPTH}`,
     );
   }
   if (ancestors.has(arr as object)) {
-    throw new TypeError(`${path} is a cycle: it contains itself`);
+    throw new TypeError(`${keyPath} is a cycle: it contains itself`);
   }
   ancestors.add(arr as object);
   try {
@@ -194,9 +194,9 @@ function copyArray(
     for (let i = 0; i < arr.length; i += 1) {
       const value = arr[i];
       if (value === undefined) {
-        throw new TypeError(`${path}[${i}] must not be undefined`);
+        throw new TypeError(`${keyPath}[${i}] must not be undefined`);
       }
-      result.push(copyValue(value, `${path}[${i}]`, depth + 1, ancestors));
+      result.push(copyValue(value, `${keyPath}[${i}]`, depth + 1, ancestors));
     }
     return result;
   } finally {

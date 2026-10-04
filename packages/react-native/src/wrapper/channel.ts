@@ -24,9 +24,7 @@ export function forwardLog(message: string, level: LogLevel = LogLevel.Info): vo
     throw new TypeError(`forwardLog requires message to be a string, got ${typeof message}`);
   }
   if (!LEVELS.has(level)) {
-    throw new RangeError(
-      `forwardLog requires a LogLevel (1-5), got ${String(level)}`,
-    );
+    throw new RangeError('forwardLog requires a LogLevel (1-5)');
   }
   NativeBugsee.wrapperLog(message, level);
 }

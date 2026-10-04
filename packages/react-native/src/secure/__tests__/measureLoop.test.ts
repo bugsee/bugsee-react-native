@@ -105,6 +105,7 @@ describe('the shared re-measure loop', () => {
     jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
 
     expect(healthy).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith('[Bugsee] a secure-region measurer threw', error);
+    // The class name only: the error's message is the app's, and may carry app data.
+    expect(warn).toHaveBeenCalledWith('[Bugsee] a secure-region measurer threw', 'Error');
   });
 });

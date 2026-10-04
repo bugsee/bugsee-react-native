@@ -66,10 +66,7 @@ export function validateAttributeName(name: unknown): string {
 export function validateAttributeValue(value: unknown): AttributeValue {
   if (typeof value === 'string') {
     if (value.length > ATTRIBUTE_STRING_MAX_LENGTH) {
-      badArgument(
-        `attribute value must be at most ${ATTRIBUTE_STRING_MAX_LENGTH} ` +
-          `UTF-16 units, got ${value.length}`,
-      );
+      badArgument(`attribute value must be at most ${ATTRIBUTE_STRING_MAX_LENGTH} UTF-16 units`);
     }
     return value;
   }

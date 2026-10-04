@@ -18,6 +18,7 @@ import { RootErrorReporter } from '../exceptions/RootErrorReporter';
 import { BugseeSecure } from '../secure/BugseeSecure';
 import { secureRectangleScale } from '../secure/unit';
 import { VH_ANCHOR_NATIVE_ID } from './constants';
+import { errorName } from '../errorName';
 import { FiberTag, fiberRootOf, measureHostFiber } from './fiber';
 import type { FiberLike } from './fiber';
 import { buildViewTree } from './walk';
@@ -267,13 +268,13 @@ function onDataRequest(event: DataRequestEvent): void {
       }
     }
   } catch (error) {
-    console.warn('[Bugsee] could not answer a view-hierarchy data request', error);
+    console.warn('[Bugsee] could not answer a view-hierarchy data request', errorName(error));
     payload = null;
   }
   try {
     NativeBugsee.replyDataRequest(event.requestId, payload);
   } catch (error) {
-    console.warn('[Bugsee] could not deliver a view-hierarchy reply', error);
+    console.warn('[Bugsee] could not deliver a view-hierarchy reply', errorName(error));
   }
 }
 

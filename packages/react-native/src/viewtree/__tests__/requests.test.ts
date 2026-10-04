@@ -223,7 +223,7 @@ describe('a throwing walk', () => {
 
     expect(native.replyDataRequest).toHaveBeenCalledWith('dr-5', null);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[Bugsee]'), expect.any(Error));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[Bugsee]'), 'Error');
   });
 
   // "Once" means once per FAILING request, not once ever for the process: a
@@ -263,7 +263,7 @@ describe('a throwing replyDataRequest', () => {
     expect(native.replyDataRequest).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('deliver a view-hierarchy reply'),
-      expect.any(Error),
+      'Error',
     );
   });
 });

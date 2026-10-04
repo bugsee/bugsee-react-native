@@ -1,6 +1,7 @@
 import NativeBugsee from '../NativeBugsee';
 import { BugseeReportProxy } from './BugseeReport';
 import type { BugseeReportHandler } from './types';
+import { errorName } from '../errorName';
 
 interface ReportHandlerRequestEvent {
   handleId: string;
@@ -78,7 +79,7 @@ function onReportHandlerRequest(event: ReportHandlerRequestEvent): void {
     .catch((error: unknown) => {
       // Never an unhandled rejection: a handler's own bug must not become
       // one, on top of whatever else it broke.
-      console.error('[Bugsee] report handler threw', error);
+      console.error('[Bugsee] report handler threw', errorName(error));
     })
     .finally(() => {
       clearTimeout(deadlineTimer);
@@ -89,6 +90,6 @@ function onReportHandlerRequest(event: ReportHandlerRequestEvent): void {
       // The native call itself threw (a torn-down bridge, say). Native
       // completes the handle at its deadline or on detach regardless; this
       // only keeps the failure from becoming an unhandled rejection.
-      console.error('[Bugsee] could not complete the report handler', error);
+      console.error('[Bugsee] could not complete the report handler', errorName(error));
     });
 }

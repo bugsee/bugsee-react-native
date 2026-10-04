@@ -1,3 +1,5 @@
+import { errorName } from '../errorName';
+
 /**
  * How often every mounted `<BugseeSecure>` re-measures itself.
  *
@@ -24,7 +26,7 @@ function tick(): void {
     try {
       measure();
     } catch (error) {
-      console.warn('[Bugsee] a secure-region measurer threw', error);
+      console.warn('[Bugsee] a secure-region measurer threw', errorName(error));
     }
   }
 }

@@ -179,8 +179,8 @@ class Bugsee {
   ): void {
     if (!Number.isInteger(display) || display < 0) {
       throw new RangeError(
-        `display must be a non-negative integer, got ${String(display)}; ` +
-          `a fractional index reaches the native cast and silently addresses display 0`,
+        'display must be a non-negative integer; ' +
+          'a fractional index reaches the native cast and silently addresses display 0',
       );
     }
     setOwnerRectangles(`manual:${display}`, display, rectangles);

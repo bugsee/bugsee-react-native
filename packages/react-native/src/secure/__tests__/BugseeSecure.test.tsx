@@ -198,7 +198,7 @@ describe('<BugseeSecure>', () => {
     expect(native.setSecureRectangles).not.toHaveBeenCalled();
     // Logged once, not every 100 ms.
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith('[Bugsee] BugseeSecure could not measure', failure);
+    expect(warn).toHaveBeenCalledWith('[Bugsee] BugseeSecure could not measure', failure.name);
 
     measureInWindow.mockImplementation(measuresAt(10, 70, 30, 40));
     tick();

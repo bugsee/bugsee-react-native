@@ -34,9 +34,10 @@ export function addBreadcrumb(crumb: Breadcrumb): void {
   const message = requireString('message', crumb.message);
   const type = requireString('type', crumb.type);
   if (!isBreadcrumbLevel(crumb.level)) {
-    const got = typeof crumb.level === 'string' ? crumb.level : typeof crumb.level;
+    // The type only: a level name the app made up is still the app's text.
+    const kind = typeof crumb.level;
     throw new TypeError(
-      `Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got ${got}`,
+      `Bugsee.addBreadcrumb level must be one of debug, info, warning, error, fatal, got ${kind}`,
     );
   }
   const level = crumb.level;

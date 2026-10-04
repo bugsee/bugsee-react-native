@@ -250,7 +250,7 @@ describe('ErrorBoundary', () => {
 
     expect(warn).toHaveBeenCalledWith(
       '[Bugsee] ErrorBoundary options rejected; reporting without options',
-      expect.any(RangeError),
+      'RangeError',
     );
     expect(markReported).toHaveBeenCalledWith(error);
     expect(reportHandled).toHaveBeenCalledWith(

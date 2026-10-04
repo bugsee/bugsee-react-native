@@ -118,9 +118,8 @@ function write(name: ReportAppearanceName, color: string): void {
   }
   const parsed = parseReportColor(color);
   if (parsed === undefined) {
-    throw new RangeError(
-      `Bugsee appearance ${name} requires a hex color, got ${JSON.stringify(color)}`,
-    );
+    // The key only: the rejected text is the app's.
+    throw new RangeError(`Bugsee appearance ${name} requires a hex color`);
   }
   const key = bindingKey(name, Platform.OS);
   if (key === undefined) {

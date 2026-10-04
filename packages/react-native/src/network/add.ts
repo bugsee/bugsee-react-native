@@ -82,9 +82,7 @@ export function addNetworkEvent(event: AddedNetworkEvent): void {
   }
   const stageName = event.stage === undefined ? 'completed' : event.stage;
   if (typeof stageName !== 'string' || STAGE_WIRE[stageName] === undefined) {
-    throw new TypeError(
-      `Bugsee.addNetworkEvent stage must name a network stage, got ${String(stageName)}`,
-    );
+    throw new TypeError('Bugsee.addNetworkEvent stage must name a network stage');
   }
   const wire: Record<string, unknown> = {
     url: event.url,
@@ -106,9 +104,7 @@ export function addNetworkEvent(event: AddedNetworkEvent): void {
     }
     if (key === 'responseCode') {
       if (typeof value !== 'number' || !Number.isFinite(value)) {
-        throw new TypeError(
-          `Bugsee.addNetworkEvent responseCode must be a finite number, got ${String(value)}`,
-        );
+        throw new TypeError('Bugsee.addNetworkEvent responseCode must be a finite number');
       }
       wire.responseCode = value;
       continue;
