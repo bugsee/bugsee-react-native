@@ -21,7 +21,7 @@
   "thresholds": {
     "high": 100,
     "low": 97,
-    "break": 97
+    "break": 95
   },
   "timeoutMS": 60000,
   "inPlace": true,

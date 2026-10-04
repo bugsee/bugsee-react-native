@@ -13,6 +13,9 @@ const {
   readDebugId,
   retargetSourceMappingUrl,
 } = require('../hermes-sourcemaps');
+const { useScratchCwd } = require('./fixtures/scratch-cwd');
+
+useScratchCwd();
 
 function writeJson(file, value) {
   fs.writeFileSync(file, JSON.stringify(value));

@@ -6,6 +6,9 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { readLog, startStub, stopStub } = require('./fixtures/stub');
+const { useScratchCwd } = require('./fixtures/scratch-cwd');
+
+useScratchCwd();
 
 const HOOK = path.join(__dirname, '..', 'bugsee-xcode.sh');
 const TOKEN = '3f2a9c1e-0000-4abc-8def-5ca1ab1e0001';
