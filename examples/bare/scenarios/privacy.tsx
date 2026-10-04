@@ -39,6 +39,7 @@ import {
   Animated,
   Dimensions,
   Easing,
+  Modal,
   PixelRatio,
   ScrollView,
   StyleSheet,
@@ -52,6 +53,7 @@ export const PRIVACY_SCENARIOS = [
   'blackout',
   'blackout-prelaunch',
   'secure-component',
+  'secure-modal',
   'view-tree',
 ] as const;
 
@@ -69,6 +71,8 @@ export const HOLD_MS = 8_000;
 /** The accessibility labels the tests find the probes by (uiautomator). */
 export const SECURE_COMPONENT_LABEL = 'bugsee-secure-component';
 export const SECURE_WITNESS_LABEL = 'bugsee-secure-witness';
+export const SECURE_MODAL_MAIN_LABEL = 'bugsee-secure-modal-main';
+export const SECURE_MODAL_SHEET_LABEL = 'bugsee-secure-modal-sheet';
 export const VH_OPEN_LABEL = 'vh-open-probe';
 
 function mark(message: string): void {
@@ -309,6 +313,68 @@ function SecureComponentProbe({ nonce, setMoving }: ProbeProps) {
   );
 }
 
+const MODAL_MAIN_RECT = { position: 'absolute', top: 120, left: 40, width: 160, height: 80 } as const;
+/** Same absolute box for the secure view and its measure twin (must overlap). */
+const MODAL_SHEET_RECT = { position: 'absolute', top: 80, left: 80, width: 200, height: 100 } as const;
+
+/**
+ * secure-modal: a white `<BugseeSecure>` on the activity root and another
+ * inside a `<Modal>` (Android Dialog / iOS presented VC). Both must land in
+ * display space for their own surface — the sheet must not be translated by
+ * the activity root's origin alone.
+ */
+function SecureModalProbe({ nonce, setMoving }: ProbeProps) {
+  const mainTwin = useRef<View>(null);
+  const sheetTwin = useRef<View>(null);
+
+  useLayoutEffect(() => {
+    mark(`secure-modal mounted t=${Date.now()} nonce=${nonce}`);
+  }, [nonce]);
+
+  useEffect(() => {
+    (async () => {
+      await sleep(2000);
+      const main = await measure(mainTwin.current);
+      const sheet = await measure(sheetTwin.current);
+      mark(
+        `secure-modal rect phase=both main=${main.x},${main.y},${main.w},${main.h} ` +
+          `sheet=${sheet.x},${sheet.y},${sheet.w},${sheet.h} ${screenLine()} nonce=${nonce}`,
+      );
+      await sleep(1500);
+      Bugsee.upload(`secure-modal-${nonce}`, '');
+      mark(`secure-modal uploaded t=${Date.now()} nonce=${nonce}`);
+      await sleep(SETTLE_MS);
+      setMoving(false);
+      mark(`secure-modal still t=${Date.now()} nonce=${nonce}`);
+      await sleep(HOLD_MS);
+      setMoving(true);
+    })().catch((error: unknown) => {
+      mark(`secure-modal threw ${String(error)} nonce=${nonce}`);
+    });
+  }, [nonce, setMoving]);
+
+  return (
+    <>
+      <BugseeSecure
+        accessible
+        accessibilityLabel={SECURE_MODAL_MAIN_LABEL}
+        style={{ ...MODAL_MAIN_RECT, backgroundColor: '#FFFFFF' }}
+      />
+      <View ref={mainTwin} collapsable={false} pointerEvents="none" style={MODAL_MAIN_RECT} />
+      <Modal visible transparent animationType="none">
+        <View style={styles.modalSheet} accessible accessibilityLabel="bugsee-secure-modal-backdrop">
+          <BugseeSecure
+            accessible
+            accessibilityLabel={SECURE_MODAL_SHEET_LABEL}
+            style={{ ...MODAL_SHEET_RECT, backgroundColor: '#FFFFFF' }}
+          />
+          <View ref={sheetTwin} collapsable={false} pointerEvents="none" style={MODAL_SHEET_RECT} />
+        </View>
+      </Modal>
+    </>
+  );
+}
+
 /**
  * view-tree: what the managed tree must describe, and what it must never
  * carry (the text, the typed value, and every id under the secure boundary).
@@ -387,6 +453,9 @@ export function PrivacyStage({
       {launched && scenario === 'secure-component' && (
         <SecureComponentProbe nonce={nonce} setMoving={setMoving} />
       )}
+      {launched && scenario === 'secure-modal' && (
+        <SecureModalProbe nonce={nonce} setMoving={setMoving} />
+      )}
       {launched && scenario === 'view-tree' && (
         <BugseeE2EViewTreeProbe nonce={nonce} setMoving={setMoving} />
       )}
@@ -399,4 +468,12 @@ const styles = StyleSheet.create({
   stage: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#FFFFFF' },
   square: { position: 'absolute', left: 0, width: SQUARE, height: SQUARE, backgroundColor: '#000000' },
   witness: { position: 'absolute', left: 20, width: 80, height: 80, backgroundColor: '#000000' },
+  modalSheet: {
+    flex: 1,
+    marginTop: 200,
+    marginHorizontal: 24,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+  },
 });
