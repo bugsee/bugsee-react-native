@@ -2,6 +2,7 @@ package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
 import android.graphics.Point;
@@ -58,6 +59,7 @@ public class ReactRootOriginTrackerTest {
         int[] location = { 0, 0 };
         Point viewport = new Point();
         int displayId;
+        int surfaceKey = SecureRectangleStore.MAIN_SURFACE;
         /** Simulates the weakly-held view having been collected mid-refresh. */
         boolean viewGone;
         int listenerRegistrations;
@@ -66,6 +68,11 @@ public class ReactRootOriginTrackerTest {
         @Override
         public boolean isAttachedToWindow() {
             return attached;
+        }
+
+        @Override
+        public int surfaceKey() {
+            return surfaceKey;
         }
 
         @Override
@@ -327,6 +334,90 @@ public class ReactRootOriginTrackerTest {
                 new ReactRootOriginTracker(new FakeLifecycleSource(), finder, new SecureRectangleStore());
 
         assertNull(tracker.currentOrigin());
+    }
+
+    /**
+     * watchNow must keep the LayoutListenerToken it receives and release it
+     * when the handle leaves watched (detach, or a detached-root refresh).
+     * Dropping the token leaks the global-layout listener on the dialog root.
+     */
+    @Test
+    public void detachingAWatchedSurfaceReleasesItsLayoutToken() {
+        final FakeRoot modal = new FakeRoot();
+        modal.surfaceKey = 42;
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), new SecureRectangleStore());
+        tracker.watchNow(modal);
+        final FakeToken token = modal.lastToken;
+        assertEquals(1, modal.listenerRegistrations);
+        assertNotNull(token);
+
+        tracker.detach();
+
+        assertEquals("watchNow must retain the token so detach can release it",
+                1, token.releaseCalls);
+    }
+
+    @Test
+    public void aDetachedWatchedSurfaceIsReleasedOnRefresh() {
+        final FakeRoot modal = new FakeRoot();
+        modal.surfaceKey = 42;
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), new SecureRectangleStore());
+        tracker.watchNow(modal);
+        final FakeToken token = modal.lastToken;
+
+        modal.attached = false;
+        tracker.refresh();
+
+        assertEquals(1, token.releaseCalls);
+    }
+
+    /**
+     * A {@code <Modal>}'s DialogRootViewGroup is a second surface. Its
+     * measureInWindow values are relative to that root, so the activity
+     * origin must not translate them, and its own origin must.
+     */
+    @Test
+    public void aWatchedSurfacesOriginMovesOnlyItsRectangles() {
+        final FakeRoot main = new FakeRoot();
+        main.location = new int[] { 0, 96 };
+        main.viewport.x = 0;
+        main.viewport.y = 0;
+        main.displayId = 0;
+        main.surfaceKey = SecureRectangleStore.MAIN_SURFACE;
+        final FakeRoot modal = new FakeRoot();
+        modal.location = new int[] { 40, 200 };
+        modal.viewport.x = 0;
+        modal.viewport.y = 0;
+        modal.displayId = 0;
+        modal.surfaceKey = 42;
+        final QueueRootFinder finder = new QueueRootFinder();
+        finder.queue.add(main);
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(0, SecureRectangleStore.MAIN_SURFACE, new int[] { 10, 20, 30, 40 });
+        store.set(0, 42, new int[] { 100, 50, 180, 90 });
+
+        final ReactRootOriginTracker tracker =
+                new ReactRootOriginTracker(new FakeLifecycleSource(), finder, store);
+        tracker.watchNow(modal);
+        tracker.refresh();
+
+        final int[] packed = store.snapshot(0);
+        assertEquals(2, packed[1]);
+        // Main origin (0, 96): (10,20)-(30,40) → (10,116)-(30,136).
+        // Modal origin (40, 200): (100,50)-(180,90) → (140,250)-(220,290).
+        assertArrayEquals(
+                new int[] { 10, 116, 30, 136, 140, 250, 220, 290 },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+
+        // Moving only the activity root must not drag the modal rectangle.
+        main.location = new int[] { 0, 200 };
+        tracker.refresh();
+        final int[] afterMainMove = store.snapshot(0);
+        assertArrayEquals(
+                new int[] { 10, 220, 30, 240, 140, 250, 220, 290 },
+                java.util.Arrays.copyOfRange(afterMainMove, 2, afterMainMove.length));
     }
 
     @Test

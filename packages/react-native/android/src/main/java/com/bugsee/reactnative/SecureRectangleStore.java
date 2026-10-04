@@ -7,6 +7,7 @@ import androidx.annotation.Nullable;
 
 import java.util.Arrays;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -29,6 +30,18 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>The version is kept per display because the SDK's freshness comparison is
  * per display: a change on one screen must not invalidate another's.
+ *
+ * <h2>Surfaces</h2>
+ *
+ * <p>JS measures with {@code measureInWindow}, which Fabric makes relative to
+ * the measured node's nearest {@code RootNodeKind} ancestor
+ * ({@code LayoutableShadowNode.cpp} stops the ancestor walk there;
+ * {@code ModalHostViewShadowNode} sets that trait). The activity React root
+ * and a {@code <Modal>}'s {@code DialogRootViewGroup} are different surfaces:
+ * each rectangle is stored under the surface it was measured in, and served
+ * translated by <em>that</em> surface's display origin
+ * ({@code locationOnScreen - viewportOffset} of that root). A single origin
+ * for the whole display cannot serve both.
  *
  * <h2>Threading</h2>
  *
@@ -58,24 +71,28 @@ final class SecureRectangleStore {
 
     private static final int[] NO_COORDINATES = new int[0];
 
-    /** One immutable published set. Replaced wholesale, never edited. */
-    private static final class Snapshot {
-        final int version;
-        /** As JS published them: relative to React Native's viewport offset. */
+    /**
+     * The activity React root's surface key. Legacy {@link #set}/{@link
+     * #setOrigin} writers that do not name a surface land here; a {@code
+     * <Modal>}'s {@code DialogRootViewGroup} uses a different key.
+     */
+    static final int MAIN_SURFACE = 0;
+
+    /** One surface's raw measurements and the origin that places them. */
+    private static final class Lane {
+        /** As JS published them: relative to this surface's viewport offset. */
         final int[] raw;
         final int originX;
         final int originY;
-        /** {@link #raw} moved to the display origin: what the SDK is served. */
+        /** {@link #raw} moved by this surface's origin: what the SDK is served. */
         final int[] coordinates;
 
-        Snapshot(final int version, @NonNull final int[] raw,
-                final int originX, final int originY) {
-            this(version, raw, originX, originY, translate(raw, originX, originY));
+        Lane(@NonNull final int[] raw, final int originX, final int originY) {
+            this(raw, originX, originY, translate(raw, originX, originY));
         }
 
-        private Snapshot(final int version, @NonNull final int[] raw,
-                final int originX, final int originY, @NonNull final int[] coordinates) {
-            this.version = version;
+        private Lane(@NonNull final int[] raw, final int originX, final int originY,
+                @NonNull final int[] coordinates) {
             this.raw = raw;
             this.originX = originX;
             this.originY = originY;
@@ -83,13 +100,57 @@ final class SecureRectangleStore {
         }
 
         @NonNull
+        Lane withRaw(@NonNull final int[] newRaw) {
+            return new Lane(newRaw, originX, originY);
+        }
+
+        @NonNull
+        Lane withOrigin(final int newOriginX, final int newOriginY) {
+            return new Lane(raw, newOriginX, newOriginY);
+        }
+    }
+
+    /** One immutable published set for a display. Replaced wholesale. */
+    private static final class Snapshot {
+        final int version;
+        /** Surface key → lane. TreeMap so the served order is stable. */
+        final TreeMap<Integer, Lane> lanes;
+        /** Every lane's translated coordinates, concatenated in surface-key order. */
+        final int[] coordinates;
+
+        Snapshot(final int version, @NonNull final TreeMap<Integer, Lane> lanes) {
+            this.version = version;
+            // Defensive copy: callers must not retain a mutable reference.
+            this.lanes = new TreeMap<>(lanes);
+            this.coordinates = merge(this.lanes);
+        }
+
+        @NonNull
         Snapshot withVersion(final int newVersion) {
-            return new Snapshot(newVersion, raw, originX, originY, coordinates);
+            return new Snapshot(newVersion, lanes);
+        }
+
+        @NonNull
+        private static int[] merge(@NonNull final TreeMap<Integer, Lane> lanes) {
+            int total = 0;
+            for (final Lane lane : lanes.values()) {
+                total += lane.coordinates.length;
+            }
+            if (total == 0) {
+                return NO_COORDINATES;
+            }
+            final int[] merged = new int[total];
+            int at = 0;
+            for (final Lane lane : lanes.values()) {
+                System.arraycopy(lane.coordinates, 0, merged, at, lane.coordinates.length);
+                at += lane.coordinates.length;
+            }
+            return merged;
         }
     }
 
     /** What a display serves before anything is secured or located. */
-    private static final Snapshot EMPTY = new Snapshot(INITIAL_VERSION, NO_COORDINATES, 0, 0);
+    private static final Snapshot EMPTY = new Snapshot(INITIAL_VERSION, new TreeMap<>());
 
     /**
      * The process-wide set of secured regions.
@@ -111,13 +172,23 @@ final class SecureRectangleStore {
     private final Map<Integer, Snapshot> byDisplay = new ConcurrentHashMap<>();
 
     /**
-     * Publishes {@code coordinates} as the secure set for {@code display}, as a
-     * flat list of four-int rectangles.
+     * Publishes {@code coordinates} as the secure set for {@code display}'s
+     * main surface, as a flat list of four-int rectangles. Other surfaces on
+     * the same display are left alone.
      *
-     * <p>The version moves only when the set actually differs, so an app that
-     * re-publishes an unchanged layout on every render costs the SDK nothing.
+     * <p>The version moves only when the served set actually differs, so an
+     * app that re-publishes an unchanged layout on every render costs the SDK
+     * nothing.
      */
     void set(final int display, @Nullable final int[] coordinates) {
+        set(display, MAIN_SURFACE, coordinates);
+    }
+
+    /**
+     * Publishes {@code coordinates} for one surface on {@code display}. Other
+     * surfaces keep their rectangles and origins.
+     */
+    void set(final int display, final int surface, @Nullable final int[] coordinates) {
         if (coordinates == null) {
             throw new IllegalArgumentException(
                     "secure rectangles cannot be null; pass an empty array to clear them");
@@ -131,7 +202,7 @@ final class SecureRectangleStore {
         // Copy on the way in as well as out: the caller keeps its array and a
         // later write through it would edit a snapshot the SDK is reading.
         final int[] raw = coordinates.clone();
-        update(display, previous -> new Snapshot(0, raw, previous.originX, previous.originY));
+        update(display, previous -> withLane(previous, surface, lane -> lane.withRaw(raw)));
     }
 
     /**
@@ -143,8 +214,12 @@ final class SecureRectangleStore {
      * @return whether {@code coordinates} was published
      */
     boolean publishOrLog(final int display, @Nullable final int[] coordinates) {
+        return publishOrLog(display, MAIN_SURFACE, coordinates);
+    }
+
+    boolean publishOrLog(final int display, final int surface, @Nullable final int[] coordinates) {
         try {
-            set(display, coordinates);
+            set(display, surface, coordinates);
             return true;
         } catch (IllegalArgumentException e) {
             Log.e(TAG, "setSecureRectangles rejected; the previous set stays published: "
@@ -154,8 +229,9 @@ final class SecureRectangleStore {
     }
 
     /**
-     * Records where the React root's viewport origin sits on {@code display},
-     * in display pixels, and serves every rectangle moved by it.
+     * Records where the main React root's viewport origin sits on {@code
+     * display}, in display pixels, and serves that surface's rectangles moved
+     * by it. Other surfaces keep their own origins.
      *
      * <p>JS measures with {@code measureInWindow}, which React Native makes
      * relative to the root's viewport offset
@@ -171,13 +247,23 @@ final class SecureRectangleStore {
      * for integer {@code k}.
      */
     void setOrigin(final int display, final int originX, final int originY) {
-        update(display, previous -> new Snapshot(0, previous.raw, originX, originY));
+        setOrigin(display, MAIN_SURFACE, originX, originY);
     }
 
     /**
-     * {@code locationOnScreen} of the React root less React Native's viewport
+     * Records where one surface's viewport origin sits on {@code display}.
+     * Only that surface's rectangles move; a {@code <Modal>} and the activity
+     * root must not share one origin.
+     */
+    void setOrigin(final int display, final int surface, final int originX, final int originY) {
+        update(display, previous -> withLane(previous, surface,
+                lane -> lane.withOrigin(originX, originY)));
+    }
+
+    /**
+     * {@code locationOnScreen} of a React root less React Native's viewport
      * offset for it: the display-pixel position of the origin
-     * {@code measureInWindow} measures from.
+     * {@code measureInWindow} measures from on that surface.
      */
     @NonNull
     static int[] displayOrigin(@NonNull final int[] locationOnScreen,
@@ -185,10 +271,25 @@ final class SecureRectangleStore {
         return new int[] { locationOnScreen[0] - viewportX, locationOnScreen[1] - viewportY };
     }
 
+    private interface LaneChange {
+        @NonNull
+        Lane apply(@NonNull Lane previous);
+    }
+
     private interface Change {
         /** The next state, built from the current one; its version is ignored. */
         @NonNull
         Snapshot apply(@NonNull Snapshot previous);
+    }
+
+    @NonNull
+    private static Snapshot withLane(@NonNull final Snapshot previous, final int surface,
+            @NonNull final LaneChange change) {
+        final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
+        final Lane prior = nextLanes.get(surface);
+        final Lane base = prior == null ? new Lane(NO_COORDINATES, 0, 0) : prior;
+        nextLanes.put(surface, change.apply(base));
+        return new Snapshot(0, nextLanes);
     }
 
     /**

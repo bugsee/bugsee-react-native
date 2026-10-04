@@ -276,6 +276,60 @@ public class SecureRectangleStoreTest {
                 SecureRectangleStore.displayOrigin(new int[] { 80, 1296 }, 0, 96));
     }
 
+    // ---- Per-surface origins (Modal / DialogRootViewGroup) --------------
+    //
+    // Fabric measureInWindow stops at the nearest RootNodeKind ancestor
+    // (ModalHostViewShadowNode sets that trait), so a rectangle measured
+    // inside a <Modal> is already relative to THAT surface's root -- not
+    // the activity React root. One setOrigin for the whole display cannot
+    // serve both: the activity origin must not move the modal's rectangle,
+    // and the modal surface's own origin must.
+
+    private static final int MAIN_SURFACE = 0;
+    private static final int MODAL_SURFACE = 42;
+
+    @Test
+    public void theMainOriginDoesNotMoveAnotherSurfacesRectangle() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, MAIN_SURFACE, new int[] { 10, 20, 30, 40 });
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
+        store.setOrigin(DISPLAY, MAIN_SURFACE, 0, 96);
+        store.setOrigin(DISPLAY, MODAL_SURFACE, 0, 0);
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertEquals(2, packed[1]);
+        assertArrayEquals(
+                new int[] { 10, 116, 30, 136, 100, 200, 150, 250 },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
+    @Test
+    public void anotherSurfacesOwnOriginMovesOnlyItsRectangle() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, MAIN_SURFACE, new int[] { 10, 20, 30, 40 });
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
+        store.setOrigin(DISPLAY, MAIN_SURFACE, 0, 96);
+        store.setOrigin(DISPLAY, MODAL_SURFACE, 7, 40);
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertEquals(2, packed[1]);
+        assertArrayEquals(
+                new int[] { 10, 116, 30, 136, 107, 240, 157, 290 },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
+    /** Existing single-argument set/setOrigin keep meaning the main surface. */
+    @Test
+    public void theLegacySetAndSetOriginTargetTheMainSurface() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+        store.setOrigin(DISPLAY, 0, 96);
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertArrayEquals(new int[] { 10, 116, 30, 136 },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
     // ---- The TurboModule's entry point ----------------------------------
     //
     // setSecureRectangles is a void TurboModule method: an exception thrown
