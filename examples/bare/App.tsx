@@ -405,19 +405,11 @@ export default function App() {
         console.log(`BUGSEE_E2E launch() resolved ${String(launched)}`);
 
         // Wait until the poll has seen Launched before relaunching. Firing
-        // relaunch as soon as launch() resolves races the status poll, and
-        // the e2e matches its steps in order.
+        // relaunch as soon as launch() resolves races the status poll.
+        // The status=2 marker itself is not logged here: a console.log in
+        // this turn does not reach the CI simulator pty. It is the first
+        // line of the burst printed after relaunch() settles.
         await loggedLaunched;
-        // The poll logs `status=2` inside the setState updater, on the
-        // getStatus bridge callback. On the CI simulator that line reaches
-        // the pty after this continuation: relaunch, the option lines and
-        // `post-relaunch status=2` were already in the log, and the ordered
-        // e2e matched the late line and missed every step in front of it.
-        // This is the marker the test matches. It is printed from the
-        // continuation whose later lines the pty keeps in order.
-        console.log(
-          `BUGSEE_E2E status=${Status.Launched} (${STATUS_NAMES[Status.Launched]})`,
-        );
 
         if (reportHandler !== undefined) {
           runReportHandlerScenario(reportHandler, choice.nonce);
@@ -532,15 +524,18 @@ export default function App() {
         // accepted by launch(). Reading it back through getLaunchOptions is
         // the only thing that shows the difference.
         //
-        // The lines are held until relaunch() settles, then printed after
-        // its own line. On the CI simulator the console.log in this
-        // continuation, and the Debug NSLog inside getLaunchOptions, are
-        // both absent from the pty while this function keeps going and the
-        // relaunch continuation is present. The strings are taken before
+        // The lines are held until relaunch() settles, then printed in the
+        // burst the CI pty keeps. On the CI simulator the console.log in
+        // this continuation, and the Debug NSLog inside getLaunchOptions,
+        // are both absent from the pty while this function keeps going and
+        // the relaunch continuation is present. The strings are taken before
         // relaunch, so they are still the options getLaunchOptions returned.
-        // The relaunch line comes first: launch.test.ts waits up to 45s for
-        // it and only then for these lines, so a hung started: callback
-        // fails as relaunch rather than as a missing duration.
+        // The poll's own status=2 is logged inside the getStatus updater and
+        // reaches that pty after this burst, so the ordered e2e matches it
+        // too late and misses relaunch. The same marker is printed first
+        // here, then the relaunch line, then these. launch.test.ts waits up
+        // to 45s for relaunch and only then for these lines, so a hung
+        // started: callback fails as relaunch when the poll line did arrive.
         let optionLines: string[];
         try {
           const effective = await Bugsee.getLaunchOptions();
@@ -584,6 +579,11 @@ export default function App() {
         } catch (relaunchCause) {
           relaunchLine = `BUGSEE_E2E relaunch() settled rejected=${String(relaunchCause)}`;
         }
+        // First line of the burst the pty keeps. The poll's own status=2
+        // arrives after this burst; matching that late line misses relaunch.
+        console.log(
+          `BUGSEE_E2E status=${Status.Launched} (${STATUS_NAMES[Status.Launched]})`,
+        );
         console.log(relaunchLine);
         for (const line of optionLines) {
           console.log(line);
