@@ -442,6 +442,7 @@ describe('scanTs', () => {
   allowed('typeof in an interpolation', 'throw new TypeError(`got ${typeof value}`);');
   allowed('describeType in an interpolation', 'throw new TypeError(`got ${describeType(value)}`);');
   allowed('errorName for console', "console.warn('[Bugsee] threw', errorName(error));");
+  allowed('exceptionOptionsMessage for console', "console.warn('[Bugsee] options rejected', exceptionOptionsMessage(cause));");
   allowed('identifier names', 'throw new TypeError(`Bugsee.${method} ${name} ${key} ${field} ${kind} ${keyPath}[${i}] ${index} ${platform}`);');
   allowed('constants and an enum member', 'throw new BugseeReportError(ReportErrorCode.BadArgument, `at most ${MAX_LENGTH}`);');
   allowed('no arguments, and a trailing comma', "throw new Error();\nthrow new TypeError(\n  'fixed',\n);");

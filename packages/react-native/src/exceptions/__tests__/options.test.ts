@@ -1,5 +1,6 @@
 import {
   encodeExceptionOptions,
+  exceptionOptionsMessage,
   EXCEPTION_DOMAIN_MAX_LENGTH,
 } from '../options';
 
@@ -112,3 +113,24 @@ describe('encodeExceptionOptions', () => {
     }
   });
 });
+
+describe('exceptionOptionsMessage', () => {
+  it("is the message of an error encodeExceptionOptions threw: the package's own, field names only", () => {
+    for (const bad of [{ domain: '' }, { domain: 3 }, { nope: 1 }, { labels: [1] }, 'x']) {
+      let thrown: unknown;
+      try {
+        encodeExceptionOptions(bad as never);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect(exceptionOptionsMessage(thrown)).toBe((thrown as Error).message);
+    }
+  });
+
+  it('is only the class name of anything else, even an identical-looking error', () => {
+    expect(exceptionOptionsMessage(new RangeError('ExceptionOptions.domain must be non-empty'))).toBe('RangeError');
+    expect(exceptionOptionsMessage('s3cret')).toBe('string');
+  });
+});
+

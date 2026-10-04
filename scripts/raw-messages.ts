@@ -77,7 +77,9 @@
  * TypeScript (`.ts`, `.tsx`, the packages' `src`): every argument of
  * `new XError(...)`, `badArgument(...)`, `reject(...)` and `console.x(...)`
  * may only concatenate literals, constants, `Enum.Member`, `typeof X`,
- * `describeType(X)`, `errorName(X)` and the identifier-carrying names in
+ * `describeType(X)`, `errorName(X)`, `exceptionOptionsMessage(X)` (the
+ * package's own options-validation text, matched by error identity) and the
+ * identifier-carrying names in
  * `TS_IDENTIFIER_NAMES`, including inside `${...}`. `toReportError` and
  * `toAttributeError` are exempt: they forward a native rejection's message,
  * which the native rules above keep value-free.
@@ -361,7 +363,7 @@ const CONSTANT = /^(?:[A-Z][A-Z0-9_]*|k[A-Z]\w*|BGSRN[A-Z]\w*)$/;
 const QUALIFIED_CONSTANT = /^[A-Z]\w*\.[A-Z]\w*$/;
 const CAST = /^\((?:unsigned\s+)?\w+\)\s*/;
 const CLASS_NAME = /^\w+\??\.getClass\(\)\.get(?:Simple)?Name\(\)$/;
-const TS_TYPE_NAME = /^(?:typeof\s+[\w.]+|(?:describeType|errorName)\([\w.]*\))$/;
+const TS_TYPE_NAME = /^(?:typeof\s+[\w.]+|(?:describeType|errorName|exceptionOptionsMessage)\([\w.]*\))$/;
 const OBJC_FORMAT = /^\[NSString\s+stringWithFormat:([\s\S]*)\]$/;
 
 /** The code of every `${...}` interpolation in a masked template literal. */
