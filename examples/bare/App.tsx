@@ -404,11 +404,20 @@ export default function App() {
         const launched = await Bugsee.launch(token, launchOptions(endpoint, choice.scenario));
         console.log(`BUGSEE_E2E launch() resolved ${String(launched)}`);
 
-        // Wait for Launched to be LOGGED before relaunching, so the output
-        // order is deterministic: status=2, then relaunch, then status=2
-        // again. Firing relaunch as soon as launch() resolves races the
-        // status poll, and the e2e matches its steps in order.
+        // Wait until the poll has seen Launched before relaunching. Firing
+        // relaunch as soon as launch() resolves races the status poll, and
+        // the e2e matches its steps in order.
         await loggedLaunched;
+        // The poll logs `status=2` inside the setState updater, on the
+        // getStatus bridge callback. On the CI simulator that line reaches
+        // the pty after this continuation: relaunch, the option lines and
+        // `post-relaunch status=2` were already in the log, and the ordered
+        // e2e matched the late line and missed every step in front of it.
+        // This is the marker the test matches. It is printed from the
+        // continuation whose later lines the pty keeps in order.
+        console.log(
+          `BUGSEE_E2E status=${Status.Launched} (${STATUS_NAMES[Status.Launched]})`,
+        );
 
         if (reportHandler !== undefined) {
           runReportHandlerScenario(reportHandler, choice.nonce);
