@@ -86,7 +86,7 @@
 - (void)testMalformedOptionsAreTheBridgesOwnMessage {
   NSError *error = nil;
   XCTAssertNil([BGSRNExceptions loggingOptionsFromJSON:@"{\"domain\": \"s3cret" error:&error]);
-  XCTAssertEqualObjects(error.localizedDescription, @"malformed JSON");
+  XCTAssertEqualObjects(BGSRNErrorMessage(error), @"exception options are not a JSON object: malformed JSON");
 }
 
 @end

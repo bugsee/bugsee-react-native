@@ -43,7 +43,9 @@ const O = {
   formatted: (name: string): string => `NSError/NSException \`${name}\` formatted into a log, format or reject call`,
   thirdArgument: "reject's third argument is not nil (RN serialises the NSError's userInfo into JS)",
   rejectArg: 'a reject argument other than a literal, an identifier or an audited message',
-  fail: 'an NSError message built from something other than literals, constants and key names',
+  opaqueUserInfo: 'an NSError built with a userInfo the scanner cannot see (nil or a dictionary literal only)',
+  errorDescription: 'an NSError description that is not a string literal or a named constant',
+  identifier: 'a BGSRNErrorIdentifierKey entry that is not the identifier `key`',
 };
 
 const T = {
@@ -303,8 +305,18 @@ describe('scanObjC', () => {
   flagged('an NSError formatted into initWithFormat:', 'NSError *error = nil;\n[[NSString alloc] initWithFormat:@"%@", error];', [O.formatted('error')]);
   flagged('a reject message that is a value', 'reject(@"C", value, nil);', [O.rejectArg]);
   flagged('a reject message formatted from a value', 'reject(code, [NSString stringWithFormat:@"got %@", value], nil);', [O.rejectArg]);
-  flagged('a Fail message formatted from a value', 'Fail(error, BGSRNReportErrorBadArgument, [NSString stringWithFormat:@"got %@", severity]);', [O.fail]);
-  flagged('a Fail message from a variable', 'Fail(error, message);', [O.fail]);
+  // Review I2: an own-domain error's description is handed on by
+  // BGSRNErrorMessage, so every construction is checked, however written.
+  flagged('a direct construction with a value in the description', 'if (out) *out = [NSError errorWithDomain:BGSRNReportErrorDomain code:1\n    userInfo:@{NSLocalizedDescriptionKey : value}];', [O.errorDescription]);
+  flagged('a variable description', 'NSString *message = Describe(x);\nNSError *e = [NSError errorWithDomain:BGSRNJSONErrorDomain code:1 userInfo:@{NSLocalizedDescriptionKey : message}];', [O.errorDescription]);
+  flagged('a formatted description', '[NSError errorWithDomain:BGSRNReportErrorDomain code:1 userInfo:@{NSLocalizedDescriptionKey : [NSString stringWithFormat:@"got %@", severity]}];', [O.errorDescription]);
+  flagged('a description concatenated after a literal', '[NSError errorWithDomain:D code:1 userInfo:@{NSLocalizedDescriptionKey : @"bad " @"x", NSLocalizedDescriptionKey : name}];', [O.errorDescription]);
+  flagged('a userInfo built elsewhere', 'NSError *e = [NSError errorWithDomain:BGSRNReportErrorDomain code:1 userInfo:info];', [O.opaqueUserInfo]);
+  flagged('an init with a userInfo built elsewhere', 'NSError *e = [[NSError alloc] initWithDomain:BGSRNReportErrorDomain code:1 userInfo:Info()];', [O.opaqueUserInfo]);
+  flagged('a description set by subscript', 'info[NSLocalizedDescriptionKey] = value;', [O.errorDescription]);
+  flagged('a description set with setObject:forKey:', '[info setObject:@"x" forKey:NSLocalizedDescriptionKey];', [O.errorDescription]);
+  flagged('an identifier entry holding a value', '[NSError errorWithDomain:D code:1 userInfo:@{NSLocalizedDescriptionKey : @"bad {identifier}", BGSRNErrorIdentifierKey : value}];', [O.identifier]);
+  flagged('a description read outside the reader', 'NSString *d = info[NSLocalizedDescriptionKey];', [O.errorDescription]);
   flagged('the audited helper, in another file', 'NSString *BGSRNErrorMessage(NSError *error) {\n  return error.localizedDescription;\n}', [O.localizedDescription]);
   flagged(
     'a read outside the helper, in the helper\'s own file',
@@ -327,12 +339,12 @@ describe('scanObjC', () => {
   allowed('an error domain and code', 'NSError *error = nil;\nNSLog(@"%@ %ld", error.domain, (long)[error code]);');
   allowed('an out-parameter inside a format call', 'NSError *error = nil;\nNSLog(@"%@", Parse(json, &error));');
   allowed('the audited helper in BGSRNErrorMessage.m', 'NSString *BGSRNErrorMessage(NSError *error) {\n  return error.userInfo[NSLocalizedDescriptionKey] ?: error.localizedDescription;\n}', 'BGSRNErrorMessage.m');
-  allowed('a Fail definition', 'static BOOL Fail(NSError **error, NSString *message) {\n  return NO;\n}');
-  allowed('a literal Fail message', 'Fail(error, BGSRNReportErrorBadArgument, @"labels must all be strings");');
-  allowed('a Fail message naming the key', 'Fail(error, X, [NSString stringWithFormat:@"unknown key \\"%@\\"", key]);');
-  allowed('a Fail message with a cast constant', 'Fail(error, X, [NSString stringWithFormat:@"at most %lu", (unsigned long)BGSRNMaxCount]);');
-  allowed('a Fail message wrapping a bridge error', 'Fail(error, X, [NSString stringWithFormat:@"not JSON: %@", BGSRNErrorMessage(parseError)]);');
-  allowed('a userInfo: selector label', '[NSError errorWithDomain:D code:1 userInfo:@{NSLocalizedDescriptionKey : message}];');
+  allowed('a literal description', 'Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain\n    code:BGSRNReportErrorBadArgument\n    userInfo:@{NSLocalizedDescriptionKey : @"labels must all be strings"}]);');
+  allowed('a description that is a named constant', '[NSError errorWithDomain:D code:1 userInfo:@{ NSLocalizedDescriptionKey : kMalformedJSON }];');
+  allowed('an identifier entry naming the key, and an underlying error', '[NSError errorWithDomain:D code:1 userInfo:@{\n  NSLocalizedDescriptionKey : @"unknown key \\"{identifier}\\"",\n  BGSRNErrorIdentifierKey : key,\n  NSUnderlyingErrorKey : parseError ?: NSNull.null,\n}];');
+  allowed('a nil userInfo, and an init', '[NSError errorWithDomain:D code:1 userInfo:nil];\n[[NSError alloc] initWithDomain:D code:2 userInfo:@{NSLocalizedDescriptionKey : @"x"}];');
+  allowed('the reader reading the description', 'NSString *BGSRNErrorMessage(NSError *error) {\n  id d = error.userInfo[NSLocalizedDescriptionKey];\n  return d;\n}', 'BGSRNErrorMessage.m');
+  allowed('a userInfo: selector label', '[NSError errorWithDomain:D code:1 userInfo:@{NSLocalizedDescriptionKey : @"m"}];');
   allowed('a description: selector label', '[Bugsee startSpanWithOperation:operation description:description];');
   allowed('concatenated literals in a reject', 'reject(kHandleDeadCode, @"no longer " @"valid", nil);');
   allowed('a reject with a fixed failure message', 'reject(nil, [BGSRNReportOps failureMessageForOperation:operation], nil);');
@@ -368,8 +380,10 @@ describe('scanObjC', () => {
       "reject's third argument is not nil (RN serialises the NSError's userInfo into JS)",
       'a reject argument other than a literal, an identifier or an audited message',
     ]);
-    expect(rulesOf(scanObjC('A.m', 'Fail(error, message);'))).toEqual([
-      'an NSError message built from something other than literals, constants and key names',
+    expect(rulesOf(scanObjC('A.m', '[NSError errorWithDomain:D code:1 userInfo:info];\nx = @{NSLocalizedDescriptionKey : v, BGSRNErrorIdentifierKey : v};'))).toEqual([
+      'an NSError built with a userInfo the scanner cannot see (nil or a dictionary literal only)',
+      'an NSError description that is not a string literal or a named constant',
+      'a BGSRNErrorIdentifierKey entry that is not the identifier `key`',
     ]);
   });
 
@@ -380,13 +394,15 @@ describe('scanObjC', () => {
   flagged('an NSError after a nested call in a format call', 'NSError *error;\nNSString *s = [NSString stringWithFormat:@"%@ %@", Name(a), error];', [O.formatted('error')]);
   flagged('a spaced NSError declaration', 'NSError  *   error;\nNSLog(@"%@", error);', [O.formatted('error')]);
   flagged('a nullable out-parameter', '- (BOOL)go:(NSError * _Nullable __autoreleasing *)outError {\n  NSLog(@"%@", *outError);\n}', [O.formatted('outError')]);
-  flagged('spaced reject and Fail calls', 'reject  (@"C", @"m", error);\nFail  (error, message);', [O.thirdArgument, O.rejectArg, O.fail]);
+  flagged('spaced reject and construction', 'reject  (@"C", @"m", error);\n[NSError   errorWithDomain:D code:1 userInfo  :  info];\nx = @{ NSLocalizedDescriptionKey   :   v };', [O.thirdArgument, O.rejectArg, O.opaqueUserInfo, O.errorDescription]);
   flagged('a reject with two arguments, the second a value', 'reject(code, value);', [O.rejectArg]);
-  flagged('an audited helper call that is only a prefix', 'reject(code, BGSRNErrorMessage(error) ?: value, nil);\nFail(error, BGSRNErrorMessage(e).lowercaseString);', [O.rejectArg, O.fail]);
+  flagged('an audited helper call that is only a prefix', 'reject(code, BGSRNErrorMessage(error) ?: value, nil);', [O.rejectArg]);
   flagged('a failure-message send that is only a prefix', 'reject(nil, [BGSRNReportOps failureMessageForOperation:op].lowercaseString, nil);', [O.rejectArg]);
-  flagged('a format send that is only a prefix', 'Fail(error, [NSString stringWithFormat:@"%@", key].lowercaseString);', [O.fail]);
+  flagged('a format send that is only a prefix', 'reject(nil, [NSString stringWithFormat:@"%@", name].lowercaseString, nil);', [O.rejectArg]);
+  flagged('a failure message for something other than the operation', 'reject(nil, [BGSRNReportOps failureMessageForOperation:summary], nil);', [O.rejectArg]);
   allowed('a spaced failure-message send', 'reject(nil, [BGSRNReportOps   failureMessageForOperation:operation], nil);');
-  allowed('a spaced format send', 'Fail(error, [NSString   stringWithFormat:@"%@", key]);');
+  allowed('a spaced format send', 'reject(nil, [NSString   stringWithFormat:@"%@", name], nil);');
+  allowed('a failure message for a literal operation', 'reject(nil, [BGSRNReportOps failureMessageForOperation:@"reportRead"], nil);');
   allowed('a class or domain read with spaces', 'NSError *error;\nNSLog(@"%@ %@", error .  domain, [  error   code  ]);');
   allowed('the audited helper in BGSRNErrorMessage.m with a nested path', 'NSString *BGSRNErrorMessage(NSError *error) {\n  return error.userInfo[NSLocalizedDescriptionKey];\n}', 'Support/Sources/BGSRNErrorMessage.m');
 

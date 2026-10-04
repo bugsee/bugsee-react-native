@@ -29,7 +29,7 @@
   XCTAssertNil(BGSRNJSONObject(json, &error), @"accepted %@", json);
   XCTAssertNotNil(error, @"no error for %@", json);
   XCTAssertEqualObjects(error.domain, BGSRNJSONErrorDomain);
-  XCTAssertGreaterThan(error.localizedDescription.length, 0u);
+  XCTAssertGreaterThan(BGSRNErrorMessage(error).length, 0u);
 }
 
 static BOOL IsCFBoolean(id value) {
@@ -275,7 +275,7 @@ static BOOL IsFloatNumber(id value) {
 - (void)testMalformedTextIsAFixedMessage {
   NSError *error = nil;
   XCTAssertNil(BGSRNJSONObject(@"{\"a\": \"s3cret", &error));
-  XCTAssertEqualObjects(error.localizedDescription, @"malformed JSON");
+  XCTAssertEqualObjects(BGSRNErrorMessage(error), @"malformed JSON");
 }
 
 @end

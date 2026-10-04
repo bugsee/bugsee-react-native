@@ -6,11 +6,12 @@
 NSString *const BGSRNReactNativeExceptionName = @"ReactNativeWebException";
 NSErrorDomain const BGSRNExceptionsErrorDomain = @"BGSRNExceptionsErrorDomain";
 
-static id Fail(NSError **error, NSString *message) {
-  if (error != NULL) {
-    *error = [NSError errorWithDomain:BGSRNExceptionsErrorDomain
-                                 code:1
-                             userInfo:@{NSLocalizedDescriptionKey : message}];
+/// Hands `made` to the caller's out-parameter. Every error this file makes is
+/// built inline, with a string-literal description, so the scanner
+/// (`scripts/raw-messages.ts`) can see that no value goes into it.
+static id Fail(NSError **out, NSError *made) {
+  if (out != NULL) {
+    *out = made;
   }
   return nil;
 }
@@ -33,7 +34,12 @@ static BOOL IsCFBoolean(id value) {
   NSError *parseError = nil;
   NSDictionary<NSString *, id> *object = BGSRNJSONObject(json, &parseError);
   if (object == nil) {
-    return Fail(error, BGSRNErrorMessage(parseError));
+    return Fail(error, [NSError errorWithDomain:BGSRNExceptionsErrorDomain
+                                           code:1
+                                       userInfo:@{
+                                           NSLocalizedDescriptionKey : @"exception options are not a JSON object",
+                                           NSUnderlyingErrorKey : parseError ?: NSNull.null,
+                                       }]);
   }
 
   BugseeExceptionLoggingOptions *opts = [BugseeExceptionLoggingOptions new];
@@ -44,7 +50,9 @@ static BOOL IsCFBoolean(id value) {
   id domain = object[@"domain"];
   if (domain != nil) {
     if (![domain isKindOfClass:NSString.class]) {
-      return Fail(error, @"domain must be a string");
+      return Fail(error, [NSError errorWithDomain:BGSRNExceptionsErrorDomain
+                                             code:1
+                                         userInfo:@{NSLocalizedDescriptionKey : @"domain must be a string"}]);
     }
     opts.exceptionDomain = (NSString *)domain;
   }
@@ -52,12 +60,16 @@ static BOOL IsCFBoolean(id value) {
   id labels = object[@"labels"];
   if (labels != nil) {
     if (![labels isKindOfClass:NSArray.class]) {
-      return Fail(error, @"labels must be an array of strings");
+      return Fail(error, [NSError errorWithDomain:BGSRNExceptionsErrorDomain
+                                             code:1
+                                         userInfo:@{NSLocalizedDescriptionKey : @"labels must be an array of strings"}]);
     }
     NSMutableArray<NSString *> *kept = [NSMutableArray array];
     for (id element in (NSArray *)labels) {
       if (![element isKindOfClass:NSString.class]) {
-        return Fail(error, @"labels must be an array of strings");
+        return Fail(error, [NSError errorWithDomain:BGSRNExceptionsErrorDomain
+                                               code:1
+                                           userInfo:@{NSLocalizedDescriptionKey : @"labels must be an array of strings"}]);
       }
       [kept addObject:element];
     }
@@ -67,7 +79,9 @@ static BOOL IsCFBoolean(id value) {
   id includeVideo = object[@"includeVideo"];
   if (includeVideo != nil) {
     if (!IsCFBoolean(includeVideo)) {
-      return Fail(error, @"includeVideo must be a boolean");
+      return Fail(error, [NSError errorWithDomain:BGSRNExceptionsErrorDomain
+                                             code:1
+                                         userInfo:@{NSLocalizedDescriptionKey : @"includeVideo must be a boolean"}]);
     }
     opts.includeVideo = [(NSNumber *)includeVideo boolValue];
   }

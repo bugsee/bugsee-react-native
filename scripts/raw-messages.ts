@@ -66,10 +66,13 @@
  *     two may only be literals, constants, the identifiers `name`/`operation`/
  *     `code`, `BGSRNErrorMessage(...)`, `BGSRNReportErrorWireCode(...)` or
  *     `[BGSRNReportOps failureMessageForOperation:...]`.
- *   - `Fail(...)` (the Support package's `NSError` builders): the message may
- *     only be a literal, a constant, `BGSRNErrorMessage(...)`, or a
- *     `stringWithFormat:` whose arguments are constants or the identifier
- *     `key`.
+ *   - Every `NSError` the code builds is checked where it is built, because
+ *     `BGSRNErrorMessage` hands an own-domain error's description on: an
+ *     `errorWithDomain:`/`initWithDomain:` construction's `userInfo` is
+ *     `nil` or a dictionary literal; every `NSLocalizedDescriptionKey` is a
+ *     dictionary-literal entry whose value is a string literal or a named
+ *     constant (reads only inside the audited reader); a
+ *     `BGSRNErrorIdentifierKey` entry holds the identifier `key`.
  *
  * TypeScript (`.ts`, `.tsx`, the packages' `src`): every argument of
  * `new XError(...)`, `badArgument(...)`, `reject(...)` and `console.x(...)`
@@ -671,6 +674,82 @@ function sinkArguments(masked: string, at: number, head: string): Span {
   return { start: at + head.length, end: i };
 }
 
+/** The value of the dictionary entry whose key ends at `at` (`KEY : value`), or undefined when `at` is not an entry key. */
+function entryValue(masked: string, at: number): string | undefined {
+  const colon = /^\s*:/.exec(masked.slice(at));
+  if (colon === null) return undefined;
+  const start = at + colon[0].length;
+  let depth = 0;
+  for (let i = start; i < masked.length; i += 1) {
+    const ch = masked.charAt(i);
+    if (ch in PAIRS) depth += 1;
+    if (ch === ')' || ch === ']' || ch === '}') {
+      if (depth === 0) return masked.slice(start, i).trim();
+      depth -= 1;
+    }
+    if (ch === ',' && depth === 0) return masked.slice(start, i).trim();
+  }
+  return masked.slice(start).trim();
+}
+
+/** The `userInfo:` argument of the message send a `...WithDomain:` match at `at` belongs to. */
+function userInfoArgument(masked: string, at: number): string | undefined {
+  let depth = 0;
+  let end = at;
+  while (end < masked.length) {
+    const ch = masked.charAt(end);
+    if (ch in PAIRS) depth += 1;
+    if (ch === ')' || ch === ']' || ch === '}') {
+      if (depth === 0) break;
+      depth -= 1;
+    }
+    end += 1;
+  }
+  const send = masked.slice(at, end);
+  const label = /\buserInfo\s*:/.exec(send);
+  return label === null ? undefined : send.slice(label.index + label[0].length).trim();
+}
+
+const DESCRIPTION_POLICY: Policy = { lang: 'objc', identifiers: new Set(), extra: () => false };
+const IDENTIFIER_POLICY: Policy = { lang: 'objc', identifiers: new Set(['key']), extra: () => false };
+
+/**
+ * Every `NSError` construction, checked where it is built: `BGSRNErrorMessage`
+ * hands an own-domain error's description on, so that description must be
+ * visibly value-free wherever, and however, the error is made.
+ */
+function errorConstructions(src: Source, reader: Span | undefined): Violation[] {
+  const { masked } = src;
+  const violations: Violation[] = [];
+  let m: RegExpExecArray | null;
+  const construction = /\b(?:errorWithDomain|initWithDomain)\s*:/g;
+  while ((m = construction.exec(masked))) {
+    const info = userInfoArgument(masked, m.index);
+    if (info !== undefined && info !== 'nil' && !info.startsWith('@{')) {
+      violations.push(violation(src, m.index, m.index + m[0].length,
+        'an NSError built with a userInfo the scanner cannot see (nil or a dictionary literal only)'));
+    }
+  }
+  const description = /\bNSLocalizedDescriptionKey\b/g;
+  while ((m = description.exec(masked))) {
+    if (reader !== undefined && within([reader], m.index)) continue;
+    const value = entryValue(masked, m.index + m[0].length);
+    if (value === undefined || !isAllowedOperand(value, DESCRIPTION_POLICY, m.index)) {
+      violations.push(violation(src, m.index, m.index + m[0].length,
+        'an NSError description that is not a string literal or a named constant'));
+    }
+  }
+  const identifier = /\bBGSRNErrorIdentifierKey\s*:/g;
+  while ((m = identifier.exec(masked))) {
+    const value = entryValue(masked, m.index + m[0].length - 1) as string;
+    if (!isAllowedOperand(value, IDENTIFIER_POLICY, m.index)) {
+      violations.push(violation(src, m.index, m.index + m[0].length,
+        'a BGSRNErrorIdentifierKey entry that is not the identifier `key`'));
+    }
+  }
+  return violations;
+}
+
 export function scanObjC(path: string, raw: string): Violation[] {
   const src: Source = { path, raw, masked: mask(raw, 'objc') };
   const { masked } = src;
@@ -729,22 +808,11 @@ export function scanObjC(path: string, raw: string): Violation[] {
       lang: 'objc',
       identifiers: new Set(['name', 'operation', 'code']),
       extra: (op) => /^(?:BGSRNErrorMessage|BGSRNReportErrorWireCode)\(\w+\)$/.test(op) ||
-        /^\[BGSRNReportOps\s+failureMessageForOperation:\w+\]$/.test(op),
+        /^\[BGSRNReportOps\s+failureMessageForOperation:(?:operation|@"[^"]*")\]$/.test(op),
     }, 'a reject argument other than a literal, an identifier or an audited message'),
   );
 
-  const failCall = /\bFail\s*\(/g;
-  const failPolicy: Policy = { lang: 'objc', identifiers: new Set(['key']), extra: (op) => /^BGSRNErrorMessage\(\w+\)$/.test(op) };
-  while ((m = failCall.exec(masked))) {
-    const open = m.index + m[0].length - 1;
-    const close = closingIndex(masked, open);
-    const args = argumentsAt(masked, open);
-    if (BODY_OPENER.test(masked.slice(close + 1))) continue;
-    if (!isAllowedOperand(args[args.length - 1] as string, failPolicy, open)) {
-      violations.push(violation(src, m.index, close + 1,
-        'an NSError message built from something other than literals, constants and key names'));
-    }
-  }
+  violations.push(...errorConstructions(src, helper));
   return violations;
 }
 

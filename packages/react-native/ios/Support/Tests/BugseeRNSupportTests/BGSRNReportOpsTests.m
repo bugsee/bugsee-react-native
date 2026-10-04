@@ -76,7 +76,7 @@
   XCTAssertFalse([BGSRNReportOps applyPatch:@{ @"severity" : @"s3cret-severity-value" }
                                    toReport:_report
                                       error:&error]);
-  XCTAssertEqualObjects(error.localizedDescription, @"severity must be an integer 1..5");
+  XCTAssertEqualObjects(BGSRNErrorMessage(error), @"severity must be an integer 1..5");
 }
 
 #pragma mark - Patch
@@ -106,7 +106,7 @@
   [self assertRejected:patch];
   NSError *error = nil;
   [BGSRNReportOps applyPatch:patch toReport:_report error:&error];
-  XCTAssertEqualObjects(error.localizedDescription, @"attribute name must be a non-empty string");
+  XCTAssertEqualObjects(BGSRNErrorMessage(error), @"attribute name must be a non-empty string");
   XCTAssertNil(_report.fakeSummary);
   XCTAssertEqual(_report.fakeAttributes.count, 0u);
   XCTAssertEqualObjects(_report.mutations, @[]);
@@ -270,21 +270,26 @@
 
 #pragma mark - Messages
 
+/// A developer-chosen identifier is named; the value never is.
+- (void)testAnUnknownKeyAndABadAttributeAreNamed {
+  NSError *error = nil;
+  XCTAssertFalse([BGSRNReportOps applyPatch:@{ @"summray" : @"s3cret" } toReport:_report error:&error]);
+  XCTAssertEqualObjects(BGSRNErrorMessage(error), @"update() received an unknown key \"summray\"");
+  error = nil;
+  XCTAssertFalse([BGSRNReportOps applyPatch:@{ @"attributes" : @{ @"plan" : @[ @"s3cret" ] } }
+                                   toReport:_report
+                                      error:&error]);
+  XCTAssertEqualObjects(BGSRNErrorMessage(error),
+                        @"attribute \"plan\" must be a string, boolean, finite number or null");
+}
+
 /// Through the real call path: the rejection says the text is malformed and
 /// never repeats it. The same wording as Android's `ReportOps.applyJson`.
 - (void)testApplyPatchJSONRejectsMalformedTextWithoutEchoingIt {
   NSError *error = nil;
   XCTAssertFalse([BGSRNReportOps applyPatchJSON:@"{\"summary\": \"s3cret-do-not-leak" toReport:_report error:&error]);
   XCTAssertEqual(error.code, BGSRNReportErrorBadArgument);
-  XCTAssertEqualObjects(error.localizedDescription, @"update() patch is not a JSON object: malformed JSON");
-}
-
-/// What an unexpected `NSException` in a report operation rejects with: the
-/// operation, nothing of the exception.
-- (void)testFailureMessageNamesOnlyTheOperation {
-  XCTAssertEqualObjects([BGSRNReportOps failureMessageForOperation:@"reportRead"], @"reportRead failed");
-  XCTAssertEqualObjects([BGSRNReportOps failureMessageForOperation:@"createdReportUpload"],
-                        @"createdReportUpload failed");
+  XCTAssertEqualObjects(BGSRNErrorMessage(error), @"update() patch is not a JSON object: malformed JSON");
 }
 
 @end

@@ -6,11 +6,12 @@
 const NSUInteger BGSRNCreatedReportAttachmentMaxCount = 3;
 const NSUInteger BGSRNCreatedReportAttachmentMaxBytes = 3u * 1024u * 1024u;
 
-static BOOL Fail(NSError **error, BGSRNReportError code, NSString *message) {
-  if (error != NULL) {
-    *error = [NSError errorWithDomain:BGSRNReportErrorDomain
-                                 code:code
-                             userInfo:@{NSLocalizedDescriptionKey : message}];
+/// Hands `made` to the caller's out-parameter. Every error this file makes is
+/// built inline, with a string-literal description, so the scanner
+/// (`scripts/raw-messages.ts`) can see that no value goes into it.
+static BOOL Fail(NSError **out, NSError *made) {
+  if (out != NULL) {
+    *out = made;
   }
   return NO;
 }
@@ -75,9 +76,12 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
   NSError *parseError = nil;
   NSDictionary *patch = BGSRNJSONObject(json, &parseError);
   if (patch == nil) {
-    return Fail(error, BGSRNReportErrorBadArgument,
-                [NSString stringWithFormat:@"update() patch is not a JSON object: %@",
-                                           BGSRNErrorMessage(parseError)]);
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorBadArgument
+                                       userInfo:@{
+                                           NSLocalizedDescriptionKey : @"update() patch is not a JSON object",
+                                           NSUnderlyingErrorKey : parseError ?: NSNull.null,
+                                       }]);
   }
   NSDictionary<NSString *, id> *valid = [BGSRNReportOps validatedPatch:patch error:error];
   if (valid == nil) {
@@ -119,17 +123,20 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
           toReport:(BugseeExtendedReport *)report
              error:(NSError **)error {
   if (AtAttachmentLimit(report)) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected,
-                [NSString stringWithFormat:@"a created report holds at most %lu attachments",
-                                           (unsigned long)BGSRNCreatedReportAttachmentMaxCount]);
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"a created report holds at most 3 attachments"}]);
   }
   if (data.length == 0 || data.length > BGSRNCreatedReportAttachmentMaxBytes) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected,
-                @"a created-report attachment must be non-empty and at most 3 MiB");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"a created-report attachment must be non-empty and at most 3 MiB"}]);
   }
   BugseeAttachment *attachment = [BugseeAttachment attachmentWithName:name filename:name data:data];
   if (attachment == nil) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected, @"The SDK declined the attachment");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"The SDK declined the attachment"}]);
   }
   [report setAttachment:attachment];
   return YES;
@@ -140,25 +147,31 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
        toReport:(BugseeExtendedReport *)report
           error:(NSError **)error {
   if (![base64 isKindOfClass:NSString.class]) {
-    return Fail(error, BGSRNReportErrorBadArgument, @"data must be base64-encoded");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorBadArgument
+                                       userInfo:@{NSLocalizedDescriptionKey : @"data must be base64-encoded"}]);
   }
   // An empty string decodes to empty data, which the SDK drops at upload.
   // Reject it as an attachment, not as bad base64: the encoding is valid.
   if (base64.length == 0) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected,
-                @"a created-report attachment must be non-empty and at most 3 MiB");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"a created-report attachment must be non-empty and at most 3 MiB"}]);
   }
   // 3145728 is divisible by 3, so its base64 form is exactly 4/3 with no
   // padding. Reject a longer string before decoding it: this runs on the main
   // thread, and the decoded bytes are checked again in `attachData`.
   const NSUInteger maxBase64Chars = (BGSRNCreatedReportAttachmentMaxBytes / 3) * 4;
   if (base64.length > maxBase64Chars) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected,
-                @"a created-report attachment must be non-empty and at most 3 MiB");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"a created-report attachment must be non-empty and at most 3 MiB"}]);
   }
   NSData *data = [[NSData alloc] initWithBase64EncodedString:base64 options:0];
   if (data == nil) {
-    return Fail(error, BGSRNReportErrorBadArgument, @"data must be base64-encoded");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorBadArgument
+                                       userInfo:@{NSLocalizedDescriptionKey : @"data must be base64-encoded"}]);
   }
   return [self attachData:data name:name toReport:report error:error];
 }
@@ -168,9 +181,9 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
              toReport:(BugseeExtendedReport *)report
                 error:(NSError **)error {
   if (AtAttachmentLimit(report)) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected,
-                [NSString stringWithFormat:@"a created report holds at most %lu attachments",
-                                           (unsigned long)BGSRNCreatedReportAttachmentMaxCount]);
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"a created report holds at most 3 attachments"}]);
   }
 
   // The link's own length is the target path, not the file. Resolve first,
@@ -183,27 +196,36 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
   NSError *attrError = nil;
   NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:resolved error:&attrError];
   if (attributes == nil) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"the file is missing or unreadable"}]);
   }
   if (![attributes[NSFileType] isEqualToString:NSFileTypeRegular]) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"the file is missing or unreadable"}]);
   }
   const unsigned long long size = [attributes[NSFileSize] unsignedLongLongValue];
   if (size == 0 || size > (unsigned long long)BGSRNCreatedReportAttachmentMaxBytes) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected,
-                @"a created-report attachment must be non-empty and at most 3 MiB");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"a created-report attachment must be non-empty and at most 3 MiB"}]);
   }
 
   // Cap the read. The size above can grow between the stat and this read, and
   // `dataWithContentsOfFile:` would then take the whole file on the main thread.
   NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:resolved];
   if (file == nil) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"the file is missing or unreadable"}]);
   }
   NSData *read = [file readDataOfLength:BGSRNCreatedReportAttachmentMaxBytes + 1];
   [file closeFile];
   if (read == nil) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected, @"the file is missing or unreadable");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"the file is missing or unreadable"}]);
   }
   // Own the bytes. The file is the app's; overwriting it later must not
   // change what the report will upload.

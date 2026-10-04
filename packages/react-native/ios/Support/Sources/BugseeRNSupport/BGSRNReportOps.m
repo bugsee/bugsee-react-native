@@ -22,11 +22,12 @@ NSString *BGSRNReportErrorWireCode(NSError *error) {
 /// JS numbers are doubles; beyond 2^53 a double is no longer an exact integer.
 static const double kMaxSafeInteger = 9007199254740992.0;
 
-static BOOL Fail(NSError **error, BGSRNReportError code, NSString *message) {
-  if (error != NULL) {
-    *error = [NSError errorWithDomain:BGSRNReportErrorDomain
-                                 code:code
-                             userInfo:@{NSLocalizedDescriptionKey : message}];
+/// Hands `made` to the caller's out-parameter. Every error this file makes is
+/// built inline, with a string-literal description, so the scanner
+/// (`scripts/raw-messages.ts`) can see that no value goes into it.
+static BOOL Fail(NSError **out, NSError *made) {
+  if (out != NULL) {
+    *out = made;
   }
   return NO;
 }
@@ -120,8 +121,12 @@ static NSNumber *WireNumber(NSNumber *number) {
   });
   for (id key in patch) {
     if (![knownKeys containsObject:key]) {
-      Fail(error, BGSRNReportErrorBadArgument,
-           [NSString stringWithFormat:@"update() received an unknown key \"%@\"", key]);
+      Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                      code:BGSRNReportErrorBadArgument
+                                  userInfo:@{
+                                      NSLocalizedDescriptionKey : @"update() received an unknown key \"{identifier}\"",
+                                      BGSRNErrorIdentifierKey : key,
+                                  }]);
       return nil;
     }
   }
@@ -129,12 +134,16 @@ static NSNumber *WireNumber(NSNumber *number) {
   // Validate everything first. Nothing below the next comment can reject.
   id summary = patch[@"summary"];
   if (summary != nil && summary != NSNull.null && ![summary isKindOfClass:NSString.class]) {
-    Fail(error, BGSRNReportErrorBadArgument, @"summary must be a string or null");
+    Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                    code:BGSRNReportErrorBadArgument
+                                userInfo:@{NSLocalizedDescriptionKey : @"summary must be a string or null"}]);
     return nil;
   }
   id description = patch[@"description"];
   if (description != nil && description != NSNull.null && ![description isKindOfClass:NSString.class]) {
-    Fail(error, BGSRNReportErrorBadArgument, @"description must be a string or null");
+    Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                    code:BGSRNReportErrorBadArgument
+                                userInfo:@{NSLocalizedDescriptionKey : @"description must be a string or null"}]);
     return nil;
   }
 
@@ -146,7 +155,9 @@ static NSNumber *WireNumber(NSNumber *number) {
     const double value = IsFiniteNumber(severity) ? [severity doubleValue] : NAN;
     if (!(value == floor(value) && value >= BugseeSeverityLow && value <= BugseeSeverityBlocker)) {
       // Never the value itself: anything JS allows can arrive here.
-      Fail(error, BGSRNReportErrorBadArgument, @"severity must be an integer 1..5");
+      Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                      code:BGSRNReportErrorBadArgument
+                                  userInfo:@{NSLocalizedDescriptionKey : @"severity must be an integer 1..5"}]);
       return nil;
     }
   }
@@ -154,12 +165,16 @@ static NSNumber *WireNumber(NSNumber *number) {
   id labels = patch[@"labels"];
   if (labels != nil) {
     if (![labels isKindOfClass:NSArray.class]) {
-      Fail(error, BGSRNReportErrorBadArgument, @"labels must be an array of strings");
+      Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                      code:BGSRNReportErrorBadArgument
+                                  userInfo:@{NSLocalizedDescriptionKey : @"labels must be an array of strings"}]);
       return nil;
     }
     for (id label in (NSArray *)labels) {
       if (![label isKindOfClass:NSString.class]) {
-        Fail(error, BGSRNReportErrorBadArgument, @"labels must all be strings");
+        Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                        code:BGSRNReportErrorBadArgument
+                                    userInfo:@{NSLocalizedDescriptionKey : @"labels must all be strings"}]);
         return nil;
       }
     }
@@ -167,7 +182,9 @@ static NSNumber *WireNumber(NSNumber *number) {
 
   id clearAttributes = patch[@"clearAttributes"];
   if (clearAttributes != nil && !(IsBoolean(clearAttributes) && [clearAttributes boolValue])) {
-    Fail(error, BGSRNReportErrorBadArgument, @"clearAttributes must be true when present");
+    Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                    code:BGSRNReportErrorBadArgument
+                                userInfo:@{NSLocalizedDescriptionKey : @"clearAttributes must be true when present"}]);
     return nil;
   }
 
@@ -175,7 +192,9 @@ static NSNumber *WireNumber(NSNumber *number) {
   NSMutableDictionary<NSString *, id> *attributes = nil;
   if (rawAttributes != nil) {
     if (![rawAttributes isKindOfClass:NSDictionary.class]) {
-      Fail(error, BGSRNReportErrorBadArgument, @"attributes must be a plain object");
+      Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                      code:BGSRNReportErrorBadArgument
+                                  userInfo:@{NSLocalizedDescriptionKey : @"attributes must be a plain object"}]);
       return nil;
     }
     attributes = [NSMutableDictionary dictionary];
@@ -184,15 +203,19 @@ static NSNumber *WireNumber(NSNumber *number) {
       const BOOL valid = value == NSNull.null || [value isKindOfClass:NSString.class] ||
                          IsBoolean(value) || IsFiniteNumber(value);
       if (![key isKindOfClass:NSString.class] || !valid) {
-        Fail(error, BGSRNReportErrorBadArgument,
-             [NSString stringWithFormat:@"attribute \"%@\" must be a string, boolean, "
-                                        @"finite number or null",
-                                        key]);
+        Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                        code:BGSRNReportErrorBadArgument
+                                    userInfo:@{
+                                        NSLocalizedDescriptionKey : @"attribute \"{identifier}\" must be a string, boolean, finite number or null",
+                                        BGSRNErrorIdentifierKey : key,
+                                    }]);
         return nil;
       }
       // Parity with the JS proxy, which rejects it before crossing.
       if ([(NSString *)key length] == 0) {
-        Fail(error, BGSRNReportErrorBadArgument, @"attribute name must be a non-empty string");
+        Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                        code:BGSRNReportErrorBadArgument
+                                    userInfo:@{NSLocalizedDescriptionKey : @"attribute name must be a non-empty string"}]);
         return nil;
       }
       attributes[key] = IsFiniteNumber(value) ? WireNumber(value) : value;
@@ -268,9 +291,12 @@ static NSNumber *WireNumber(NSNumber *number) {
   NSError *parseError = nil;
   NSDictionary *patch = BGSRNJSONObject(json, &parseError);
   if (patch == nil) {
-    return Fail(error, BGSRNReportErrorBadArgument,
-                [NSString stringWithFormat:@"update() patch is not a JSON object: %@",
-                                           BGSRNErrorMessage(parseError)]);
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorBadArgument
+                                       userInfo:@{
+                                           NSLocalizedDescriptionKey : @"update() patch is not a JSON object",
+                                           NSUnderlyingErrorKey : parseError ?: NSNull.null,
+                                       }]);
   }
   return [self applyPatch:patch toReport:report error:error];
 }
@@ -283,7 +309,9 @@ static NSNumber *WireNumber(NSNumber *number) {
                 error:(NSError **)error {
   id<BGSAttachmentContract> added = [report addAttachmentWithFilePath:path name:name mimeType:mimeType move:move];
   if (added == nil) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected, @"The SDK declined the attachment");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"The SDK declined the attachment"}]);
   }
   return YES;
 }
@@ -297,11 +325,15 @@ static NSNumber *WireNumber(NSNumber *number) {
       ? [[NSData alloc] initWithBase64EncodedString:base64 options:0]
       : nil;
   if (data == nil) {
-    return Fail(error, BGSRNReportErrorBadArgument, @"data must be base64-encoded");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorBadArgument
+                                       userInfo:@{NSLocalizedDescriptionKey : @"data must be base64-encoded"}]);
   }
   id<BGSAttachmentContract> added = [report addAttachmentWithData:data name:name mimeType:mimeType];
   if (added == nil) {
-    return Fail(error, BGSRNReportErrorAttachmentRejected, @"The SDK declined the attachment");
+    return Fail(error, [NSError errorWithDomain:BGSRNReportErrorDomain
+                                           code:BGSRNReportErrorAttachmentRejected
+                                       userInfo:@{NSLocalizedDescriptionKey : @"The SDK declined the attachment"}]);
   }
   return YES;
 }

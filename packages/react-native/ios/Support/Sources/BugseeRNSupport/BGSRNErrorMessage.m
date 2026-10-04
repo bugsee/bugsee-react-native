@@ -5,18 +5,36 @@
 #import "BGSRNReportOps.h"
 
 NSString *const BGSRNForeignErrorMessage = @"an unexpected native error";
+NSErrorUserInfoKey const BGSRNErrorIdentifierKey = @"BGSRNErrorIdentifier";
 
-NSString *BGSRNErrorMessage(NSError *error) {
+static BOOL IsOwn(id error) {
   static NSSet<NSErrorDomain> *ownDomains;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
     ownDomains = [NSSet setWithArray:@[ BGSRNJSONErrorDomain, BGSRNReportErrorDomain, BGSRNExceptionsErrorDomain ]];
   });
-  if (error == nil || ![ownDomains containsObject:error.domain]) {
+  return [error isKindOfClass:NSError.class] && [ownDomains containsObject:((NSError *)error).domain];
+}
+
+NSString *BGSRNErrorMessage(NSError *error) {
+  if (!IsOwn(error)) {
     return BGSRNForeignErrorMessage;
   }
-  // The key itself, not `localizedDescription`: without one, Foundation
+  // The keys themselves, not `localizedDescription`: without one, Foundation
   // generates text from the domain and code rather than returning nil.
-  id message = error.userInfo[NSLocalizedDescriptionKey];
-  return [message isKindOfClass:NSString.class] ? message : BGSRNForeignErrorMessage;
+  NSDictionary *info = error.userInfo;
+  id description = info[NSLocalizedDescriptionKey];
+  if (![description isKindOfClass:NSString.class]) {
+    return BGSRNForeignErrorMessage;
+  }
+  NSString *message = description;
+  id identifier = info[BGSRNErrorIdentifierKey];
+  if ([identifier isKindOfClass:NSString.class]) {
+    message = [message stringByReplacingOccurrencesOfString:@"{identifier}" withString:identifier];
+  }
+  id underlying = info[NSUnderlyingErrorKey];
+  if (IsOwn(underlying)) {
+    message = [NSString stringWithFormat:@"%@: %@", message, BGSRNErrorMessage(underlying)];
+  }
+  return message;
 }
