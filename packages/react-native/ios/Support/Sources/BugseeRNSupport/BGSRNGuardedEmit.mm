@@ -1,6 +1,7 @@
 #import "BGSRNGuardedEmit.h"
 
 #include <exception>
+#include <typeinfo>
 
 BOOL BGSRNGuardedEmit(dispatch_block_t emit, NSString *what) {
   if (emit == nil) {
@@ -15,11 +16,12 @@ BOOL BGSRNGuardedEmit(dispatch_block_t emit, NSString *what) {
       emit();
       return YES;
     } @catch (NSException *exception) {
-      NSLog(@"[Bugsee] %@ could not be emitted: %@", what, exception);
+      NSLog(@"[Bugsee] %@ could not be emitted: %@", what, NSStringFromClass(exception.class));
       return NO;
     }
   } catch (const std::exception &e) {
-    NSLog(@"[Bugsee] %@ could not be emitted: %s", what, e.what());
+    // The type only: what() is the exception's own message.
+    NSLog(@"[Bugsee] %@ could not be emitted: %s", what, typeid(e).name());
     return NO;
   } catch (...) {
     // Not every C++ throw is a std::exception, and whatever this misses

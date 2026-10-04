@@ -1,4 +1,5 @@
 #import "BGSRNReportOps.h"
+#import "BGSRNErrorMessage.h"
 #import "BGSRNJSON.h"
 
 #include <math.h>
@@ -144,8 +145,8 @@ static NSNumber *WireNumber(NSNumber *number) {
   if (severity != nil) {
     const double value = IsFiniteNumber(severity) ? [severity doubleValue] : NAN;
     if (!(value == floor(value) && value >= BugseeSeverityLow && value <= BugseeSeverityBlocker)) {
-      Fail(error, BGSRNReportErrorBadArgument,
-           [NSString stringWithFormat:@"severity must be an integer 1..5, got %@", severity]);
+      // Never the value itself: anything JS allows can arrive here.
+      Fail(error, BGSRNReportErrorBadArgument, @"severity must be an integer 1..5");
       return nil;
     }
   }
@@ -269,7 +270,7 @@ static NSNumber *WireNumber(NSNumber *number) {
   if (patch == nil) {
     return Fail(error, BGSRNReportErrorBadArgument,
                 [NSString stringWithFormat:@"update() patch is not a JSON object: %@",
-                                           parseError.localizedDescription]);
+                                           BGSRNErrorMessage(parseError)]);
   }
   return [self applyPatch:patch toReport:report error:error];
 }
@@ -303,6 +304,10 @@ static NSNumber *WireNumber(NSNumber *number) {
     return Fail(error, BGSRNReportErrorAttachmentRejected, @"The SDK declined the attachment");
   }
   return YES;
+}
+
++ (NSString *)failureMessageForOperation:(NSString *)operation {
+  return [operation stringByAppendingString:@" failed"];
 }
 
 @end

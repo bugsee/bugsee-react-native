@@ -1,5 +1,6 @@
 #import "BGSRNExceptions.h"
 
+#import "BGSRNErrorMessage.h"
 #import "BGSRNJSON.h"
 
 NSString *const BGSRNReactNativeExceptionName = @"ReactNativeWebException";
@@ -32,7 +33,7 @@ static BOOL IsCFBoolean(id value) {
   NSError *parseError = nil;
   NSDictionary<NSString *, id> *object = BGSRNJSONObject(json, &parseError);
   if (object == nil) {
-    return Fail(error, parseError.localizedDescription ?: @"unparseable options JSON");
+    return Fail(error, BGSRNErrorMessage(parseError));
   }
 
   BugseeExceptionLoggingOptions *opts = [BugseeExceptionLoggingOptions new];

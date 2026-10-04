@@ -37,6 +37,7 @@
 #import <BugseeRNSupport/BGSRNCreatedReports.h>
 #import <BugseeRNSupport/BGSRNCreatedReportOps.h>
 #import <BugseeRNSupport/BGSRNSpanHandles.h>
+#import <BugseeRNSupport/BGSRNErrorMessage.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -61,6 +62,7 @@
 #import "BGSRNCreatedReports.h"
 #import "BGSRNCreatedReportOps.h"
 #import "BGSRNSpanHandles.h"
+#import "BGSRNErrorMessage.h"
 #endif
 
 /// The conformance lives here rather than in the Support package so that the
@@ -246,10 +248,16 @@ static void BGSRNRejectCreatedHandleDead(RCTPromiseRejectBlock reject) {
 }
 
 /// No code of our own (React Native fills in `EUNSPECIFIED`, as Android's
-/// `promise.reject(e)` does): an unexpected fault is not one of the three the
-/// JS contract names, and inventing a fourth would make it matchable.
-static void BGSRNRejectException(RCTPromiseRejectBlock reject, NSException *exception) {
-  reject(nil, exception.reason ?: exception.name, nil);
+/// `rejectReportFailure` does): an unexpected fault is not one of the codes the
+/// JS contract names, and inventing another would make it matchable.
+///
+/// The message names `operation` only (`failureMessageForOperation:`), never
+/// `exception.reason`, which can echo report content (a summary, an attribute
+/// value, a file path, an attachment name). Only the exception's class is
+/// logged.
+static void BGSRNRejectException(RCTPromiseRejectBlock reject, NSString *operation, NSException *exception) {
+  NSLog(@"BugseeRN %@ failed: %@", operation, NSStringFromClass(exception.class));
+  reject(nil, [BGSRNReportOps failureMessageForOperation:operation], nil);
 }
 
 /// The SDK returns nil both for a declined attachment and for a report that
@@ -270,7 +278,7 @@ static void BGSRNSettleAttachment(NSString *handleId,
     BGSRNRejectHandleDead(reject);
     return;
   }
-  reject(code, error.localizedDescription, nil);
+  reject(code, BGSRNErrorMessage(error), nil);
 }
 
 static NSString *const kAttributeRejectedCode = @"E_ATTRIBUTE_REJECTED";
@@ -1131,7 +1139,7 @@ RCT_EXPORT_MODULE(Bugsee)
     BugseeExceptionLoggingOptions *opts =
         [BGSRNExceptions loggingOptionsFromJSON:optionsJson error:&error];
     if (optionsJson != nil && opts == nil) {
-      NSLog(@"BugseeRN exception options unparseable: %@", error.localizedDescription);
+      NSLog(@"BugseeRN exception options unparseable: %@", BGSRNErrorMessage(error));
     }
     [Bugsee logException:BGSRNReactNativeExceptionName
                   reason:payloadJson
@@ -1229,7 +1237,7 @@ RCT_EXPORT_MODULE(Bugsee)
     params = BGSRNJSONObject(paramsJson, &error);
     if (params == nil) {
       NSLog(@"BugseeRN event \"%@\" dropped: its params are not a JSON object: %@", name,
-            error.localizedDescription);
+            BGSRNErrorMessage(error));
       return;
     }
   }
@@ -1633,14 +1641,14 @@ RCT_EXPORT_MODULE(Bugsee)
     data = BGSRNJSONObject(dataJson, &error);
     if (data == nil) {
       NSLog(@"BugseeRN addBreadcrumb dropped: its data is not a JSON object: %@",
-            error.localizedDescription);
+            BGSRNErrorMessage(error));
       return @NO;
     }
   }
   NSInteger levelValue = 0;
   if (![level isKindOfClass:NSString.class]
       || !BGSRNBreadcrumbLevelFromName(level, &levelValue)) {
-    NSLog(@"BugseeRN addBreadcrumb dropped: level %@ is not a breadcrumb level name", level);
+    NSLog(@"BugseeRN addBreadcrumb dropped: level is not a breadcrumb level name");
     return @NO;
   }
   // createBreadcrumb still returns a crumb when capture is left off, and
@@ -1809,7 +1817,7 @@ RCT_EXPORT_MODULE(Bugsee)
   @try {
     resolve([BGSRNReportOps readReport:report]);
   } @catch (NSException *exception) {
-    BGSRNRejectException(reject, exception);
+    BGSRNRejectException(reject, @"reportRead", exception);
   }
 }
 
@@ -1832,10 +1840,10 @@ RCT_EXPORT_MODULE(Bugsee)
     if ([BGSRNReportOps applyPatchJSON:patchJson toReport:report error:&error]) {
       resolve(nil);
     } else {
-      reject(BGSRNReportErrorWireCode(error), error.localizedDescription, nil);
+      reject(BGSRNReportErrorWireCode(error), BGSRNErrorMessage(error), nil);
     }
   } @catch (NSException *exception) {
-    BGSRNRejectException(reject, exception);
+    BGSRNRejectException(reject, @"reportUpdate", exception);
   }
 }
 
@@ -1861,7 +1869,7 @@ RCT_EXPORT_MODULE(Bugsee)
                                                error:&error];
     BGSRNSettleAttachment(handleId, added, error, resolve, reject);
   } @catch (NSException *exception) {
-    BGSRNRejectException(reject, exception);
+    BGSRNRejectException(reject, @"reportAddFileAttachment", exception);
   }
 }
 
@@ -1885,7 +1893,7 @@ RCT_EXPORT_MODULE(Bugsee)
                                          error:&error];
     BGSRNSettleAttachment(handleId, added, error, resolve, reject);
   } @catch (NSException *exception) {
-    BGSRNRejectException(reject, exception);
+    BGSRNRejectException(reject, @"reportAddDataAttachment", exception);
   }
 }
 
@@ -1932,7 +1940,7 @@ RCT_EXPORT_MODULE(Bugsee)
       }];
     } @catch (NSException *exception) {
       [registry fulfil:nil reservation:reservation];
-      BGSRNRejectException(reject, exception);
+      BGSRNRejectException(reject, @"createReport", exception);
     }
   });
 }
@@ -1949,7 +1957,7 @@ RCT_EXPORT_MODULE(Bugsee)
       }
       resolve([BGSRNCreatedReportOps readReport:report]);
     } @catch (NSException *exception) {
-      BGSRNRejectException(reject, exception);
+      BGSRNRejectException(reject, @"createdReportRead", exception);
     }
   });
 }
@@ -1968,10 +1976,10 @@ RCT_EXPORT_MODULE(Bugsee)
       if ([BGSRNCreatedReportOps applyPatchJSON:patchJson toReport:report error:&error]) {
         resolve(nil);
       } else {
-        reject(BGSRNReportErrorWireCode(error), error.localizedDescription, nil);
+        reject(BGSRNReportErrorWireCode(error), BGSRNErrorMessage(error), nil);
       }
     } @catch (NSException *exception) {
-      BGSRNRejectException(reject, exception);
+      BGSRNRejectException(reject, @"createdReportUpdate", exception);
     }
   });
 }
@@ -1996,10 +2004,10 @@ RCT_EXPORT_MODULE(Bugsee)
       if ([BGSRNCreatedReportOps addData:base64 name:name toReport:report error:&error]) {
         resolve(nil);
       } else {
-        reject(BGSRNReportErrorWireCode(error), error.localizedDescription, nil);
+        reject(BGSRNReportErrorWireCode(error), BGSRNErrorMessage(error), nil);
       }
     } @catch (NSException *exception) {
-      BGSRNRejectException(reject, exception);
+      BGSRNRejectException(reject, @"createdReportAddDataAttachment", exception);
     }
   });
 }
@@ -2023,10 +2031,10 @@ RCT_EXPORT_MODULE(Bugsee)
       if ([BGSRNCreatedReportOps addFileAtPath:path name:name toReport:report error:&error]) {
         resolve(nil);
       } else {
-        reject(BGSRNReportErrorWireCode(error), error.localizedDescription, nil);
+        reject(BGSRNReportErrorWireCode(error), BGSRNErrorMessage(error), nil);
       }
     } @catch (NSException *exception) {
-      BGSRNRejectException(reject, exception);
+      BGSRNRejectException(reject, @"createdReportAddFileAttachment", exception);
     }
   });
 }
@@ -2055,7 +2063,7 @@ RCT_EXPORT_MODULE(Bugsee)
       }];
     } @catch (NSException *exception) {
       [BGSRNCreatedReports.shared endUpload:generation];
-      BGSRNRejectException(reject, exception);
+      BGSRNRejectException(reject, @"createdReportUpload", exception);
     }
   });
 }
@@ -2097,7 +2105,7 @@ RCT_EXPORT_MODULE(Bugsee)
     NSError *error = nil;
     parsed = BGSRNJSONObject(fieldsJson, &error);
     if (parsed == nil) {
-      NSLog(@"BugseeRN notify dropped: %@", error);
+      NSLog(@"BugseeRN notify dropped: %@", BGSRNErrorMessage(error));
       return;
     }
   }
@@ -2131,7 +2139,7 @@ RCT_EXPORT_MODULE(Bugsee)
       NSError *error = nil;
       attributes = BGSRNJSONObject(attributesJson, &error);
       if (attributes == nil) {
-        NSLog(@"BugseeRN startTransaction dropped attributes: %@", error);
+        NSLog(@"BugseeRN startTransaction dropped attributes: %@", BGSRNErrorMessage(error));
       }
     }
     id<BGSTransaction> transaction = attributes == nil
@@ -2211,7 +2219,7 @@ RCT_EXPORT_MODULE(Bugsee)
   BGSRNRunOnMainSync(^{
     NSInteger wire = (NSInteger)llround(status);
     if (wire < BGSSpanStatusOK || wire > BGSSpanStatusUnknown) {
-      NSLog(@"BugseeRN span status %ld is outside 0..5", (long)wire);
+      NSLog(@"BugseeRN span status is outside 0..5");
       return;
     }
     BGSRNLiveSpan *live = [self liveSpan:handle];
@@ -2251,7 +2259,7 @@ RCT_EXPORT_MODULE(Bugsee)
     if (statusSet) {
       NSInteger value = (NSInteger)llround(status);
       if (value < BGSSpanStatusOK || value > BGSSpanStatusUnknown) {
-        NSLog(@"BugseeRN span finish status %ld is outside 0..5", (long)value);
+        NSLog(@"BugseeRN span finish status is outside 0..5");
         return;
       }
       wire = @(value);

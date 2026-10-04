@@ -51,7 +51,7 @@ static void RunQuietly(BGSCallback _Nullable completion) {
   @try {
     completion();
   } @catch (NSException *exception) {
-    NSLog(@"BugseeRN report handler completion threw: %@", exception);
+    NSLog(@"BugseeRN report handler completion threw: %@", NSStringFromClass(exception.class));
   }
 }
 
@@ -301,7 +301,7 @@ static NSString *_Nullable SafeType(id<BGSReportContract> report) {
   @try {
     _cancel(timer);
   } @catch (NSException *exception) {
-    NSLog(@"BugseeRN report handler timer cancel threw: %@", exception);
+    NSLog(@"BugseeRN report handler timer cancel threw: %@", NSStringFromClass(exception.class));
   }
 }
 

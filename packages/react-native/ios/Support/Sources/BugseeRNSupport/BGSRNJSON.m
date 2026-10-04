@@ -22,8 +22,9 @@ NSDictionary<NSString *, id> *BGSRNJSONObject(NSString *json, NSError **error) {
   // text after the object is one too.
   id value = data == nil ? nil : [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
   if (value == nil) {
-    return Fail(error, [NSString stringWithFormat:@"malformed JSON: %@",
-                                                  parseError.localizedDescription ?: @"not UTF-8"]);
+    // Fixed, never the parser's own diagnostic: that can repeat fragments of
+    // the malformed text, which a rejection or log line must not carry.
+    return Fail(error, @"malformed JSON");
   }
   if (![value isKindOfClass:NSDictionary.class]) {
     return Fail(error, @"expected a JSON object");

@@ -1,4 +1,5 @@
 #import "BGSRNCreatedReportOps.h"
+#import "BGSRNErrorMessage.h"
 #import "BGSRNJSON.h"
 #import "BGSRNReportOps.h"
 
@@ -76,7 +77,7 @@ static BOOL AtAttachmentLimit(BugseeExtendedReport *report) {
   if (patch == nil) {
     return Fail(error, BGSRNReportErrorBadArgument,
                 [NSString stringWithFormat:@"update() patch is not a JSON object: %@",
-                                           parseError.localizedDescription]);
+                                           BGSRNErrorMessage(parseError)]);
   }
   NSDictionary<NSString *, id> *valid = [BGSRNReportOps validatedPatch:patch error:error];
   if (valid == nil) {

@@ -51,7 +51,7 @@ static void RunQuietly(BGSRNDataRequestReply _Nullable reply, NSString *_Nullabl
   @try {
     reply(payload);
   } @catch (NSException *exception) {
-    NSLog(@"BugseeRN data request reply threw: %@", exception);
+    NSLog(@"BugseeRN data request reply threw: %@", NSStringFromClass(exception.class));
   }
 }
 
@@ -109,7 +109,7 @@ static id _Nullable CallOrigin(BGSRNDataRequestOriginBlock _Nullable block, BOOL
   @try {
     return block();
   } @catch (NSException *exception) {
-    NSLog(@"BugseeRN data request origin threw: %@", exception);
+    NSLog(@"BugseeRN data request origin threw: %@", NSStringFromClass(exception.class));
     *threw = YES;
     return nil;
   }
@@ -415,7 +415,7 @@ static id _Nullable CallOrigin(BGSRNDataRequestOriginBlock _Nullable block, BOOL
   @try {
     return _schedule(task, BGSRNDataRequestDeadlineMs);
   } @catch (NSException *exception) {
-    NSLog(@"BugseeRN data request deadline could not be armed: %@", exception);
+    NSLog(@"BugseeRN data request deadline could not be armed: %@", NSStringFromClass(exception.class));
     return nil;
   }
 }
@@ -424,7 +424,7 @@ static id _Nullable CallOrigin(BGSRNDataRequestOriginBlock _Nullable block, BOOL
   @try {
     _cancel(timer);
   } @catch (NSException *exception) {
-    NSLog(@"BugseeRN data request timer cancel threw: %@", exception);
+    NSLog(@"BugseeRN data request timer cancel threw: %@", NSStringFromClass(exception.class));
   }
 }
 

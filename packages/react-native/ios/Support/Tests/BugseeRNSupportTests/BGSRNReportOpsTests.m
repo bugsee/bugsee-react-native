@@ -69,6 +69,16 @@
   XCTAssertEqualObjects(_report.mutations, @[]);
 }
 
+/// The rejection never echoes the value a caller sent: anything JS allows can
+/// arrive, and rendering it into the message would carry it back to JS.
+- (void)testSeverityRejectionNeverEchoesTheOffendingValue {
+  NSError *error = nil;
+  XCTAssertFalse([BGSRNReportOps applyPatch:@{ @"severity" : @"s3cret-severity-value" }
+                                   toReport:_report
+                                      error:&error]);
+  XCTAssertEqualObjects(error.localizedDescription, @"severity must be an integer 1..5");
+}
+
 #pragma mark - Patch
 
 /// A valid field next to an invalid one must not land on its own.
@@ -256,6 +266,25 @@
 
 - (void)testWireCodeIsNilForAForeignError {
   XCTAssertNil(BGSRNReportErrorWireCode([NSError errorWithDomain:NSCocoaErrorDomain code:1 userInfo:nil]));
+}
+
+#pragma mark - Messages
+
+/// Through the real call path: the rejection says the text is malformed and
+/// never repeats it. The same wording as Android's `ReportOps.applyJson`.
+- (void)testApplyPatchJSONRejectsMalformedTextWithoutEchoingIt {
+  NSError *error = nil;
+  XCTAssertFalse([BGSRNReportOps applyPatchJSON:@"{\"summary\": \"s3cret-do-not-leak" toReport:_report error:&error]);
+  XCTAssertEqual(error.code, BGSRNReportErrorBadArgument);
+  XCTAssertEqualObjects(error.localizedDescription, @"update() patch is not a JSON object: malformed JSON");
+}
+
+/// What an unexpected `NSException` in a report operation rejects with: the
+/// operation, nothing of the exception.
+- (void)testFailureMessageNamesOnlyTheOperation {
+  XCTAssertEqualObjects([BGSRNReportOps failureMessageForOperation:@"reportRead"], @"reportRead failed");
+  XCTAssertEqualObjects([BGSRNReportOps failureMessageForOperation:@"createdReportUpload"],
+                        @"createdReportUpload failed");
 }
 
 @end

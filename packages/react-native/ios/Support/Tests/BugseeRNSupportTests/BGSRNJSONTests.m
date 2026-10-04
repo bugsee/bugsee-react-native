@@ -270,4 +270,12 @@ static BOOL IsFloatNumber(id value) {
   XCTAssertEqualObjects(report.mutations, @[]);
 }
 
+/// The system parser's own diagnostic can repeat fragments of the text it
+/// choked on; the message is fixed instead.
+- (void)testMalformedTextIsAFixedMessage {
+  NSError *error = nil;
+  XCTAssertNil(BGSRNJSONObject(@"{\"a\": \"s3cret", &error));
+  XCTAssertEqualObjects(error.localizedDescription, @"malformed JSON");
+}
+
 @end

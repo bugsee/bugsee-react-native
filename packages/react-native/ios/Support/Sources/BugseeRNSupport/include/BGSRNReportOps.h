@@ -75,6 +75,12 @@ FOUNDATION_EXPORT NSString *_Nullable BGSRNReportErrorWireCode(NSError *error);
        toReport:(id<BGSReportContract>)report
           error:(NSError **)error;
 
+/// What a rejection says when `operation` (e.g. `"reportRead"`) faults with an
+/// `NSException`: the operation only, never the exception's `reason`, which
+/// can echo report content. The iOS mirror of Android's
+/// `ReportOps.failureMessage`.
++ (NSString *)failureMessageForOperation:(NSString *)operation;
+
 @end
 
 NS_ASSUME_NONNULL_END
