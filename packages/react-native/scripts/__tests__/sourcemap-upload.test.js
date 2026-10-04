@@ -14,6 +14,9 @@ const {
   uploadDisabled,
 } = require('../hermes-sourcemaps');
 const { readLog, startStub, stopStub } = require('./fixtures/stub');
+const { useScratchCwd } = require('./fixtures/scratch-cwd');
+
+useScratchCwd();
 
 // Synthetic, UUID-shaped, never a real app.
 const TOKEN = '3f2a9c1e-0000-4abc-8def-5ca1ab1e0001';
