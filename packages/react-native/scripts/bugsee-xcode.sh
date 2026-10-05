@@ -4,6 +4,7 @@
 # bugsee-cli. The upload needs a real app token: BUGSEE_PLUGIN_APP_TOKEN (the
 # Expo plugin bakes it into this phase), BUGSEE_APP_TOKEN, BUGSEE_TOKEN_IOS,
 # or `ios` in ../credentials.json. BUGSEE_UPLOAD_SOURCEMAPS=false turns it off.
+# Debug configurations skip it unless BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true.
 # Without a token, or with the placeholder, one build-log line says it skipped.
 # A failed upload warns; it never fails the build.
 
@@ -74,6 +75,7 @@ if [[ "${USE_HERMES:-true}" == "false" && -f "$BUGSEE_BYTECODE_BUNDLE" && -f "$S
   "$NODE_BINARY" "$HOOK_DIR/hermes-sourcemaps.js" upload \
     --composed "$SOURCEMAP_FILE" \
     --platform ios \
+    --configuration "${CONFIGURATION:-}" \
     --credentials "$BUGSEE_CREDENTIALS_FILE" \
     --app-version "${MARKETING_VERSION:-}" \
     --app-build "${CURRENT_PROJECT_VERSION:-}"

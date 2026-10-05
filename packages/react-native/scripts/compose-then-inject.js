@@ -8,11 +8,13 @@
  * the intermediate one and is not the inject target. Then upload that map:
  * this runs only when React Native composed in this build, so the map is never
  * a stale one. Version and build come from Xcode's MARKETING_VERSION and
- * CURRENT_PROJECT_VERSION.
+ * CURRENT_PROJECT_VERSION. A Debug CONFIGURATION is skipped unless
+ * BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true.
  */
 
 const { spawnSync } = require('node:child_process');
 const {
+  debugUploadAllowed,
   finishAfterCompose,
   resolveUploadSettings,
   uploadComposedSourceMap,
@@ -85,6 +87,8 @@ function run(argv, env) {
     uploadComposedSourceMap({
       composedMapPath: output,
       enabled: !uploadDisabled(undefined, env),
+      configuration: env.CONFIGURATION,
+      allowDebug: debugUploadAllowed(env),
       token: settings.token,
       endpoint: settings.endpoint,
       appVersion: env.MARKETING_VERSION,

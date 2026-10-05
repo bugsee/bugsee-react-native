@@ -237,6 +237,17 @@ function isOff(value) {
   return value === false || OFF_VALUES.has(String(value).trim().toLowerCase());
 }
 
+const ON_VALUES = new Set(['true', '1', 'yes', 'on']);
+
+/**
+ * iOS Debug builds for a device bundle and compose too. Their -Og maps are
+ * not uploaded unless BUGSEE_UPLOAD_DEBUG_SOURCEMAPS opts in, as Android
+ * never bundles debug variants.
+ */
+function debugUploadAllowed(env) {
+  return ON_VALUES.has(String(env.BUGSEE_UPLOAD_DEBUG_SOURCEMAPS).trim().toLowerCase());
+}
+
 /** Off when the build passes `false` or BUGSEE_UPLOAD_SOURCEMAPS says so. */
 function uploadDisabled(option, env) {
   return isOff(option) || isOff(env.BUGSEE_UPLOAD_SOURCEMAPS);
@@ -312,6 +323,8 @@ function readMapDebugId(mapPath) {
 function uploadComposedSourceMap({
   composedMapPath,
   enabled = true,
+  configuration,
+  allowDebug = false,
   token,
   endpoint,
   appVersion,
@@ -322,6 +335,10 @@ function uploadComposedSourceMap({
   if (!enabled) {
     say('source map upload skipped: uploadSourcemaps is off');
     return { status: 'skipped', reason: 'disabled' };
+  }
+  if (/Debug/.test(configuration ?? '') && !allowDebug) {
+    say('source map upload skipped: Debug configuration (set BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true to upload)');
+    return { status: 'skipped', reason: 'debug' };
   }
   if (!token) {
     say('source map upload skipped: no app token is configured');
@@ -377,6 +394,8 @@ function uploadFromArgs(args) {
   return uploadComposedSourceMap({
     composedMapPath: args.composed,
     enabled: !uploadDisabled(args['upload-sourcemaps'], process.env),
+    configuration: args.configuration,
+    allowDebug: debugUploadAllowed(process.env),
     token: settings.token,
     endpoint: settings.endpoint,
     appVersion: args['app-version'],
@@ -439,6 +458,7 @@ function main(argv) {
 module.exports = {
   UPLOAD_ARGV,
   cli,
+  debugUploadAllowed,
   finishAfterCompose,
   injectComposedSourceMap,
   main,

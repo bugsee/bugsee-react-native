@@ -194,6 +194,23 @@ fs.writeFileSync(out, JSON.stringify({ version: 3, mappings: 'CCCC' }));
     expect(written.join('')).toBe('bugsee: source map upload skipped: uploadSourcemaps is off\n');
   });
 
+  it('skips the upload for a Debug configuration unless opted in', () => {
+    const versions = { MARKETING_VERSION: '1', CURRENT_PROJECT_VERSION: '1', BUGSEE_PLUGIN_APP_TOKEN: TOKEN };
+    expect(run(argv(), { ...env, ...versions, CONFIGURATION: 'Debug' })).toBe(0);
+    expect(written.join('')).toBe(
+      'bugsee: source map upload skipped: Debug configuration (set BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true to upload)\n',
+    );
+    written.length = 0;
+    const spawn = jest.spyOn(cp, 'spawnSync');
+    try {
+      run(argv(), { ...env, ...versions, CONFIGURATION: 'Debug', BUGSEE_UPLOAD_DEBUG_SOURCEMAPS: 'true' });
+      expect(spawn.mock.calls.some((call) => (call[1] ?? []).includes('debug-files'))).toBe(true);
+    } finally {
+      spawn.mockRestore();
+    }
+    expect(written.join('')).not.toContain('Debug configuration');
+  });
+
   it('does not upload when finish skipped', () => {
     expect(run(argv(), { ...env, BUGSEE_HERMES_ARGS: '-O', BUGSEE_PLUGIN_APP_TOKEN: TOKEN })).toBe(0);
     expect(written.join('')).toContain('no -output-source-map');

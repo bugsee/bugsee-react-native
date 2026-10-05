@@ -231,6 +231,36 @@ describe('source map upload', () => {
     expect(output.text()).toBe(`bugsee: source map upload skipped: no source map at ${missing}\n`);
   });
 
+  it('skips a Debug configuration unless Debug uploads are opted in', () => {
+    const spawn = jest.spyOn(cp, 'spawnSync').mockReturnValue({ status: 0, stdout: '', stderr: '' });
+    try {
+      const base = { composedMapPath: mapPath, token: TOKEN, appVersion: '1', appBuild: '1', cliPath: '/c' };
+      for (const configuration of ['Debug', 'StagingDebug', 'Debug-Dev']) {
+        expect(uploadComposedSourceMap({ ...base, configuration })).toEqual({ status: 'skipped', reason: 'debug' });
+      }
+      expect(spawn).not.toHaveBeenCalled();
+      expect(uploadComposedSourceMap({ ...base, configuration: 'Debug', allowDebug: true }).status).toBe('uploaded');
+      expect(uploadComposedSourceMap({ ...base, configuration: 'Release' }).status).toBe('uploaded');
+      expect(uploadComposedSourceMap({ ...base, configuration: 'debug' }).status).toBe('uploaded');
+      expect(uploadComposedSourceMap(base).status).toBe('uploaded');
+      expect(spawn).toHaveBeenCalledTimes(4);
+    } finally {
+      spawn.mockRestore();
+    }
+    expect(output.text().split('\n').filter((line) => line.includes('skipped'))).toEqual(
+      Array(3).fill(
+        'bugsee: source map upload skipped: Debug configuration (set BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true to upload)',
+      ),
+    );
+  });
+
+  it('checks the switch first, then Debug, then the token', () => {
+    expect(
+      uploadComposedSourceMap({ composedMapPath: mapPath, enabled: false, configuration: 'Debug' }).reason,
+    ).toBe('disabled');
+    expect(uploadComposedSourceMap({ composedMapPath: mapPath, configuration: 'Debug' }).reason).toBe('debug');
+  });
+
   it('checks the switch before the token, the token before the version, and the version before the map', () => {
     const missing = path.join(dir, 'missing.map');
     expect(uploadComposedSourceMap({ composedMapPath: missing, enabled: false }).reason).toBe('disabled');
@@ -369,6 +399,18 @@ describe('source map upload', () => {
       '9',
       '/m.map',
     ]);
+  });
+});
+
+describe('Debug opt-in', () => {
+  it('is on only for an explicit true value', () => {
+    const { debugUploadAllowed } = require('../hermes-sourcemaps');
+    for (const on of ['true', '1', 'yes', 'on', ' TRUE ']) {
+      expect(debugUploadAllowed({ BUGSEE_UPLOAD_DEBUG_SOURCEMAPS: on })).toBe(true);
+    }
+    for (const off of [undefined, '', 'false', '0', 'nope']) {
+      expect(debugUploadAllowed({ BUGSEE_UPLOAD_DEBUG_SOURCEMAPS: off })).toBe(false);
+    }
   });
 });
 

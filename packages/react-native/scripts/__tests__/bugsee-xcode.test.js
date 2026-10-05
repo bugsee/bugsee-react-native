@@ -145,6 +145,16 @@ describe('bugsee-xcode.sh', () => {
     expect(result.stderr).not.toContain('bugsee: uploaded');
   });
 
+  it('skips the upload for a Debug configuration, on both the Hermes and the JSC path', () => {
+    for (const extra of [{}, { USE_HERMES: 'false' }]) {
+      const result = runHook({ BUGSEE_PLUGIN_APP_TOKEN: TOKEN, CONFIGURATION: 'Debug', ...extra });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        'bugsee: source map upload skipped: Debug configuration (set BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true to upload)\n',
+      );
+    }
+  });
+
   it('honours BUGSEE_UPLOAD_SOURCEMAPS=false', () => {
     const result = runHook({ BUGSEE_PLUGIN_APP_TOKEN: TOKEN, BUGSEE_UPLOAD_SOURCEMAPS: 'false' });
     expect(result.status).toBe(0);
