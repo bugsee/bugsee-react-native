@@ -52,7 +52,11 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 /// A Modal surface belongs to one JS runtime: its key is a React tag the next
 /// runtime does not know. A reload drops every surface but the main one
 /// (`claimRuntime`, `releaseRuntime:`), so a Modal that was open when the old
-/// runtime went away does not mask the screen for the rest of the process.
+/// runtime went away does not mask the screen for the rest of the process. A
+/// claim also empties the main surface's rectangles, keeping its origin: they
+/// were the old runtime's, and its clearing write is ignored once stale
+/// (below), so a new tree that never publishes on the main surface would
+/// otherwise leave them masking until the process dies.
 ///
 /// The claim also gates the module's rectangle writes
 /// (`setCoordinates:count:forDisplay:surface:runtime:`): one whose claim is no
@@ -131,7 +135,8 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 - (NSArray<NSNumber *> *)surfacesForDisplay:(NSInteger)display;
 
 /// A new JS runtime's module is starting: drops every surface but the main
-/// one and returns its claim. Serialised with `releaseRuntime:`, so an old
+/// one, empties the main one's rectangles (keeping its origin), and returns
+/// its claim. Serialised with `releaseRuntime:`, so an old
 /// module released after the new one started cannot drop its surfaces.
 - (NSInteger)claimRuntime;
 

@@ -325,7 +325,8 @@
   XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][0], before);
 }
 
-/// A new runtime drops the Modal surfaces the old one left; the main one stays.
+/// A new runtime drops the Modal surfaces the old one left; the main one
+/// stays, emptied, with its origin.
 - (void)testClaimingANewRuntimeDropsEveryModalSurfaceButKeepsTheMainOne {
   const int32_t mainRects[] = {10, 20, 30, 40};
   const int32_t modalRects[] = {100, 200, 150, 250};
@@ -341,7 +342,39 @@
   XCTAssertEqualObjects([_store surfacesForDisplay:1], @[]);
   NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
   XCTAssertNotEqualObjects(packed[0], before);
-  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(1, 5)], (@[ @1, @10, @20, @30, @40 ]));
+  XCTAssertEqualObjects(packed[1], @0);
+}
+
+/// The main surface's origin survives the claim: the new runtime's first set
+/// is placed, not failed closed.
+- (void)testAClaimKeepsTheMainSurfacesOrigin {
+  const int32_t oldRects[] = {10, 20, 30, 40};
+  const int32_t newRects[] = {1, 2, 3, 4};
+  [_store setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
+  [_store setOrigin:CGPointMake(5, 7) forDisplay:0];
+  [_store setCoordinates:oldRects count:4 forDisplay:0];
+
+  const NSInteger current = [_store claimRuntime];
+  XCTAssertTrue([_store setCoordinates:newRects count:4 forDisplay:0 surface:BGSRNSecureMainSurface runtime:current]);
+
+  XCTAssertEqualObjects([[self unpack:[_store snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(1, 5)],
+                        (@[ @1, @6, @9, @8, @11 ]));
+}
+
+/// The old runtime's main set must not outlive it: its clearing write is
+/// stale, and a new tree that never publishes on the main surface would
+/// otherwise keep masking where the old secure view was.
+- (void)testAClaimWithAMainSetThenAStaleEmptyWriteAndNoNewPublishServesNothing {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
+  const NSInteger old = [_store claimRuntime];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:BGSRNSecureMainSurface runtime:old];
+  XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][1], @1);
+
+  [_store claimRuntime];
+  XCTAssertFalse([_store setCoordinates:NULL count:0 forDisplay:0 surface:BGSRNSecureMainSurface runtime:old]);
+
+  XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][1], @0);
 }
 
 - (void)testReleasingTheCurrentRuntimeDropsItsModalSurfaces {

@@ -234,8 +234,29 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
   _runtime += 1;
   const NSInteger claim = _runtime;
   [self dropNonMainSurfacesLocked];
+  [self emptyMainSurfaceLocked];
   [_lock unlock];
   return claim;
+}
+
+/// Empties the main surface's rectangles on every display, keeping its
+/// origin: the old runtime's set must not outlive it, and a new runtime that
+/// never publishes on the main surface would otherwise inherit it. Caller
+/// holds `_lock`.
+- (void)emptyMainSurfaceLocked {
+  for (NSNumber *display in _lanesByDisplay.allKeys) {
+    BGSRNSecureLane *main = _lanesByDisplay[display][@(BGSRNSecureMainSurface)];
+    if (main == nil || main.raw.length == 0) {
+      continue;
+    }
+    [self changeLaneLockedForDisplay:display.integerValue
+                             surface:BGSRNSecureMainSurface
+                              change:^BGSRNSecureLane *(BGSRNSecureLane *prior) {
+                                return [[BGSRNSecureLane alloc] initWithRaw:[NSData data]
+                                                                     origin:prior.origin
+                                                                originKnown:prior.originKnown];
+                              }];
+  }
 }
 
 - (void)releaseRuntime:(NSInteger)claim {
