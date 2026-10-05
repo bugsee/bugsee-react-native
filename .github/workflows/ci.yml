@@ -74,7 +74,8 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
       # Spec §13: the plugin's edits survive `expo prebuild --clean`, and a
-      # second prebuild changes nothing. No pods, no build.
+      # `--no-clean` prebuild over its own output changes nothing. No pods,
+      # no build yet.
       - run: ./scripts/check-expo-prebuild.sh
 
   compat:

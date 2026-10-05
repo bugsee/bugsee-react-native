@@ -1,8 +1,10 @@
 #!/bin/bash
 # Spec §13: `expo prebuild --clean` must leave the config plugin's edits in
 # the regenerated projects. Runs the prebuild in examples/expo (no pod or
-# npm install), checks each edit, then a second `--no-clean` prebuild must
-# leave every generated file as it was. Removes ios/ and android/ afterwards.
+# npm install) and checks each edit. Then a second prebuild with `--no-clean`
+# runs the plugin over its own output, which must change no file (SDK 57
+# prebuilds clean by default, which would only prove determinism). Removes
+# ios/ and android/ afterwards. Builds nothing.
 
 set -euo pipefail
 
@@ -40,10 +42,10 @@ snapshot() {
   find android ios -type f -not -path '*/.gradle/*' -print0 | sort -z | xargs -0 shasum
 }
 before="$(snapshot)"
-CI=1 yarn expo prebuild --no-install
+CI=1 yarn expo prebuild --no-clean --no-install
 after="$(snapshot)"
 if [[ "$before" != "$after" ]]; then
-  echo "::error::a second prebuild changed generated files"
+  echo "::error::a --no-clean prebuild over the plugin's own output changed generated files"
   diff <(echo "$before") <(echo "$after") || true
   failures=$((failures + 1))
 fi
