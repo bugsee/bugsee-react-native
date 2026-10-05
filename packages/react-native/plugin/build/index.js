@@ -37,17 +37,18 @@ function editProjectBuildGradle(file, edits) {
     }
     return (0, gradle_1.ensureGradlePluginDeclared)(file.contents, edits.gradlePluginVersion);
 }
-function editAppBuildGradle(file, edits) {
+function editAppBuildGradle(file, edits, log = console.warn) {
     if (file.language !== 'groovy') {
         throw new Error(exports.APP_GRADLE_NOT_GROOVY);
     }
-    return (0, gradle_1.ensureSymbolUploads)((0, gradle_1.ensureAppAppliesPlugin)(file.contents, edits.ndkVersion), edits.uploadSymbols);
+    return (0, gradle_1.ensureSymbolUploads)((0, gradle_1.ensureAppAppliesPlugin)(file.contents, edits.ndkVersion, log), edits.uploadSymbols);
 }
 /** Runs every Gradle edit on the files as they are on disk, writing nothing. */
 async function refuseUnlessEditable(projectRoot, edits) {
     editSettingsGradle(await config_plugins_1.AndroidConfig.Paths.getSettingsGradleAsync(projectRoot));
     editProjectBuildGradle(await config_plugins_1.AndroidConfig.Paths.getProjectBuildGradleAsync(projectRoot), edits);
-    editAppBuildGradle(await config_plugins_1.AndroidConfig.Paths.getAppBuildGradleAsync(projectRoot), edits);
+    // The mod that follows logs; the check stays quiet.
+    editAppBuildGradle(await config_plugins_1.AndroidConfig.Paths.getAppBuildGradleAsync(projectRoot), edits, () => undefined);
 }
 const TOKEN_SHAPE = /^[0-9A-Za-z._-]+$/;
 /** The token for one platform, or undefined. Refuses anything that is not token-shaped. */

@@ -26,6 +26,27 @@ function refusal(file, reason, fix) {
 function unreadable(file, reason) {
     return refusal(file, reason, `Fix that line, ${BY_HAND}, then run expo prebuild again`);
 }
+/**
+ * Runs a transform; anything that is not already a refusal (a defect in the
+ * plugin) becomes one, so a prebuild never shows a raw TypeError and never
+ * writes a half-made edit.
+ */
+function guarded(file, transform) {
+    try {
+        return transform();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.startsWith(exports.CANNOT_EDIT)) {
+            throw error;
+        }
+        throw refusal(file, `the plugin hit an internal error while reading it (${message})`, `Report this with the file attached, ${BY_HAND}, then run expo prebuild again`);
+    }
+}
+/** A brace that shares its line with other code is not an anchor: refuse rather than split the line. */
+function anchorRefusal(file, line, lineNo, what, alternative) {
+    return refusal(file, `line ${lineNo}: \`${codeOf(line).trim()}\` shares its line with other code, so ${what} cannot be added without rewriting that line`, `Put the brace alone on its line, or ${alternative}, then run expo prebuild again`);
+}
 const KIND_CODE = 0;
 const KIND_STRING = 1;
 const KIND_COMMENT = 2;
@@ -114,8 +135,8 @@ function scan(source, file) {
         commentAt = null;
         last = ch;
     };
-    /** The identifier that ends right before `at`, when `last` is a word character. */
-    const wordBefore = (at) => /[A-Za-z0-9_]+\s*$/.exec(source.slice(lineStart, at))[0].trimEnd();
+    /** The identifier that ends right before `at`, when `last` is a word character; null when a comment sits between. */
+    const wordBefore = (at) => /[A-Za-z0-9_]+\s*$/.exec(source.slice(lineStart, at))?.[0].trimEnd() ?? null;
     const endLine = (end) => {
         lines.push({
             start: lineStart,
@@ -217,7 +238,8 @@ function scan(source, file) {
             const spaced = isBlank(source[i - 1] ?? '');
             const after = next ?? '\n';
             const tight = !isBlank(after) && after !== '\n';
-            const slashy = slashyAllowed(last, isWordChar(last) ? wordBefore(i) : '', spaced, tight);
+            const word = isWordChar(last) ? wordBefore(i) : '';
+            const slashy = word === null ? null : slashyAllowed(last, word, spaced, tight);
             if (slashy === null) {
                 throw unreadable(file, `line ${lineNo}: cannot tell whether the / starts a slashy string or divides`);
             }
@@ -229,7 +251,8 @@ function scan(source, file) {
             i += 1;
             continue;
         }
-        if (ch === '$' && source[i + 1] === '/') {
+        // `$` is an identifier character too: `a$/2` is `a$` divided, not a dollar-slashy string.
+        if (ch === '$' && source[i + 1] === '/' && !isWordChar(last)) {
             noteCode(STRING_END);
             stack.push({ kind: 'string', close: '/$', interpolates: true, escape: 'dollar', oneLine: false, line: lineNo });
             emitN(i, 2);
@@ -334,6 +357,28 @@ function isLineComment(line) {
 function isMarker(line, marker) {
     return isLineComment(line) && stripCr(line.raw).trim() === marker;
 }
+const indentOf = (raw) => raw.slice(0, raw.length - raw.trimStart().length);
+/** The line opens a block with nothing but `keyword {` (a trailing comment allowed) on it. */
+function isOpenerLine(line, keyword) {
+    return !line.openAtStart && keyword.test(codeOf(line).trim());
+}
+/** The line holds nothing but a closing brace (a trailing comment allowed). */
+function isCloserLine(line) {
+    return !line.openAtStart && codeOf(line).trim() === '}';
+}
+/** The indentation of the block's first direct entry, or one level under the opener when it has none. */
+function innerIndent(s, opener, closer) {
+    const depth = s.lines[opener].depthAfter;
+    const inner = s.lines.slice(opener + 1, closer).find((line) => line.depth === depth && stripCr(line.raw).trim() !== '');
+    return inner !== undefined ? indentOf(inner.raw) : `${indentOf(s.lines[opener].raw)}    `;
+}
+/** Inserts `added` (without EOLs) as whole lines at line index `at`, with the file's EOL. */
+function insertLines(source, at, added) {
+    const lines = source.split('\n');
+    const cr = crOf(eolOf(source));
+    lines.splice(at, 0, ...added.map((line) => `${line}${cr}`));
+    return lines.join('\n');
+}
 /** Bugsee's own code line, exactly, alone as a statement, at the top level, nothing after it. */
 function isOwnStatement(line, statement) {
     return (line !== undefined &&
@@ -437,42 +482,38 @@ function occursLive(s, needle) {
  * missing block gets the portal, Google, and Maven Central together.
  */
 function ensureMavenCentral(settingsGradle) {
+    return guarded(SETTINGS_GRADLE, () => mavenCentral(settingsGradle));
+}
+const REPOSITORIES = ['repositories {', '    gradlePluginPortal()', '    google()', '    mavenCentral()', '}'];
+function mavenCentral(settingsGradle) {
     const s = scan(settingsGradle, SETTINGS_GRADLE);
     const eol = eolOf(settingsGradle);
     const extent = blockExtent(s, 'pluginManagement');
     if (!extent) {
-        const header = [
-            'pluginManagement {',
-            '    repositories {',
-            '        gradlePluginPortal()',
-            '        google()',
-            '        mavenCentral()',
-            '    }',
-            '}',
-            '',
-        ].join(eol);
-        return header + settingsGradle;
+        return `pluginManagement {${eol}${REPOSITORIES.map((line) => `    ${line}`).join(eol)}${eol}}${eol}${settingsGradle}`;
     }
     if (blockExtentCall(s, 'mavenCentral', extent.bodyStart, extent.bodyEnd)) {
         return settingsGradle;
     }
     const repositories = blockExtent(s, 'repositories', extent.bodyStart, extent.bodyEnd);
     if (repositories) {
-        // After the last entry, so the closing brace keeps its own line.
-        const inner = settingsGradle.slice(repositories.bodyStart, repositories.bodyEnd);
-        const insertAt = repositories.bodyStart + inner.trimEnd().length;
-        return `${settingsGradle.slice(0, insertAt)}${eol}        mavenCentral()${settingsGradle.slice(insertAt)}`;
+        // Before the closing brace, which must stand alone on its line.
+        const opener = lineIndexAt(s, repositories.open);
+        const closer = lineIndexAt(s, repositories.bodyEnd);
+        if (!isOpenerLine(s.lines[opener], /^repositories\s*\{$/) || !isCloserLine(s.lines[closer])) {
+            const at = isCloserLine(s.lines[closer]) ? opener : closer;
+            throw anchorRefusal(SETTINGS_GRADLE, s.lines[at], at + 1, 'mavenCentral()', 'add mavenCentral() to pluginManagement.repositories yourself');
+        }
+        return insertLines(settingsGradle, closer, [`${innerIndent(s, opener, closer)}mavenCentral()`]);
     }
-    const addition = [
-        '',
-        '    repositories {',
-        '        gradlePluginPortal()',
-        '        google()',
-        '        mavenCentral()',
-        '    }',
-        '',
-    ].join(eol);
-    return settingsGradle.slice(0, extent.bodyEnd) + addition + settingsGradle.slice(extent.bodyEnd);
+    const opener = lineIndexAt(s, extent.open);
+    const closer = lineIndexAt(s, extent.bodyEnd);
+    if (!isOpenerLine(s.lines[opener], /^pluginManagement\s*\{$/) || !isCloserLine(s.lines[closer])) {
+        const at = isCloserLine(s.lines[closer]) ? opener : closer;
+        throw anchorRefusal(SETTINGS_GRADLE, s.lines[at], at + 1, 'a repositories block with mavenCentral()', 'add repositories { mavenCentral() } to pluginManagement yourself');
+    }
+    const indent = innerIndent(s, opener, closer);
+    return insertLines(settingsGradle, closer, ['', ...REPOSITORIES.map((line) => `${indent}${line}`)]);
 }
 /** A `name(` call in code within [from, to). */
 function blockExtentCall(s, name, from, to) {
@@ -489,8 +530,11 @@ const DECLARED_VERSION = /(id\s*\(?\s*['"]com\.bugsee\.android\.gradle['"]\s*\)?
  */
 function ensureGradlePluginDeclared(projectBuildGradle, version) {
     if (!/^[0-9A-Za-z.+_-]+$/.test(version)) {
-        throw new Error(`refusing Gradle plugin version ${version}`);
+        throw refusal(ROOT_GRADLE, `the gradlePluginVersion option "${version}" is not a plain version string`, 'Fix the option in the Expo config (the @bugsee/react-native plugin entry), then run expo prebuild again');
     }
+    return guarded(ROOT_GRADLE, () => gradlePluginDeclared(projectBuildGradle, version));
+}
+function gradlePluginDeclared(projectBuildGradle, version) {
     const s = scan(projectBuildGradle, ROOT_GRADLE);
     const eol = eolOf(projectBuildGradle);
     const declared = codeMatches(s, DECLARED_VERSION)[0];
@@ -505,15 +549,21 @@ function ensureGradlePluginDeclared(projectBuildGradle, version) {
     // apply false: the plugin has to be applied on the application module.
     // Applied to the root project it fails configuration, because it hangs
     // its tasks off an Android variant.
-    const declaration = ['plugins {', `    id '${PLUGIN_ID}' version '${version}' apply false`, '}'].join(eol);
+    const declaration = ['plugins {', `    id '${PLUGIN_ID}' version '${version}' apply false`, '}'];
     // plugins {} has to stay with the buildscript block. A later allprojects
     // or apply statement makes Gradle reject the block.
     const buildscript = blockExtent(s, 'buildscript');
     if (buildscript) {
-        const at = buildscript.bodyEnd + 1;
-        return `${projectBuildGradle.slice(0, at)}${eol}${declaration}${eol}${projectBuildGradle.slice(at)}`;
+        // After the closing brace's line, which must hold nothing else.
+        const closer = lineIndexAt(s, buildscript.bodyEnd);
+        const line = s.lines[closer];
+        if (!isCloserLine(line)) {
+            throw anchorRefusal(ROOT_GRADLE, line, closer + 1, 'the plugins block that declares the Bugsee Gradle plugin', `declare \`id '${PLUGIN_ID}' version '${version}' apply false\` in a plugins block yourself`);
+        }
+        const indent = indentOf(line.raw);
+        return insertLines(projectBuildGradle, closer + 1, [...declaration.map((entry) => `${indent}${entry}`), '']);
     }
-    return `${declaration}${eol}${eol}${projectBuildGradle}`;
+    return `${declaration.join(eol)}${eol}${eol}${projectBuildGradle}`;
 }
 // ---------------------------------------------------------------------------
 // App build.gradle
@@ -538,17 +588,24 @@ const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
  * debug id and uploads the composed map unless `bugseeUploadSourcemaps=false`
  * or no real token is configured.
  */
-function ensureAppAppliesPlugin(appBuildGradle, ndkVersion) {
-    let next = ensurePluginApplied(appBuildGradle);
-    if (ndkVersion === null) {
-        next = ensureNdkExcluded(dropNdkImplementation(next));
+function ensureAppAppliesPlugin(appBuildGradle, ndkVersion, log = console.warn) {
+    if (ndkVersion !== null && !/^[0-9A-Za-z.+_-]+$/.test(ndkVersion)) {
+        throw refusal(APP_GRADLE, `the NDK artifact version "${ndkVersion}" (native-versions.json android.sdk) is not a plain version string`, 'Fix the baked version, then run expo prebuild again');
     }
-    else {
-        next = dropNdkExclude(next);
-        next = ensureNdkImplementation(next, ndkVersion);
-    }
-    next = ensureSymbolTable(next, ndkVersion !== null);
-    return ensureHermesHooks(next);
+    return guarded(APP_GRADLE, () => {
+        // The steps that can refuse run first, on the file as the user wrote it,
+        // so their line numbers are the user's; the plugin apply line goes in last.
+        let next = appBuildGradle;
+        if (ndkVersion === null) {
+            next = ensureNdkExcluded(dropNdkImplementation(next, log));
+        }
+        else {
+            next = dropNdkExclude(next);
+            next = ensureNdkImplementation(next, ndkVersion, log);
+        }
+        next = ensureSymbolTable(next, ndkVersion !== null);
+        return ensurePluginApplied(ensureHermesHooks(next));
+    });
 }
 const REACT_PLUGIN_LINE = /^\s*apply\s+plugin:\s*(["'])com\.facebook\.react\1\s*$/;
 function ensurePluginApplied(source) {
@@ -570,38 +627,97 @@ function ensurePluginApplied(source) {
     }
     return lines.join('\n');
 }
-const NDK_LINE = /^(\s*implementation\s+["']com\.bugsee:bugsee-android-ndk:)([^"']*)(["']\s*)$/;
-function ensureNdkImplementation(source, ndkVersion) {
-    if (!/^[0-9A-Za-z.+_-]+$/.test(ndkVersion)) {
-        throw new Error(`refusing NDK artifact version ${ndkVersion}`);
-    }
-    const s = scan(source, APP_GRADLE);
-    const eol = eolOf(source);
-    const existing = s.lines.findIndex((line) => !line.openAtStart && NDK_LINE.test(codeOf(line)));
-    if (existing !== -1) {
-        const lines = source.split('\n');
-        const line = s.lines[existing];
-        const code = codeOf(line);
-        lines[existing] = `${code.replace(NDK_LINE, `$1${ndkVersion}$3`)}${line.raw.slice(code.length)}`;
-        return lines.join('\n');
-    }
-    const dep = `    implementation "com.bugsee:bugsee-android-ndk:${ndkVersion}"`;
-    // The first top-level dependencies block in code (the mask hides the rest).
-    const re = /(?<![A-Za-z0-9_.])dependencies\s*\{/g;
-    for (let m = re.exec(s.masked); m !== null; m = re.exec(s.masked)) {
-        const open = m.index + m[0].length - 1;
-        if (depthAt(s, open) === 0) {
-            return `${source.slice(0, open + 1)}${eol}${dep}${source.slice(open + 1)}`;
+/** Bugsee's NDK dependency carries this marker; without it, an NDK line is the user's. */
+const NDK_MARKER = '// bugsee:ndk';
+const NDK_ARTIFACT = 'com.bugsee:bugsee-android-ndk';
+const NDK_OWN_CODE = /^(\s*implementation\s+"com\.bugsee:bugsee-android-ndk:)([^"]*)("\s*)$/;
+/** The opener of the dependencies block the plugin appends when the file has none. */
+const NDK_OPENER = `dependencies { ${NDK_MARKER}`;
+const DEPENDENCIES_OPENER = /^dependencies\s*\{$/;
+/** Bugsee's own NDK line: its exact statement with its marker as the trailing comment. */
+function isOwnNdkLine(line) {
+    return (!line.openAtStart &&
+        line.commentAt !== null &&
+        stripCr(line.raw.slice(line.commentAt)).trim() === NDK_MARKER &&
+        NDK_OWN_CODE.test(codeOf(line)));
+}
+/** The user declares the NDK artifact themselves, in code or a string, on a line that is not Bugsee's. */
+function userDeclaresNdk(s) {
+    return s.lines.some((line) => !isOwnNdkLine(line) && lineMentionsLive(s, line, NDK_ARTIFACT));
+}
+function lineMentionsLive(s, line, needle) {
+    for (let at = line.raw.indexOf(needle); at !== -1; at = line.raw.indexOf(needle, at + 1)) {
+        if (s.masked[line.start + at] !== ' ') {
+            return true;
         }
     }
-    return appendBlock(source, `dependencies {\n${dep}\n}`, eol);
+    return false;
 }
-function dropNdkImplementation(source) {
+const USER_NDK_NOTE = '@bugsee/react-native: android/app/build.gradle declares com.bugsee:bugsee-android-ndk itself; the plugin leaves that line alone and does not add or remove its own';
+function ensureNdkImplementation(source, ndkVersion, log) {
     const s = scan(source, APP_GRADLE);
-    return s.lines
-        .filter((line) => line.openAtStart || !NDK_LINE.test(codeOf(line)))
-        .map((line) => line.raw)
-        .join('\n');
+    const own = s.lines.findIndex(isOwnNdkLine);
+    if (own !== -1) {
+        const lines = source.split('\n');
+        const line = s.lines[own];
+        const code = codeOf(line);
+        lines[own] = `${code.replace(NDK_OWN_CODE, `$1${ndkVersion}$3`)}${line.raw.slice(code.length)}`;
+        return lines.join('\n');
+    }
+    if (userDeclaresNdk(s)) {
+        log(USER_NDK_NOTE);
+        return source;
+    }
+    const dep = `implementation "${NDK_ARTIFACT}:${ndkVersion}" ${NDK_MARKER}`;
+    // The first top-level dependencies block, wherever its opener sits on its
+    // line (the mask hides strings and comments); that line must hold nothing else.
+    const re = /(?<![A-Za-z0-9_.])dependencies\s*\{/g;
+    let opener = -1;
+    for (let m = re.exec(s.masked); m !== null && opener === -1; m = re.exec(s.masked)) {
+        const open = m.index + m[0].length - 1;
+        if (depthAt(s, open) === 0) {
+            opener = lineIndexAt(s, open);
+        }
+    }
+    if (opener === -1) {
+        return appendBlock(source, `${NDK_OPENER}\n    ${dep}\n}`, eolOf(source));
+    }
+    const line = s.lines[opener];
+    if (!isOpenerLine(line, DEPENDENCIES_OPENER)) {
+        throw anchorRefusal(APP_GRADLE, line, opener + 1, 'the Bugsee NDK dependency', `declare \`implementation "${NDK_ARTIFACT}:${ndkVersion}"\` yourself`);
+    }
+    const closer = s.lines.findIndex((entry, i) => i > opener && entry.depthAfter === line.depth);
+    return insertLines(source, opener + 1, [`${innerIndent(s, opener, closer)}${dep}`]);
+}
+/**
+ * Removes Bugsee's marked NDK line, and the dependencies block the plugin
+ * appended for it when nothing else is left inside. A user's own NDK line
+ * is left alone and noted.
+ */
+function dropNdkImplementation(source, log) {
+    const s = scan(source, APP_GRADLE);
+    if (userDeclaresNdk(s)) {
+        log(USER_NDK_NOTE);
+    }
+    const lines = source.split('\n');
+    for (let i = s.lines.length - 1; i >= 0; i -= 1) {
+        const line = s.lines[i];
+        if (isOwnNdkLine(line)) {
+            lines.splice(i, 1);
+        }
+    }
+    const stripped = scan(lines.join('\n'), APP_GRADLE);
+    const opener = stripped.lines.findIndex((line) => !line.openAtStart && line.depth === 0 && stripCr(line.raw) === NDK_OPENER);
+    if (opener !== -1) {
+        const closer = stripped.lines.findIndex((entry, i) => i > opener && entry.depthAfter === 0);
+        const empty = stripped.lines.slice(opener + 1, closer).every((entry) => stripCr(entry.raw).trim() === '');
+        if (empty && isCloserLine(stripped.lines[closer])) {
+            const rest = lines;
+            removeBlock(rest, opener, closer);
+            return rest.join('\n');
+        }
+    }
+    return lines.join('\n');
 }
 const NDK_EXCLUDE_BLOCK = ['configurations.configureEach {', `    ${NDK_EXCLUDE}`, '}'];
 function ensureNdkExcluded(source) {
@@ -621,8 +737,6 @@ function dropNdkExclude(source) {
     removeBlock(lines, at, at + NDK_EXCLUDE_BLOCK.length - 1);
     return lines.join('\n');
 }
-/** Identifies the ndk block this plugin inserted, so a user's block stays. */
-const SYMBOL_TABLE_MARKER = 'bugsee-symbol-table:';
 const SYMBOL_TABLE_BLOCK = [
     "// bugsee-symbol-table: AGP defaults this to NONE, so the plugin's native upload finds",
     '// nothing and skips. SYMBOL_TABLE emits symbols for code this app',
@@ -656,32 +770,26 @@ function buildTypeSpans(s) {
     }
     return spans;
 }
-function isSymbolTableMarker(line) {
-    return isLineComment(line) && line.raw.includes(SYMBOL_TABLE_MARKER);
-}
 function insertSymbolTable(source, span) {
     const s = scan(source, APP_GRADLE);
-    const firstLine = lineIndexAt(s, span.open);
-    const lastLine = lineIndexAt(s, span.close);
+    const opener = lineIndexAt(s, span.open);
+    const closer = lineIndexAt(s, span.close);
     // The block this plugin wrote has an `ndk {` of its own, so it is covered here too.
     if (codeMatches(s, /debugSymbolLevel\s+(['"])SYMBOL_TABLE\1/g, span.open, span.close).length > 0 ||
         blockExtent(s, 'ndk', span.open, span.close) !== null) {
         return source;
     }
-    // The block goes last, one level deeper than the line the build type opens
-    // on; the closing brace keeps its own line, indentation and the blank lines
-    // before it. A one-line `release { minifyEnabled true }` would have to be
-    // split, which changes the user's line, so it is refused instead.
-    if (firstLine === lastLine) {
-        throw refusal(APP_GRADLE, `the ${span.name} build type is written on one line (${codeOf(s.lines[firstLine]).trim()}), so debugSymbolLevel 'SYMBOL_TABLE' cannot be added without rewriting that line`, "Put its closing brace on its own line, or set ndk { debugSymbolLevel 'SYMBOL_TABLE' } in it yourself, then run expo prebuild again");
+    // The block goes last, before the closing brace's line; the opener and the
+    // closer must each hold nothing but their brace, or the user's line would
+    // have to be split.
+    const openerLine = s.lines[opener];
+    const closerLine = s.lines[closer];
+    if (!isOpenerLine(openerLine, new RegExp(`^${span.name}\\s*\\{$`)) || !isCloserLine(closerLine)) {
+        const at = isCloserLine(closerLine) ? opener : closer;
+        throw anchorRefusal(APP_GRADLE, s.lines[at], at + 1, `debugSymbolLevel 'SYMBOL_TABLE' for the ${span.name} build type`, "set ndk { debugSymbolLevel 'SYMBOL_TABLE' } in it yourself");
     }
-    const eol = eolOf(source);
-    const opener = s.lines[firstLine].raw;
-    const lineIndent = opener.slice(0, opener.length - opener.trimStart().length);
-    const block = SYMBOL_TABLE_BLOCK.map((line) => `${lineIndent}    ${line}`).join(eol);
-    const before = source.slice(0, span.close);
-    const cut = before.trimEnd().length;
-    return `${before.slice(0, cut)}${eol}${block}${before.slice(cut)}${source.slice(span.close)}`;
+    const indent = `${indentOf(openerLine.raw)}    `;
+    return insertLines(source, closer, SYMBOL_TABLE_BLOCK.map((line) => `${indent}${line}`));
 }
 function ensureSymbolTable(source, enabled) {
     if (!enabled) {
@@ -690,21 +798,18 @@ function ensureSymbolTable(source, enabled) {
     const spans = buildTypeSpans(scan(source, APP_GRADLE)).sort((a, b) => b.open - a.open);
     return spans.reduce((current, span) => insertSymbolTable(current, span), source);
 }
-/**
- * Index of the `}` closing the `ndk {` block that follows the marker's
- * comment lines, or null when the marker does not start such a block.
- */
-function insertedBlockEnd(lines, start) {
-    // After the marker's own comment lines; a line after a line comment is never inside a string.
-    const j = afterLineComments(lines, start);
-    const open = lines[j];
-    if (open === undefined || codeOf(open).trim() !== 'ndk {') {
-        return null;
+/** How many of Bugsee's symbol-table block lines stand at `start`, in order, at the marker's indentation. */
+function symbolBlockLinesAt(lines, start) {
+    const indent = indentOf(lines[start].raw);
+    let count = 0;
+    while (count < SYMBOL_TABLE_BLOCK.length) {
+        const line = lines[start + count];
+        if (line === undefined || line.openAtStart || stripCr(line.raw) !== `${indent}${SYMBOL_TABLE_BLOCK[count]}`) {
+            break;
+        }
+        count += 1;
     }
-    // The block this plugin writes closes at the indentation it opened at.
-    const closing = `${open.raw.slice(0, open.raw.indexOf('ndk {'))}}`;
-    const close = lines.findIndex((line, k) => k > j && line.depthAfter === open.depth);
-    return lines[close].raw.trimEnd() === closing ? close : null;
+    return count;
 }
 /** Index of the first line after `start` that is not a `//` comment line (may be lines.length). */
 function afterLineComments(lines, start) {
@@ -714,18 +819,26 @@ function afterLineComments(lines, start) {
     }
     return j;
 }
+/**
+ * Removes exactly Bugsee's symbol-table block, at whatever indentation it
+ * stands, and nothing after it. A block whose marker lines are intact but
+ * whose body was changed (a user added a line inside) is refused rather than
+ * cut; a stray marker loses only its own matching comment lines.
+ */
 function removeInsertedSymbolTable(source) {
     const s = scan(source, APP_GRADLE);
     const kept = [];
     for (let i = 0; i < s.lines.length; i += 1) {
         const line = s.lines[i];
-        const end = isSymbolTableMarker(line) ? insertedBlockEnd(s.lines, i) : null;
-        if (end === null) {
+        const matched = isMarker(line, SYMBOL_TABLE_BLOCK[0]) ? symbolBlockLinesAt(s.lines, i) : 0;
+        if (matched === 0) {
             kept.push(line.raw);
+            continue;
         }
-        else {
-            i = end;
+        if (matched < SYMBOL_TABLE_BLOCK.length && matched >= 4) {
+            throw refusal(APP_GRADLE, `line ${i + 1}: the Bugsee symbol-table block that starts here has been changed inside, so the plugin cannot tell its lines from yours`, 'Restore the block as the plugin wrote it, or remove it and set ndk { debugSymbolLevel } yourself, then run expo prebuild again');
         }
+        i += matched - 1;
     }
     return kept.join('\n');
 }
@@ -837,7 +950,7 @@ function legacyHookEnd(lines, start) {
         return null;
     }
     const close = lines.findIndex((line, k) => k >= j && line.depthAfter === open.depth);
-    return stripCr(lines[close].raw) === '}' ? close : null;
+    return close !== -1 && stripCr(lines[close].raw) === '}' ? close : null;
 }
 /**
  * Leaves exactly one hook: the marker and, on the very next line, the
@@ -893,6 +1006,9 @@ const UPLOADS_OFF_BLOCK = [
  * removes exactly that block.
  */
 function ensureSymbolUploads(appBuildGradle, enabled) {
+    return guarded(APP_GRADLE, () => symbolUploads(appBuildGradle, enabled));
+}
+function symbolUploads(appBuildGradle, enabled) {
     const s = scan(appBuildGradle, APP_GRADLE);
     const at = findOwnBlock(s, UPLOADS_OFF_BLOCK);
     if (enabled) {
