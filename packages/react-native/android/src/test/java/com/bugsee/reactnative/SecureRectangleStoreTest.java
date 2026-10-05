@@ -484,8 +484,11 @@ public class SecureRectangleStoreTest {
         store.set(1, 43, new int[] { 1, 2, 3, 4 });
         assertArrayEquals(new int[] { 10, 20, 30, 40, 0, 0, WIDTH, HEIGHT }, rectanglesOf(store.snapshot(DISPLAY)));
         final int before = store.snapshot(DISPLAY)[0];
+        assertEquals(2, store.nonMainSurfacesWithRectangles());
 
         store.claimRuntime();
+
+        assertEquals(0, store.nonMainSurfacesWithRectangles());
 
         assertFalse(store.hasSurface(MODAL_SURFACE));
         assertFalse(store.hasSurface(43));

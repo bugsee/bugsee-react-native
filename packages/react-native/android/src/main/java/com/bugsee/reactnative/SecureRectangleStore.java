@@ -381,6 +381,19 @@ final class SecureRectangleStore {
         }
     }
 
+    /** How many surfaces other than the main one hold rectangles, on every display. */
+    int nonMainSurfacesWithRectangles() {
+        int count = 0;
+        for (final Snapshot snapshot : byDisplay.values()) {
+            for (final java.util.Map.Entry<Integer, Lane> entry : snapshot.lanes.entrySet()) {
+                if (entry.getKey() != MAIN_SURFACE && entry.getValue().raw.length > 0) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
     /** Drops every surface but the main one, on every display. */
     void dropNonMainSurfaces() {
         for (final Integer display : byDisplay.keySet()) {

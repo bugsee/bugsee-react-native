@@ -120,7 +120,12 @@ public class BugseeModule extends NativeBugseeSpec
         // A new JS runtime: Modal surfaces the previous one left behind (a
         // reload with a secure Modal open) are dropped before this one's JS
         // can publish.
+        final int leftBehind = SecureRectangleStore.shared().nonMainSurfacesWithRectangles();
         secureRuntime = SecureRectangleStore.shared().claimRuntime();
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "secure runtime claimed: dropped " + leftBehind
+                    + " Modal surface(s) the previous runtime left");
+        }
         originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared());
         // refreshSoon only posts to the UI thread, which is all the SDK's pull
         // thread may do.
@@ -178,7 +183,12 @@ public class BugseeModule extends NativeBugseeSpec
         originTracker.dispose();
         // This runtime's Modal surfaces cannot be cleared by its JS any more.
         // A no-op when the next module has already claimed the store.
+        final int open = SecureRectangleStore.shared().nonMainSurfacesWithRectangles();
         SecureRectangleStore.shared().releaseRuntime(secureRuntime);
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "secure runtime released: " + open + " Modal surface(s) held, "
+                    + SecureRectangleStore.shared().nonMainSurfacesWithRectangles() + " left");
+        }
         super.invalidate();
     }
 
