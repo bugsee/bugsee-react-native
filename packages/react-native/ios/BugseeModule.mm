@@ -65,9 +65,10 @@
 #import "BGSRNErrorMessage.h"
 #endif
 
-/// Forward-declared: the wrapper's pull path refreshes the origin before the
-/// function's definition later in this file.
+/// Forward-declared: the wrapper's pull path refreshes the origins before the
+/// functions' definitions later in this file.
 static NSValue *_Nullable BGSRNReactOrigin(void);
+static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface);
 
 /// The conformance lives here rather than in the Support package so that the
 /// package stays buildable and testable without the SDK's headers. BGSRNWrapper
@@ -109,18 +110,25 @@ static NSValue *_Nullable BGSRNReactOrigin(void);
 /// secret must survive that swap. See `BGSRNSecureRectangles` for the version
 /// contract, which is what makes the SDK notice a change at all.
 - (NSData *)secureRectanglesForDisplay:(NSInteger)display {
-  // Refresh the main surface origin on each pull so a window move still
-  // updates without waiting for the next JS publish — same reason Android
-  // refreshes at pull time. iOS Fabric Modal shares this window
-  // (`presentViewController:`), so one origin serves both.
+  // Every surface's origin is re-read on the pull, so a window move or a
+  // sheet settling still updates without waiting for the next JS publish,
+  // the same reason Android refreshes at pull time. The main surface is the
+  // React root's window; each <Modal> is its presented view controller's
+  // view. A Modal whose host is gone takes its empty lane with it; one that
+  // is not found yet keeps failing closed.
   if (NSThread.isMainThread) {
+    BGSRNSecureRectangles *store = BGSRNSecureRectangles.shared;
     NSValue *origin = BGSRNReactOrigin();
     if (origin != nil) {
-      CGPoint p = origin.CGPointValue;
-      [BGSRNSecureRectangles.shared setOriginX:(int32_t)llround(p.x)
-                                       originY:(int32_t)llround(p.y)
-                                    forDisplay:display
-                                       surface:BGSRNSecureMainSurface];
+      [store setOrigin:origin.CGPointValue forDisplay:display];
+    }
+    for (NSNumber *surface in [store surfacesForDisplay:display]) {
+      NSValue *modalOrigin = BGSRNModalSurfaceOrigin(surface.integerValue);
+      if (modalOrigin != nil) {
+        [store setOrigin:modalOrigin.CGPointValue forDisplay:display surface:surface.integerValue];
+      } else {
+        [store dropSurfaceIfEmpty:surface.integerValue];
+      }
     }
   }
   return [BGSRNSecureRectangles.shared snapshotForDisplay:display];
@@ -249,6 +257,84 @@ static NSValue *_Nullable BGSRNReactOrigin(void) {
     return (surfaceHostingView != Nil && [view isKindOfClass:surfaceHostingView]) ||
            (legacyRootView != Nil && [view isKindOfClass:legacyRootView]);
   });
+}
+
+/// A `<Modal>` host's view controller. Declared here rather than imported:
+/// `RCTModalHostViewComponentView` implements `viewController` without
+/// declaring it in its header, and the call is guarded by
+/// `respondsToSelector:`.
+@interface UIView (BGSRNModalHost)
+- (UIViewController *)viewController;
+@end
+
+/// The `<Modal>` host component views found so far, by React tag. Weak: a
+/// host that unmounts must not be kept alive. Main thread only.
+static NSMapTable<NSNumber *, UIView *> *BGSRNModalHosts(void) {
+  static NSMapTable<NSNumber *, UIView *> *hosts;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    hosts = [NSMapTable strongToWeakObjectsMapTable];
+  });
+  return hosts;
+}
+
+/// The mounted `<Modal>` host component view with React tag `surface`, among
+/// the windows the SDK walks. Fabric sets each component view's `tag` to its
+/// React tag (`RCTComponentViewRegistry`). nil when there is none.
+static UIView *_Nullable BGSRNModalHost(NSInteger surface) {
+  static Class modalHostClass;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    modalHostClass = NSClassFromString(@"RCTModalHostViewComponentView");
+  });
+  if (modalHostClass == Nil || surface <= 0) {
+    return nil;
+  }
+  NSNumber *key = @(surface);
+  UIView *cached = [BGSRNModalHosts() objectForKey:key];
+  if (cached != nil && cached.tag == surface && cached.window != nil) {
+    return cached;
+  }
+  UIWindow *keyWindow = BGSRNSdkKeyWindow();
+  for (UIWindow *window in BGSRNSdkWalkedWindows(keyWindow)) {
+    UIView *found = [window viewWithTag:surface];
+    if (found != nil && [found isKindOfClass:modalHostClass]) {
+      [BGSRNModalHosts() setObject:found forKey:key];
+      return found;
+    }
+  }
+  [BGSRNModalHosts() removeObjectForKey:key];
+  return nil;
+}
+
+/// Where `measureInWindow`'s (0, 0) sits on the screen, in points, for the
+/// `<Modal>` whose host has React tag `surface`: the origin of its presented
+/// view controller's view in its window, plus the window's `frame.origin`.
+/// Fabric inserts the Modal's children into that view
+/// (`RCTModalHostViewComponentView`), and `measureInWindow` inside a Modal
+/// stops at the `ModalHostView` node with an identity transform, so this is
+/// the window's origin for a full-screen Modal and inset for a `pageSheet` or
+/// `formSheet` one. nil when the Modal is not presented, or off main.
+static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface) {
+  if (!NSThread.isMainThread) {
+    return nil;
+  }
+  UIView *host = BGSRNModalHost(surface);
+  if (host == nil || ![host respondsToSelector:@selector(viewController)]) {
+    return nil;
+  }
+  UIViewController *controller = [host viewController];
+  if (controller == nil || !controller.isViewLoaded) {
+    return nil;
+  }
+  UIView *content = controller.view;
+  UIWindow *window = content.window;
+  if (window == nil) {
+    return nil;
+  }
+  CGPoint inWindow = [content convertPoint:CGPointZero toView:nil];
+  CGPoint origin = CGPointMake(inWindow.x + window.frame.origin.x, inWindow.y + window.frame.origin.y);
+  return [NSValue valueWithCGPoint:origin];
 }
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
@@ -1003,35 +1089,14 @@ RCT_EXPORT_MODULE(Bugsee)
   free(flat);
 }
 
-/// The store key for the React root that hosts `viewTag`. On iOS Fabric a
-/// `<Modal>` is presented in the same `UIWindow` as the main surface
-/// (`RCTModalHostViewComponentView` uses `presentViewController:`), so both
-/// publish on the main surface. Fabric `measureInWindow` for modal content
-/// stops at `ModalHostView`'s `RootNodeKind` with an identity transform
-/// (`LayoutableShadowNode.cpp`, `ModalHostViewShadowNode.h`), which is
-/// already that window's coordinate space; the origin is the window's
-/// `frame.origin` (what the SDK adds to every native node — see
-/// `BGSRNReactWindow.h`).
-- (NSNumber *)secureSurfaceKey:(double)viewTag {
-  (void)viewTag;
-  BGSRNRunOnMainSync(^{
-    NSValue *origin = BGSRNReactOrigin();
-    if (origin != nil) {
-      CGPoint p = origin.CGPointValue;
-      [BGSRNSecureRectangles.shared setOriginX:(int32_t)llround(p.x)
-                                       originY:(int32_t)llround(p.y)
-                                    forDisplay:0
-                                       surface:BGSRNSecureMainSurface];
-    }
-  });
-  return @(BGSRNSecureMainSurface);
-}
-
-- (NSArray<NSNumber *> *)secureSurfaceOrigin:(double)viewTag {
-  (void)viewTag;
+/// The screen origin `[x, y]` (points) of the `<Modal>` whose host has React
+/// tag `surface`, for the `vh` walk, which asks once per Modal per walk.
+/// Empty when the Modal is not presented.
+- (NSArray<NSNumber *> *)secureSurfaceOrigin:(double)surface {
   __block NSArray<NSNumber *> *origin = @[];
+  const NSInteger key = (NSInteger)llround(surface);
   BGSRNRunOnMainSync(^{
-    NSValue *value = BGSRNReactOrigin();
+    NSValue *value = BGSRNModalSurfaceOrigin(key);
     if (value != nil) {
       CGPoint p = value.CGPointValue;
       origin = @[ @(p.x), @(p.y) ];

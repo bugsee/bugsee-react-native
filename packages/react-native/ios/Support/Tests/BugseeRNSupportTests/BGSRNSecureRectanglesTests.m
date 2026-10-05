@@ -148,7 +148,7 @@
 /// snapshot at the empty-set version (1), not message-nil's 0. Android's
 /// empty snapshot stays at version 1 the same way.
 - (void)testAnOriginOnlyWriteThatLeavesServedEmptyKeepsVersionOne {
-  [_store setOriginX:0 originY:96 forDisplay:0];
+  [_store setOrigin:CGPointMake(0, 96) forDisplay:0];
 
   NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
   XCTAssertEqualObjects(packed[0], @1,
@@ -163,8 +163,8 @@
   const int32_t modalRects[] = {100, 200, 150, 250};
   [_store setCoordinates:mainRects count:4 forDisplay:0 surface:BGSRNSecureMainSurface];
   [_store setCoordinates:modalRects count:4 forDisplay:0 surface:42];
-  [_store setOriginX:0 originY:96 forDisplay:0 surface:BGSRNSecureMainSurface];
-  [_store setOriginX:0 originY:0 forDisplay:0 surface:42];
+  [_store setOrigin:CGPointMake(0, 96) forDisplay:0 surface:BGSRNSecureMainSurface];
+  [_store setOrigin:CGPointMake(0, 0) forDisplay:0 surface:42];
 
   NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
   XCTAssertEqualObjects(packed[1], @2);
@@ -177,13 +177,110 @@
   const int32_t modalRects[] = {100, 200, 150, 250};
   [_store setCoordinates:mainRects count:4 forDisplay:0 surface:BGSRNSecureMainSurface];
   [_store setCoordinates:modalRects count:4 forDisplay:0 surface:42];
-  [_store setOriginX:0 originY:96 forDisplay:0 surface:BGSRNSecureMainSurface];
-  [_store setOriginX:7 originY:40 forDisplay:0 surface:42];
+  [_store setOrigin:CGPointMake(0, 96) forDisplay:0 surface:BGSRNSecureMainSurface];
+  [_store setOrigin:CGPointMake(7, 40) forDisplay:0 surface:42];
 
   NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
   XCTAssertEqualObjects(packed[1], @2);
   XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 8)],
                         (@[ @10, @116, @30, @136, @107, @240, @157, @290 ]));
+}
+
+/// A Modal's rectangles before its origin is recorded redact the whole screen.
+- (void)testASurfaceWithNoOriginYetServesTheWholeDisplay {
+  const int32_t modalRects[] = {100, 200, 150, 250, 1, 2, 3, 4};
+  [_store setCoordinates:modalRects count:8 forDisplay:0 surface:42];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertEqualObjects(packed[1], @1);
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[ @0, @0, @(1 << 20), @(1 << 20) ]));
+}
+
+- (void)testRecordingTheSurfacesOriginReplacesTheWholeDisplayRectangle {
+  const int32_t modalRects[] = {100, 200, 150, 250};
+  [_store setCoordinates:modalRects count:4 forDisplay:0 surface:42];
+  NSNumber *before = [self unpack:[_store snapshotForDisplay:0]][0];
+
+  [_store setOrigin:CGPointZero forDisplay:0 surface:42];
+
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertNotEqualObjects(packed[0], before);
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 4)], (@[ @100, @200, @150, @250 ]));
+}
+
+/// The main surface keeps (0, 0) until its origin is recorded.
+- (void)testTheMainSurfaceWithNoOriginServesItsRectanglesUnmoved {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+
+  XCTAssertEqualObjects([[self unpack:[_store snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[ @10, @20, @30, @40 ]));
+}
+
+/// A fractional origin grows the rectangle by under a point, never shrinks it.
+- (void)testAFractionalOriginRoundsEveryEdgeOutward {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42];
+  [_store setOrigin:CGPointMake(0.5, 59.25) forDisplay:0 surface:42];
+
+  XCTAssertEqualObjects([[self unpack:[_store snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[ @10, @79, @31, @100 ]));
+}
+
+- (void)testANegativeFractionalOriginAlsoRoundsOutward {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+  [_store setOrigin:CGPointMake(-0.5, -0.5) forDisplay:0];
+
+  XCTAssertEqualObjects([[self unpack:[_store snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[ @9, @19, @30, @40 ]));
+}
+
+- (void)testAnOriginSaturatesInsteadOfWrapping {
+  const int32_t rects[] = {INT32_MAX - 1, INT32_MIN + 1, INT32_MAX - 1, INT32_MIN + 1};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+  [_store setOrigin:CGPointMake(10, -10) forDisplay:0];
+
+  XCTAssertEqualObjects([[self unpack:[_store snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[ @(INT32_MAX), @((uint32_t)INT32_MIN), @(INT32_MAX), @((uint32_t)INT32_MIN) ]),
+                        @"unpack reads each int32's bits as unsigned");
+}
+
+- (void)testRecordingTheSameOriginAgainHoldsTheVersion {
+  const int32_t rects[] = {10, 20, 30, 40};
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42];
+  [_store setOrigin:CGPointMake(0, 59) forDisplay:0 surface:42];
+  NSNumber *settled = [self unpack:[_store snapshotForDisplay:0]][0];
+
+  [_store setOrigin:CGPointMake(0, 59) forDisplay:0 surface:42];
+
+  XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][0], settled);
+}
+
+- (void)testListsTheSurfacesOtherThanTheMainOne {
+  const int32_t rects[] = {1, 2, 3, 4};
+  [_store setCoordinates:rects count:4 forDisplay:0];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:78];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42];
+  [_store setCoordinates:rects count:4 forDisplay:1 surface:99];
+
+  XCTAssertEqualObjects([_store surfacesForDisplay:0], (@[ @42, @78 ]));
+}
+
+- (void)testDropsOnlyAnEmptyNonMainSurface {
+  const int32_t rects[] = {1, 2, 3, 4};
+  [_store setCoordinates:NULL count:0 forDisplay:0 surface:42];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:78];
+  [_store setCoordinates:NULL count:0 forDisplay:0];
+  NSNumber *before = [self unpack:[_store snapshotForDisplay:0]][0];
+
+  [_store dropSurfaceIfEmpty:42];
+  [_store dropSurfaceIfEmpty:78];
+  [_store dropSurfaceIfEmpty:BGSRNSecureMainSurface];
+
+  XCTAssertEqualObjects([_store surfacesForDisplay:0], (@[ @78 ]));
+  XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][0], before);
 }
 
 /// The shared store outlives any one wrapper: the init provider registers one

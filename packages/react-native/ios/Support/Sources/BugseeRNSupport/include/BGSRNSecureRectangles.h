@@ -1,10 +1,15 @@
+#import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// The activity / main React root's surface key. Legacy writers that do not
-/// name a surface land here.
+/// The app's own React root's surface key. Legacy writers that do not name a
+/// surface land here.
 FOUNDATION_EXPORT const NSInteger BGSRNSecureMainSurface;
+
+/// What a surface whose origin is unknown serves in place of its rectangles:
+/// one rectangle larger than any screen, `{0, 0, 2^20, 2^20}`.
+FOUNDATION_EXPORT const int32_t BGSRNSecureFullDisplay[4];
 
 /// The regions the app has asked Bugsee not to record, in the form the SDK
 /// pulls them.
@@ -25,12 +30,21 @@ FOUNDATION_EXPORT const NSInteger BGSRNSecureMainSurface;
 /// per display: a change on one screen must not invalidate another's.
 ///
 /// Fabric `measureInWindow` is relative to the measured node's nearest
-/// `RootNodeKind` ancestor. On Android a `<Modal>` dialog is a second
-/// surface key with its own origin; rectangles are stored under the surface
-/// they were measured in and served translated by that surface's origin. On
-/// iOS a Fabric Modal is `presentViewController:` on the same `UIWindow`, so
-/// it publishes on `BGSRNSecureMainSurface` with that window's
-/// `frame.origin` — not a second origin lane.
+/// `RootNodeKind` ancestor: the app's root, or a `<Modal>`'s content (the
+/// `ModalHostView` node, whose transform is the identity). Each rectangle is
+/// stored under the surface it was measured in (the Modal host's React tag,
+/// or `BGSRNSecureMainSurface`) and served moved by that surface's origin in
+/// screen points. A Modal's origin is where its presented view controller's
+/// view sits: the window's origin for a full-screen Modal, inset for a
+/// `pageSheet` or `formSheet` one. A single origin for the display cannot
+/// serve both.
+///
+/// Origins can be fractional. Left and top edges are moved and rounded down,
+/// right and bottom ones up: a rectangle may grow by under a point, never
+/// shrink. Edges saturate at the int32 range rather than wrap.
+///
+/// Fails closed: a surface other than the main one whose origin has not been
+/// recorded yet serves `BGSRNSecureFullDisplay` instead of its rectangles.
 ///
 /// ## Threading
 ///
@@ -65,15 +79,21 @@ FOUNDATION_EXPORT const NSInteger BGSRNSecureMainSurface;
             forDisplay:(NSInteger)display
                surface:(NSInteger)surface;
 
-/// Records where the main React root's viewport origin sits on `display`.
-- (void)setOriginX:(int32_t)originX originY:(int32_t)originY forDisplay:(NSInteger)display;
+/// Records where the main surface's window sits on `display`'s screen, in
+/// points. Re-recording the same origin costs nothing.
+- (void)setOrigin:(CGPoint)origin forDisplay:(NSInteger)display;
 
-/// Records where one surface's origin sits on `display`. Only that surface's
-/// rectangles move.
-- (void)setOriginX:(int32_t)originX
-           originY:(int32_t)originY
-        forDisplay:(NSInteger)display
-           surface:(NSInteger)surface;
+/// Records where one surface's `measureInWindow` (0, 0) sits on `display`'s
+/// screen, in points. Only that surface's rectangles move.
+- (void)setOrigin:(CGPoint)origin forDisplay:(NSInteger)display surface:(NSInteger)surface;
+
+/// The surfaces other than the main one that `display` has lanes for, in key
+/// order: the ones whose origin the pull refreshes.
+- (NSArray<NSNumber *> *)surfacesForDisplay:(NSInteger)display;
+
+/// Forgets `surface` on every display where it holds no rectangles (its
+/// Modal is gone). A surface that still holds rectangles stays.
+- (void)dropSurfaceIfEmpty:(NSInteger)surface;
 
 /// The buffer for `display`. A display nothing has secured reports an empty
 /// set rather than nil, so the SDK always has a version to compare against.

@@ -318,6 +318,68 @@ public class SecureRectangleStoreTest {
                 java.util.Arrays.copyOfRange(packed, 2, packed.length));
     }
 
+    // ---- Failing closed -------------------------------------------------
+
+    /** A <Modal>'s rectangles before its origin is read redact the whole display. */
+    @Test
+    public void aSurfaceWithNoOriginYetServesTheWholeDisplay() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250, 1, 2, 3, 4 });
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertEquals(1, packed[1]);
+        assertArrayEquals(SecureRectangleStore.FULL_DISPLAY,
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
+    @Test
+    public void readingTheSurfacesOriginReplacesTheWholeDisplayRectangle() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
+        final int before = store.snapshot(DISPLAY)[0];
+
+        store.setOrigin(DISPLAY, MODAL_SURFACE, 0, 0);
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertNotEquals(before, packed[0]);
+        assertArrayEquals(new int[] { 100, 200, 150, 250 },
+                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+    }
+
+    /** The main surface keeps (0, 0) until its origin is read, as before surfaces existed. */
+    @Test
+    public void theMainSurfaceWithNoOriginServesItsRectanglesUnmoved() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+
+        assertArrayEquals(new int[] { 10, 20, 30, 40 },
+                java.util.Arrays.copyOfRange(store.snapshot(DISPLAY), 2, 6));
+    }
+
+    @Test
+    public void anEmptySurfaceWithNoOriginServesNothing() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, MODAL_SURFACE, new int[0]);
+
+        assertEquals(0, store.snapshot(DISPLAY)[1]);
+    }
+
+    @Test
+    public void dropSurfaceIfEmptyForgetsOnlyAnEmptyNonMainLane() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, MODAL_SURFACE, new int[0]);
+        store.set(DISPLAY, 43, new int[] { 1, 2, 3, 4 });
+        store.set(DISPLAY, MAIN_SURFACE, new int[0]);
+
+        store.dropSurfaceIfEmpty(MODAL_SURFACE);
+        store.dropSurfaceIfEmpty(43);
+        store.dropSurfaceIfEmpty(MAIN_SURFACE);
+
+        assertFalse(store.hasSurface(MODAL_SURFACE));
+        assertTrue(store.hasSurface(43));
+        assertTrue(store.hasSurface(MAIN_SURFACE));
+    }
+
     /** Existing single-argument set/setOrigin keep meaning the main surface. */
     @Test
     public void theLegacySetAndSetOriginTargetTheMainSurface() {

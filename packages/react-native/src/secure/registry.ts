@@ -1,6 +1,7 @@
 import NativeBugsee from '../NativeBugsee';
 import { flattenSecureRectangles } from './rectangles';
 import type { SecureRectangle } from './rectangles';
+import { MAIN_SURFACE } from './surface';
 import { secureRectangleScale } from './unit';
 
 /**
@@ -13,8 +14,7 @@ import { secureRectangleScale } from './unit';
  */
 export type SecureOwner = object | `manual:${number}`;
 
-/** The activity React root's surface; matches native `MAIN_SURFACE`. */
-export const MAIN_SURFACE = 0;
+export { MAIN_SURFACE };
 
 interface OwnerEntry {
   readonly display: number;

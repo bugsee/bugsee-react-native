@@ -3,10 +3,8 @@ package com.bugsee.reactnative;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import android.graphics.Point;
 import android.util.Base64;
 import android.util.Log;
-import android.view.View;
 
 import com.bugsee.library.Bugsee;
 import com.bugsee.library.contracts.exchange.Breadcrumb;
@@ -25,14 +23,10 @@ import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableMapKeySetIterator;
 import com.facebook.react.bridge.ReadableType;
-import com.facebook.react.bridge.UIManager;
-import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableArray;
+import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.module.annotations.ReactModule;
-import com.facebook.react.uimanager.RootView;
-import com.facebook.react.uimanager.RootViewUtil;
-import com.facebook.react.uimanager.UIManagerHelper;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -285,6 +279,9 @@ public class BugseeModule extends NativeBugseeSpec
                 return;
             }
             originTracker.refreshSoon();
+            // A <Modal>'s first publish: find and watch its dialog root.
+            // Until then its rectangles fail closed in the store.
+            originTracker.watchSurface(surface);
             if (Log.isLoggable(TAG, Log.DEBUG)) {
                 Log.d(TAG, "secure published display=" + (int) display
                         + " surface=" + surface
@@ -297,18 +294,21 @@ public class BugseeModule extends NativeBugseeSpec
         }
     }
 
+    /**
+     * The display origin {@code [x, y]} of the {@code <Modal>} whose host has
+     * React tag {@code surface}, for the {@code vh} walk, which asks once per
+     * {@code <Modal>} per walk. Answered from the tracker's cache when the
+     * surface is watched; otherwise read on the UI thread, waiting at most
+     * {@link #SURFACE_ORIGIN_WAIT_MS}. Empty when unknown: the walk then
+     * keeps the request's origin for that subtree.
+     */
     @Override
-    public double secureSurfaceKey(final double viewTag) {
-        return resolveOnUiThread(
-                SecureRectangleStore.MAIN_SURFACE,
-                () -> surfaceKeyForViewTag((int) Math.round(viewTag)));
-    }
-
-    @Override
-    public WritableArray secureSurfaceOrigin(final double viewTag) {
-        final int[] origin = resolveOnUiThread(
-                null,
-                () -> surfaceOriginForViewTag((int) Math.round(viewTag)));
+    public WritableArray secureSurfaceOrigin(final double surface) {
+        final int key = (int) Math.round(surface);
+        int[] origin = originTracker.cachedSurfaceOrigin(key);
+        if (origin == null) {
+            origin = readSurfaceOriginOnUiThread(key);
+        }
         final WritableArray out = Arguments.createArray();
         if (origin != null) {
             out.pushDouble(origin[0]);
@@ -317,85 +317,27 @@ public class BugseeModule extends NativeBugseeSpec
         return out;
     }
 
-    @Nullable
-    private int[] surfaceOriginForViewTag(final int viewTag) {
-        final View rootView = rootViewForTag(viewTag);
-        if (rootView == null) {
-            return null;
-        }
-        final int[] onScreen = new int[2];
-        rootView.getLocationOnScreen(onScreen);
-        final Point viewport = RootViewUtil.getViewportOffset(rootView);
-        return SecureRectangleStore.displayOrigin(onScreen, viewport.x, viewport.y);
-    }
-
-    private int surfaceKeyForViewTag(final int viewTag) {
-        final View rootView = rootViewForTag(viewTag);
-        if (rootView == null) {
-            return SecureRectangleStore.MAIN_SURFACE;
-        }
-        final ReactRootOriginTracker.RootHandle handle = ReactRootOriginTracker.handleFor(rootView);
-        if (handle == null) {
-            return SecureRectangleStore.MAIN_SURFACE;
-        }
-        originTracker.watchNow(handle);
-        return handle.surfaceKey();
-    }
+    /** Well inside the walk's own 250 ms budget. */
+    private static final long SURFACE_ORIGIN_WAIT_MS = 100;
 
     @Nullable
-    private View rootViewForTag(final int viewTag) {
-        final ReactApplicationContext context = getReactApplicationContext();
-        if (context == null || !context.hasActiveReactInstance()) {
-            return null;
-        }
-        try {
-            final UIManager uiManager = UIManagerHelper.getUIManagerForReactTag(context, viewTag);
-            if (uiManager == null) {
-                return null;
-            }
-            final View view = uiManager.resolveView(viewTag);
-            if (view == null) {
-                return null;
-            }
-            final RootView root = RootViewUtil.getRootView(view);
-            return root instanceof View ? (View) root : null;
-        } catch (Throwable t) {
-            Log.w(TAG, "secure surface: could not resolve the React root ("
-                    + t.getClass().getSimpleName() + ")");
-            return null;
-        }
-    }
-
-    /**
-     * Runs {@code work} on the UI thread and returns its result. View and
-     * RootView access is not safe off the UI thread; {@code
-     * secureSurfaceKey}/{@code secureSurfaceOrigin} are sync TurboModule
-     * methods called from the JS thread during measure.
-     */
-    private <T> T resolveOnUiThread(final T fallback, final java.util.concurrent.Callable<T> work) {
+    private int[] readSurfaceOriginOnUiThread(final int key) {
         if (UiThreadUtil.isOnUiThread()) {
-            try {
-                return work.call();
-            } catch (Exception e) {
-                Log.w(TAG, "secure surface resolve failed (" + e.getClass().getSimpleName() + ")");
-                return fallback;
-            }
+            return originTracker.surfaceOriginNow(key);
         }
-        final AtomicReference<T> result = new AtomicReference<>(fallback);
+        final AtomicReference<int[]> result = new AtomicReference<>();
         final CountDownLatch done = new CountDownLatch(1);
         UiThreadUtil.runOnUiThread(() -> {
             try {
-                result.set(work.call());
-            } catch (Exception e) {
-                Log.w(TAG, "secure surface resolve failed (" + e.getClass().getSimpleName() + ")");
+                result.set(originTracker.surfaceOriginNow(key));
+            } catch (Throwable t) {
+                Log.w(TAG, "secure surface origin failed (" + t.getClass().getSimpleName() + ")");
             } finally {
                 done.countDown();
             }
         });
         try {
-            if (!done.await(2, TimeUnit.SECONDS)) {
-                Log.w(TAG, "secure surface resolve timed out");
-            }
+            done.await(SURFACE_ORIGIN_WAIT_MS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }

@@ -39,9 +39,16 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code ModalHostViewShadowNode} sets that trait). The activity React root
  * and a {@code <Modal>}'s {@code DialogRootViewGroup} are different surfaces:
  * each rectangle is stored under the surface it was measured in, and served
- * translated by <em>that</em> surface's display origin
- * ({@code locationOnScreen - viewportOffset} of that root). A single origin
- * for the whole display cannot serve both.
+ * translated by <em>that</em> surface's display origin (see {@link
+ * ReactRootOriginTracker#surfaceOrigin}). A single origin for the whole
+ * display cannot serve both.
+ *
+ * <p>Fails closed. A surface other than {@link #MAIN_SURFACE} whose origin
+ * has not been read yet serves its rectangles as one {@link #FULL_DISPLAY}
+ * rectangle: an unknown origin must not place a secure region anywhere it
+ * could miss, so until the tracker reads it the whole display is redacted.
+ * The main surface keeps (0, 0) until its origin is read, as before
+ * surfaces existed: the activity root is tracked from module start.
  *
  * <h2>Threading</h2>
  *
@@ -78,35 +85,50 @@ final class SecureRectangleStore {
      */
     static final int MAIN_SURFACE = 0;
 
+    /**
+     * What a surface whose origin is unknown serves in place of its
+     * rectangles: larger than any display, small enough that the SDK's own
+     * scaling cannot overflow an {@code int}.
+     */
+    static final int[] FULL_DISPLAY = { 0, 0, 1 << 20, 1 << 20 };
+
     /** One surface's raw measurements and the origin that places them. */
     private static final class Lane {
-        /** As JS published them: relative to this surface's viewport offset. */
+        /** As JS published them: relative to this surface's own origin. */
         final int[] raw;
         final int originX;
         final int originY;
+        /** Whether {@link #originX}/{@link #originY} were ever read. */
+        final boolean originKnown;
+        /** Whether an unknown origin redacts the whole display (every non-main surface). */
+        final boolean failClosed;
         /** {@link #raw} moved by this surface's origin: what the SDK is served. */
         final int[] coordinates;
 
-        Lane(@NonNull final int[] raw, final int originX, final int originY) {
-            this(raw, originX, originY, translate(raw, originX, originY));
-        }
-
-        private Lane(@NonNull final int[] raw, final int originX, final int originY,
-                @NonNull final int[] coordinates) {
+        Lane(@NonNull final int[] raw, final int originX, final int originY,
+                final boolean originKnown, final boolean failClosed) {
             this.raw = raw;
             this.originX = originX;
             this.originY = originY;
-            this.coordinates = coordinates;
+            this.originKnown = originKnown;
+            this.failClosed = failClosed;
+            if (raw.length == 0) {
+                this.coordinates = NO_COORDINATES;
+            } else if (!originKnown && failClosed) {
+                this.coordinates = FULL_DISPLAY.clone();
+            } else {
+                this.coordinates = translate(raw, originX, originY);
+            }
         }
 
         @NonNull
         Lane withRaw(@NonNull final int[] newRaw) {
-            return new Lane(newRaw, originX, originY);
+            return new Lane(newRaw, originX, originY, originKnown, failClosed);
         }
 
         @NonNull
         Lane withOrigin(final int newOriginX, final int newOriginY) {
-            return new Lane(raw, newOriginX, newOriginY);
+            return new Lane(raw, newOriginX, newOriginY, true, failClosed);
         }
     }
 
@@ -261,6 +283,39 @@ final class SecureRectangleStore {
     }
 
     /**
+     * Forgets {@code surface} on every display where it holds no rectangles:
+     * its root is gone, and a later root may reuse the key. A surface that
+     * still holds rectangles stays (fails closed): only its owner clearing
+     * them removes the redaction.
+     */
+    void dropSurfaceIfEmpty(final int surface) {
+        if (surface == MAIN_SURFACE) {
+            return;
+        }
+        for (final Integer display : byDisplay.keySet()) {
+            update(display, previous -> {
+                final Lane lane = previous.lanes.get(surface);
+                if (lane == null || lane.raw.length > 0) {
+                    return previous;
+                }
+                final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
+                nextLanes.remove(surface);
+                return new Snapshot(0, nextLanes);
+            });
+        }
+    }
+
+    /** Whether {@code surface} has a lane on any display. Tests and the tracker read it. */
+    boolean hasSurface(final int surface) {
+        for (final Snapshot snapshot : byDisplay.values()) {
+            if (snapshot.lanes.containsKey(surface)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * {@code locationOnScreen} of a React root less React Native's viewport
      * offset for it: the display-pixel position of the origin
      * {@code measureInWindow} measures from on that surface.
@@ -287,7 +342,9 @@ final class SecureRectangleStore {
             @NonNull final LaneChange change) {
         final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
         final Lane prior = nextLanes.get(surface);
-        final Lane base = prior == null ? new Lane(NO_COORDINATES, 0, 0) : prior;
+        final Lane base = prior == null
+                ? new Lane(NO_COORDINATES, 0, 0, false, surface != MAIN_SURFACE)
+                : prior;
         nextLanes.put(surface, change.apply(base));
         return new Snapshot(0, nextLanes);
     }

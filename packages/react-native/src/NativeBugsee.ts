@@ -58,15 +58,17 @@ export interface Spec extends TurboModule {
    *
    * An empty list clears the display's main-surface set. Rectangles measured
    * inside a React Native `<Modal>` go through
-   * {@link setSecureRectanglesOnSurface} with that surface's key from
-   * {@link secureSurfaceKey}.
+   * {@link setSecureRectanglesOnSurface} instead.
    */
   setSecureRectangles(display: number, coordinates: number[]): void;
   /**
-   * Like {@link setSecureRectangles}, for one React surface on the display.
-   * Fabric `measureInWindow` is relative to that surface's root
-   * (`ModalHostView` / `DialogRootViewGroup` for a `<Modal>`), so each
-   * surface keeps its own origin at pull time.
+   * Like {@link setSecureRectangles}, for one React surface on the display:
+   * `surface` is the React tag of the `<Modal>` host the rectangles were
+   * measured in (JS reads it off the fiber tree), or `-1` for a Modal whose
+   * tag is unknown. Fabric `measureInWindow` is relative to that Modal's
+   * content, so native finds and watches the Modal's root on the first
+   * publish and translates the rectangles by its origin at pull time. Until
+   * that origin is read, the surface redacts the whole display.
    */
   setSecureRectanglesOnSurface(
     display: number,
@@ -74,16 +76,11 @@ export interface Spec extends TurboModule {
     coordinates: number[],
   ): void;
   /**
-   * The store key for the React root that hosts `viewTag` (the activity root
-   * or a modal's dialog root). Registers that root for origin refresh.
-   * Returns {@code 0} (the main surface) when the view cannot be resolved.
+   * The display origin `[x, y]` of the `<Modal>` whose host has React tag
+   * `surface`, in the units of the `vh` request's `originX`/`originY`. Empty
+   * when unknown. Synchronous: the `vh` walk asks once per Modal per walk.
    */
-  secureSurfaceKey(viewTag: number): number;
-  /**
-   * Display origin `[x, y]` of the React root hosting `viewTag`, in the same
-   * units as the `vh` request's `originX`/`originY`. Empty when unknown.
-   */
-  secureSurfaceOrigin(viewTag: number): number[];
+  secureSurfaceOrigin(surface: number): number[];
 
   /**
    * Suppresses everything that describes the screen: the video (black

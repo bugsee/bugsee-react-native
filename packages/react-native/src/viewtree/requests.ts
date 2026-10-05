@@ -16,6 +16,7 @@ import { Platform } from 'react-native';
 import NativeBugsee from '../NativeBugsee';
 import { RootErrorReporter } from '../exceptions/RootErrorReporter';
 import { BugseeSecure } from '../secure/BugseeSecure';
+import { nativeTagOfFiber } from '../secure/surface';
 import { secureRectangleScale } from '../secure/unit';
 import { VH_ANCHOR_NATIVE_ID } from './constants';
 import { errorName } from '../errorName';
@@ -203,38 +204,20 @@ function buildEnv(event: DataRequestEvent): WalkEnv {
     originX: event.originX,
     originY: event.originY,
     nativeTagOf: nativeTagOfFiber,
-    originForNativeTag: (tag) => {
+    originForSurface: (surface) => {
       try {
-        const origin: unknown = NativeBugsee.secureSurfaceOrigin(tag);
+        const origin: unknown = NativeBugsee.secureSurfaceOrigin(surface);
         // Number.isFinite never coerces, so a missing element fails it too.
         if (Array.isArray(origin) && Number.isFinite(origin[0]) && Number.isFinite(origin[1])) {
           return { x: origin[0] as number, y: origin[1] as number };
         }
       } catch {
-        // Fall back to the activity / main origin from the request.
+        // Keep the enclosing origin for that Modal's subtree.
       }
       return null;
     },
     now: monotonicNow,
   };
-}
-
-/**
- * Fabric public instances carry `__nativeTag`. Used to resolve the hosting
- * React root's display origin for a measured host (Modal vs activity).
- */
-function nativeTagOfFiber(fiber: FiberLike): number | null {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- same lazy require as measureHostFiber.
-    const rendererProxy = require('react-native/Libraries/ReactNative/RendererProxy') as {
-      getPublicInstanceFromInternalInstanceHandle: (fiber: unknown) => unknown;
-    };
-    const publicInstance = rendererProxy.getPublicInstanceFromInternalInstanceHandle(fiber);
-    const tag = (publicInstance as { __nativeTag?: unknown } | null)?.__nativeTag;
-    return Number.isFinite(tag) ? (tag as number) : null;
-  } catch {
-    return null;
-  }
 }
 
 /**

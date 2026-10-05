@@ -2,8 +2,10 @@ package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import android.graphics.Point;
 
@@ -60,6 +62,8 @@ public class ReactRootOriginTrackerTest {
         Point viewport = new Point();
         int displayId;
         int surfaceKey = SecureRectangleStore.MAIN_SURFACE;
+        /** A ReactRoot (the activity root) rather than a dialog root. */
+        boolean reactRoot = true;
         /** Simulates the weakly-held view having been collected mid-refresh. */
         boolean viewGone;
         int listenerRegistrations;
@@ -80,7 +84,7 @@ public class ReactRootOriginTrackerTest {
             if (viewGone) {
                 return null;
             }
-            return new OriginSnapshot(new int[] { location[0], location[1] }, viewport, displayId);
+            return new OriginSnapshot(new int[] { location[0], location[1] }, viewport, displayId, reactRoot);
         }
 
         @Override
@@ -388,8 +392,12 @@ public class ReactRootOriginTrackerTest {
         main.surfaceKey = SecureRectangleStore.MAIN_SURFACE;
         final FakeRoot modal = new FakeRoot();
         modal.location = new int[] { 40, 200 };
+        // A dialog root is not a ReactRoot: Fabric never applies its viewport
+        // offset, so the offset RootViewUtil would report (here a translucent
+        // status bar's -51) must not move its rectangles.
+        modal.reactRoot = false;
         modal.viewport.x = 0;
-        modal.viewport.y = 0;
+        modal.viewport.y = -51;
         modal.displayId = 0;
         modal.surfaceKey = 42;
         final QueueRootFinder finder = new QueueRootFinder();
@@ -418,6 +426,177 @@ public class ReactRootOriginTrackerTest {
         assertArrayEquals(
                 new int[] { 10, 220, 30, 240, 140, 250, 220, 290 },
                 java.util.Arrays.copyOfRange(afterMainMove, 2, afterMainMove.length));
+    }
+
+    @Test
+    public void theActivityRootsOriginSubtractsItsViewportOffset() {
+        final OriginSnapshot snapshot = new OriginSnapshot(new int[] { 0, 51 }, new Point(), 0, true);
+        snapshot.viewport.y = 51;
+        assertArrayEquals(new int[] { 0, 0 }, ReactRootOriginTracker.surfaceOrigin(snapshot));
+    }
+
+    @Test
+    public void aDialogRootsOriginIsItsLocationOnScreenAlone() {
+        final OriginSnapshot snapshot = new OriginSnapshot(new int[] { 0, 0 }, new Point(), 0, false);
+        snapshot.viewport.y = -51;
+        assertArrayEquals(new int[] { 0, 0 }, ReactRootOriginTracker.surfaceOrigin(snapshot));
+    }
+
+    /** The activity root is the main surface whatever its own view id. */
+    @Test
+    public void theActivityRootPublishesOnTheMainSurfaceOnly() {
+        final FakeRoot main = new FakeRoot();
+        main.location = new int[] { 0, 51 };
+        main.surfaceKey = 1;
+        final QueueRootFinder finder = new QueueRootFinder();
+        finder.queue.add(main);
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(0, new int[] { 10, 20, 30, 40 });
+
+        new ReactRootOriginTracker(new FakeLifecycleSource(), finder, store).refresh();
+
+        assertArrayEquals(new int[] { 10, 71, 30, 91 },
+                java.util.Arrays.copyOfRange(store.snapshot(0), 2, 6));
+        assertFalse(store.hasSurface(1));
+    }
+
+    /** A resolver whose answer a test sets. */
+    private static final class FakeResolver implements ReactRootOriginTracker.SurfaceResolver {
+        RootHandle answer;
+        int calls;
+
+        @Override
+        public RootHandle resolve(final int surfaceKey) {
+            calls++;
+            return answer;
+        }
+    }
+
+    private static FakeRoot dialog(final int key, final int x, final int y) {
+        final FakeRoot dialog = new FakeRoot();
+        dialog.surfaceKey = key;
+        dialog.reactRoot = false;
+        dialog.location = new int[] { x, y };
+        return dialog;
+    }
+
+    /**
+     * A <Modal>'s dialog root that does not exist yet stays pending: its
+     * rectangles fail closed until a refresh finds it.
+     */
+    @Test
+    public void aSurfaceWhoseDialogRootIsNotFoundYetFailsClosedUntilARefreshFindsIt() {
+        final FakeResolver resolver = new FakeResolver();
+        final SecureRectangleStore store = new SecureRectangleStore();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, store);
+        store.set(0, 56, new int[] { 208, 560, 608, 760 });
+
+        tracker.watchSurfaceNow(56);
+        assertArrayEquals(SecureRectangleStore.FULL_DISPLAY,
+                java.util.Arrays.copyOfRange(store.snapshot(0), 2, 6));
+        assertNull(tracker.cachedSurfaceOrigin(56));
+
+        resolver.answer = dialog(56, 0, 0);
+        tracker.refresh();
+
+        assertArrayEquals(new int[] { 208, 560, 608, 760 },
+                java.util.Arrays.copyOfRange(store.snapshot(0), 2, 6));
+        assertArrayEquals(new int[] { 0, 0 }, tracker.cachedSurfaceOrigin(56));
+    }
+
+    @Test
+    public void aWatchedSurfaceIsResolvedOnce() {
+        final FakeResolver resolver = new FakeResolver();
+        resolver.answer = dialog(56, 0, 0);
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, new SecureRectangleStore());
+
+        tracker.watchSurfaceNow(56);
+        tracker.watchSurfaceNow(56);
+        tracker.refresh();
+
+        assertEquals(1, resolver.calls);
+        assertEquals(1, ((FakeRoot) resolver.answer).listenerRegistrations);
+    }
+
+    @Test
+    public void theMainSurfaceAndUnknownKeysAreNeverResolved() {
+        final FakeResolver resolver = new FakeResolver();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, new SecureRectangleStore());
+
+        tracker.watchSurfaceNow(SecureRectangleStore.MAIN_SURFACE);
+        tracker.watchSurfaceNow(-1);
+        tracker.refresh();
+
+        assertEquals(0, resolver.calls);
+    }
+
+    @Test
+    public void aThrowingResolverLeavesTheSurfacePending() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        final int[] calls = { 0 };
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), key -> {
+                    calls[0]++;
+                    throw new IllegalStateException("no view");
+                }, store);
+        store.set(0, 56, new int[] { 1, 2, 3, 4 });
+
+        tracker.watchSurfaceNow(56);
+        tracker.refresh();
+
+        assertEquals(2, calls[0]);
+        assertArrayEquals(SecureRectangleStore.FULL_DISPLAY,
+                java.util.Arrays.copyOfRange(store.snapshot(0), 2, 6));
+    }
+
+    @Test
+    public void surfaceOriginNowReadsTheDialogRootsCurrentPlace() {
+        final FakeResolver resolver = new FakeResolver();
+        final FakeRoot dialog = dialog(56, 0, 0);
+        resolver.answer = dialog;
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, new SecureRectangleStore());
+
+        assertArrayEquals(new int[] { 0, 0 }, tracker.surfaceOriginNow(56));
+        dialog.location = new int[] { 0, 30 };
+        assertArrayEquals(new int[] { 0, 30 }, tracker.surfaceOriginNow(56));
+        assertNull(tracker.surfaceOriginNow(57));
+    }
+
+    /** A dialog root that leaves the window takes its empty lane with it. */
+    @Test
+    public void aDetachedDialogRootDropsItsEmptyLaneAndItsOrigin() {
+        final FakeResolver resolver = new FakeResolver();
+        final FakeRoot dialog = dialog(56, 0, 0);
+        resolver.answer = dialog;
+        final SecureRectangleStore store = new SecureRectangleStore();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, store);
+        store.set(0, 56, new int[] { 1, 2, 3, 4 });
+        tracker.watchSurfaceNow(56);
+        store.set(0, 56, new int[0]);
+        assertTrue(store.hasSurface(56));
+
+        dialog.attached = false;
+        tracker.refresh();
+
+        assertFalse(store.hasSurface(56));
+        assertNull(tracker.cachedSurfaceOrigin(56));
+    }
+
+    @Test
+    public void detachForgetsPendingSurfaces() {
+        final FakeResolver resolver = new FakeResolver();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, new SecureRectangleStore());
+        tracker.watchSurfaceNow(56);
+        tracker.detach();
+        tracker.refresh();
+
+        assertEquals(1, resolver.calls);
     }
 
     @Test

@@ -779,74 +779,136 @@ describe('buildViewTree', () => {
     expect(node?.bounds).toEqual([11.13, 22.67, 5.56, 6.45]);
   });
 
-  // A <Modal> is its own React root (an Android Dialog): measureInWindow is
-  // relative to it, so its nodes take that root's origin, not the request's.
-  describe('a node on another React surface', () => {
-    const tagged = (tag: number) => (fiber: FiberLike): number | null =>
-      (fiber.memoizedProps as { tag?: number } | null)?.tag === tag ? tag : null;
-    const sheet = (): FiberSpec => host('Sheet', { x: 10, y: 20, width: 5, height: 5 }, [], { tag: 77 });
+  // A <Modal> is its own React surface: measureInWindow inside it is relative
+  // to the Modal's content, so its subtree takes that surface's origin. The
+  // origin is asked once per Modal per walk, never per node.
+  describe('a subtree inside a <Modal>', () => {
+    const MODAL_RECT = { x: 0, y: 0, width: 360, height: 800 };
+    const tagged = (fiber: FiberLike): number | null =>
+      (fiber.memoizedProps as { tag?: number } | null)?.tag ?? null;
+    const modal = (tag: number | undefined, children: FiberSpec[], rect: WindowRect | null = MODAL_RECT): FiberSpec =>
+      host('RCTModalHostView', rect, children, tag === undefined ? {} : { tag });
+    const box = (name: string, y = 20): FiberSpec => host(name, { x: 10, y, width: 5, height: 5 });
 
-    it('Android: takes the origin native resolves for its tag', () => {
-      const originForNativeTag = jest.fn((tag: number) => (tag === 77 ? { x: 40, y: 200 } : null));
+    function nodes(tree: ManagedNode | null): Map<string, ManagedNode> {
+      return new Map(flatten(tree as ManagedNode).map((n) => [n.class_name, n]));
+    }
+
+    it('Android: places the subtree by the Modal surface origin, the host by the enclosing one', () => {
+      const originForSurface = jest.fn((tag: number) => (tag === 56 ? { x: 40, y: 200 } : null));
       const tree = buildViewTree(
-        [fiberRoot(fragment([host('Main', { x: 10, y: 20, width: 5, height: 5 }), sheet()]))],
-        makeEnv({ platform: 'android', scale: 2, originX: 0, originY: 63, nativeTagOf: tagged(77), originForNativeTag }),
+        [fiberRoot(fragment([box('Main'), modal(56, [box('Sheet'), box('Sheet2', 30)])]))],
+        makeEnv({ platform: 'android', scale: 2, originX: 0, originY: 63, nativeTagOf: tagged, originForSurface }),
       );
 
-      const [main, modal] = tree?.subitems?.[0]?.subitems ?? [];
-      expect(main?.bounds).toEqual([20, 103, 10, 10]);
-      expect(modal?.bounds).toEqual([60, 240, 10, 10]);
-      expect(originForNativeTag).toHaveBeenCalledTimes(1);
-      expect(originForNativeTag).toHaveBeenCalledWith(77);
+      const byName = nodes(tree);
+      expect(byName.get('Main')?.bounds).toEqual([20, 103, 10, 10]);
+      expect(byName.get('RCTModalHostView')?.bounds).toEqual([0, 63, 720, 1600]);
+      expect(byName.get('Sheet')?.bounds).toEqual([60, 240, 10, 10]);
+      expect(byName.get('Sheet2')?.bounds).toEqual([60, 260, 10, 10]);
+      expect(originForSurface).toHaveBeenCalledTimes(1);
+      expect(originForSurface).toHaveBeenCalledWith(56);
     });
 
-    it('iOS: takes the origin native resolves for its tag', () => {
+    it('iOS: places the subtree by the Modal surface origin', () => {
       const tree = buildViewTree(
-        [fiberRoot(sheet())],
-        makeEnv({ platform: 'ios', originX: 1, originY: 2, nativeTagOf: tagged(77), originForNativeTag: () => ({ x: 3.5, y: 4 }) }),
+        [fiberRoot(modal(56, [box('Sheet')]))],
+        makeEnv({ platform: 'ios', originX: 1, originY: 2, nativeTagOf: tagged, originForSurface: () => ({ x: 3.5, y: 4 }) }),
       );
 
-      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([13.5, 24, 5, 5]);
+      expect(nodes(tree).get('Sheet')?.bounds).toEqual([13.5, 24, 5, 5]);
     });
 
-    it('falls back to the request origin when native knows no origin for the tag', () => {
-      const tree = buildViewTree(
-        [fiberRoot(sheet())],
-        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, nativeTagOf: tagged(77), originForNativeTag: () => null }),
+    it('asks native nothing for a tree without a Modal', () => {
+      const originForSurface = jest.fn(() => ({ x: 40, y: 200 }));
+      buildViewTree(
+        [fiberRoot(fragment([box('A'), host('B', RECT, [box('C')], { tag: 9 })]))],
+        makeEnv({ platform: 'android', scale: 1, nativeTagOf: tagged, originForSurface }),
       );
 
-      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([17, 29, 5, 5]);
+      expect(originForSurface).not.toHaveBeenCalled();
     });
 
-    it('asks nothing for a node without a tag', () => {
-      const originForNativeTag = jest.fn(() => ({ x: 40, y: 200 }));
+    it('asks once per Modal, and again for a different Modal', () => {
+      const originForSurface = jest.fn((tag: number) => ({ x: tag, y: 0 }));
       const tree = buildViewTree(
-        [fiberRoot(sheet())],
-        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, nativeTagOf: () => null, originForNativeTag }),
+        [fiberRoot(fragment([modal(56, [box('First')]), modal(78, [box('Second')])]))],
+        makeEnv({ platform: 'android', scale: 1, nativeTagOf: tagged, originForSurface }),
       );
 
-      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([17, 29, 5, 5]);
-      expect(originForNativeTag).not.toHaveBeenCalled();
+      expect(originForSurface.mock.calls).toEqual([[56], [78]]);
+      expect(nodes(tree).get('First')?.bounds).toEqual([66, 20, 5, 5]);
+      expect(nodes(tree).get('Second')?.bounds).toEqual([88, 20, 5, 5]);
     });
 
-    it('uses the request origin when the env has no tag reader', () => {
-      const originForNativeTag = jest.fn(() => ({ x: 40, y: 200 }));
-      const tree = buildViewTree(
-        [fiberRoot(sheet())],
-        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, originForNativeTag }),
+    it('asks once for one Modal reached from two roots', () => {
+      const originForSurface = jest.fn(() => ({ x: 40, y: 200 }));
+      buildViewTree(
+        [fiberRoot(modal(56, [box('A')])), fiberRoot(modal(56, [box('B')]))],
+        makeEnv({ platform: 'android', scale: 1, nativeTagOf: tagged, originForSurface }),
       );
 
-      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([17, 29, 5, 5]);
-      expect(originForNativeTag).not.toHaveBeenCalled();
+      expect(originForSurface).toHaveBeenCalledTimes(1);
     });
 
-    it('uses the request origin when the env has no origin resolver', () => {
+    it('a Modal inside a Modal takes the inner origin', () => {
       const tree = buildViewTree(
-        [fiberRoot(sheet())],
-        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, nativeTagOf: tagged(77) }),
+        [fiberRoot(modal(56, [box('Outer'), modal(78, [box('Inner')])]))],
+        makeEnv({
+          platform: 'android',
+          scale: 1,
+          nativeTagOf: tagged,
+          originForSurface: (tag) => (tag === 56 ? { x: 100, y: 0 } : { x: 0, y: 300 }),
+        }),
       );
 
-      expect(tree?.subitems?.[0]?.subitems?.[0]?.bounds).toEqual([17, 29, 5, 5]);
+      expect(nodes(tree).get('Outer')?.bounds).toEqual([110, 20, 5, 5]);
+      expect(nodes(tree).get('Inner')?.bounds).toEqual([10, 320, 5, 5]);
+    });
+
+    it('an unmeasurable Modal host still gives its children its origin', () => {
+      const tree = buildViewTree(
+        [fiberRoot(modal(56, [box('Sheet')], null))],
+        makeEnv({ platform: 'android', scale: 1, nativeTagOf: tagged, originForSurface: () => ({ x: 40, y: 200 }) }),
+      );
+
+      expect(nodes(tree).get('Sheet')?.bounds).toEqual([50, 220, 5, 5]);
+    });
+
+    it('keeps the enclosing origin when native knows no origin for the Modal', () => {
+      const tree = buildViewTree(
+        [fiberRoot(modal(56, [box('Sheet')]))],
+        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, nativeTagOf: tagged, originForSurface: () => null }),
+      );
+
+      expect(nodes(tree).get('Sheet')?.bounds).toEqual([17, 29, 5, 5]);
+    });
+
+    it('keeps the enclosing origin for a Modal host with no tag', () => {
+      const originForSurface = jest.fn(() => ({ x: 40, y: 200 }));
+      const tree = buildViewTree(
+        [fiberRoot(modal(undefined, [box('Sheet')]))],
+        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, nativeTagOf: tagged, originForSurface }),
+      );
+
+      expect(nodes(tree).get('Sheet')?.bounds).toEqual([17, 29, 5, 5]);
+      expect(originForSurface).not.toHaveBeenCalled();
+    });
+
+    it('keeps the enclosing origin when the env cannot read tags or origins', () => {
+      const originForSurface = jest.fn(() => ({ x: 40, y: 200 }));
+      const noTags = buildViewTree(
+        [fiberRoot(modal(56, [box('Sheet')]))],
+        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, originForSurface }),
+      );
+      const noOrigins = buildViewTree(
+        [fiberRoot(modal(56, [box('Sheet')]))],
+        makeEnv({ platform: 'android', scale: 1, originX: 7, originY: 9, nativeTagOf: tagged }),
+      );
+
+      expect(nodes(noTags).get('Sheet')?.bounds).toEqual([17, 29, 5, 5]);
+      expect(nodes(noOrigins).get('Sheet')?.bounds).toEqual([17, 29, 5, 5]);
+      expect(originForSurface).not.toHaveBeenCalled();
     });
   });
 

@@ -2,9 +2,9 @@ import { useLayoutEffect, useRef } from 'react';
 import type { ComponentRef, ReactElement, ReactNode } from 'react';
 import { View } from 'react-native';
 import type { LayoutChangeEvent, ViewProps } from 'react-native';
-import NativeBugsee from '../NativeBugsee';
 import { addMeasurer } from './measureLoop';
-import { clearOwner, MAIN_SURFACE, setOwnerRectangles } from './registry';
+import { clearOwner, setOwnerRectangles } from './registry';
+import { surfaceOfInstance } from './surface';
 import { errorName } from '../errorName';
 
 export interface BugseeSecureProps extends ViewProps {
@@ -27,10 +27,11 @@ export interface BugseeSecureProps extends ViewProps {
  * rectangle published. Only unmounting or `enabled={false}` removes it.
  *
  * Fabric `measureInWindow` is relative to the measured node's nearest
- * `RootNodeKind` ancestor (the activity React root, or a `<Modal>`'s
- * `DialogRootViewGroup` / `ModalHostView`). The rectangle is published under
- * that surface's key so native can translate it by that surface's display
- * origin at pull time — not the activity root's origin alone.
+ * `RootNodeKind` ancestor: the app's root, or the content of the `<Modal>`
+ * it is in. The rectangle is published under that surface's key (the Modal
+ * host's tag, read off the fiber tree once per mount), so native translates
+ * it by that surface's origin at pull time. No native call is made to find
+ * the surface.
  *
  * A plain function component on purpose (no `memo`, no `forwardRef`): the view
  * tree walk recognises it by identity.
@@ -46,6 +47,9 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
   // disable must not bring the region back.
   const active = useRef(false);
   const warned = useRef(false);
+  // The surface this view is measured in. Read once per mount: a mounted
+  // host never changes ancestors.
+  const surface = useRef<number | null>(null);
 
   // Reads refs only, so every render's copy does the same thing; the loop
   // keeps the one from the render that enabled it.
@@ -62,12 +66,14 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
       return;
     }
     try {
+      surface.current ??= surfaceOfInstance(view);
+      const measuredIn = surface.current;
       view.measureInWindow((x, y, width, height) => {
         if (!active.current) {
           return;
         }
         try {
-          setOwnerRectangles(token, 0, [{ x, y, width, height }], surfaceOf(view));
+          setOwnerRectangles(token, 0, [{ x, y, width, height }], measuredIn);
         } catch (error) {
           failed(error);
         }
@@ -89,6 +95,7 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
     const removeMeasurer = addMeasurer(measure);
     return () => {
       active.current = false;
+      surface.current = null;
       removeMeasurer();
       clearOwner(token);
     };
@@ -102,20 +109,4 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
   };
 
   return <View {...rest} ref={ref} collapsable={false} onLayout={handleLayout} />;
-}
-
-/**
- * The surface key native resolves for the React root holding `view`; the
- * main surface when the view has no tag or native answers something that is
- * not a key. Throws whatever the lookup throws: the caller treats that as a
- * failed measurement and keeps the last rectangle.
- */
-function surfaceOf(view: object): number {
-  const tag = (view as { __nativeTag?: unknown }).__nativeTag;
-  // Number.isFinite never coerces: a string or a missing tag is not finite.
-  if (!Number.isFinite(tag)) {
-    return MAIN_SURFACE;
-  }
-  const surface: unknown = NativeBugsee.secureSurfaceKey(tag as number);
-  return Number.isInteger(surface) ? (surface as number) : MAIN_SURFACE;
 }

@@ -10,9 +10,9 @@ static const NSUInteger kHeaderInts = 2;
 /// as it is stable; the SDK only ever compares it against what it saw last.
 static const int32_t kInitialVersion = 1;
 
-/// The activity / main React root's surface key. Legacy writers that do not
-/// name a surface land here.
 const NSInteger BGSRNSecureMainSurface = 0;
+
+const int32_t BGSRNSecureFullDisplay[4] = {0, 0, 1 << 20, 1 << 20};
 
 /// Steps the version, skipping the value that means "nothing secured yet":
 /// landing back on it would make a real set look identical to the empty one to
@@ -23,44 +23,65 @@ static int32_t BGSRNNextVersion(int32_t current) {
   return next == kInitialVersion ? kInitialVersion + 1 : next;
 }
 
-static int32_t BGSRNSaturatedAdd(int32_t a, int32_t b) {
-  const int64_t sum = (int64_t)a + (int64_t)b;
-  if (sum > INT32_MAX) {
+/// One coordinate moved by the origin, rounded outward: down for a left or top
+/// edge, up for a right or bottom one, so the region can only grow. Saturates
+/// at the int32 range.
+static int32_t BGSRNMovedCoordinate(int32_t value, NSUInteger index, CGPoint origin) {
+  const BOOL isX = index % 2 == 0;
+  const BOOL isLeadingEdge = index % kCoordinatesPerRectangle < 2;
+  const double moved = (double)value + (isX ? origin.x : origin.y);
+  const double rounded = isLeadingEdge ? floor(moved) : ceil(moved);
+  if (rounded >= (double)INT32_MAX) {
     return INT32_MAX;
   }
-  if (sum < INT32_MIN) {
+  if (rounded <= (double)INT32_MIN) {
     return INT32_MIN;
   }
-  return (int32_t)sum;
+  return (int32_t)rounded;
 }
 
-/// One surface's raw measurements and the origin that places them.
+/// `raw` (int32 coordinates) with every coordinate moved by `origin`.
+static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
+  if (origin.x == 0 && origin.y == 0) {
+    return raw;
+  }
+  const NSUInteger count = raw.length / sizeof(int32_t);
+  NSMutableData *moved = [NSMutableData dataWithLength:raw.length];
+  const int32_t *in = (const int32_t *)raw.bytes;
+  int32_t *out = (int32_t *)moved.mutableBytes;
+  for (NSUInteger i = 0; i < count; i++) {
+    out[i] = BGSRNMovedCoordinate(in[i], i, origin);
+  }
+  return [moved copy];
+}
+
+/// One surface's raw measurements and the origin that places them. Immutable:
+/// a change replaces the lane.
 @interface BGSRNSecureLane : NSObject
-@property (nonatomic, copy) NSData *raw;
-@property (nonatomic, assign) int32_t originX;
-@property (nonatomic, assign) int32_t originY;
-@property (nonatomic, copy, readonly) NSData *coordinates;
+@property (nonatomic, copy, readonly) NSData *raw;
+@property (nonatomic, assign, readonly) CGPoint origin;
+@property (nonatomic, assign, readonly) BOOL originKnown;
+/// What the SDK is served for this lane.
+@property (nonatomic, copy, readonly) NSData *served;
 @end
 
 @implementation BGSRNSecureLane
 
-- (instancetype)initWithRaw:(NSData *)raw originX:(int32_t)originX originY:(int32_t)originY {
+- (instancetype)initWithRaw:(NSData *)raw
+                     origin:(CGPoint)origin
+                originKnown:(BOOL)originKnown
+                 failClosed:(BOOL)failClosed {
   self = [super init];
   if (self) {
     _raw = [raw copy] ?: [NSData data];
-    _originX = originX;
-    _originY = originY;
-    const NSUInteger count = _raw.length / sizeof(int32_t);
-    if (count == 0) {
-      _coordinates = [NSData data];
+    _origin = origin;
+    _originKnown = originKnown;
+    if (_raw.length == 0) {
+      _served = [NSData data];
+    } else if (!originKnown && failClosed) {
+      _served = [NSData dataWithBytes:BGSRNSecureFullDisplay length:sizeof(BGSRNSecureFullDisplay)];
     } else {
-      NSMutableData *moved = [NSMutableData dataWithLength:count * sizeof(int32_t)];
-      const int32_t *in = (const int32_t *)_raw.bytes;
-      int32_t *out = (int32_t *)moved.mutableBytes;
-      for (NSUInteger i = 0; i < count; i++) {
-        out[i] = BGSRNSaturatedAdd(in[i], (i % 2 == 0) ? originX : originY);
-      }
-      _coordinates = [moved copy];
+      _served = BGSRNMovedCoordinates(_raw, origin);
     }
   }
   return self;
@@ -69,10 +90,13 @@ static int32_t BGSRNSaturatedAdd(int32_t a, int32_t b) {
 @end
 
 @implementation BGSRNSecureRectangles {
-  /// display -> (surface -> lane). Surfaces sorted by key when serving.
+  /// display -> (surface -> lane). Served in surface-key order.
   NSMutableDictionary<NSNumber *, NSMutableDictionary<NSNumber *, BGSRNSecureLane *> *> *_lanesByDisplay;
-  /// display -> its current version.
+  /// display -> its current version. Absent until the served set first changes.
   NSMutableDictionary<NSNumber *, NSNumber *> *_versionsByDisplay;
+  /// Serialises the JS-thread write against the main-thread pull. A plain lock
+  /// rather than a queue: the pull happens on main once per captured frame and
+  /// must not be made to hop.
   NSLock *_lock;
 }
 
@@ -112,77 +136,114 @@ static int32_t BGSRNSaturatedAdd(int32_t a, int32_t b) {
     return NO;
   }
 
+  // Copied on the way in: the caller keeps its buffer, and a later write
+  // through it would edit a snapshot the SDK is reading.
   NSData *published = count == 0
       ? [NSData data]
       : [NSData dataWithBytes:coordinates length:count * sizeof(int32_t)];
 
-  NSNumber *displayKey = @(display);
-  NSNumber *surfaceKey = @(surface);
-
   [_lock lock];
-  NSData *previousServed = [self servedCoordinatesForDisplayLocked:display];
-  NSMutableDictionary<NSNumber *, BGSRNSecureLane *> *lanes = _lanesByDisplay[displayKey];
-  if (lanes == nil) {
-    lanes = [NSMutableDictionary dictionary];
-    _lanesByDisplay[displayKey] = lanes;
-  }
-  BGSRNSecureLane *prior = lanes[surfaceKey];
-  int32_t originX = prior ? prior.originX : 0;
-  int32_t originY = prior ? prior.originY : 0;
-  lanes[surfaceKey] = [[BGSRNSecureLane alloc] initWithRaw:published originX:originX originY:originY];
-  NSData *nextServed = [self servedCoordinatesForDisplayLocked:display];
-  if (![previousServed isEqualToData:nextServed]) {
-    const int32_t currentVersion = _versionsByDisplay[displayKey]
-                                       ? _versionsByDisplay[displayKey].intValue
-                                       : kInitialVersion;
-    _versionsByDisplay[displayKey] = @(BGSRNNextVersion(currentVersion));
-  }
+  [self changeLaneLockedForDisplay:display
+                           surface:surface
+                            change:^BGSRNSecureLane *(BGSRNSecureLane *prior, BOOL failClosed) {
+                              return [[BGSRNSecureLane alloc] initWithRaw:published
+                                                                   origin:prior.origin
+                                                              originKnown:prior.originKnown
+                                                               failClosed:failClosed];
+                            }];
   [_lock unlock];
 
   return YES;
 }
 
-- (void)setOriginX:(int32_t)originX originY:(int32_t)originY forDisplay:(NSInteger)display {
-  [self setOriginX:originX originY:originY forDisplay:display surface:BGSRNSecureMainSurface];
+- (void)setOrigin:(CGPoint)origin forDisplay:(NSInteger)display {
+  [self setOrigin:origin forDisplay:display surface:BGSRNSecureMainSurface];
 }
 
-- (void)setOriginX:(int32_t)originX
-           originY:(int32_t)originY
-        forDisplay:(NSInteger)display
-           surface:(NSInteger)surface {
+- (void)setOrigin:(CGPoint)origin forDisplay:(NSInteger)display surface:(NSInteger)surface {
+  [_lock lock];
+  BGSRNSecureLane *current = _lanesByDisplay[@(display)][@(surface)];
+  // The usual case: re-read on every pull, the window has not moved.
+  if (current != nil && current.originKnown && CGPointEqualToPoint(current.origin, origin)) {
+    [_lock unlock];
+    return;
+  }
+  [self changeLaneLockedForDisplay:display
+                           surface:surface
+                            change:^BGSRNSecureLane *(BGSRNSecureLane *prior, BOOL failClosed) {
+                              return [[BGSRNSecureLane alloc] initWithRaw:prior.raw
+                                                                   origin:origin
+                                                              originKnown:YES
+                                                               failClosed:failClosed];
+                            }];
+  [_lock unlock];
+}
+
+- (NSArray<NSNumber *> *)surfacesForDisplay:(NSInteger)display {
+  [_lock lock];
+  NSMutableArray<NSNumber *> *surfaces = [NSMutableArray array];
+  for (NSNumber *key in _lanesByDisplay[@(display)]) {
+    if (key.integerValue != BGSRNSecureMainSurface) {
+      [surfaces addObject:key];
+    }
+  }
+  [_lock unlock];
+  return [surfaces sortedArrayUsingSelector:@selector(compare:)];
+}
+
+- (void)dropSurfaceIfEmpty:(NSInteger)surface {
+  if (surface == BGSRNSecureMainSurface) {
+    return;
+  }
+  [_lock lock];
+  for (NSNumber *display in _lanesByDisplay.allKeys) {
+    BGSRNSecureLane *lane = _lanesByDisplay[display][@(surface)];
+    if (lane != nil && lane.raw.length == 0) {
+      // An empty lane serves nothing, so removing it leaves the version alone.
+      [_lanesByDisplay[display] removeObjectForKey:@(surface)];
+    }
+  }
+  [_lock unlock];
+}
+
+/// Replaces one lane and moves the display's version only when what is served
+/// changes. Caller holds `_lock`.
+- (void)changeLaneLockedForDisplay:(NSInteger)display
+                           surface:(NSInteger)surface
+                            change:(BGSRNSecureLane * (^)(BGSRNSecureLane *prior, BOOL failClosed))change {
   NSNumber *displayKey = @(display);
   NSNumber *surfaceKey = @(surface);
-
-  [_lock lock];
-  NSData *previousServed = [self servedCoordinatesForDisplayLocked:display];
+  NSData *previousServed = [self servedLockedForDisplay:display];
   NSMutableDictionary<NSNumber *, BGSRNSecureLane *> *lanes = _lanesByDisplay[displayKey];
   if (lanes == nil) {
     lanes = [NSMutableDictionary dictionary];
     _lanesByDisplay[displayKey] = lanes;
   }
-  BGSRNSecureLane *prior = lanes[surfaceKey];
-  NSData *raw = prior ? prior.raw : [NSData data];
-  lanes[surfaceKey] = [[BGSRNSecureLane alloc] initWithRaw:raw originX:originX originY:originY];
-  NSData *nextServed = [self servedCoordinatesForDisplayLocked:display];
+  const BOOL failClosed = surface != BGSRNSecureMainSurface;
+  BGSRNSecureLane *prior = lanes[surfaceKey]
+      ?: [[BGSRNSecureLane alloc] initWithRaw:[NSData data]
+                                       origin:CGPointZero
+                                  originKnown:NO
+                                   failClosed:failClosed];
+  lanes[surfaceKey] = change(prior, failClosed);
+  NSData *nextServed = [self servedLockedForDisplay:display];
   if (![previousServed isEqualToData:nextServed]) {
     const int32_t currentVersion = _versionsByDisplay[displayKey]
                                        ? _versionsByDisplay[displayKey].intValue
                                        : kInitialVersion;
     _versionsByDisplay[displayKey] = @(BGSRNNextVersion(currentVersion));
   }
-  [_lock unlock];
 }
 
-/// Caller holds `_lock`.
-- (NSData *)servedCoordinatesForDisplayLocked:(NSInteger)display {
+/// Every lane's served coordinates, in surface-key order. Caller holds `_lock`.
+- (NSData *)servedLockedForDisplay:(NSInteger)display {
   NSMutableDictionary<NSNumber *, BGSRNSecureLane *> *lanes = _lanesByDisplay[@(display)];
   if (lanes.count == 0) {
     return [NSData data];
   }
-  NSArray<NSNumber *> *keys = [lanes.allKeys sortedArrayUsingSelector:@selector(compare:)];
   NSMutableData *merged = [NSMutableData data];
-  for (NSNumber *key in keys) {
-    [merged appendData:lanes[key].coordinates];
+  for (NSNumber *key in [lanes.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+    [merged appendData:lanes[key].served];
   }
   return [merged copy];
 }
@@ -191,13 +252,11 @@ static int32_t BGSRNSaturatedAdd(int32_t a, int32_t b) {
   NSNumber *key = @(display);
 
   [_lock lock];
-  NSData *coordinates = [self servedCoordinatesForDisplayLocked:display];
-  // Lanes can exist without a version entry: an origin-only write that leaves
-  // the served buffer empty deliberately does not bump. Messaging a missing
-  // NSNumber yields 0, which is not the empty-set version (kInitialVersion).
-  const int32_t version = _versionsByDisplay[key]
-                              ? _versionsByDisplay[key].intValue
-                              : kInitialVersion;
+  NSData *coordinates = [self servedLockedForDisplay:display];
+  // Keyed off the version itself, not the lanes: an origin-only write creates
+  // a lane without moving the version, and must still report the initial one.
+  const int32_t version =
+      _versionsByDisplay[key] ? _versionsByDisplay[key].intValue : kInitialVersion;
   [_lock unlock];
 
   const NSUInteger coordinateCount = coordinates.length / sizeof(int32_t);
@@ -205,6 +264,8 @@ static int32_t BGSRNSaturatedAdd(int32_t a, int32_t b) {
   NSMutableData *packed =
       [NSMutableData dataWithLength:(kHeaderInts + coordinateCount) * sizeof(int32_t)];
   int32_t *out = (int32_t *)packed.mutableBytes;
+  // The SDK reads raw int32s, so the encoding is explicit rather than whatever
+  // this host happens to be.
   out[0] = (int32_t)CFSwapInt32HostToLittle((uint32_t)version);
   out[1] = (int32_t)CFSwapInt32HostToLittle(
       (uint32_t)(coordinateCount / kCoordinatesPerRectangle));
@@ -216,6 +277,7 @@ static int32_t BGSRNSaturatedAdd(int32_t a, int32_t b) {
     }
   }
 
+  // Immutable to the caller: the SDK may hold it across our next write.
   return [packed copy];
 }
 
