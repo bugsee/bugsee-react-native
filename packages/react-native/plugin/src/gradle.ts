@@ -2,6 +2,9 @@ import type { AndroidConfig } from '@expo/config-plugins';
 
 const PLUGIN_ID = 'com.bugsee.android.gradle';
 
+/** Every refusal starts with this, then the file, the reason and the manual fix. */
+export const CANNOT_EDIT = '@bugsee/react-native cannot edit';
+
 function blockExtent(source: string, keyword: string): { bodyStart: number; bodyEnd: number } | null {
   const start = source.indexOf(keyword);
   if (start < 0) {
