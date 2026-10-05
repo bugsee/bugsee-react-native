@@ -4096,7 +4096,7 @@ Device: WOD_LX1 `AMRJCP4718402860`, Debug, logged `BUGSEE_E2E appearance nonce=9
     - The token must be real: a placeholder or missing token skips with one line.
     - iOS Debug skips unless `BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true`.
     - A failure warns and the build goes on.
-  - **Mutation gate (I2).** `stryker.plugin.json` (`yarn mutate:plugin`, CI) covers `plugin/src` and the two scripts. It scores 97.53, with break 97.
+  - **Mutation gate (I2).** `stryker.plugin.json` (`yarn mutate:plugin`, CI) covers `plugin/src` and the two scripts. It scores 97.48 on the final run (97.53 earlier), with break 97.
   - **No real endpoints.** Jest, Stryker and CI default to the dead endpoint `http://127.0.0.1:9`, and a `jest setupFiles` guard refuses to spawn bugsee-cli with a non-loopback endpoint.
   - **Bare Android release** (stub endpoint, synthetic token): the stub received the composed map with id `e0b734d3-5439-5d44-8445-8ffe54ba2de5`.
     - The WOD_LX1 `AMRJCP4718402860` reported the same runtime `debug_ids` (`composed-debug-id.test.ts` 1/1).
