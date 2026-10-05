@@ -10,6 +10,7 @@ const {
   finishAfterCompose,
   injectComposedSourceMap,
   main,
+  preserveDirFor,
   readDebugId,
   retargetSourceMappingUrl,
 } = require('../hermes-sourcemaps');
@@ -765,5 +766,25 @@ describe('command line', () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toBe('usage: hermes-sourcemaps.js inject|finish|upload [options]\n');
+  });
+});
+
+describe('preserve directory paths', () => {
+  it('maps generated/assets to intermediates/bugsee-sourcemaps with the platform separator', () => {
+    expect(
+      preserveDirFor(
+        'C:\\app\\android\\app\\build\\generated\\assets\\react\\release\\index.android.bundle',
+        path.win32,
+      ),
+    ).toBe('C:\\app\\android\\app\\build\\intermediates\\bugsee-sourcemaps\\react\\release');
+    expect(
+      preserveDirFor('/app/android/app/build/generated/assets/react/release/index.android.bundle', path.posix),
+    ).toBe('/app/android/app/build/intermediates/bugsee-sourcemaps/react/release');
+    // Not under generated/assets: the bundle's own directory.
+    expect(preserveDirFor('C:\\out\\main.jsbundle', path.win32)).toBe('C:\\out');
+    // Defaults to this platform's path module.
+    expect(preserveDirFor(path.join('b', 'generated', 'assets', 'x', 'f'))).toBe(
+      path.join('b', 'intermediates', 'bugsee-sourcemaps', 'x'),
+    );
   });
 });
