@@ -176,6 +176,13 @@ typedef id _Nullable (^BGSRNSecureHostResolver)(NSInteger surface);
 /// the caller's thread: main, for a view registry.
 - (nullable id)hostForSurface:(NSInteger)surface accepting:(BOOL (^)(id candidate))accept;
 
+/// Whether the current runtime has named `surface`'s host or its lookup
+/// (`setHost:...`, `setHostResolver:...`). Once it has, only that host places
+/// the lane: a lookup that finds nothing yet means the origin is unknown, not
+/// that the windows may be searched, where another runtime's host can be the
+/// only one with the tag.
+- (BOOL)isHostNamedForSurface:(NSInteger)surface;
+
 /// Forgets `surface` on every display where it holds no rectangles (its
 /// Modal is gone). A surface that still holds rectangles stays.
 - (void)dropSurfaceIfEmpty:(NSInteger)surface;

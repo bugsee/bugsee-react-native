@@ -279,8 +279,8 @@ static Class _Nullable BGSRNModalHostClass(void) {
 /// time (`nameModalHostForSurface:`), the same shape as Android's
 /// `watchSurface`: a window can hold another runtime's host with the same
 /// tag during a reload, and only the module's own view registry tells them
-/// apart. Without a recorded host, the one class+tag match in the windows
-/// the SDK walks. nil (none or several, or off main) leaves the lane's
+/// apart. While that host has not mounted, unknown. Only without a
+/// registry, the one class+tag match in the windows the SDK walks. nil (none or several, or off main) leaves the lane's
 /// origin as it was: unknown for a new lane, which is served as the whole
 /// display.
 static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface) {
@@ -1076,8 +1076,9 @@ RCT_EXPORT_MODULE(Bugsee)
 /// with React tag `surface`: this runtime's view registry, which another
 /// runtime's same-tag host is not in. Not looked up here: Fabric mounts the
 /// host after JS has measured and published inside it, so the pull asks (on
-/// main) until the host is there, then holds it weakly. No registry: nothing
-/// is named, and the pull falls back to a unique class+tag match.
+/// main) until the host is there, then holds it weakly; until then the lane
+/// fails closed. No registry: nothing is named, and the pull falls back to a
+/// unique class+tag match.
 - (void)nameModalHostForSurface:(NSInteger)surface {
   __weak RCTViewRegistry *registry = self.viewRegistry_DEPRECATED;
   if (registry == nil) {

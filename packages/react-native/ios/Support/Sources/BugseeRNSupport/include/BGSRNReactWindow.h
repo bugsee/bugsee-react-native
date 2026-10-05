@@ -85,8 +85,10 @@ FOUNDATION_EXPORT NSValue *_Nullable BGSRNModalHostOrigin(UIView *host);
 /// The screen origin of `surface`, a `<Modal>` lane in `store`. Read from the
 /// current runtime's host (`hostForSurface:accepting:`, which takes a view
 /// `isHost` accepts with that tag) when there is one, even when that gives no
-/// origin yet. Otherwise, the registry lookup being unavailable or not
-/// finding it, the one view `isHost` accepts with that tag in `windows`
+/// origin yet. nil while a host or lookup the current runtime named finds
+/// nothing (`isHostNamedForSurface:`): the host mounts after the publish, and
+/// until then the origin is unknown. Only when nothing was ever named (no
+/// registry), the one view `isHost` accepts with that tag in `windows`
 /// (`BGSRNUniqueTaggedView`); nil when there are none or several. A nil
 /// leaves the lane's origin as it was: unknown for a new lane, which is
 /// served as the whole display. Main thread only.

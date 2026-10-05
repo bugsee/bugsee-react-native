@@ -323,6 +323,13 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
   return entry != nil;
 }
 
+- (BOOL)isHostNamedForSurface:(NSInteger)surface {
+  [_lock lock];
+  const BOOL named = _hostsBySurface[@(surface)] != nil;
+  [_lock unlock];
+  return named;
+}
+
 /// `surface`'s host entry for the module holding `claim`, made if needed;
 /// nil when the claim is stale, `surface` is the main one, or no display has
 /// a lane for it. Caller holds `_lock`.

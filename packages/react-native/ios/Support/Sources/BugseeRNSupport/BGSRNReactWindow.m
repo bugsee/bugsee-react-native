@@ -162,6 +162,13 @@ NSValue *BGSRNSecureSurfaceOrigin(BGSRNSecureRectangles *store,
     // search that could find another runtime's.
     return BGSRNModalHostOrigin(host);
   }
+  if ([store isHostNamedForSurface:surface]) {
+    // Named but not found: the current runtime's host has not mounted yet
+    // (Fabric mounts it after the publish), or has gone. Unknown, so the lane
+    // fails closed: during a reload the walk's one match can be the old
+    // runtime's still-presented host.
+    return nil;
+  }
   UIView *found = BGSRNUniqueTaggedView(windows, surface, isHost, BGSRNModalHostSearchBudget);
   return found == nil ? nil : BGSRNModalHostOrigin(found);
 }

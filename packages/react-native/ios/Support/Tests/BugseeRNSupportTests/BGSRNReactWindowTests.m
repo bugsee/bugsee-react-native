@@ -389,8 +389,8 @@
 }
 
 /// A held host that has gone is looked up again; the lookup not finding it
-/// falls back to the unique class+tag match.
-- (void)testAGoneHostTheLookupCannotFindFallsBackToTheUniqueWalk {
+/// leaves the origin unknown, not a search that could find another host.
+- (void)testAGoneHostTheLookupCannotFindGivesNoOrigin {
   UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 390, 844)];
   [self hostTagged:42 inWindow:window presentedIn:window contentFrame:CGRectMake(0, 300, 390, 544)];
   NSInteger claim = 0;
@@ -408,9 +408,57 @@
                    runtime:claim];
   }
 
+  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]));
+  XCTAssertEqual(calls, 1u);
+}
+
+/// A reload with a sheet up, before the new runtime's Modal has mounted: the
+/// old runtime's presented host is the only one with tag 42, and the new
+/// runtime has named its lookup, which finds nothing yet. The old host's
+/// origin must not place the new lane: it stays unknown and is served as the
+/// whole display.
+- (void)testAnOldHostAloneWhileTheNewHostIsNotMountedGivesNoOrigin {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 390, 844)];
+  [self hostTagged:42 inWindow:window presentedIn:window contentFrame:CGRectMake(0, 300, 390, 544)];
+  BGSRNSecureRectangles *store = [[BGSRNSecureRectangles alloc] init];
+  [store setDisplaySize:CGSizeMake(390, 844) forDisplay:0];
+  [store setOrigin:CGPointZero forDisplay:0];
+  [store claimRuntime];
+  const NSInteger current = [store claimRuntime];
+  const int32_t rects[] = {10, 20, 110, 120};
+  XCTAssertTrue([store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:current]);
+  XCTAssertTrue([store setHostResolver:^id _Nullable(NSInteger tag) {
+    return nil;
+  }
+                            forSurface:42
+                               runtime:current]);
+  XCTAssertNotNil(BGSRNUniqueTaggedView(@[ window ], 42, [self isModalHost], BGSRNModalHostSearchBudget),
+                  @"the fixture's old host is the walk's one match");
+
+  NSValue *origin = BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]);
+
+  XCTAssertNil(origin);
+  // What the pull then serves: the lane's origin is still unknown.
+  NSData *snapshot = [store snapshotForDisplay:0];
+  int32_t served[6] = {0};
+  [snapshot getBytes:served length:sizeof(served)];
+  XCTAssertEqual(CFSwapInt32LittleToHost((uint32_t)served[1]), 1u);
+  XCTAssertEqual((int32_t)CFSwapInt32LittleToHost((uint32_t)served[2]), 0);
+  XCTAssertEqual((int32_t)CFSwapInt32LittleToHost((uint32_t)served[3]), 0);
+  XCTAssertEqual((int32_t)CFSwapInt32LittleToHost((uint32_t)served[4]), 390);
+  XCTAssertEqual((int32_t)CFSwapInt32LittleToHost((uint32_t)served[5]), 844);
+}
+
+/// With no lookup ever named (no registry), the walk's one presented match
+/// places the lane.
+- (void)testWithNoLookupNamedTheUniqueWalkPlacesTheLane {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 390, 844)];
+  [self hostTagged:42 inWindow:window presentedIn:window contentFrame:CGRectMake(0, 300, 390, 544)];
+  BGSRNSecureRectangles *store = [self storeWithLaneOn:42 claim:NULL];
+
+  XCTAssertFalse([store isHostNamedForSurface:42]);
   XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]),
                         [NSValue valueWithCGPoint:CGPointMake(0, 300)]);
-  XCTAssertEqual(calls, 1u);
 }
 
 @end
