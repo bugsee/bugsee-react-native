@@ -367,6 +367,70 @@
   XCTAssertEqualObjects([_store surfacesForDisplay:0], @[ @58 ]);
 }
 
+/// The old module is not invalidated yet when the new one claims: its late
+/// publish must not put back the Modal lane the claim dropped, which would
+/// fail closed over the whole screen for the rest of the process.
+- (void)testAStaleNonEmptyWriteDoesNotRecreateADroppedLane {
+  const int32_t rects[] = {100, 200, 150, 250};
+  [_store setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
+  const NSInteger old = [_store claimRuntime];
+  XCTAssertTrue([_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:old]);
+  [_store claimRuntime];
+  XCTAssertEqualObjects([_store surfacesForDisplay:0], @[]);
+  NSData *before = [_store snapshotForDisplay:0];
+
+  XCTAssertFalse([_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:old]);
+
+  XCTAssertEqualObjects([_store surfacesForDisplay:0], @[]);
+  XCTAssertEqualObjects([_store snapshotForDisplay:0], before);
+}
+
+/// Fabric numbers React tags from 1 again after a reload, so the old
+/// runtime's unmount clears the same key the new runtime's Modal now
+/// publishes on. That empty write must not uncover the new Modal.
+- (void)testAStaleEmptyWriteDoesNotClearTheNewRuntimesLaneOnTheSameTag {
+  const int32_t oldRects[] = {1, 2, 3, 4};
+  const int32_t newRects[] = {100, 200, 150, 250};
+  [_store setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
+  const NSInteger old = [_store claimRuntime];
+  [_store setCoordinates:oldRects count:4 forDisplay:0 surface:42 runtime:old];
+  const NSInteger current = [_store claimRuntime];
+  [_store setCoordinates:newRects count:4 forDisplay:0 surface:42 runtime:current];
+  [_store setOrigin:CGPointMake(10, 20) forDisplay:0 surface:42];
+  NSData *before = [_store snapshotForDisplay:0];
+  XCTAssertEqualObjects([[self unpack:before] subarrayWithRange:NSMakeRange(1, 5)],
+                        (@[ @1, @110, @220, @160, @270 ]));
+
+  XCTAssertFalse([_store setCoordinates:NULL count:0 forDisplay:0 surface:42 runtime:old]);
+
+  XCTAssertEqualObjects([_store snapshotForDisplay:0], before);
+}
+
+- (void)testTheCurrentRuntimesWritesStillApply {
+  const int32_t rects[] = {100, 200, 150, 250};
+  [_store setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
+  [_store claimRuntime];
+  const NSInteger current = [_store claimRuntime];
+  XCTAssertEqual([_store currentClaim], current);
+
+  XCTAssertTrue([_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:current]);
+  [_store setOrigin:CGPointMake(10, 20) forDisplay:0 surface:42];
+  XCTAssertEqualObjects([[self unpack:[_store snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(1, 5)],
+                        (@[ @1, @110, @220, @160, @270 ]));
+
+  XCTAssertTrue([_store setCoordinates:NULL count:0 forDisplay:0 surface:42 runtime:current]);
+  XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][1], @0);
+}
+
+/// A malformed write from the current runtime is still rejected, not applied.
+- (void)testTheCurrentRuntimesMalformedWriteIsStillRejected {
+  const int32_t rects[] = {1, 2, 3};
+  const NSInteger current = [_store claimRuntime];
+
+  XCTAssertFalse([_store setCoordinates:rects count:3 forDisplay:0 surface:42 runtime:current]);
+  XCTAssertEqualObjects([_store surfacesForDisplay:0], @[]);
+}
+
 /// The shared store outlives any one wrapper: the init provider registers one
 /// before launch and setWrapperInfo swaps in another, and the regions the app
 /// marked secret must survive that.

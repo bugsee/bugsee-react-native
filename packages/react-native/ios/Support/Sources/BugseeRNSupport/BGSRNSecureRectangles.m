@@ -1,5 +1,7 @@
 #import "BGSRNSecureRectangles.h"
 
+#import <os/log.h>
+
 /// Four coordinates per rectangle: left, top, right, bottom.
 static const NSUInteger kCoordinatesPerRectangle = 4;
 
@@ -126,6 +128,36 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
                  count:(NSUInteger)count
             forDisplay:(NSInteger)display
                surface:(NSInteger)surface {
+  return [self setCoordinates:coordinates
+                        count:count
+                   forDisplay:display
+                      surface:surface
+                      runtime:[self currentClaim]];
+}
+
+- (NSInteger)currentClaim {
+  [_lock lock];
+  const NSInteger claim = _runtime;
+  [_lock unlock];
+  return claim;
+}
+
+/// Whether `claim` is still the current runtime's. A stale one is logged at
+/// debug, numbers only. Caller holds `_lock`.
+- (BOOL)isCurrentLocked:(NSInteger)claim {
+  if (claim == _runtime) {
+    return YES;
+  }
+  os_log_debug(OS_LOG_DEFAULT, "BugseeRN secure write ignored: runtime claim %ld is stale, current %ld",
+               (long)claim, (long)_runtime);
+  return NO;
+}
+
+- (BOOL)setCoordinates:(const int32_t *)coordinates
+                 count:(NSUInteger)count
+            forDisplay:(NSInteger)display
+               surface:(NSInteger)surface
+               runtime:(NSInteger)claim {
   if (count % kCoordinatesPerRectangle != 0) {
     return NO;
   }
@@ -140,6 +172,12 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
       : [NSData dataWithBytes:coordinates length:count * sizeof(int32_t)];
 
   [_lock lock];
+  // Under the same lock as claimRuntime and releaseRuntime: a write checked
+  // here cannot land after a newer claim has dropped the lanes.
+  if (![self isCurrentLocked:claim]) {
+    [_lock unlock];
+    return NO;
+  }
   [self changeLaneLockedForDisplay:display
                            surface:surface
                             change:^BGSRNSecureLane *(BGSRNSecureLane *prior) {

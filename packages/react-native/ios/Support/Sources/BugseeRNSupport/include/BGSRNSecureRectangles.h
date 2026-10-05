@@ -54,6 +54,16 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 /// (`claimRuntime`, `releaseRuntime:`), so a Modal that was open when the old
 /// runtime went away does not mask the screen for the rest of the process.
 ///
+/// The claim also gates the module's rectangle writes
+/// (`setCoordinates:count:forDisplay:surface:runtime:`): one whose claim is no
+/// longer current is ignored, under the same lock as the claim. A reload can
+/// start the new module before the old one is invalidated, and Fabric numbers
+/// React tags from 1 again, so the old runtime's late writes would otherwise
+/// put back a lane the claim dropped, or clear the new runtime's lane on the
+/// same key and uncover its Modal. Origins, display sizes and empty-lane drops
+/// come from the wrapper's pull, which reads the live view tree and belongs to
+/// no runtime.
+///
 /// ## Threading
 ///
 /// Writes arrive on the JS thread; the pull is on the main thread. Every
@@ -81,11 +91,28 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
             forDisplay:(NSInteger)display;
 
 /// Publishes `coordinates` for one surface on `display`. Other surfaces keep
-/// their rectangles and origins.
+/// their rectangles and origins. Writes as whichever runtime holds the claim
+/// now; a module uses the `runtime:` variant with its own claim.
 - (BOOL)setCoordinates:(nullable const int32_t *)coordinates
                  count:(NSUInteger)count
             forDisplay:(NSInteger)display
                surface:(NSInteger)surface;
+
+/// `setCoordinates:count:forDisplay:surface:`, written by the module holding
+/// `claim` (from `claimRuntime`). What the TurboModule calls.
+///
+/// @return NO, publishing nothing, when `count` is not whole rectangles or a
+/// newer runtime has claimed the store since `claim` was given.
+- (BOOL)setCoordinates:(nullable const int32_t *)coordinates
+                 count:(NSUInteger)count
+            forDisplay:(NSInteger)display
+               surface:(NSInteger)surface
+               runtime:(NSInteger)claim;
+
+/// The claim a runtime holds now. For writers that belong to no runtime of
+/// their own (tests, single-runtime callers); a module writes with the claim
+/// `claimRuntime` gave it.
+- (NSInteger)currentClaim;
 
 /// Records where the main surface's window sits on `display`'s screen, in
 /// points. Re-recording the same origin costs nothing.

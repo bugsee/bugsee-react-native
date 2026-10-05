@@ -1096,10 +1096,14 @@ RCT_EXPORT_MODULE(Bugsee)
     flat[i] = (int32_t)llround([coordinates[i] doubleValue]);
   }
 
+  // Ignored once a newer runtime has claimed the store: this module's late
+  // writes (a reload's teardown) must not touch the next runtime's lanes,
+  // whose keys may be the same React tags.
   [BGSRNSecureRectangles.shared setCoordinates:flat
                                          count:count
                                     forDisplay:(NSInteger)display
-                                       surface:(NSInteger)llround(surface)];
+                                       surface:(NSInteger)llround(surface)
+                                       runtime:_secureRuntime];
   free(flat);
 }
 
