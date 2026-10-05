@@ -474,7 +474,10 @@ public class SecureRectangleStoreTest {
 
     // ---- A JS reload (N7) ------------------------------------------------
 
-    /** A new runtime drops the Modal surfaces the old one left; the main one stays. */
+    /**
+     * A new runtime drops the Modal surfaces the old one left; the main one
+     * stays, emptied, with its origin.
+     */
     @Test
     public void claimingANewRuntimeDropsEveryModalSurfaceButKeepsTheMainOne() {
         final SecureRectangleStore store = located();
@@ -495,8 +498,41 @@ public class SecureRectangleStoreTest {
         assertTrue(store.hasSurface(MAIN_SURFACE));
         final int[] packed = store.snapshot(DISPLAY);
         assertNotEquals(before, packed[0]);
-        assertArrayEquals(new int[] { 10, 20, 30, 40 }, rectanglesOf(packed));
+        assertEquals(0, packed[1]);
         assertEquals(0, store.snapshot(1)[1]);
+    }
+
+    /** The main surface's origin survives the claim: the new runtime's first set is placed, not failed closed. */
+    @Test
+    public void aClaimKeepsTheMainSurfacesOrigin() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        store.setOrigin(DISPLAY, 5, 7);
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+
+        final int current = store.claimRuntime();
+        assertTrue(store.publishForRuntime(current, DISPLAY, MAIN_SURFACE, new int[] { 1, 2, 3, 4 }));
+
+        assertArrayEquals(new int[] { 6, 9, 8, 11 }, rectanglesOf(store.snapshot(DISPLAY)));
+    }
+
+    /**
+     * The old runtime's main set must not outlive it: its clearing write is
+     * stale, and a new tree that never publishes on the main surface would
+     * otherwise keep masking where the old secure view was.
+     */
+    @Test
+    public void aClaimWithAMainSetThenAStaleEmptyWriteAndNoNewPublishServesNothing() {
+        final SecureRectangleStore store = located();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        final int old = store.claimRuntime();
+        store.publishForRuntime(old, DISPLAY, MAIN_SURFACE, new int[] { 10, 20, 30, 40 });
+        assertEquals(1, store.snapshot(DISPLAY)[1]);
+
+        store.claimRuntime();
+        assertFalse(store.publishForRuntime(old, DISPLAY, MAIN_SURFACE, new int[0]));
+
+        assertEquals(0, store.snapshot(DISPLAY)[1]);
     }
 
     @Test

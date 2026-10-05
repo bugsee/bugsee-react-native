@@ -56,7 +56,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * tag that the next runtime does not know. A reload drops every surface but
  * the main one ({@link #claimRuntime}, {@link #releaseRuntime}), so a Modal
  * that was open when the old runtime went away does not mask the display
- * for the rest of the process.
+ * for the rest of the process. A claim also empties the main surface's
+ * rectangles, keeping its origin: they were the old runtime's, and its
+ * clearing write is ignored once stale (below), so without this a new tree
+ * that never publishes on the main surface would leave them masking until
+ * the process dies. The new runtime's first publish is then the only main
+ * set.
  *
  * <p>The claim also gates every lane write a runtime makes: the module's
  * publish ({@link #publishForRuntime}) and its tracker's origin writes
@@ -423,14 +428,35 @@ final class SecureRectangleStore {
 
     /**
      * A new JS runtime's module is starting: drops every surface but the main
-     * one, whose keys the new runtime cannot know, and returns its claim.
-     * Synchronised with {@link #releaseRuntime} so an old module released
-     * after the new one started cannot drop the new runtime's surfaces.
+     * one, whose keys the new runtime cannot know, empties the main one's
+     * rectangles (keeping its origin), and returns its claim. Synchronised
+     * with {@link #releaseRuntime} so an old module released after the new
+     * one started cannot drop the new runtime's surfaces.
      */
     synchronized int claimRuntime() {
         runtime++;
         dropNonMainSurfaces();
+        emptyMainSurface();
         return runtime;
+    }
+
+    /**
+     * Empties the main surface's rectangles on every display, keeping its
+     * origin: the old runtime's set must not outlive it, and a new runtime
+     * that never publishes on the main surface would otherwise inherit it.
+     */
+    private void emptyMainSurface() {
+        for (final Integer display : byDisplay.keySet()) {
+            update(display, previous -> {
+                final Lane main = previous.lanes.get(MAIN_SURFACE);
+                if (main == null || main.raw.length == 0) {
+                    return previous;
+                }
+                final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
+                nextLanes.put(MAIN_SURFACE, main.withRaw(NO_COORDINATES));
+                return previous.withLanes(nextLanes);
+            });
+        }
     }
 
     /**
