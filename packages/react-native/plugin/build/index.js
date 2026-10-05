@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.APP_GRADLE_NOT_GROOVY = void 0;
+exports.gradleNotGroovy = gradleNotGroovy;
 exports.platformToken = platformToken;
 exports.listSchemes = listSchemes;
 const node_fs_1 = require("node:fs");
@@ -14,9 +15,40 @@ const manifest_1 = require("./manifest");
 const native_versions_1 = require("./native-versions");
 const properties_1 = require("./properties");
 const scheme_1 = require("./scheme");
-exports.APP_GRADLE_NOT_GROOVY = '@bugsee/react-native edits android/app/build.gradle in Groovy; a Kotlin build.gradle.kts app module is not ' +
-    'supported. Apply scripts/bugsee-sourcemaps.gradle and set react.hermesCommand by hand (see the package README, ' +
-    '"Android source maps").';
+exports.APP_GRADLE_NOT_GROOVY = `${gradle_1.CANNOT_EDIT} android/app/build.gradle: it is written in the Kotlin DSL (build.gradle.kts), which ` +
+    '@bugsee/react-native does not edit. Apply scripts/bugsee-sourcemaps.gradle and set react.hermesCommand by hand ' +
+    '(see the package README, "Android source maps"), then run expo prebuild again';
+/** The settings or root Gradle file is Kotlin; the plugin edits Groovy only. */
+function gradleNotGroovy(file) {
+    return (`${gradle_1.CANNOT_EDIT} ${file}: it is written in the Kotlin DSL, which @bugsee/react-native does not edit. ` +
+        'Make the Bugsee edits by hand (package README, "Android source maps"), then run expo prebuild again');
+}
+// One function per file, shared by the mods and by the check that runs them
+// all first: a refusal in any file then leaves every file as it was.
+function editSettingsGradle(file) {
+    if (file.language !== 'groovy') {
+        throw new Error(gradleNotGroovy('android/settings.gradle'));
+    }
+    return (0, gradle_1.ensureMavenCentral)(file.contents);
+}
+function editProjectBuildGradle(file, edits) {
+    if (file.language !== 'groovy') {
+        throw new Error(gradleNotGroovy('android/build.gradle'));
+    }
+    return (0, gradle_1.ensureGradlePluginDeclared)(file.contents, edits.gradlePluginVersion);
+}
+function editAppBuildGradle(file, edits) {
+    if (file.language !== 'groovy') {
+        throw new Error(exports.APP_GRADLE_NOT_GROOVY);
+    }
+    return (0, gradle_1.ensureSymbolUploads)((0, gradle_1.ensureAppAppliesPlugin)(file.contents, edits.ndkVersion), edits.uploadSymbols);
+}
+/** Runs every Gradle edit on the files as they are on disk, writing nothing. */
+async function refuseUnlessEditable(projectRoot, edits) {
+    editSettingsGradle(await config_plugins_1.AndroidConfig.Paths.getSettingsGradleAsync(projectRoot));
+    editProjectBuildGradle(await config_plugins_1.AndroidConfig.Paths.getProjectBuildGradleAsync(projectRoot), edits);
+    editAppBuildGradle(await config_plugins_1.AndroidConfig.Paths.getAppBuildGradleAsync(projectRoot), edits);
+}
 const TOKEN_SHAPE = /^[0-9A-Za-z._-]+$/;
 /** The token for one platform, or undefined. Refuses anything that is not token-shaped. */
 function platformToken(appToken, platform) {
@@ -36,21 +68,21 @@ const withBugsee = (config, props) => {
     const uploadSourcemaps = options.uploadSourcemaps !== false;
     const uploadSymbols = options.uploadSymbols !== false;
     const versions = (0, native_versions_1.loadNativeVersions)(__dirname);
-    const gradlePluginVersion = options.gradlePluginVersion ?? versions.gradlePlugin;
-    const ndkVersion = options.nativeCrashReporting === false ? null : versions.sdk;
+    const edits = {
+        gradlePluginVersion: options.gradlePluginVersion ?? versions.gradlePlugin,
+        ndkVersion: options.nativeCrashReporting === false ? null : versions.sdk,
+        uploadSymbols,
+    };
     config = (0, config_plugins_1.withSettingsGradle)(config, (cfg) => {
-        cfg.modResults.contents = (0, gradle_1.ensureMavenCentral)(cfg.modResults.contents);
+        cfg.modResults.contents = editSettingsGradle(cfg.modResults);
         return cfg;
     });
     config = (0, config_plugins_1.withProjectBuildGradle)(config, (cfg) => {
-        cfg.modResults.contents = (0, gradle_1.ensureGradlePluginDeclared)(cfg.modResults.contents, gradlePluginVersion);
+        cfg.modResults.contents = editProjectBuildGradle(cfg.modResults, edits);
         return cfg;
     });
     config = (0, config_plugins_1.withAppBuildGradle)(config, (cfg) => {
-        if (cfg.modResults.language !== 'groovy') {
-            throw new Error(exports.APP_GRADLE_NOT_GROOVY);
-        }
-        cfg.modResults.contents = (0, gradle_1.ensureSymbolUploads)((0, gradle_1.ensureAppAppliesPlugin)(cfg.modResults.contents, ndkVersion), uploadSymbols);
+        cfg.modResults.contents = editAppBuildGradle(cfg.modResults, edits);
         return cfg;
     });
     config = (0, config_plugins_1.withGradleProperties)(config, (cfg) => {
@@ -60,6 +92,9 @@ const withBugsee = (config, props) => {
     config = (0, config_plugins_1.withDangerousMod)(config, [
         'android',
         async (cfg) => {
+            // Dangerous mods run first: a Gradle file the plugin cannot edit is
+            // refused here, before any file is written.
+            await refuseUnlessEditable(cfg.modRequest.projectRoot, edits);
             await (0, promises_1.writeFile)((0, node_path_1.join)(cfg.modRequest.platformProjectRoot, 'bugsee.properties'), (0, properties_1.bugseePropertiesText)({
                 appToken: androidToken,
                 nativeCrashReporting: options.nativeCrashReporting,

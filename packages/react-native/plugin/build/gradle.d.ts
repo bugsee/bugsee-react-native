@@ -1,4 +1,6 @@
 import type { AndroidConfig } from '@expo/config-plugins';
+/** Every refusal starts with this, then the file, the reason and the manual fix. */
+export declare const CANNOT_EDIT = "@bugsee/react-native cannot edit";
 /**
  * The plugin marker is on Maven Central, not the Plugin Portal. Declaring
  * any repositories block replaces Gradle's implicit Plugin Portal, so a
@@ -31,7 +33,7 @@ export declare function ensureGradlePluginDeclared(projectBuildGradle: string, v
  * or no real token is configured.
  */
 export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string;
-export declare const HERMES_COMMAND_UNREWRITABLE: string;
+export declare const HERMES_COMMAND_UNREWRITABLE = "@bugsee/react-native cannot edit android/app/build.gradle: react.hermesCommand spans several lines or shares its line with another statement, so it cannot be pointed at scripts/hermesc-preserve-js.sh. Put it alone on one line, or delete it, and prebuild again";
 /**
  * `uploadSymbols: false` on Android: disables every `uploadBugsee*` task
  * (mapping, NDK symbols, build info) inside a marked block. On again

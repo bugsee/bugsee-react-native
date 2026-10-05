@@ -1,41 +1,450 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HERMES_COMMAND_UNREWRITABLE = void 0;
+exports.HERMES_COMMAND_UNREWRITABLE = exports.CANNOT_EDIT = void 0;
 exports.ensureMavenCentral = ensureMavenCentral;
 exports.ensureGradlePluginDeclared = ensureGradlePluginDeclared;
 exports.ensureAppAppliesPlugin = ensureAppAppliesPlugin;
 exports.ensureSymbolUploads = ensureSymbolUploads;
 exports.applyUploadSourcemapsProperty = applyUploadSourcemapsProperty;
+// The rule for every edit here: a prebuild, clean or --no-clean, run any
+// number of times, never removes or changes a byte of the user's own code.
+// Every transform reads the file through one Groovy lexer, so a keyword, a
+// brace or a Bugsee marker inside a comment or a string is never a target,
+// and only Bugsee's own exact lines are ever replaced or removed. Where the
+// file cannot be read or edited with certainty, the transform refuses with
+// one error that names the file, the reason and the manual fix.
 const PLUGIN_ID = 'com.bugsee.android.gradle';
-function blockExtent(source, keyword) {
-    const start = source.indexOf(keyword);
-    if (start < 0) {
+const APP_GRADLE = 'android/app/build.gradle';
+const ROOT_GRADLE = 'android/build.gradle';
+const SETTINGS_GRADLE = 'android/settings.gradle';
+/** Every refusal starts with this, then the file, the reason and the manual fix. */
+exports.CANNOT_EDIT = '@bugsee/react-native cannot edit';
+const BY_HAND = 'or make the Bugsee edits by hand (package README, "Android source maps")';
+function refusal(file, reason, fix) {
+    return new Error(`${exports.CANNOT_EDIT} ${file}: ${reason}. ${fix}`);
+}
+function unreadable(file, reason) {
+    return refusal(file, reason, `Fix that line, ${BY_HAND}, then run expo prebuild again`);
+}
+const KIND_CODE = 0;
+const KIND_STRING = 1;
+const KIND_COMMENT = 2;
+/** Keywords after which Groovy reads `/` as the start of a slashy string. */
+const BEFORE_EXPRESSION = new Set(['return', 'in', 'case', 'assert', 'throw', 'else', 'do']);
+/** Characters after which `/` can only start a slashy string. */
+const OPERATOR_BEFORE_SLASHY = '=([{,:;!?&|+-*<>~^%';
+/** Stands for a string that just ended, as the previous code token. */
+const STRING_END = '"';
+const isWordChar = (ch) => /[A-Za-z0-9_]/.test(ch);
+const isBlank = (ch) => ch === ' ' || ch === '\t' || ch === '\r';
+/**
+ * Whether a `/` starts a slashy string (true), divides (false), or cannot be
+ * told apart (null). `last` is the previous code character on the line, `word`
+ * the identifier it ends, `spaced` whether whitespace separates it from the
+ * slash, and `tight` whether the slash is followed by a non-space character.
+ */
+function slashyAllowed(last, word, spaced, tight) {
+    if (last === '') {
         return null;
     }
-    // No brace after the keyword: the loop finds none and returns null.
-    const open = source.indexOf('{', start);
+    if (last === ')' || last === ']' || last === STRING_END) {
+        return false;
+    }
+    if (isWordChar(last)) {
+        if (BEFORE_EXPRESSION.has(word)) {
+            return true;
+        }
+        // `a /b/` reads like a regex argument, `a / b` and `a/b` like division.
+        return spaced && tight ? null : false;
+    }
+    if (OPERATOR_BEFORE_SLASHY.includes(last)) {
+        return true;
+    }
+    return null;
+}
+/**
+ * A Groovy lexer deep enough to tell code from comments and strings, and to
+ * count braces in code only: `//` and block comments; '…', "…", '''…''' and
+ * """…""" with backslash escapes; slashy /…/ and dollar-slashy $/…/$ strings;
+ * `${…}` interpolation with nested code. Anything it cannot read with
+ * certainty — a string that does not close on its line, a construct still
+ * open at the end of the file, braces that do not balance, a `/` that may be
+ * a slashy string or a division — is a refusal, never a guess.
+ */
+function scan(source, file) {
+    const masked = [];
+    const kinds = [];
+    const lines = [];
+    const stack = [];
+    const openBraces = [];
     let depth = 0;
-    for (let i = open; i < source.length; i += 1) {
+    let lineNo = 1;
+    let lineStart = 0;
+    let lineDepth = 0;
+    let lineOpenAtStart = false;
+    let commentAt = null;
+    let last = '';
+    let word = '';
+    const top = () => stack[stack.length - 1];
+    const inString = () => stack.some((frame) => frame.kind === 'string');
+    const emit = (ch) => {
+        if (ch === '\n') {
+            masked.push('\n');
+            kinds.push(KIND_CODE);
+        }
+        else if (inString()) {
+            masked.push('S');
+            kinds.push(KIND_STRING);
+        }
+        else if (top()?.kind === 'comment') {
+            masked.push(ch === '\r' ? ch : ' ');
+            kinds.push(KIND_COMMENT);
+        }
+        else {
+            masked.push(ch);
+            kinds.push(KIND_CODE);
+        }
+    };
+    const emitN = (from, count) => {
+        for (let k = 0; k < count; k += 1) {
+            emit(source[from + k]);
+        }
+    };
+    const noteCode = (ch) => {
+        commentAt = null;
+        word = isWordChar(ch) && isWordChar(last) ? word + ch : isWordChar(ch) ? ch : '';
+        last = ch;
+    };
+    const endLine = (end) => {
+        lines.push({
+            start: lineStart,
+            raw: source.slice(lineStart, end),
+            code: masked.slice(lineStart, end).join(''),
+            depth: lineDepth,
+            depthAfter: depth,
+            openAtStart: lineOpenAtStart,
+            openAtEnd: stack.length > 0,
+            commentAt,
+        });
+    };
+    const startLine = (at) => {
+        lineStart = at;
+        lineDepth = depth;
+        lineOpenAtStart = stack.length > 0;
+        commentAt = null;
+        last = '';
+        word = '';
+    };
+    startLine(0);
+    let i = 0;
+    while (i < source.length) {
         const ch = source[i];
+        const frame = top();
+        if (ch === '\n') {
+            if (frame?.kind === 'string' && frame.oneLine) {
+                throw unreadable(file, `line ${frame.line}: a string opened on this line does not close on it`);
+            }
+            if (frame?.kind === 'comment' && !frame.block) {
+                stack.pop();
+            }
+            endLine(i);
+            emit('\n');
+            i += 1;
+            lineNo += 1;
+            startLine(i);
+            continue;
+        }
+        if (frame?.kind === 'comment') {
+            if (frame.block && source.startsWith('*/', i)) {
+                emitN(i, 2);
+                i += 2;
+                stack.pop();
+            }
+            else {
+                emit(ch);
+                i += 1;
+            }
+            continue;
+        }
+        if (frame?.kind === 'string') {
+            const next = source[i + 1];
+            if (frame.escape === 'quoted' && ch === '\\' && next !== undefined && next !== '\n') {
+                emitN(i, 2);
+                i += 2;
+                continue;
+            }
+            if (frame.escape === 'slashy' && ch === '\\' && next === '/') {
+                emitN(i, 2);
+                i += 2;
+                continue;
+            }
+            if (frame.escape === 'dollar' && ch === '$' && (next === '$' || next === '/')) {
+                emitN(i, 2);
+                i += 2;
+                continue;
+            }
+            if (frame.interpolates && ch === '$' && next === '{') {
+                emitN(i, 2);
+                i += 2;
+                stack.push({ kind: 'code', depth: 1, line: lineNo });
+                continue;
+            }
+            if (source.startsWith(frame.close, i)) {
+                // A fourth quote: the first one is content and the string closes on the last three.
+                if (frame.close.length === 3 && source[i + 3] === ch) {
+                    emit(ch);
+                    i += 1;
+                    continue;
+                }
+                emitN(i, frame.close.length);
+                i += frame.close.length;
+                stack.pop();
+                continue;
+            }
+            emit(ch);
+            i += 1;
+            continue;
+        }
+        // Code, at the top level or inside an interpolation.
+        if (ch === '/') {
+            const next = source[i + 1];
+            if (next === '/' || next === '*') {
+                commentAt = commentAt ?? i - lineStart;
+                stack.push({ kind: 'comment', block: next === '*', line: lineNo });
+                emitN(i, 2);
+                i += 2;
+                continue;
+            }
+            const spaced = i > 0 && isBlank(source[i - 1]);
+            const tight = next !== undefined && !isBlank(next) && next !== '\n';
+            const slashy = slashyAllowed(last, word, spaced, tight);
+            if (slashy === null) {
+                throw unreadable(file, `line ${lineNo}: cannot tell whether the / starts a slashy string or divides`);
+            }
+            noteCode(slashy ? STRING_END : ch);
+            if (slashy) {
+                stack.push({ kind: 'string', close: '/', interpolates: true, escape: 'slashy', oneLine: false, line: lineNo });
+            }
+            emit(ch);
+            i += 1;
+            continue;
+        }
+        if (ch === '$' && source[i + 1] === '/') {
+            noteCode(STRING_END);
+            stack.push({ kind: 'string', close: '/$', interpolates: true, escape: 'dollar', oneLine: false, line: lineNo });
+            emitN(i, 2);
+            i += 2;
+            continue;
+        }
+        if (ch === '"' || ch === "'") {
+            const triple = source.startsWith(ch.repeat(3), i);
+            noteCode(STRING_END);
+            stack.push({
+                kind: 'string',
+                close: triple ? ch.repeat(3) : ch,
+                interpolates: ch === '"',
+                escape: 'quoted',
+                oneLine: !triple,
+                line: lineNo,
+            });
+            emitN(i, triple ? 3 : 1);
+            i += triple ? 3 : 1;
+            continue;
+        }
+        if (ch === '{') {
+            if (frame) {
+                frame.depth += 1;
+            }
+            else {
+                depth += 1;
+                openBraces.push(lineNo);
+            }
+            noteCode(ch);
+            emit(ch);
+            i += 1;
+            continue;
+        }
+        if (ch === '}') {
+            if (frame) {
+                frame.depth -= 1;
+                if (frame.depth === 0) {
+                    stack.pop();
+                }
+            }
+            else {
+                if (depth === 0) {
+                    throw unreadable(file, `line ${lineNo}: a closing brace has no opening brace`);
+                }
+                depth -= 1;
+                openBraces.pop();
+            }
+            noteCode(ch);
+            emit(ch);
+            i += 1;
+            continue;
+        }
+        if (!isBlank(ch)) {
+            noteCode(ch);
+        }
+        emit(ch);
+        i += 1;
+    }
+    const open = top();
+    if (open?.kind === 'comment' && open.block) {
+        throw unreadable(file, `line ${open.line}: a block comment opened on this line never closes`);
+    }
+    if (open?.kind === 'string') {
+        if (open.oneLine) {
+            throw unreadable(file, `line ${open.line}: a string opened on this line does not close on it`);
+        }
+        throw unreadable(file, `line ${open.line}: a string opened on this line never closes`);
+    }
+    if (open?.kind === 'code') {
+        throw unreadable(file, `line ${open.line}: a \${ interpolation opened on this line never closes`);
+    }
+    if (depth > 0) {
+        throw unreadable(file, `line ${openBraces[openBraces.length - 1]}: a brace opened on this line never closes`);
+    }
+    if (open?.kind === 'comment') {
+        stack.pop();
+    }
+    endLine(source.length);
+    const text = masked.join('');
+    return {
+        file,
+        source,
+        masked: text,
+        lines,
+        isCode: (index) => kinds[index] === KIND_CODE,
+    };
+}
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+const eolOf = (source) => (source.includes('\r\n') ? '\r\n' : '\n');
+const crOf = (eol) => (eol === '\r\n' ? '\r' : '');
+const stripCr = (line) => line.replace(/\r$/, '');
+/** The line's code as written, up to a trailing comment, carriage return excluded. */
+function codeOf(line) {
+    return stripCr(line.raw.slice(0, line.commentAt ?? line.raw.length));
+}
+/** A line that is only a `//` comment in code context, at any indentation. */
+function isLineComment(line) {
+    return !line.openAtStart && line.commentAt !== null && line.raw.slice(0, line.commentAt).trim() === '' && line.raw.slice(line.commentAt).startsWith('//');
+}
+/** Bugsee's own comment line, as the plugin writes it, at any indentation. */
+function isMarker(line, marker) {
+    return isLineComment(line) && stripCr(line.raw).trim() === marker;
+}
+/** Bugsee's own code line, exactly, alone as a statement, at the top level. */
+function isOwnStatement(line, statement) {
+    return !line.openAtStart && line.depth === 0 && line.commentAt === null && stripCr(line.raw).trim() === statement;
+}
+/**
+ * Appends a block after the content, separated by one blank line, keeping
+ * the file's own trailing whitespace. The block's lines use the file's EOL.
+ */
+function appendBlock(source, block, eol) {
+    const body = block.split('\n').join(eol);
+    if (source === '') {
+        return `${body}${eol}`;
+    }
+    const lead = source.endsWith('\n') ? eol : `${eol}${eol}`;
+    return `${source}${lead}${body}${eol}`;
+}
+/**
+ * Removes lines `from` through `to`, with the blank line before them when
+ * there is one: the one appendBlock put there.
+ */
+function removeBlock(lines, from, to) {
+    const blank = from > 0 && lines[from - 1].trim() === '' ? 1 : 0;
+    lines.splice(from - blank, to - from + 1 + blank);
+}
+/** Index of the first line of `block` written as consecutive own lines at the top level, or -1. */
+function findOwnBlock(s, block) {
+    return s.lines.findIndex((first, i) => first.depth === 0 &&
+        block.every((text, k) => {
+            const line = s.lines[i + k];
+            return line !== undefined && !line.openAtStart && stripCr(line.raw) === text;
+        }));
+}
+/** Index of the matching `}` for the `{` at `open`, counting code braces only. */
+function matchingBrace(masked, open) {
+    let depth = 0;
+    let i = open;
+    for (;; i += 1) {
+        const ch = masked[i];
         if (ch === '{') {
             depth += 1;
         }
         else if (ch === '}') {
             depth -= 1;
             if (depth === 0) {
-                return { bodyStart: open + 1, bodyEnd: i };
+                return i;
             }
+        }
+    }
+}
+/** The first `keyword {` block in code, searched within [from, to). */
+function blockExtent(s, keyword, from = 0, to = s.masked.length) {
+    const re = new RegExp(`(?<![A-Za-z0-9_])${keyword}\\s*\\{`, 'g');
+    const region = s.masked.slice(0, to);
+    re.lastIndex = from;
+    for (let m = re.exec(region); m !== null; m = re.exec(region)) {
+        if (s.isCode(m.index)) {
+            const open = m.index + m[0].length - 1;
+            return { open, bodyStart: open + 1, bodyEnd: matchingBrace(s.masked, open) };
         }
     }
     return null;
 }
+/** Brace depth, code only, just before `index`. */
+function depthAt(s, index) {
+    const line = s.lines.find((entry) => index >= entry.start && index <= entry.start + entry.raw.length);
+    let depth = line.depth;
+    for (let i = line.start; i < index; i += 1) {
+        if (s.masked[i] === '{') {
+            depth += 1;
+        }
+        else if (s.masked[i] === '}') {
+            depth -= 1;
+        }
+    }
+    return depth;
+}
+/** Matches of `re` (global) in the source whose first character is code, within [from, to). */
+function codeMatches(s, re, from = 0, to = s.source.length) {
+    const out = [];
+    const region = s.source.slice(0, to);
+    re.lastIndex = from;
+    for (let m = re.exec(region); m !== null; m = re.exec(region)) {
+        if (s.isCode(m.index)) {
+            out.push(m);
+        }
+    }
+    return out;
+}
+/** True when `needle` occurs in code or in a string, not only in comments. */
+function occursLive(s, needle) {
+    for (let at = s.source.indexOf(needle); at >= 0; at = s.source.indexOf(needle, at + 1)) {
+        if (s.masked[at] !== ' ') {
+            return true;
+        }
+    }
+    return false;
+}
+// ---------------------------------------------------------------------------
+// settings.gradle
+// ---------------------------------------------------------------------------
 /**
  * The plugin marker is on Maven Central, not the Plugin Portal. Declaring
  * any repositories block replaces Gradle's implicit Plugin Portal, so a
  * missing block gets the portal, Google, and Maven Central together.
  */
 function ensureMavenCentral(settingsGradle) {
-    const extent = blockExtent(settingsGradle, 'pluginManagement');
+    const s = scan(settingsGradle, SETTINGS_GRADLE);
+    const eol = eolOf(settingsGradle);
+    const extent = blockExtent(s, 'pluginManagement');
     if (!extent) {
         const header = [
             'pluginManagement {',
@@ -46,19 +455,18 @@ function ensureMavenCentral(settingsGradle) {
             '    }',
             '}',
             '',
-        ].join('\n');
+        ].join(eol);
         return header + settingsGradle;
     }
-    const body = settingsGradle.slice(extent.bodyStart, extent.bodyEnd);
-    if (/mavenCentral\s*\(/.test(body)) {
+    if (blockExtentCall(s, 'mavenCentral', extent.bodyStart, extent.bodyEnd)) {
         return settingsGradle;
     }
-    const repositories = blockExtent(body, 'repositories');
+    const repositories = blockExtent(s, 'repositories', extent.bodyStart, extent.bodyEnd);
     if (repositories) {
         // After the last entry, so the closing brace keeps its own line.
-        const inner = body.slice(repositories.bodyStart, repositories.bodyEnd);
-        const insertAt = extent.bodyStart + repositories.bodyStart + inner.trimEnd().length;
-        return `${settingsGradle.slice(0, insertAt)}\n        mavenCentral()${settingsGradle.slice(insertAt)}`;
+        const inner = settingsGradle.slice(repositories.bodyStart, repositories.bodyEnd);
+        const insertAt = repositories.bodyStart + inner.trimEnd().length;
+        return `${settingsGradle.slice(0, insertAt)}${eol}        mavenCentral()${settingsGradle.slice(insertAt)}`;
     }
     const addition = [
         '',
@@ -68,10 +476,17 @@ function ensureMavenCentral(settingsGradle) {
         '        mavenCentral()',
         '    }',
         '',
-    ].join('\n');
-    return (settingsGradle.slice(0, extent.bodyEnd) + addition + settingsGradle.slice(extent.bodyEnd));
+    ].join(eol);
+    return settingsGradle.slice(0, extent.bodyEnd) + addition + settingsGradle.slice(extent.bodyEnd);
 }
-const DECLARED_VERSION = /(id\s*\(?\s*['"]com\.bugsee\.android\.gradle['"]\s*\)?\s+version\s*\(?\s*['"])([^'"]*)(['"])/;
+/** A `name(` call in code within [from, to). */
+function blockExtentCall(s, name, from, to) {
+    return codeMatches(s, new RegExp(`(?<![A-Za-z0-9_])${name}\\s*\\(`, 'g'), from, to).length > 0;
+}
+// ---------------------------------------------------------------------------
+// Root build.gradle
+// ---------------------------------------------------------------------------
+const DECLARED_VERSION = /(id\s*\(?\s*['"]com\.bugsee\.android\.gradle['"]\s*\)?\s+version\s*\(?\s*['"])([^'"]*)(['"])/g;
 /**
  * Declares the plugin `apply false` on the root project. A declaration from
  * an earlier prebuild gets this version written over its own, so a
@@ -81,22 +496,33 @@ function ensureGradlePluginDeclared(projectBuildGradle, version) {
     if (!/^[0-9A-Za-z.+_-]+$/.test(version)) {
         throw new Error(`refusing Gradle plugin version ${version}`);
     }
-    if (projectBuildGradle.includes(PLUGIN_ID)) {
-        return projectBuildGradle.replace(DECLARED_VERSION, `$1${version}$3`);
+    const s = scan(projectBuildGradle, ROOT_GRADLE);
+    const eol = eolOf(projectBuildGradle);
+    const declared = codeMatches(s, DECLARED_VERSION)[0];
+    if (declared) {
+        const end = declared.index + declared[0].length;
+        return `${projectBuildGradle.slice(0, declared.index)}${declared[1]}${version}${declared[3]}${projectBuildGradle.slice(end)}`;
+    }
+    // Another declaration form (in a string, so not the pattern above): left alone.
+    if (occursLive(s, PLUGIN_ID)) {
+        return projectBuildGradle;
     }
     // apply false: the plugin has to be applied on the application module.
     // Applied to the root project it fails configuration, because it hangs
     // its tasks off an Android variant.
-    const declaration = `plugins {\n    id '${PLUGIN_ID}' version '${version}' apply false\n}\n`;
+    const declaration = ['plugins {', `    id '${PLUGIN_ID}' version '${version}' apply false`, '}'].join(eol);
     // plugins {} has to stay with the buildscript block. A later allprojects
     // or apply statement makes Gradle reject the block.
-    const buildscript = blockExtent(projectBuildGradle, 'buildscript');
+    const buildscript = blockExtent(s, 'buildscript');
     if (buildscript) {
         const at = buildscript.bodyEnd + 1;
-        return `${projectBuildGradle.slice(0, at)}\n${declaration}${projectBuildGradle.slice(at)}`;
+        return `${projectBuildGradle.slice(0, at)}${eol}${declaration}${eol}${projectBuildGradle.slice(at)}`;
     }
-    return `${declaration}\n${projectBuildGradle}`;
+    return `${declaration}${eol}${eol}${projectBuildGradle}`;
 }
+// ---------------------------------------------------------------------------
+// App build.gradle
+// ---------------------------------------------------------------------------
 const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
 /**
  * `ndkVersion` is the baked `android.sdk`, or null when native crash
@@ -118,16 +544,7 @@ const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
  * or no real token is configured.
  */
 function ensureAppAppliesPlugin(appBuildGradle, ndkVersion) {
-    let next = appBuildGradle;
-    if (!next.includes(PLUGIN_ID)) {
-        const react = 'apply plugin: "com.facebook.react"';
-        if (next.includes(react)) {
-            next = next.replace(react, `${react}\napply plugin: "${PLUGIN_ID}"`);
-        }
-        else {
-            next = `apply plugin: "${PLUGIN_ID}"\n${next}`;
-        }
-    }
+    let next = ensurePluginApplied(appBuildGradle);
     if (ndkVersion === null) {
         next = ensureNdkExcluded(dropNdkImplementation(next));
     }
@@ -138,101 +555,105 @@ function ensureAppAppliesPlugin(appBuildGradle, ndkVersion) {
     next = ensureSymbolTable(next, ndkVersion !== null);
     return ensureHermesHooks(next);
 }
-const NDK_IMPLEMENTATION_VERSION = /(implementation\s+["']com\.bugsee:bugsee-android-ndk:)([^"']*)(["'])/;
+const REACT_PLUGIN_LINE = /^\s*apply\s+plugin:\s*(["'])com\.facebook\.react\1\s*$/;
+function ensurePluginApplied(source) {
+    const s = scan(source, APP_GRADLE);
+    if (occursLive(s, PLUGIN_ID)) {
+        return source;
+    }
+    const eol = eolOf(source);
+    const statement = `apply plugin: "${PLUGIN_ID}"${crOf(eol)}`;
+    const lines = source.split('\n');
+    const react = s.lines.findIndex((line) => !line.openAtStart && line.depth === 0 && REACT_PLUGIN_LINE.test(codeOf(line)));
+    if (react >= 0) {
+        const raw = s.lines[react].raw;
+        const indent = raw.slice(0, raw.length - raw.trimStart().length);
+        lines.splice(react + 1, 0, `${indent}${statement}`);
+    }
+    else {
+        lines.unshift(statement);
+    }
+    return lines.join('\n');
+}
+const NDK_LINE = /^(\s*implementation\s+["']com\.bugsee:bugsee-android-ndk:)([^"']*)(["']\s*)$/;
 function ensureNdkImplementation(source, ndkVersion) {
     if (!/^[0-9A-Za-z.+_-]+$/.test(ndkVersion)) {
         throw new Error(`refusing NDK artifact version ${ndkVersion}`);
     }
-    if (NDK_IMPLEMENTATION_VERSION.test(source)) {
-        return source.replace(NDK_IMPLEMENTATION_VERSION, `$1${ndkVersion}$3`);
+    const s = scan(source, APP_GRADLE);
+    const eol = eolOf(source);
+    const existing = s.lines.findIndex((line) => !line.openAtStart && NDK_LINE.test(codeOf(line)));
+    if (existing >= 0) {
+        const lines = source.split('\n');
+        const line = s.lines[existing];
+        const code = codeOf(line);
+        lines[existing] = `${code.replace(NDK_LINE, `$1${ndkVersion}$3`)}${line.raw.slice(code.length)}`;
+        return lines.join('\n');
     }
     const dep = `    implementation "com.bugsee:bugsee-android-ndk:${ndkVersion}"`;
-    const deps = source.indexOf('dependencies {');
-    if (deps < 0) {
-        return `${source.replace(/\s*$/, '')}\n\ndependencies {\n${dep}\n}\n`;
+    const re = /(?<![A-Za-z0-9_.])dependencies\s*\{/g;
+    for (let m = re.exec(s.masked); m !== null; m = re.exec(s.masked)) {
+        const open = m.index + m[0].length - 1;
+        if (s.isCode(m.index) && depthAt(s, open) === 0) {
+            return `${source.slice(0, open + 1)}${eol}${dep}${source.slice(open + 1)}`;
+        }
     }
-    const brace = source.indexOf('{', deps);
-    return `${source.slice(0, brace + 1)}\n${dep}${source.slice(brace + 1)}`;
+    return appendBlock(source, `dependencies {\n${dep}\n}`, eol);
 }
-const NDK_IMPLEMENTATION = /^\s*implementation\s+["']com\.bugsee:bugsee-android-ndk:/;
 function dropNdkImplementation(source) {
-    return source
-        .split('\n')
-        .filter((line) => !NDK_IMPLEMENTATION.test(line))
-        .join('\n');
+    const s = scan(source, APP_GRADLE);
+    const lines = source.split('\n');
+    for (let i = s.lines.length - 1; i >= 0; i -= 1) {
+        const line = s.lines[i];
+        if (!line.openAtStart && NDK_LINE.test(codeOf(line))) {
+            lines.splice(i, 1);
+        }
+    }
+    return lines.join('\n');
 }
-const NDK_EXCLUDE_BLOCK = [
-    'configurations.configureEach {',
-    `    ${NDK_EXCLUDE}`,
-    '}',
-].join('\n');
+const NDK_EXCLUDE_BLOCK = ['configurations.configureEach {', `    ${NDK_EXCLUDE}`, '}'];
 function ensureNdkExcluded(source) {
-    if (source.includes(NDK_EXCLUDE_BLOCK)) {
+    const s = scan(source, APP_GRADLE);
+    if (findOwnBlock(s, NDK_EXCLUDE_BLOCK) >= 0) {
         return source;
     }
-    const block = ['', NDK_EXCLUDE_BLOCK, ''].join('\n');
-    return `${source.replace(/\s*$/, '')}\n${block}`;
+    return appendBlock(source, NDK_EXCLUDE_BLOCK.join('\n'), eolOf(source));
 }
 function dropNdkExclude(source) {
-    const at = source.indexOf(NDK_EXCLUDE_BLOCK);
+    const s = scan(source, APP_GRADLE);
+    const at = findOwnBlock(s, NDK_EXCLUDE_BLOCK);
     if (at < 0) {
         return source;
     }
-    // ensureHermesHooks normalises the file's trailing whitespace afterwards.
-    const start = source[at - 1] === '\n' ? at - 1 : at;
-    let end = at + NDK_EXCLUDE_BLOCK.length;
-    while (source[end] === '\n') {
-        end += 1;
-    }
-    return source.slice(0, start) + source.slice(end);
+    const lines = source.split('\n');
+    removeBlock(lines, at, at + NDK_EXCLUDE_BLOCK.length - 1);
+    return lines.join('\n');
 }
 /** Identifies the ndk block this plugin inserted, so a user's block stays. */
 const SYMBOL_TABLE_MARKER = 'bugsee-symbol-table:';
 const SYMBOL_TABLE_BLOCK = [
-    '// bugsee-symbol-table: AGP defaults this to NONE, so the plugin\'s native upload finds',
+    "// bugsee-symbol-table: AGP defaults this to NONE, so the plugin's native upload finds",
     '// nothing and skips. SYMBOL_TABLE emits symbols for code this app',
     '// builds. Maven Hermes and libreactnative.so are pre-stripped;',
     '// this level does not symbolicate those two.',
     'ndk {',
     "    debugSymbolLevel 'SYMBOL_TABLE'",
     '}',
-].join('\n');
-function matchingBrace(source, open) {
-    let depth = 0;
-    for (let i = open; i < source.length; i += 1) {
-        const ch = source[i];
-        if (ch === '{') {
-            depth += 1;
-        }
-        else if (ch === '}') {
-            depth -= 1;
-            if (depth === 0) {
-                return i;
-            }
-        }
-    }
-    return null;
-}
-function buildTypeSpans(source) {
-    const extent = blockExtent(source, 'buildTypes');
+];
+function buildTypeSpans(s) {
+    const extent = blockExtent(s, 'buildTypes');
     if (!extent) {
         return [];
     }
-    const body = source.slice(extent.bodyStart, extent.bodyEnd);
     const spans = [];
     let depth = 0;
-    for (let i = 0; i < body.length; i += 1) {
-        const ch = body[i];
+    for (let i = extent.bodyStart; i < extent.bodyEnd; i += 1) {
+        const ch = s.masked[i];
         if (ch === '{') {
             if (depth === 0) {
-                const named = /([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(body.slice(0, i));
-                const name = named?.[1];
+                const name = /([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(s.masked.slice(extent.bodyStart, i))?.[1];
                 if (name === 'debug' || name === 'release') {
-                    const open = extent.bodyStart + i;
-                    const close = matchingBrace(source, open);
-                    if (close != null) {
-                        spans.push({ name, open, close });
-                    }
+                    spans.push({ name, open: i, close: matchingBrace(s.masked, i) });
                 }
             }
             depth += 1;
@@ -243,33 +664,40 @@ function buildTypeSpans(source) {
     }
     return spans;
 }
-function indentBlock(block, indent) {
-    return block
-        .split('\n')
-        .map((line) => indent + line)
-        .join('\n');
+const lineIndexAt = (s, index) => s.lines.findIndex((line) => index >= line.start && index <= line.start + line.raw.length);
+function isSymbolTableMarker(line) {
+    return isLineComment(line) && line.raw.includes(SYMBOL_TABLE_MARKER);
 }
 function insertSymbolTable(source, span) {
-    const body = source.slice(span.open + 1, span.close);
-    if (body.includes(SYMBOL_TABLE_MARKER) ||
-        /debugSymbolLevel\s+(['"])SYMBOL_TABLE\1/.test(body) ||
-        /\bndk\s*\{/.test(body)) {
+    const s = scan(source, APP_GRADLE);
+    const firstLine = lineIndexAt(s, span.open);
+    const lastLine = lineIndexAt(s, span.close);
+    const marked = s.lines.slice(firstLine, lastLine + 1).some(isSymbolTableMarker);
+    if (marked ||
+        codeMatches(s, /debugSymbolLevel\s+(['"])SYMBOL_TABLE\1/g, span.open, span.close).length > 0 ||
+        blockExtent(s, 'ndk', span.open + 1, span.close) !== null) {
         return source;
     }
     // The block goes last, one level deeper than the line the build type opens
-    // on, and the closing brace gets its own line at that line's indentation.
-    // A one-line `release { minifyEnabled true }` is split the same way.
-    const lineStart = source.lastIndexOf('\n', span.open) + 1;
-    const line = source.slice(lineStart, span.open);
-    const lineIndent = line.slice(0, line.length - line.trimStart().length);
-    const block = indentBlock(SYMBOL_TABLE_BLOCK, `${lineIndent}    `);
-    return `${source.slice(0, span.close).trimEnd()}\n${block}\n${lineIndent}${source.slice(span.close)}`;
+    // on; the closing brace keeps its own line, indentation and the blank lines
+    // before it. A one-line `release { minifyEnabled true }` would have to be
+    // split, which changes the user's line, so it is refused instead.
+    if (firstLine === lastLine) {
+        throw refusal(APP_GRADLE, `the ${span.name} build type is written on one line (${codeOf(s.lines[firstLine]).trim()}), so debugSymbolLevel 'SYMBOL_TABLE' cannot be added without rewriting that line`, "Put its closing brace on its own line, or set ndk { debugSymbolLevel 'SYMBOL_TABLE' } in it yourself, then run expo prebuild again");
+    }
+    const eol = eolOf(source);
+    const opener = s.lines[firstLine].raw;
+    const lineIndent = opener.slice(0, opener.length - opener.trimStart().length);
+    const block = SYMBOL_TABLE_BLOCK.map((line) => `${lineIndent}    ${line}`).join(eol);
+    const before = source.slice(0, span.close);
+    const cut = before.trimEnd().length;
+    return `${before.slice(0, cut)}${eol}${block}${before.slice(cut)}${source.slice(span.close)}`;
 }
 function ensureSymbolTable(source, enabled) {
     if (!enabled) {
         return removeInsertedSymbolTable(source);
     }
-    const spans = buildTypeSpans(source).sort((a, b) => b.open - a.open);
+    const spans = buildTypeSpans(scan(source, APP_GRADLE)).sort((a, b) => b.open - a.open);
     return spans.reduce((current, span) => insertSymbolTable(current, span), source);
 }
 /**
@@ -278,27 +706,31 @@ function ensureSymbolTable(source, enabled) {
  */
 function insertedBlockEnd(lines, start) {
     let j = start;
-    while (j < lines.length && lines[j].trim().startsWith('//')) {
+    while (j < lines.length && isLineComment(lines[j])) {
         j += 1;
     }
     const open = lines[j];
-    if (open?.trim() !== 'ndk {') {
+    if (open === undefined || open.openAtStart || codeOf(open).trim() !== 'ndk {') {
         return null;
     }
     // The block this plugin writes closes at the indentation it opened at.
-    const closing = `${open.slice(0, open.indexOf('ndk {'))}}`;
-    const close = lines.findIndex((line, k) => k > j && line.trimEnd() === closing);
-    // An unclosed block is left alone rather than cut to the end of the file.
-    return close < 0 ? null : close;
+    const closing = `${open.raw.slice(0, open.raw.indexOf('ndk {'))}}`;
+    for (let k = j + 1; k < lines.length; k += 1) {
+        const line = lines[k];
+        if (line.depthAfter === open.depth) {
+            return line.raw.trimEnd() === closing ? k : null;
+        }
+    }
+    return null;
 }
 function removeInsertedSymbolTable(source) {
-    const lines = source.split('\n');
+    const s = scan(source, APP_GRADLE);
     const kept = [];
-    for (let i = 0; i < lines.length; i += 1) {
-        const line = lines[i];
-        const end = line.includes(SYMBOL_TABLE_MARKER) ? insertedBlockEnd(lines, i) : null;
+    for (let i = 0; i < s.lines.length; i += 1) {
+        const line = s.lines[i];
+        const end = isSymbolTableMarker(line) ? insertedBlockEnd(s.lines, i) : null;
         if (end === null) {
-            kept.push(line);
+            kept.push(line.raw);
         }
         else {
             i = end;
@@ -315,73 +747,12 @@ const SOURCEMAPS_HOOK_MARKER = '// bugsee-sourcemaps: debug ids and source-map u
  * apps run the same code: inject after compose, upload, fail the bundle
  * task when Hermes skipped hermesc-preserve-js.sh.
  */
-const SOURCEMAPS_HOOK = [
-    SOURCEMAPS_HOOK_MARKER,
-    `apply from: new File(new File(["node", "--print", "require.resolve('@bugsee/react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile(), "${SOURCEMAPS_SCRIPT}")`,
-].join('\n');
+const SOURCEMAPS_APPLY = `apply from: new File(new File(["node", "--print", "require.resolve('@bugsee/react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile(), "${SOURCEMAPS_SCRIPT}")`;
 /** First line of the inline hook earlier versions wrote. */
 const LEGACY_HOOK_MARKER = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
-exports.HERMES_COMMAND_UNREWRITABLE = 'react.hermesCommand in android/app/build.gradle spans several lines, so @bugsee/react-native ' +
-    'cannot point it at scripts/hermesc-preserve-js.sh. Put it on one line, or delete it, and prebuild again.';
-/**
- * A Groovy lexer just deep enough to tell code from comments and strings,
- * line by line: `//` and block comments, '…' and "…" strings (with
- * backslash escapes), and ''' / """ strings across lines. Slashy strings
- * are read as division.
- */
-function scanLines(source) {
-    const out = [];
-    let state = 'code';
-    for (const line of source.split('\n')) {
-        let code = '';
-        let unclosed = false;
-        let i = 0;
-        while (i < line.length) {
-            if (state !== 'code') {
-                const close = state === 'block' ? '*/' : state;
-                const at = line.indexOf(close, i);
-                if (at < 0) {
-                    i = line.length;
-                }
-                else {
-                    code += state === 'block' ? ' ' : 'S';
-                    state = 'code';
-                    i = at + close.length;
-                }
-                continue;
-            }
-            const two = line.slice(i, i + 2);
-            const three = line.slice(i, i + 3);
-            if (two === '//') {
-                break;
-            }
-            if (two === '/*') {
-                state = 'block';
-                i += 2;
-            }
-            else if (three === "'''" || three === '"""') {
-                state = three;
-                i += 3;
-            }
-            else if (line[i] === '"' || line[i] === "'") {
-                const quote = line[i];
-                let j = i + 1;
-                while (j < line.length && line[j] !== quote) {
-                    j += line[j] === '\\' ? 2 : 1;
-                }
-                unclosed = unclosed || j >= line.length;
-                code += 'S';
-                i = j + 1;
-            }
-            else {
-                code += line[i];
-                i += 1;
-            }
-        }
-        out.push({ code, open: unclosed || state !== 'code' });
-    }
-    return out;
-}
+/** The line both earlier inline hooks have after their comments; user code does not. */
+const LEGACY_HOOK_FINGERPRINT = 'def bugseeHermesSourcemaps = ';
+exports.HERMES_COMMAND_UNREWRITABLE = `${exports.CANNOT_EDIT} ${APP_GRADLE}: react.hermesCommand spans several lines or shares its line with another statement, so it cannot be pointed at scripts/hermesc-preserve-js.sh. Put it alone on one line, or delete it, and prebuild again`;
 /** Brackets all close, something is there, and it does not end in an operator. */
 function completeExpression(code) {
     let depth = 0;
@@ -397,81 +768,87 @@ function completeExpression(code) {
 }
 /** The next code line starts by continuing the previous expression. */
 const CONTINUATION = /^(\?\.|\.|\?|:|\+|-|\*|\/|&&|\|\|)/;
-const HERMES_COMMAND = /^([ \t]*)hermesCommand(\s*=|\.set\()/;
+const HERMES_COMMAND = /^([ \t]*)hermesCommand(\s*=(?!=)|\.set\()/;
 const REACT_BLOCK = /^\s*react\s*\{\s*$/;
 /**
- * Points react.hermesCommand at hermesc-preserve-js.sh. Only code counts:
- * a setting inside a comment or a multi-line string is left alone. A
- * one-line `hermesCommand = …` or `hermesCommand.set(…)` is rewritten,
- * a trailing comment included. Anything this cannot read with certainty
- * (a value that continues on the next line, an open bracket, quote or
- * block comment, nothing after `=`) is refused. A react block without
- * the setting gets one. With no react block the file is left alone, and
- * the bundle task fails with the fix instead.
+ * Points react.hermesCommand at hermesc-preserve-js.sh. Only the setting at
+ * the top level of the react block counts: one in a comment, a string,
+ * another block or a nested block is left alone. A one-line
+ * `hermesCommand = …` or `hermesCommand.set(…)` is rewritten, a trailing
+ * comment kept. Anything this cannot read with certainty (a value that
+ * continues on the next line, an open bracket or multi-line string, nothing
+ * after `=`, another statement after `;`) is refused. A react block without
+ * the setting gets one. With no react block the file is left alone, and the
+ * bundle task fails with the fix instead.
  */
 function rewriteHermesCommand(source) {
+    const s = scan(source, APP_GRADLE);
     const lines = source.split('\n');
-    const scanned = scanLines(source);
+    const eol = eolOf(source);
+    const react = s.lines.findIndex((line) => !line.openAtStart && line.depth === 0 && REACT_BLOCK.test(line.code));
+    if (react < 0) {
+        return source;
+    }
+    const end = s.lines.findIndex((line, i) => i > react && line.depthAfter === 0);
     let found = false;
-    let react = -1;
-    // A line inside a comment or multi-line string has no code to match.
-    scanned.forEach((scan, i) => {
-        if (react < 0 && REACT_BLOCK.test(scan.code)) {
-            react = i;
-        }
-        const match = HERMES_COMMAND.exec(scan.code);
+    for (let i = react + 1; i < end; i += 1) {
+        const line = s.lines[i];
+        const match = line.openAtStart || line.depth !== 1 ? null : HERMES_COMMAND.exec(line.code);
         if (!match) {
-            return;
+            continue;
         }
         found = true;
-        if (lines[i].includes('hermesc-preserve-js.sh')) {
-            return;
+        if (line.raw.includes('hermesc-preserve-js.sh')) {
+            continue;
         }
-        const value = `${match[2] === '.set(' ? '(' : ''}${scan.code.slice(match[0].length)}`;
-        const next = scanned.slice(i + 1).find((later) => later.code.trim().length > 0);
-        if (scan.open || !completeExpression(value) || (next !== undefined && CONTINUATION.test(next.code.trim()))) {
+        const code = line.code.slice(0, line.commentAt ?? line.code.length);
+        const value = `${match[2] === '.set(' ? '(' : ''}${code.slice(match[0].length)}`;
+        const next = s.lines.slice(i + 1).find((later) => later.code.trim().length > 0);
+        if (line.openAtEnd ||
+            value.includes(';') ||
+            !completeExpression(value) ||
+            (next !== undefined && CONTINUATION.test(next.code.trim()))) {
             throw new Error(exports.HERMES_COMMAND_UNREWRITABLE);
         }
-        lines[i] = `${match[1]}hermesCommand = ${HERMES_COMMAND_EXPR}`;
-    });
-    if (!found && react >= 0) {
-        const line = lines[react];
-        const indent = line.slice(0, line.length - line.trimStart().length);
-        lines.splice(react + 1, 0, `${indent}    hermesCommand = ${HERMES_COMMAND_EXPR}`);
+        // The value is replaced; what follows it (whitespace, a comment, the CR) is kept.
+        const valueEnd = line.raw.slice(0, line.commentAt ?? line.raw.length).trimEnd().length;
+        lines[i] = `${match[1]}hermesCommand = ${HERMES_COMMAND_EXPR}${line.raw.slice(valueEnd)}`;
+    }
+    if (!found) {
+        const opener = s.lines[react].raw;
+        const indent = opener.slice(0, opener.length - opener.trimStart().length);
+        lines.splice(react + 1, 0, `${indent}    hermesCommand = ${HERMES_COMMAND_EXPR}${crOf(eol)}`);
     }
     return lines.join('\n');
 }
-function isApplyLine(line) {
-    return line !== undefined && line.trim().startsWith('apply from:') && line.includes(SOURCEMAPS_SCRIPT);
-}
 /**
  * Index of the last line of an inline hook an earlier version wrote, which
- * starts at `start` with its marker: comment and `def bugsee…` lines, then
- * `afterEvaluate {` through its matching `}`, alone at column 0. Null when
- * the lines after the marker are anything else, so a stray marker never
- * takes user code with it.
+ * starts at `start` with its marker: comment lines, the
+ * `def bugseeHermesSourcemaps = ` line both old versions have, more
+ * `def bugsee…` lines, then `afterEvaluate {` through the brace that
+ * matches it, alone at column 0. Null when the lines after the marker are
+ * anything else, so a stray marker never takes user code with it.
  */
 function legacyHookEnd(lines, start) {
     let j = start + 1;
-    while (j < lines.length && /^(\/\/|def bugsee)/.test(lines[j])) {
+    while (j < lines.length && isLineComment(lines[j])) {
         j += 1;
     }
-    if (lines[j] !== 'afterEvaluate {') {
+    const fingerprint = lines[j];
+    if (fingerprint === undefined || fingerprint.openAtStart || !fingerprint.raw.startsWith(LEGACY_HOOK_FINGERPRINT)) {
         return null;
     }
-    // The brace that matches afterEvaluate's, alone on a line at column 0.
-    let depth = 0;
+    while (j < lines.length && !lines[j].openAtStart && lines[j].raw.startsWith('def bugsee')) {
+        j += 1;
+    }
+    const open = lines[j];
+    if (open === undefined || open.openAtStart || stripCr(open.raw) !== 'afterEvaluate {') {
+        return null;
+    }
     for (let k = j; k < lines.length; k += 1) {
-        for (const ch of lines[k]) {
-            if (ch === '{') {
-                depth += 1;
-            }
-            else if (ch === '}') {
-                depth -= 1;
-            }
-        }
-        if (depth === 0) {
-            return lines[k] === '}' ? k : null;
+        const line = lines[k];
+        if (line.depthAfter === open.depth) {
+            return stripCr(line.raw) === '}' ? k : null;
         }
     }
     return null;
@@ -481,24 +858,30 @@ function legacyHookEnd(lines, start) {
  * apply line. A complete hook (this version's or an earlier inline one)
  * keeps its place; every other Bugsee leftover — a marker without its
  * apply line, an apply line without its marker, a second hook — goes, one
- * line at a time, and nothing else is touched. With no complete hook the
- * new one is appended.
+ * line at a time, and nothing else is touched. Only Bugsee's exact lines
+ * count: a user's fork of the script, an apply inside a block, or a line
+ * with more after it is user code. With no complete hook the new one is
+ * appended.
  */
 function ensureHermesHooks(source) {
-    const lines = rewriteHermesCommand(source).split('\n');
+    const rewritten = rewriteHermesCommand(source);
+    const s = scan(rewritten, APP_GRADLE);
+    const eol = eolOf(rewritten);
+    const cr = crOf(eol);
     const kept = [];
     let hookAt = -1;
-    for (let i = 0; i < lines.length; i += 1) {
-        const line = lines[i];
+    for (let i = 0; i < s.lines.length; i += 1) {
+        const line = s.lines[i];
         let end = null;
-        if (line === SOURCEMAPS_HOOK_MARKER) {
-            end = isApplyLine(lines[i + 1]) ? i + 1 : null;
+        if (isMarker(line, SOURCEMAPS_HOOK_MARKER)) {
+            const next = s.lines[i + 1];
+            end = next !== undefined && isOwnStatement(next, SOURCEMAPS_APPLY) ? i + 1 : null;
         }
-        else if (line === LEGACY_HOOK_MARKER) {
-            end = legacyHookEnd(lines, i);
+        else if (isMarker(line, LEGACY_HOOK_MARKER)) {
+            end = legacyHookEnd(s.lines, i);
         }
-        else if (!isApplyLine(line)) {
-            kept.push(line);
+        else if (!isOwnStatement(line, SOURCEMAPS_APPLY)) {
+            kept.push(line.raw);
             continue;
         }
         if (end !== null) {
@@ -507,10 +890,10 @@ function ensureHermesHooks(source) {
         }
     }
     if (hookAt >= 0) {
-        kept.splice(hookAt, 0, SOURCEMAPS_HOOK);
+        kept.splice(hookAt, 0, `${SOURCEMAPS_HOOK_MARKER}${cr}`, `${SOURCEMAPS_APPLY}${cr}`);
         return kept.join('\n');
     }
-    return `${kept.join('\n').replace(/\s*$/, '')}\n\n${SOURCEMAPS_HOOK}\n`;
+    return appendBlock(kept.join('\n'), `${SOURCEMAPS_HOOK_MARKER}\n${SOURCEMAPS_APPLY}`, eol);
 }
 const UPLOADS_OFF_MARKER = '// bugsee-upload-symbols-off:';
 const UPLOADS_OFF_BLOCK = [
@@ -518,26 +901,27 @@ const UPLOADS_OFF_BLOCK = [
     '// Gradle plugin 4.0.7 has no switch for its mapping, NDK symbol and build',
     '// uploads, so their tasks are turned off here.',
     "tasks.matching { it.name.startsWith('uploadBugsee') }.configureEach { enabled = false }",
-].join('\n');
+];
 /**
  * `uploadSymbols: false` on Android: disables every `uploadBugsee*` task
  * (mapping, NDK symbols, build info) inside a marked block. On again
  * removes exactly that block.
  */
 function ensureSymbolUploads(appBuildGradle, enabled) {
-    const at = appBuildGradle.indexOf(UPLOADS_OFF_BLOCK);
+    const s = scan(appBuildGradle, APP_GRADLE);
+    const at = findOwnBlock(s, UPLOADS_OFF_BLOCK);
     if (enabled) {
         if (at < 0) {
             return appBuildGradle;
         }
-        const before = appBuildGradle.slice(0, at).replace(/\n+$/, '\n');
-        const after = appBuildGradle.slice(at + UPLOADS_OFF_BLOCK.length).replace(/^\n+/, '');
-        return before + after;
+        const lines = appBuildGradle.split('\n');
+        removeBlock(lines, at, at + UPLOADS_OFF_BLOCK.length - 1);
+        return lines.join('\n');
     }
     if (at >= 0) {
         return appBuildGradle;
     }
-    return `${appBuildGradle.replace(/\s*$/, '')}\n\n${UPLOADS_OFF_BLOCK}\n`;
+    return appendBlock(appBuildGradle, UPLOADS_OFF_BLOCK.join('\n'), eolOf(appBuildGradle));
 }
 const UPLOAD_SOURCEMAPS_KEY = 'bugseeUploadSourcemaps';
 /**

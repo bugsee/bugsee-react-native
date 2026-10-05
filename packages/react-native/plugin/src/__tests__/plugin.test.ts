@@ -14,6 +14,7 @@ import {
 import { decodePbxString, encodePbxString } from '../pbx-string';
 import { bugseePropertiesText, isPlaceholderToken } from '../properties';
 import {
+  CANNOT_EDIT,
   applyUploadSourcemapsProperty,
   ensureAppAppliesPlugin,
   ensureGradlePluginDeclared,
@@ -956,7 +957,7 @@ describe('source-map hook upgrade', () => {
 
   it('appends a fresh hook when a marker has no complete hook after it', () => {
     const currentMarker = SOURCEMAPS_HOOK_TEXT.split('\n')[0] as string;
-    for (const broken of [`${legacyMarker}\n`, `${legacyMarker}\nafterEvaluate {\n`, `${currentMarker}\n`]) {
+    for (const broken of [`${legacyMarker}\n`, `${legacyMarker}\nafterEvaluate {\n}\n`, `${currentMarker}\n`]) {
       const next = ensureAppAppliesPlugin(`apply plugin: "com.facebook.react"\n${broken}`, versions.sdk);
       expect(next.match(/scripts\/bugsee-sourcemaps\.gradle/g)).toHaveLength(1);
       expect(next.endsWith(`\n\n${SOURCEMAPS_HOOK_TEXT}\n`)).toBe(true);
@@ -1005,27 +1006,36 @@ describe('hook leftovers never cost user code', () => {
     expect(twice).toBe(once);
   });
 
-  it('takes a legacy marker as a hook only when afterEvaluate follows its comments directly', () => {
+  it('takes a legacy marker as a hook only with its def bugseeHermesSourcemaps line', () => {
     const userAfter = 'afterEvaluate {\n    println("mine")\n}';
-    const source = `apply plugin: "com.facebook.react"\n${legacyMarker}\nandroid { }\n${userAfter}\n`;
-    const next = ensureAppAppliesPlugin(source, versions.sdk);
-    expect(next).not.toContain(legacyMarker);
-    expect(next).toContain(`android { }\n${userAfter}\n`);
-    expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
+    for (const between of ['android { }\n', '', '// mine\n// also mine\n', 'def bugseeMyFlag = true\n']) {
+      const source = `apply plugin: "com.facebook.react"\n${legacyMarker}\n${between}${userAfter}\n`;
+      const next = ensureAppAppliesPlugin(source, versions.sdk);
+      expect(next).not.toContain(legacyMarker);
+      expect(next).toContain(`apply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\n${between}${userAfter}\n`);
+      expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
+    }
   });
 
   it('never closes a legacy hook on a brace that is not its own', () => {
-    // Unclosed afterEvaluate: the user's dependencies block must not become its end.
-    const unclosed = `apply plugin: "com.facebook.react"\n${legacyMarker}\nafterEvaluate {\n${userDeps}\n`;
-    const next = ensureAppAppliesPlugin(unclosed, versions.sdk);
-    expect(next).toContain('implementation("com.example:kept:1.0")');
-    expect(next).toContain('afterEvaluate {\ndependencies {');
-    expect(next).not.toContain(legacyMarker);
-    // A matching brace that is indented is not the hook's either.
-    const indented = `apply plugin: "com.facebook.react"\n${legacyMarker}\nafterEvaluate {\n    x()\n  }\n${userDeps}\n`;
+    const fingerprint = 'def bugseeHermesSourcemaps = "x"';
+    // Unclosed afterEvaluate: the user's dependencies block must not become its end. Refused, never cut.
+    const unclosed = `apply plugin: "com.facebook.react"\n${legacyMarker}\n${fingerprint}\nafterEvaluate {\n${userDeps}\n`;
+    expect(() => ensureAppAppliesPlugin(unclosed, versions.sdk)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 4: a brace opened on this line never closes`,
+    );
+    // A matching brace that is indented is not the hook's either: only the marker goes.
+    const indented = `apply plugin: "com.facebook.react"\n${legacyMarker}\n${fingerprint}\nafterEvaluate {\n    x()\n  }\n${userDeps}\n`;
     const kept = ensureAppAppliesPlugin(indented, versions.sdk);
-    expect(kept).toContain('afterEvaluate {\n    x()\n  }\n');
+    expect(kept).toContain(`${fingerprint}\nafterEvaluate {\n    x()\n  }\n`);
     expect(kept).toContain('implementation("com.example:kept:1.0")');
+    expect(kept).not.toContain(legacyMarker);
+    // A brace inside a string does not count, so the real one closes the hook.
+    const quoted = `apply plugin: "com.facebook.react"\n${legacyMarker}\n${fingerprint}\nafterEvaluate {\n    def s = "{"\n}\n${userDeps}\n`;
+    const replaced = ensureAppAppliesPlugin(quoted, versions.sdk);
+    expect(replaced).not.toContain(fingerprint);
+    expect(replaced).toContain(`${SOURCEMAPS_HOOK_TEXT}\ndependencies {\n`);
+    expect(replaced).toContain('implementation("com.example:kept:1.0")');
   });
 
   it('removes every combination of leftovers and nothing else', () => {
@@ -1130,7 +1140,8 @@ describe('Android symbol uploads switch', () => {
 
   it('removes the block from the middle of a file without joining its neighbours', () => {
     const off = `${ensureSymbolUploads(app, false)}\n// after\n`;
-    expect(ensureSymbolUploads(off, true)).toBe(`${app}// after\n`);
+    // The blank line after the block was never the plugin's.
+    expect(ensureSymbolUploads(off, true)).toBe(`${app}\n// after\n`);
   });
 });
 

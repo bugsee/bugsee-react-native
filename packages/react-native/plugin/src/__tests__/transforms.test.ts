@@ -9,6 +9,7 @@ import { rewriteBundlePhase, rewriteProjectBundlePhase } from '../bundle-phase';
 import type { XcodeProjectLike } from '../bundle-phase';
 import { DSYM_POST_ACTION_SCRIPT, dsymPostActionScript } from '../dsym-script';
 import {
+  CANNOT_EDIT,
   HERMES_COMMAND_UNREWRITABLE,
   ensureAppAppliesPlugin,
   ensureGradlePluginDeclared,
@@ -103,8 +104,10 @@ describe('ensureMavenCentral, exactly', () => {
     );
   });
 
-  it('treats an unclosed pluginManagement as absent', () => {
-    expect(ensureMavenCentral('pluginManagement {\n')).toBe(`${header}pluginManagement {\n`);
+  it('refuses an unclosed pluginManagement rather than guess', () => {
+    expect(() => ensureMavenCentral('pluginManagement {\n')).toThrow(
+      `${CANNOT_EDIT} android/settings.gradle: line 1: a brace opened on this line never closes. Fix that line, or make the Bugsee edits by hand`,
+    );
   });
 });
 
@@ -161,15 +164,17 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     );
   });
 
-  it('removes an exclude block wherever it sits, with the blank lines it brought', () => {
+  it('removes an exclude block wherever it sits, with the one blank line it brought', () => {
     const expected = `apply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n\n`;
     const body = 'apply plugin: "com.facebook.react"\ndependencies {\n}\n';
-    expect(beforeHook(ensureAppAppliesPlugin(`${exclude}\n\n\n${body}`, '7.3.0'))).toBe(expected);
+    // Blank lines after a block at the file start are the user's.
+    expect(beforeHook(ensureAppAppliesPlugin(`${exclude}\n\n\n${body}`, '7.3.0'))).toBe(`\n\n${expected}`);
     expect(beforeHook(ensureAppAppliesPlugin(`${body}${exclude}`, '7.3.0'))).toBe(expected);
-    expect(beforeHook(ensureAppAppliesPlugin(`${body}\n${exclude}\n\n`, '7.3.0'))).toBe(expected);
+    // The file's own trailing blank line stays.
+    expect(beforeHook(ensureAppAppliesPlugin(`${body}\n${exclude}\n\n`, '7.3.0'))).toBe(`${expected}\n`);
     const middle = ensureAppAppliesPlugin(`${body}\n${exclude}\n\n// tail\n`, '7.3.0');
     expect(beforeHook(middle)).toBe(
-      `apply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n// tail\n\n`,
+      `apply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n\n// tail\n\n`,
     );
   });
 
@@ -192,7 +197,9 @@ describe('ensureAppAppliesPlugin, exactly', () => {
       '        staging {',
       '            minifyEnabled true',
       '        }',
-      '        release { minifyEnabled true }',
+      '        release {',
+      '            minifyEnabled true',
+      '        }',
       '    }',
       '}',
       'dependencies {',
@@ -212,7 +219,8 @@ describe('ensureAppAppliesPlugin, exactly', () => {
         '        staging {',
         '            minifyEnabled true',
         '        }',
-        '        release { minifyEnabled true',
+        '        release {',
+        '            minifyEnabled true',
         SYMBOL_BLOCK('            '),
         '        }',
         '    }',
@@ -238,7 +246,8 @@ describe('ensureAppAppliesPlugin, exactly', () => {
         '        staging {',
         '            minifyEnabled true',
         '        }',
-        '        release { minifyEnabled true',
+        '        release {',
+        '            minifyEnabled true',
         '        }',
         '    }',
         '}',
@@ -247,6 +256,22 @@ describe('ensureAppAppliesPlugin, exactly', () => {
         '',
         '',
       ),
+    );
+  });
+
+  it('refuses a one-line build type rather than split the user line', () => {
+    const oneLine = 'android {\n    buildTypes {\n        release { minifyEnabled true }\n    }\n}\n';
+    expect(() => ensureAppAppliesPlugin(oneLine, '7.3.0')).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: the release build type is written on one line (release { minifyEnabled true }), so debugSymbolLevel 'SYMBOL_TABLE' cannot be added without rewriting that line. Put its closing brace on its own line, or set ndk { debugSymbolLevel 'SYMBOL_TABLE' } in it yourself, then run expo prebuild again`,
+    );
+    // Off has nothing to add, so nothing to refuse.
+    expect(beforeHook(ensureAppAppliesPlugin(oneLine, null))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\n${oneLine}\n${exclude}\n\n`,
+    );
+    // Blank lines before the closing brace are kept.
+    const spaced = 'android {\n    buildTypes {\n        release {\n            minifyEnabled true\n\n        }\n    }\n}\n';
+    expect(ensureAppAppliesPlugin(spaced, '7.3.0')).toContain(
+      `            minifyEnabled true\n${SYMBOL_BLOCK('            ')}\n\n        }\n`,
     );
   });
 
@@ -275,8 +300,13 @@ describe('ensureAppAppliesPlugin, exactly', () => {
       `apply plugin: "com.bugsee.android.gradle"\n${kept}\n${exclude}\n\n`,
     );
     const unclosed = 'a()\n    // bugsee-symbol-table: x\n    // more\n    ndk {\n        debugSymbolLevel \'SYMBOL_TABLE\'\n';
-    expect(beforeHook(ensureAppAppliesPlugin(unclosed, null))).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\n${unclosed}\n${exclude}\n\n`,
+    expect(() => ensureAppAppliesPlugin(unclosed, null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 4: a brace opened on this line never closes`,
+    );
+    // A block that closes at another indentation is not the one this plugin wrote.
+    const other = 'a()\n// bugsee-symbol-table: x\nndk {\n  }\nb()\n';
+    expect(beforeHook(ensureAppAppliesPlugin(other, null))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\n${other}\n${exclude}\n\n`,
     );
     const twice =
       'a()\n// bugsee-symbol-table: x\nndk {\n    x { }\n}\nb()\n  // bugsee-symbol-table: y\n  ndk {\n  }  \nc()\n';
@@ -293,17 +323,22 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     expect(next.endsWith('scripts/bugsee-sourcemaps.gradle")\n')).toBe(true);
   });
 
-  it('replaces from the marker even when a block opens before it', () => {
+  it('replaces a legacy hook in place, and takes one only with its def bugseeHermesSourcemaps line', () => {
     const marker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
     const fresh = ensureAppAppliesPlugin('android { }\n', null);
     const hook = fresh.slice(fresh.indexOf('// bugsee-sourcemaps:'));
-    expect(ensureAppAppliesPlugin(`android { }\n${marker}\nafterEvaluate {\n    old()\n}\n`, null)).toBe(
+    const legacy = `${marker}\ndef bugseeHermesSourcemaps = "x"\nafterEvaluate {\n    old()\n}\n`;
+    expect(ensureAppAppliesPlugin(`android { }\n${legacy}`, null)).toBe(
       `apply plugin: "com.bugsee.android.gradle"\nandroid { }\n${hook}\n${exclude}\n`,
     );
-    // An unclosed hook is not a hook: only its marker line goes, a complete one is appended.
-    const unclosed = ensureAppAppliesPlugin(`android { }\n${marker}\nafterEvaluate {\n`, null);
-    expect(unclosed).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\nandroid { }\nafterEvaluate {\n\n${exclude}\n\n${hook}`,
+    // Without that line the block is the user's: only the stray marker goes.
+    const user = 'afterEvaluate {\n    old()\n}\n';
+    expect(ensureAppAppliesPlugin(`android { }\n${marker}\n${user}`, null)).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\nandroid { }\n${user}\n${exclude}\n\n${hook}`,
+    );
+    // An unclosed block is refused, never cut.
+    expect(() => ensureAppAppliesPlugin(`android { }\n${marker}\nafterEvaluate {\n`, null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 3: a brace opened on this line never closes`,
     );
   });
 });
@@ -316,10 +351,13 @@ describe('ensureSymbolUploads, exactly', () => {
     "tasks.matching { it.name.startsWith('uploadBugsee') }.configureEach { enabled = false }",
   );
 
-  it('appends after one blank line and removes back to the original', () => {
-    expect(ensureSymbolUploads('a()\n\n\n', false)).toBe(`a()\n\n${block}\n`);
+  it('appends after one blank line, keeps the file\'s own blank lines, and removes back to the original', () => {
+    expect(ensureSymbolUploads('a()\n', false)).toBe(`a()\n\n${block}\n`);
+    expect(ensureSymbolUploads('a()\n\n\n', false)).toBe(`a()\n\n\n\n${block}\n`);
     expect(ensureSymbolUploads(`a()\n\n${block}\n`, true)).toBe('a()\n');
-    expect(ensureSymbolUploads(`a()\n\n${block}\n\n\nb()\n`, true)).toBe('a()\nb()\n');
+    expect(ensureSymbolUploads(`a()\n\n\n\n${block}\n`, true)).toBe('a()\n\n\n');
+    // Only the one blank line before the block goes with it.
+    expect(ensureSymbolUploads(`a()\n\n${block}\n\n\nb()\n`, true)).toBe('a()\n\n\nb()\n');
   });
 });
 
@@ -575,13 +613,17 @@ describe('blocks found by keyword', () => {
     );
   });
 
-  it('trims all trailing blank lines before appending', () => {
+  it('keeps every trailing blank line and appends after them', () => {
     const ndkOn = ensureAppAppliesPlugin('android {\n}\n\n\n', '7.3.0');
     expect(beforeHook(ndkOn)).toBe(
-      'apply plugin: "com.bugsee.android.gradle"\nandroid {\n}\n\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:7.3.0"\n}\n\n',
+      'apply plugin: "com.bugsee.android.gradle"\nandroid {\n}\n\n\n\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:7.3.0"\n}\n\n',
     );
     const ndkOff = ensureAppAppliesPlugin('android {\n}\n\n\n', null);
     expect(beforeHook(ndkOff)).toBe(
+      "apply plugin: \"com.bugsee.android.gradle\"\nandroid {\n}\n\n\n\nconfigurations.configureEach {\n    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'\n}\n\n",
+    );
+    // No final newline: one is added before the blank line.
+    expect(beforeHook(ensureAppAppliesPlugin('android {\n}', null))).toBe(
       "apply plugin: \"com.bugsee.android.gradle\"\nandroid {\n}\n\nconfigurations.configureEach {\n    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'\n}\n\n",
     );
   });
@@ -629,9 +671,16 @@ describe('finish hook placement', () => {
   });
 
   it('replaces a hook that starts the file', () => {
-    const source = `${marker}\nafterEvaluate {\n    old()\n}\napply plugin: "com.bugsee.android.gradle"\n`;
+    const source = `${marker}\ndef bugseeHermesSourcemaps = "x"\nafterEvaluate {\n    old()\n}\napply plugin: "com.bugsee.android.gradle"\n`;
     expect(ensureAppAppliesPlugin(source, null)).toBe(
       `${hook}apply plugin: "com.bugsee.android.gradle"\n\n${exclude}\n`,
+    );
+  });
+
+  it('drops a stray legacy marker at the file start and keeps the user block after it', () => {
+    const source = `${marker}\nafterEvaluate {\n    old()\n}\napply plugin: "com.bugsee.android.gradle"\n`;
+    expect(ensureAppAppliesPlugin(source, null)).toBe(
+      `afterEvaluate {\n    old()\n}\napply plugin: "com.bugsee.android.gradle"\n\n${exclude}\n\n${hook}`,
     );
   });
 });
@@ -647,7 +696,8 @@ describe('symbol uploads block edges', () => {
   it('handles the block at the start of the file and text right after it', () => {
     expect(ensureSymbolUploads(`${block}\n`, true)).toBe('');
     expect(ensureSymbolUploads(`${block}\n`, false)).toBe(`${block}\n`);
-    expect(ensureSymbolUploads(`a()\n${block}b()\nc()\n`, true)).toBe('a()\nb()\nc()\n');
+    // The last line has more after it, so it is not Bugsee's line: nothing is removed.
+    expect(ensureSymbolUploads(`a()\n${block}b()\nc()\n`, true)).toBe(`a()\n${block}b()\nc()\n`);
   });
 });
 
@@ -719,12 +769,16 @@ describe('react.hermesCommand forms', () => {
       'react {\n    hermesCommand = "$rootDir/" +\n        "hermesc"\n}\n',
       'react {\n    hermesCommand = new File(\n        "x").absolutePath\n}\n',
       'react {\n    hermesCommand.set(\n        "x")\n}\n',
-      "react {\n    hermesCommand = 'unclosed\n}\n",
       'react {\n    hermesCommand = [\n    "a"].join()\n}\n',
     ]) {
       expect(() => ensureAppAppliesPlugin(source, null)).toThrow(HERMES_COMMAND_UNREWRITABLE);
     }
     expect(HERMES_COMMAND_UNREWRITABLE).toContain('hermesc-preserve-js.sh');
+    expect(HERMES_COMMAND_UNREWRITABLE.startsWith(`${CANNOT_EDIT} android/app/build.gradle: `)).toBe(true);
+    // An unclosed quote is refused by the lexer, before any setting is read.
+    expect(() => ensureAppAppliesPlugin("react {\n    hermesCommand = 'unclosed\n}\n", null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 2: a string opened on this line does not close on it`,
+    );
   });
 
   it('accepts quotes and brackets that close on the same line', () => {
@@ -790,14 +844,14 @@ describe('react.hermesCommand edge cases', () => {
     expect(ensureAppAppliesPlugin(atStart, '7.3.0')).toBe(atStart);
   });
 
-  it('trims every trailing blank line before appending the hook', () => {
+  it('keeps every trailing blank line and appends the hook after them', () => {
     const source = `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n\n\n\n`;
     const hook = (() => {
       const fresh = ensureAppAppliesPlugin('x\n', '7.3.0');
       return fresh.slice(fresh.indexOf('// bugsee-sourcemaps:'));
     })();
     expect(ensureAppAppliesPlugin(source, '7.3.0')).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n\n${hook}`,
+      `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n\n\n\n\n${hook}`,
     );
   });
 });
@@ -819,9 +873,13 @@ describe('react.hermesCommand: comments, strings and continuations', () => {
     }
   });
 
-  it('reads past a trailing line or block comment', () => {
-    expect(rewrite('react {\n    hermesCommand = "x" // don\'t touch (really\n}\n')).toContain(`react {\n${rewritten}\n}`);
-    expect(rewrite('react {\n    hermesCommand = "x" /* it\'s fine */\n}\n')).toContain(`react {\n${rewritten}\n}`);
+  it('reads past a trailing line or block comment, and keeps it', () => {
+    expect(rewrite('react {\n    hermesCommand = "x" // don\'t touch (really\n}\n')).toContain(
+      `react {\n${rewritten} // don't touch (really\n}`,
+    );
+    expect(rewrite('react {\n    hermesCommand = "x"\t/* it\'s fine */  \n}\n')).toContain(`react {\n${rewritten}\t/* it's fine */  \n}`);
+    // Trailing whitespace after the value is kept too.
+    expect(rewrite('react {\n    hermesCommand = "x"   \n}\n')).toContain(`react {\n${rewritten}   \n}`);
     expect(rewrite('react {\n    hermesCommand = "http://host/x" /* a */ + "y"\n}\n')).toContain(`react {\n${rewritten}\n}`);
     // A comment after the value does not hide a continuation.
     expect(() => ensureAppAppliesPlugin('react {\n    hermesCommand = "x" // c\n        .trim()\n}\n', null)).toThrow(
@@ -849,12 +907,13 @@ describe('react.hermesCommand: comments, strings and continuations', () => {
     expect(rewrite('react { // the RN block\n}\n')).toContain(`react { // the RN block\n${rewritten}\n}`);
   });
 
-  it('refuses a string that does not close on its line, after any comment', () => {
-    expect(() => ensureAppAppliesPlugin('react {\n    hermesCommand = "x /* y */\n}\n', null)).toThrow(
-      HERMES_COMMAND_UNREWRITABLE,
-    );
-    expect(() => ensureAppAppliesPlugin("react {\n    hermesCommand = 'x\n}\n", null)).toThrow(
-      HERMES_COMMAND_UNREWRITABLE,
+  it('refuses a string that does not close on its line, whatever follows the quote', () => {
+    const open = `${CANNOT_EDIT} android/app/build.gradle: line 2: a string opened on this line does not close on it`;
+    expect(() => ensureAppAppliesPlugin('react {\n    hermesCommand = "x /* y */\n}\n', null)).toThrow(open);
+    expect(() => ensureAppAppliesPlugin("react {\n    hermesCommand = 'x\n}\n", null)).toThrow(open);
+    // A one-line string open at the end of the file.
+    expect(() => ensureAppAppliesPlugin('react {\n}\ndef a = "x', null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 3: a string opened on this line does not close on it`,
     );
   });
 });
@@ -889,11 +948,15 @@ describe('lexer and react block, exactly', () => {
     expect(two.match(/hermesCommand =/g)).toHaveLength(1);
   });
 
-  it('looks past whitespace-only lines for a continuation, and handles a setting on the last line', () => {
+  it('looks past whitespace-only lines for a continuation, and handles a file without a final newline', () => {
     expect(() => ensureAppAppliesPlugin('react {\n    hermesCommand = file("x")\n    \n        .absolutePath\n}\n', null)).toThrow(
       HERMES_COMMAND_UNREWRITABLE,
     );
-    expect(ensureAppAppliesPlugin(`${applied}\nreact {\n    hermesCommand = "x"`, null)).toContain(`react {\n${rewritten}`);
+    expect(ensureAppAppliesPlugin(`${applied}\nreact {\n    hermesCommand = "x"\n}`, null)).toContain(`react {\n${rewritten}\n}`);
+    // Braces that do not balance are refused, with the line of the open brace.
+    expect(() => ensureAppAppliesPlugin(`${applied}\nreact {\n    hermesCommand = "x"`, null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 2: a brace opened on this line never closes`,
+    );
   });
 });
 
@@ -921,7 +984,7 @@ describe('hook lines, exactly', () => {
   });
 
   it('keeps the hook where the first complete one was', () => {
-    const legacy = `${legacyMarker}\nafterEvaluate {\n    old()\n}`;
+    const legacy = `${legacyMarker}\ndef bugseeHermesSourcemaps = "x"\nafterEvaluate {\n    old()\n}`;
     const source = `${applied}\na()\n${legacy}\nb()\n${hook}\nc()\n`;
     expect(ensureAppAppliesPlugin(source, null).startsWith(`${applied}\na()\n${hook}\nb()\nc()\n`)).toBe(true);
     // A hook first in the file stays first.

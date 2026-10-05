@@ -47,6 +47,8 @@ export interface BugseePluginProps {
     autoLaunch?: boolean;
 }
 export declare const APP_GRADLE_NOT_GROOVY: string;
+/** The settings or root Gradle file is Kotlin; the plugin edits Groovy only. */
+export declare function gradleNotGroovy(file: string): string;
 /** The token for one platform, or undefined. Refuses anything that is not token-shaped. */
 export declare function platformToken(appToken: AppTokenOption | undefined, platform: 'ios' | 'android'): string | undefined;
 /** Shared schemes of every .xcodeproj under ios/. Throws when there are none. */
