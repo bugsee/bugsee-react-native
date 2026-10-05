@@ -133,6 +133,11 @@ function bareBundleScript(): string {
   return decodePbxString(quoted);
 }
 
+const SOURCEMAPS_HOOK_TEXT = [
+  '// bugsee-sourcemaps: debug ids and source-map upload for release bundles (@bugsee/react-native).',
+  'apply from: new File(new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/bugsee-sourcemaps.gradle")',
+].join('\n');
+
 const REAL_TOKEN = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const PLACEHOLDER = '00000000-0000-4000-8000-000000000000';
 
@@ -551,32 +556,13 @@ describe('Android Gradle edits', () => {
     expect(hermes[0]).not.toContain('hermes-compiler');
     expect(next).toContain('// hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"');
 
-    const hook = next.slice(next.lastIndexOf('// After compose-source-maps.js'));
-    expect(next.match(/afterEvaluate/g)).toHaveLength(1);
-    expect(hook).toContain(
-      'def bugseeHermesSourcemaps = new File(new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/hermes-sourcemaps.js")',
-    );
-    expect(hook).toContain(
-      'def bugseeComposeSourceMaps = new File(new File(["node", "--print", "require.resolve(\'react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/compose-source-maps.js")',
-    );
-    expect(hook).toContain('hook.absolutePath, "finish"');
-    expect(hook).toContain('Bugsee preserve directory is the packaged asset directory');
-    expect(hook).toContain('/intermediates/bugsee-sourcemaps/');
-    expect(hook).not.toContain('Upload is not invoked.');
-    expect(hook).toContain("def bugseeUploadSourcemaps = String.valueOf(findProperty('bugseeUploadSourcemaps') ?: 'true')");
-    expect(hook).toContain('"--upload-sourcemaps", bugseeUploadSourcemaps,');
-    expect(hook).toContain('"--platform", "android",');
-    expect(hook).toContain('def bugseeProperties = rootProject.file("bugsee.properties")');
-    expect(hook).toContain('"--properties", bugseeProperties.absolutePath,');
-    expect(hook).toContain("def bugseeAppVersion = String.valueOf(android.defaultConfig.versionName ?: '')");
-    expect(hook).toContain("def bugseeAppBuild = String.valueOf(android.defaultConfig.versionCode ?: '')");
-    expect(hook).toContain('"--app-version", bugseeAppVersion,');
-    expect(hook).toContain('"--app-build", bugseeAppBuild,');
-    expect(hook).toContain('bundleTask.services.get(org.gradle.process.ExecOperations).exec');
-    expect(hook).not.toContain('project.exec');
-    expect(hook).not.toContain('../../node_modules');
-    expect(hook).not.toContain('bugsee-cli');
-    expect(hook).not.toContain('debug-files');
+    expect(next.endsWith(`\n\n${SOURCEMAPS_HOOK_TEXT}\n`)).toBe(true);
+    expect(next.match(/bugsee-sourcemaps\.gradle/g)).toHaveLength(1);
+    expect(next).not.toContain('afterEvaluate');
+    // Resolved through node, so a hoisted or nested install works.
+    expect(SOURCEMAPS_HOOK_TEXT).not.toContain('../../node_modules');
+    expect(next).not.toContain('bugsee-cli');
+    expect(next).not.toContain('debug-files');
     expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
 
     const off = ensureAppAppliesPlugin(next, null);
@@ -589,31 +575,8 @@ describe('Android Gradle edits', () => {
     expect(buildTypeBody(off, 'debug')).not.toContain('ndk');
     expect(buildTypeBody(off, 'release')).not.toContain('ndk');
     expect(off).toContain('hermesc-preserve-js.sh');
-    expect(off).toContain('Bugsee preserve directory is the packaged asset directory');
-    expect(off.match(/afterEvaluate/g)).toHaveLength(1);
+    expect(off.match(/bugsee-sourcemaps\.gradle/g)).toHaveLength(1);
     expect(ensureAppAppliesPlugin(off, null)).toBe(off);
-  });
-
-  it('rewrites a finish hook that still calls project.exec', () => {
-    const current = ensureAppAppliesPlugin(expoSdk57AppBuildGradle(), versions.sdk);
-    const stale = current
-      .replace(
-        'bundleTask.services.get(org.gradle.process.ExecOperations).exec {',
-        'project.exec {',
-      )
-      .replace(
-        'apply plugin: "com.facebook.react"',
-        'apply plugin: "com.facebook.react"\nproject.exec {\n    commandLine "other"\n}',
-      );
-    expect(stale).toContain('Bugsee preserve directory is the packaged asset directory');
-    expect(stale).toContain('project.exec {');
-
-    const next = ensureAppAppliesPlugin(stale, versions.sdk);
-    const hook = next.slice(next.lastIndexOf('// After compose-source-maps.js'));
-    expect(hook).toContain('bundleTask.services.get(org.gradle.process.ExecOperations).exec {');
-    expect(hook).not.toContain('project.exec');
-    expect(next).toContain('project.exec {\n    commandLine "other"\n}');
-    expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
   });
 
   it('finds hermesc nested under react-native when the app sibling package is missing', () => {
@@ -960,52 +923,28 @@ describe('manifest auto-launch', () => {
   });
 });
 
-describe('finish hook guards and upgrade', () => {
+describe('source-map hook upgrade', () => {
   const versions = loadNativeVersions(join(__dirname, '..', '..', 'build'));
-  const oldHook = readFileSync(join(__dirname, 'fixtures', 'finish-hook-0.0.0.gradle'), 'utf8');
+  const fixtures = join(__dirname, 'fixtures');
+  const legacyMarker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
 
-  function hookOf(source: string): string {
-    return source.slice(source.lastIndexOf('// After compose-source-maps.js'));
+  function withoutHook(source: string): string {
+    return source.slice(0, source.indexOf(SOURCEMAPS_HOOK_TEXT));
   }
 
-  it('warns when Hermes is on and no preserve file exists, and never recompiles a stale one', () => {
-    const hook = hookOf(ensureAppAppliesPlugin(expoSdk57AppBuildGradle(), versions.sdk));
-    const hermesOff = hook.indexOf('if (!bundleTask.hermesEnabled.get()) {');
-    const missing = hook.indexOf('} else if (!preserved.isFile()) {');
-    const finish = hook.indexOf('hook.absolutePath, "finish"');
-    expect(hermesOff).toBeGreaterThan(-1);
-    expect(missing).toBeGreaterThan(hermesOff);
-    expect(finish).toBeGreaterThan(missing);
-    expect(hook).toContain(
-      'bundleTask.logger.warn("bugsee: ${bundleTask.name} ran hermesc without hermesc-preserve-js.sh " +',
-    );
-    expect(hook).toContain(
-      '"(check react.hermesCommand); no debug id is injected and no source map is uploaded")',
-    );
-    expect(hook).toContain(
-      'bundleTask.logger.lifecycle("bugsee: Hermes is off for ${bundleTask.name}; no debug id is injected")',
-    );
-    const cleanup = hook.slice(hook.indexOf('} finally {'));
-    expect(cleanup).toContain('packagedCopies.each { copy -> copy.delete() }');
-    expect(cleanup).toContain('preserved.delete()');
-    expect(cleanup).toContain('hermescNote.delete()');
-  });
-
-  it('replaces a hook an earlier plugin version wrote', () => {
+  it('replaces the inline hooks earlier versions wrote with the apply line', () => {
     const template = expoSdk57AppBuildGradle();
-    const stale = `${ensureAppAppliesPlugin(template, versions.sdk).slice(
-      0,
-      ensureAppAppliesPlugin(template, versions.sdk).lastIndexOf('// After compose-source-maps.js'),
-    )}${oldHook}`;
-    expect(stale).toContain('Upload is not invoked.');
-
-    const next = ensureAppAppliesPlugin(stale, versions.sdk);
-    expect(next).not.toContain('Upload is not invoked.');
-    expect(next).toContain('"--upload-sourcemaps", bugseeUploadSourcemaps,');
-    expect(next.match(/afterEvaluate/g)).toHaveLength(1);
-    expect(next.match(/def bugseeHermesSourcemaps/g)).toHaveLength(1);
-    expect(next).toBe(ensureAppAppliesPlugin(template, versions.sdk));
-    expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
+    const fresh = ensureAppAppliesPlugin(template, versions.sdk);
+    for (const fixture of ['finish-hook-0.0.0.gradle', 'finish-hook-13.6-r1.gradle']) {
+      const oldHook = readFileSync(join(fixtures, fixture), 'utf8');
+      expect(oldHook.startsWith(legacyMarker)).toBe(true);
+      const stale = `${withoutHook(fresh)}${oldHook}`;
+      const next = ensureAppAppliesPlugin(stale, versions.sdk);
+      expect(next).toBe(fresh);
+      expect(next).not.toContain('afterEvaluate');
+      expect(next).not.toContain('defaultConfig.versionName');
+      expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
+    }
   });
 
   it('keeps what follows the hook when replacing it', () => {
@@ -1013,16 +952,31 @@ describe('finish hook guards and upgrade', () => {
     const withTail = `${current}\n// user tail\ntask hello {}\n`;
     const next = ensureAppAppliesPlugin(withTail, versions.sdk);
     expect(next).toBe(withTail);
-    expect(next.endsWith('// user tail\ntask hello {}\n')).toBe(true);
   });
 
-  it('appends a fresh hook when a marker has no complete afterEvaluate block', () => {
-    const marker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
-    for (const broken of [`${marker}\n`, `${marker}\nafterEvaluate {\n`]) {
+  it('appends a fresh hook when a marker has no complete hook after it', () => {
+    const currentMarker = SOURCEMAPS_HOOK_TEXT.split('\n')[0] as string;
+    for (const broken of [`${legacyMarker}\n`, `${legacyMarker}\nafterEvaluate {\n`, `${currentMarker}\n`]) {
       const next = ensureAppAppliesPlugin(`apply plugin: "com.facebook.react"\n${broken}`, versions.sdk);
-      expect(next.match(/"--upload-sourcemaps"/g)).toHaveLength(1);
-      expect(next.trimEnd().endsWith('}')).toBe(true);
+      expect(next.match(/scripts\/bugsee-sourcemaps\.gradle/g)).toHaveLength(1);
+      expect(next.endsWith(`\n\n${SOURCEMAPS_HOOK_TEXT}\n`)).toBe(true);
     }
+  });
+
+  it('replaces a current hook that ends the file without a newline', () => {
+    const source = `apply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\n\n${SOURCEMAPS_HOOK_TEXT}`;
+    const next = ensureAppAppliesPlugin(source, null);
+    expect(next.match(/scripts\/bugsee-sourcemaps\.gradle/g)).toHaveLength(1);
+    expect(ensureAppAppliesPlugin(next, null)).toBe(next);
+  });
+
+  it('ships the Gradle script the apply line names', () => {
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'packages/react-native/package.json'), 'utf8')) as {
+      files: string[];
+    };
+    expect(pkg.files).toContain('scripts/bugsee-sourcemaps.gradle');
+    expect(pkg.files).toContain('scripts/hermes-sourcemaps.js');
+    expect(existsSync(join(repoRoot, 'packages/react-native/scripts/bugsee-sourcemaps.gradle'))).toBe(true);
   });
 });
 

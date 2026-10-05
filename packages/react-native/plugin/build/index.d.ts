@@ -46,6 +46,7 @@ export interface BugseePluginProps {
     /** Defaults off. Writes `com.bugsee.app-token` manifest meta-data. */
     autoLaunch?: boolean;
 }
+export declare const APP_GRADLE_NOT_GROOVY: string;
 /** The token for one platform, or undefined. Refuses anything that is not token-shaped. */
 export declare function platformToken(appToken: AppTokenOption | undefined, platform: 'ios' | 'android'): string | undefined;
 /** Shared schemes of every .xcodeproj under ios/. Throws when there are none. */
