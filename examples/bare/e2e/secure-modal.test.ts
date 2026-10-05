@@ -15,9 +15,11 @@
  * Ground truth is independent of what the app measured: each secure view is
  * a colour nothing else on screen has, and a screenshot taken by the device
  * itself (`adb exec-out screencap`, `xcrun simctl io screenshot`) finds where
- * each really is. The report's screenshot must be dark over both, and must
- * not contain either colour anywhere. The iPhone has no command-line
- * screenshot, so there only the second check runs.
+ * each really is. The report's screenshot must be dark over each one the
+ * device shows, and must not contain either colour anywhere. An opaque
+ * `pageSheet` covers the main view entirely on an iPhone, so there only the
+ * sheet's colour is on screen. The iPhone has no command-line screenshot, so
+ * there only the colour check runs.
  *
  * Android: WOD_LX1 with `E2E_EDGE_TO_EDGE` naming the installed build.
  * iOS: simulator or XS (`E2E_IOS_TARGET`).
@@ -109,7 +111,8 @@ for (const scenario of SCENARIOS) {
     let display: { width: number; height: number };
     let shotDir: string;
     let deviceShot: string | null;
-    let found: { main: Rect; sheet: Rect } | null = null;
+    /** Where the device shows each secure view (display units); `main` is absent behind an opaque sheet. */
+    let found: { main: Rect | null; sheet: Rect } | null = null;
     let sheetFromDump: Rect | undefined;
     let mainFromJs: Rect | undefined;
     let servedLine: LogLine | undefined;
@@ -157,14 +160,19 @@ for (const scenario of SCENARIOS) {
         const main = await colourPixels(deviceShot, MAIN_COLOUR);
         const sheet = await colourPixels(deviceShot, SHEET_COLOUR);
         report('device screenshot', { main, sheet });
-        if (main.box !== null && sheet.box !== null) {
+        if (sheet.box !== null) {
           found = {
-            main: toDisplay(main.box, main.width, display.width),
+            main: main.box === null ? null : toDisplay(main.box, main.width, display.width),
             sheet: toDisplay(sheet.box, sheet.width, display.width),
           };
         }
-        expect(main.count).toBeGreaterThanOrEqual(FOUND_MIN_PIXELS);
         expect(sheet.count).toBeGreaterThanOrEqual(FOUND_MIN_PIXELS);
+        if (scenario === 'secure-modal-sheet') {
+          // The opaque sheet hides the main view: the device must not show it.
+          expect(main.count).toBe(0);
+        } else {
+          expect(main.count).toBeGreaterThanOrEqual(FOUND_MIN_PIXELS);
+        }
       }
 
       if (!ON_IOS) {
@@ -247,12 +255,13 @@ for (const scenario of SCENARIOS) {
         return;
       }
       if (found === null) {
-        throw new Error('the device screenshot does not show both secure colours');
+        throw new Error("the device screenshot does not show the Modal's secure colour");
       }
       const where = found;
-      const mainInner = await screenshotLumas(media.screenshots, where.main, display.width, 0.6);
+      const mainInner = where.main === null ? [] : await screenshotLumas(media.screenshots, where.main, display.width, 0.6);
       const sheetInner = await screenshotLumas(media.screenshots, where.sheet, display.width, 0.6);
-      const control: Rect = moved(where.main, (where.main.bottom - where.main.top) + 40);
+      // Inside the Modal's white backdrop, below its secure view.
+      const control: Rect = moved(where.sheet, (where.sheet.bottom - where.sheet.top) + 40);
       const controlLumas = await screenshotLumas(media.screenshots, control, display.width);
       report('lumas', { found: where, mainInner, sheetInner, control, controlLumas });
 
