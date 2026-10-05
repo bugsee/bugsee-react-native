@@ -67,6 +67,24 @@ maps, and Archives upload their dSYMs, whenever a real token is set.
 A committed `ios/` (`project.pbxproj` and the shared scheme) or
 `android/bugsee.properties` carries the token.
 
+The plugin's Gradle edits never remove or change a line of your own code, on a
+clean or a `--no-clean` prebuild, however often it runs: it adds its own
+marked lines, replaces only those, and rewrites exactly one of yours,
+`react.hermesCommand`, with any trailing comment kept. Where it cannot do that
+with certainty it refuses the prebuild with one error that names the file, the
+reason and the fix, and writes nothing. It refuses:
+
+- a Kotlin DSL `settings.gradle.kts`, `build.gradle.kts` or app
+  `build.gradle.kts`;
+- a Gradle file it cannot read for sure: a string that does not close on its
+  line, a comment or string still open at the end of the file, braces that do
+  not balance, or a `/` that could start a slashy string as well as divide;
+- a `react.hermesCommand` that spans several lines or shares its line with
+  another statement after `;`;
+- a `debug` or `release` build type written on one line, which the symbol
+  block cannot join without splitting your line (with
+  `nativeCrashReporting` on).
+
 ## Android source maps
 
 Release builds give the Hermes bundle a debug id and upload its source map, so
@@ -98,6 +116,12 @@ Hermes off, the plain JS bundle and Metro's map get the id instead.
   `-PbugseeUploadSourcemaps=false`, the build skips the upload with one line. A
   failed upload warns and does not fail the build.
 - **The version and build number** are the variant's own, flavors included.
+- **The preserve directory.** For a bundle at `build/generated/assets/<x>`
+  the wrapper keeps the JS in `build/intermediates/bugsee-sourcemaps/<x>`.
+  The wrapper and `hermes-sourcemaps.js` take the last `generated/assets` in
+  the path; the Gradle hook takes the path relative to the build directory.
+  The three agree unless the bundle directory itself nests another
+  `generated/assets`, which React Native never does.
 - **Limitations.** The preserve wrapper is a shell script, so Hermes release
   builds on a Windows host are not supported yet. The hook has not yet been
   verified with Gradle's configuration cache.

@@ -114,12 +114,19 @@ function injectComposedSourceMap({ bundlePath, composedMapPath, cliPath }) {
 
 /**
  * Where hermesc-preserve-js.sh writes, for a bundle under
- * `generated/assets`. Any other directory maps to itself.
+ * `generated/assets`: the last such segment is the one under the build
+ * directory, which is what the Gradle hook relativizes against. Any other
+ * directory maps to itself.
  */
 function preserveDirFor(filePath, paths = path) {
   const marker = `${paths.sep}generated${paths.sep}assets${paths.sep}`;
+  const dir = paths.dirname(filePath);
+  const at = dir.lastIndexOf(marker);
+  if (at < 0) {
+    return dir;
+  }
   const replacement = `${paths.sep}intermediates${paths.sep}bugsee-sourcemaps${paths.sep}`;
-  return paths.dirname(filePath).replace(marker, replacement);
+  return `${dir.slice(0, at)}${replacement}${dir.slice(at + marker.length)}`;
 }
 
 function sidecarName(bytecodePath) {

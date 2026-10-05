@@ -34,13 +34,15 @@ if [[ -z "$js" ]]; then
 fi
 
 # jsBundleDir is packaged as assets. Preserve files beside the bundle would
-# ship in the APK. Intermediates are not.
+# ship in the APK. Intermediates are not. The last generated/assets in the
+# path is the one under the build directory, which is where the Gradle hook
+# (relative to the build directory) and hermes-sourcemaps.js look.
 js_dir="$(dirname "$js")"
 marker="/generated/assets/"
 if [[ -n "${BUGSEE_PRESERVE_DIR:-}" ]]; then
   preserve_dir="$BUGSEE_PRESERVE_DIR"
 elif [[ "$js_dir" == *"$marker"* ]]; then
-  preserve_dir="${js_dir/$marker//intermediates/bugsee-sourcemaps/}"
+  preserve_dir="${js_dir%"$marker"*}/intermediates/bugsee-sourcemaps/${js_dir##*"$marker"}"
 else
   echo "bugsee: refusing to write preserve files beside the bundle ($js_dir)" >&2
   exit 1
