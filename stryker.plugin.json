@@ -26,5 +26,6 @@
   "timeoutMS": 60000,
   "inPlace": true,
   "tempDirName": ".stryker-tmp",
-  "disableTypeChecks": "packages/react-native/plugin/src/**/*.ts"
+  "disableTypeChecks": "packages/react-native/plugin/src/**/*.ts",
+  "concurrency": 3
 }
