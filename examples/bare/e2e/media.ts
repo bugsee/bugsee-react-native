@@ -415,3 +415,74 @@ export function heldBlackout(
       `${BLACKOUT_MIN_DARK_S}s until a bright frame`,
   };
 }
+
+/** An RGB colour, each channel 0-255. */
+export interface Colour {
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+}
+
+/** How far each channel may stray from a test colour: lossy screenshots shift it. */
+export const COLOUR_TOLERANCE = 48;
+
+/** `#RRGGBB` as a `Colour`. */
+export function colourOf(hex: string): Colour {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+  if (match === null) {
+    throw new Error(`colourOf: not #RRGGBB: ${hex}`);
+  }
+  return { r: parseInt(match[1]!, 16), g: parseInt(match[2]!, 16), b: parseInt(match[3]!, 16) };
+}
+
+/**
+ * Every pixel of `file`'s first frame within `tolerance` of `colour` on all
+ * three channels: how many, and their bounding box in image pixels (`right`
+ * and `bottom` exclusive), or `null` for none. Decodes the whole frame, so it
+ * finds a solid test colour wherever it really is on screen.
+ */
+export async function colourPixels(
+  file: string,
+  colour: Colour,
+  tolerance = COLOUR_TOLERANCE,
+): Promise<{
+  count: number;
+  box: { left: number; top: number; right: number; bottom: number } | null;
+  width: number;
+  height: number;
+}> {
+  const { width, height } = await imageSize(file);
+  const { stdout } = await runBinary('ffmpeg', [
+    '-v', 'error',
+    '-i', file,
+    '-frames:v', '1',
+    '-pix_fmt', 'rgb24',
+    '-f', 'rawvideo',
+    '-',
+  ]);
+  if (stdout.length !== width * height * 3) {
+    throw new Error(`colourPixels: ${file}: expected ${width * height * 3} raw byte(s), got ${stdout.length}`);
+  }
+  let count = 0;
+  let left = width;
+  let top = height;
+  let right = 0;
+  let bottom = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const at = (y * width + x) * 3;
+      if (
+        Math.abs(stdout[at]! - colour.r) <= tolerance &&
+        Math.abs(stdout[at + 1]! - colour.g) <= tolerance &&
+        Math.abs(stdout[at + 2]! - colour.b) <= tolerance
+      ) {
+        count++;
+        left = Math.min(left, x);
+        top = Math.min(top, y);
+        right = Math.max(right, x + 1);
+        bottom = Math.max(bottom, y + 1);
+      }
+    }
+  }
+  return { count, box: count === 0 ? null : { left, top, right, bottom }, width, height };
+}

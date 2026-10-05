@@ -54,6 +54,8 @@ export const PRIVACY_SCENARIOS = [
   'blackout-prelaunch',
   'secure-component',
   'secure-modal',
+  'secure-modal-translucent',
+  'secure-modal-sheet',
   'view-tree',
 ] as const;
 
@@ -73,6 +75,25 @@ export const SECURE_COMPONENT_LABEL = 'bugsee-secure-component';
 export const SECURE_WITNESS_LABEL = 'bugsee-secure-witness';
 export const SECURE_MODAL_MAIN_LABEL = 'bugsee-secure-modal-main';
 export const SECURE_MODAL_SHEET_LABEL = 'bugsee-secure-modal-sheet';
+/**
+ * The two secure views' colours: nothing else on screen is either, so a
+ * device screenshot finds where each one really is, and a recording that
+ * shows either colour has leaked it.
+ */
+export const SECURE_MODAL_MAIN_COLOUR = '#FF00FF';
+export const SECURE_MODAL_SHEET_COLOUR = '#00FFFF';
+
+/**
+ * The Modal each `secure-modal*` scenario shows:
+ *  - `secure-modal`: `transparent` (overFullScreen on iOS).
+ *  - `secure-modal-translucent`: also `statusBarTranslucent`. With Android
+ *    edge-to-edge off, the dialog's content then starts under the status bar
+ *    while the activity root starts below it, so the two surfaces' origins
+ *    differ.
+ *  - `secure-modal-sheet`: an opaque `pageSheet` (iOS), whose content is
+ *    inset inside the window.
+ */
+export type SecureModalVariant = 'secure-modal' | 'secure-modal-translucent' | 'secure-modal-sheet';
 export const VH_OPEN_LABEL = 'vh-open-probe';
 
 function mark(message: string): void {
@@ -318,18 +339,18 @@ const MODAL_MAIN_RECT = { position: 'absolute', top: 120, left: 40, width: 160, 
 const MODAL_SHEET_RECT = { position: 'absolute', top: 80, left: 80, width: 200, height: 100 } as const;
 
 /**
- * secure-modal: a white `<BugseeSecure>` on the activity root and another
+ * secure-modal*: a coloured `<BugseeSecure>` on the activity root and another
  * inside a `<Modal>` (Android Dialog / iOS presented VC). Both must land in
  * display space for their own surface — the sheet must not be translated by
- * the activity root's origin alone.
+ * the activity root's origin alone. Markers are tagged with the scenario.
  */
-function SecureModalProbe({ nonce, setMoving }: ProbeProps) {
+function SecureModalProbe({ nonce, setMoving, variant }: ProbeProps & { variant: SecureModalVariant }) {
   const mainTwin = useRef<View>(null);
   const sheetTwin = useRef<View>(null);
 
   useLayoutEffect(() => {
-    mark(`secure-modal mounted t=${Date.now()} nonce=${nonce}`);
-  }, [nonce]);
+    mark(`${variant} mounted t=${Date.now()} nonce=${nonce}`);
+  }, [nonce, variant]);
 
   useEffect(() => {
     (async () => {
@@ -337,36 +358,42 @@ function SecureModalProbe({ nonce, setMoving }: ProbeProps) {
       const main = await measure(mainTwin.current);
       const sheet = await measure(sheetTwin.current);
       mark(
-        `secure-modal rect phase=both main=${main.x},${main.y},${main.w},${main.h} ` +
+        `${variant} rect phase=both main=${main.x},${main.y},${main.w},${main.h} ` +
           `sheet=${sheet.x},${sheet.y},${sheet.w},${sheet.h} ${screenLine()} nonce=${nonce}`,
       );
       await sleep(1500);
-      Bugsee.upload(`secure-modal-${nonce}`, '');
-      mark(`secure-modal uploaded t=${Date.now()} nonce=${nonce}`);
+      Bugsee.upload(`${variant}-${nonce}`, '');
+      mark(`${variant} uploaded t=${Date.now()} nonce=${nonce}`);
       await sleep(SETTLE_MS);
       setMoving(false);
-      mark(`secure-modal still t=${Date.now()} nonce=${nonce}`);
+      mark(`${variant} still t=${Date.now()} nonce=${nonce}`);
       await sleep(HOLD_MS);
       setMoving(true);
     })().catch((error: unknown) => {
-      mark(`secure-modal threw ${String(error)} nonce=${nonce}`);
+      mark(`${variant} threw ${String(error)} nonce=${nonce}`);
     });
-  }, [nonce, setMoving]);
+  }, [nonce, setMoving, variant]);
 
   return (
     <>
       <BugseeSecure
         accessible
         accessibilityLabel={SECURE_MODAL_MAIN_LABEL}
-        style={{ ...MODAL_MAIN_RECT, backgroundColor: '#FFFFFF' }}
+        style={{ ...MODAL_MAIN_RECT, backgroundColor: SECURE_MODAL_MAIN_COLOUR }}
       />
       <View ref={mainTwin} collapsable={false} pointerEvents="none" style={MODAL_MAIN_RECT} />
-      <Modal visible transparent animationType="none">
+      <Modal
+        visible
+        animationType="none"
+        transparent={variant !== 'secure-modal-sheet'}
+        statusBarTranslucent={variant === 'secure-modal-translucent'}
+        presentationStyle={variant === 'secure-modal-sheet' ? 'pageSheet' : undefined}
+      >
         <View style={styles.modalSheet} accessible accessibilityLabel="bugsee-secure-modal-backdrop">
           <BugseeSecure
             accessible
             accessibilityLabel={SECURE_MODAL_SHEET_LABEL}
-            style={{ ...MODAL_SHEET_RECT, backgroundColor: '#FFFFFF' }}
+            style={{ ...MODAL_SHEET_RECT, backgroundColor: SECURE_MODAL_SHEET_COLOUR }}
           />
           <View ref={sheetTwin} collapsable={false} pointerEvents="none" style={MODAL_SHEET_RECT} />
         </View>
@@ -453,9 +480,12 @@ export function PrivacyStage({
       {launched && scenario === 'secure-component' && (
         <SecureComponentProbe nonce={nonce} setMoving={setMoving} />
       )}
-      {launched && scenario === 'secure-modal' && (
-        <SecureModalProbe nonce={nonce} setMoving={setMoving} />
-      )}
+      {launched &&
+        (scenario === 'secure-modal' ||
+          scenario === 'secure-modal-translucent' ||
+          scenario === 'secure-modal-sheet') && (
+          <SecureModalProbe nonce={nonce} setMoving={setMoving} variant={scenario} />
+        )}
       {launched && scenario === 'view-tree' && (
         <BugseeE2EViewTreeProbe nonce={nonce} setMoving={setMoving} />
       )}

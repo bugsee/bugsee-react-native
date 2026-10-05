@@ -15,8 +15,8 @@
  * is scenarios/secure.tsx, `attributes`/`attributes-persist` are
  * scenarios/attributes.ts, `e2e-native-smoke` / `native-crash-*` are
  * scenarios/native.ts, `blackout`, `blackout-prelaunch`,
- * `secure-component`, `secure-modal` and `view-tree` are
- * scenarios/privacy.tsx, and
+ * `secure-component`, `secure-modal`, `secure-modal-translucent`,
+ * `secure-modal-sheet` and `view-tree` are scenarios/privacy.tsx, and
  * `exc-*` are scenarios/exceptions.tsx, `rp-*` are
  * scenarios/reporting.ts, `log-filter` is scenarios/log-filter.ts,
  * `breadcrumb-filter` is scenarios/breadcrumb-filter.ts,
