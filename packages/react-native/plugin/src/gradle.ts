@@ -356,8 +356,6 @@ export const HERMES_COMMAND_UNREWRITABLE =
 type LexState = 'code' | 'block' | "'''" | '"""';
 
 interface ScannedLine {
-  /** Where the line starts: in code, a block comment or a multi-line string. */
-  readonly start: LexState;
   /** The line's code with comments removed and each string reduced to `S`. */
   readonly code: string;
   /** A one-line string ran to the end of the line, or a block comment or multi-line string is still open. */
@@ -374,7 +372,6 @@ function scanLines(source: string): ScannedLine[] {
   const out: ScannedLine[] = [];
   let state: LexState = 'code';
   for (const line of source.split('\n')) {
-    const start = state;
     let code = '';
     let unclosed = false;
     let i = 0;
@@ -416,7 +413,7 @@ function scanLines(source: string): ScannedLine[] {
         i += 1;
       }
     }
-    out.push({ start, code, open: unclosed || state !== 'code' });
+    out.push({ code, open: unclosed || state !== 'code' });
   }
   return out;
 }
@@ -455,10 +452,8 @@ function rewriteHermesCommand(source: string): string {
   const scanned = scanLines(source);
   let found = false;
   let react = -1;
+  // A line inside a comment or multi-line string has no code to match.
   scanned.forEach((scan, i) => {
-    if (scan.start !== 'code') {
-      return;
-    }
     if (react < 0 && REACT_BLOCK.test(scan.code)) {
       react = i;
     }
@@ -478,7 +473,8 @@ function rewriteHermesCommand(source: string): string {
     lines[i] = `${match[1] as string}hermesCommand = ${HERMES_COMMAND_EXPR}`;
   });
   if (!found && react >= 0) {
-    const indent = /^[ \t]*/.exec(lines[react] as string)?.[0] ?? '';
+    const line = lines[react] as string;
+    const indent = line.slice(0, line.length - line.trimStart().length);
     lines.splice(react + 1, 0, `${indent}    hermesCommand = ${HERMES_COMMAND_EXPR}`);
   }
   return lines.join('\n');
@@ -504,13 +500,20 @@ function legacyHookEnd(lines: readonly string[], start: number): number | null {
     return null;
   }
   // The brace that matches afterEvaluate's, alone on a line at column 0.
-  const rest = lines.slice(j).join('\n');
-  const close = matchingBrace(rest, rest.indexOf('{'));
-  if (close === null) {
-    return null;
+  let depth = 0;
+  for (let k = j; k < lines.length; k += 1) {
+    for (const ch of lines[k] as string) {
+      if (ch === '{') {
+        depth += 1;
+      } else if (ch === '}') {
+        depth -= 1;
+      }
+    }
+    if (depth === 0) {
+      return lines[k] === '}' ? k : null;
+    }
   }
-  const closeLine = j + rest.slice(0, close).split('\n').length - 1;
-  return lines[closeLine] === '}' ? closeLine : null;
+  return null;
 }
 
 /**

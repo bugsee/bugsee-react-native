@@ -1063,6 +1063,7 @@ describe('hook leftovers never cost user code', () => {
       const next = ensureAppAppliesPlugin(`${parts.join('\n')}\n`, versions.sdk);
       expect([mask, withoutHook(next)]).toEqual([mask, withoutHook(plain)]);
       expect([mask, hookCount(next)]).toEqual([mask, 1]);
+      expect([mask, next.split('\n').filter((line) => line === applyLine).length]).toEqual([mask, 1]);
       expect([mask, next.includes(`${currentMarker}\n${applyLine}\n`)]).toEqual([mask, true]);
       expect([mask, next.includes(legacyMarker)]).toEqual([mask, false]);
       expect([mask, ensureAppAppliesPlugin(next, versions.sdk)]).toEqual([mask, next]);
