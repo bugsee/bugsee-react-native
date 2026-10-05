@@ -72,7 +72,8 @@ const withBugsee = (config, props) => {
     config = (0, config_plugins_1.withXcodeProject)(config, (cfg) => {
         (0, bundle_phase_1.rewriteProjectBundlePhase)(cfg.modResults, {
             uploadSourcemaps,
-            iosAppToken: iosToken,
+            // Only the upload reads it; the Archive action carries its own copy.
+            iosAppToken: uploadSourcemaps ? iosToken : undefined,
         });
         return cfg;
     });
