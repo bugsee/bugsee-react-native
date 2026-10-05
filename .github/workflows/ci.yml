@@ -18,7 +18,7 @@ env:
 
 jobs:
   js:
-    name: lint, typecheck, unit, mutation
+    name: lint, typecheck, unit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,10 +30,28 @@ jobs:
       - run: yarn lint
       - run: yarn typecheck
       - run: yarn test
-      # Fails the build under the threshold in stryker.config.json. The point
-      # is not the number: tests that assert nothing still pass, and this is
-      # what notices.
-      - run: yarn mutate
+
+  mutation:
+    # Fails the build under each config's break threshold. The point is not
+    # the number: tests that assert nothing still pass, and this is what
+    # notices. One job per gate, so the slowest gate sets the wall time
+    # rather than their sum. Each config sets ignoreStatic: a static mutant
+    # (a module-level constant) reruns the whole suite, and in scripts/ those
+    # were 64% of the mutants and 99% of the run time.
+    name: mutation (${{ matrix.gate }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gate: [src, scripts]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn stryker run stryker.${{ matrix.gate }}.json
 
   compat:
     name: rn compat (${{ matrix.react-native }})
