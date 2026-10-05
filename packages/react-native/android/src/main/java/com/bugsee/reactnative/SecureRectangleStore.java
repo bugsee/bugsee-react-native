@@ -58,6 +58,17 @@ import java.util.concurrent.ConcurrentHashMap;
  * that was open when the old runtime went away does not mask the display
  * for the rest of the process.
  *
+ * <p>The claim also gates every lane write a runtime makes: the module's
+ * publish ({@link #publishForRuntime}) and its tracker's origin writes
+ * ({@link #setOriginForRuntime}, {@link #forgetOriginForRuntime}, {@link
+ * #dropSurfaceIfEmptyForRuntime}). A write whose claim is no longer current
+ * is ignored, under the same lock as the claim. A reload can construct the
+ * new module before the old one is invalidated, and Fabric numbers React
+ * tags from 1 again, so the old runtime's late writes would otherwise put
+ * back a lane the claim dropped or clear the new runtime's lane on the same
+ * key, uncovering its Modal. The display size is not a runtime's state: it
+ * is recorded by whoever reads it.
+ *
  * <p>Every served rectangle is clamped to the display's real size once it
  * is known ({@link #setDisplayBounds}). The SDK's native video mask clamps a
  * rectangle's rows to the frame but not its right edge to a row, so a
@@ -300,6 +311,21 @@ final class SecureRectangleStore {
     }
 
     boolean publishOrLog(final int display, final int surface, @Nullable final int[] coordinates) {
+        return publishForRuntime(currentClaim(), display, surface, coordinates);
+    }
+
+    /**
+     * {@link #publishOrLog}, written by the module holding {@code claim}: ignored
+     * when a newer runtime has claimed the store since. What the TurboModule
+     * calls.
+     *
+     * @return whether {@code coordinates} was published
+     */
+    synchronized boolean publishForRuntime(final int claim, final int display, final int surface,
+            @Nullable final int[] coordinates) {
+        if (!isCurrentLocked(claim)) {
+            return false;
+        }
         try {
             set(display, surface, coordinates);
             return true;
@@ -343,6 +369,18 @@ final class SecureRectangleStore {
     }
 
     /**
+     * {@link #setOrigin(int, int, int, int)}, written by the module holding
+     * {@code claim}: ignored when a newer runtime has claimed the store since.
+     * An old runtime's dialog root must not place the new runtime's Modal.
+     */
+    synchronized void setOriginForRuntime(final int claim, final int display, final int surface,
+            final int originX, final int originY) {
+        if (isCurrentLocked(claim)) {
+            setOrigin(display, surface, originX, originY);
+        }
+    }
+
+    /**
      * Records {@code display}'s real size in pixels: what a fail-closed lane
      * serves, and what every rectangle is clamped to.
      */
@@ -356,8 +394,32 @@ final class SecureRectangleStore {
                 : previous.withBounds(new int[] { width, height }));
     }
 
-    /** The current JS runtime's claim; see {@link #claimRuntime}. */
+    /** The current JS runtime's claim; see {@link #claimRuntime}. Guarded by {@code this}. */
     private int runtime;
+
+    /**
+     * The claim a runtime holds now. For writers that belong to no runtime
+     * of their own (tests, single-runtime callers); a module writes with the
+     * claim {@link #claimRuntime} gave it.
+     */
+    synchronized int currentClaim() {
+        return runtime;
+    }
+
+    /**
+     * Whether {@code claim} is still the current runtime's. A stale one is
+     * logged at debug, numbers only. Caller holds {@code this}.
+     */
+    private boolean isCurrentLocked(final int claim) {
+        if (claim == runtime) {
+            return true;
+        }
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "secure write ignored: runtime claim " + claim
+                    + " is stale, current " + runtime);
+        }
+        return false;
+    }
 
     /**
      * A new JS runtime's module is starting: drops every surface but the main
@@ -395,7 +457,7 @@ final class SecureRectangleStore {
     }
 
     /** Drops every surface but the main one, on every display. */
-    void dropNonMainSurfaces() {
+    private void dropNonMainSurfaces() {
         for (final Integer display : byDisplay.keySet()) {
             update(display, previous -> {
                 if (previous.lanes.isEmpty()
@@ -409,6 +471,26 @@ final class SecureRectangleStore {
                 }
                 return previous.withLanes(nextLanes);
             });
+        }
+    }
+
+    /**
+     * {@link #forgetOrigin}, by the module holding {@code claim}: ignored when
+     * a newer runtime has claimed the store since.
+     */
+    synchronized void forgetOriginForRuntime(final int claim, final int surface) {
+        if (isCurrentLocked(claim)) {
+            forgetOrigin(surface);
+        }
+    }
+
+    /**
+     * {@link #dropSurfaceIfEmpty}, by the module holding {@code claim}: ignored
+     * when a newer runtime has claimed the store since.
+     */
+    synchronized void dropSurfaceIfEmptyForRuntime(final int claim, final int surface) {
+        if (isCurrentLocked(claim)) {
+            dropSurfaceIfEmpty(surface);
         }
     }
 

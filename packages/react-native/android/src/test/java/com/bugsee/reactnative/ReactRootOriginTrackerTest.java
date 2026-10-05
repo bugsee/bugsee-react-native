@@ -508,6 +508,33 @@ public class ReactRootOriginTrackerTest {
         assertArrayEquals(new int[] { 0, 0 }, tracker.cachedSurfaceOrigin(56));
     }
 
+    /**
+     * A tracker whose module has been replaced (a reload, before the old
+     * module is invalidated) must not place the new runtime's Modal with its
+     * own, old dialog root: the key may be the same React tag.
+     */
+    @Test
+    public void aTrackerWithAStaleClaimWritesNothingToTheNewRuntimesLane() {
+        final FakeResolver resolver = new FakeResolver();
+        resolver.answer = dialog(56, 0, 0);
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.setDisplayBounds(0, 1080, 2340);
+        final int old = store.claimRuntime();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, store, old);
+        final int current = store.claimRuntime();
+        store.publishForRuntime(current, 0, 56, new int[] { 208, 560, 608, 760 });
+        store.setOriginForRuntime(current, 0, 56, 100, 200);
+        final int[] before = store.snapshot(0);
+
+        tracker.watchSurfaceNow(56);
+        tracker.refresh();
+
+        assertArrayEquals(before, store.snapshot(0));
+        assertArrayEquals(new int[] { 308, 760, 708, 960 },
+                java.util.Arrays.copyOfRange(store.snapshot(0), 2, 6));
+    }
+
     @Test
     public void aWatchedSurfaceIsResolvedOnce() {
         final FakeResolver resolver = new FakeResolver();

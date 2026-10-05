@@ -74,6 +74,12 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     private final RootFinder rootFinder;
     private final SecureRectangleStore store;
 
+    /**
+     * The owning module's claim on {@link #store}: every lane write carries
+     * it, so a tracker whose runtime has been replaced writes nothing.
+     */
+    private final int claim;
+
     /** UI thread only: the activity React root, when found. */
     @Nullable
     private RootHandle root;
@@ -144,9 +150,9 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     private volatile boolean disposed;
 
     ReactRootOriginTracker(@NonNull final ReactApplicationContext context,
-            @NonNull final SecureRectangleStore store) {
+            @NonNull final SecureRectangleStore store, final int claim) {
         this(new ContextLifecycleSource(context), new ActivityRootFinder(context),
-                new ModalSurfaceResolver(context), store);
+                new ModalSurfaceResolver(context), store, claim);
     }
 
     /**
@@ -163,14 +169,25 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         this(lifecycle, rootFinder, surfaceKey -> null, store);
     }
 
-    /** Test seam, as above, with a fake {@link SurfaceResolver} too. */
+    /**
+     * Test seam, as above, with a fake {@link SurfaceResolver} too. Writes
+     * with whatever claim {@code store} holds now.
+     */
     ReactRootOriginTracker(@NonNull final LifecycleSource lifecycle,
             @NonNull final RootFinder rootFinder, @NonNull final SurfaceResolver surfaceResolver,
             @NonNull final SecureRectangleStore store) {
+        this(lifecycle, rootFinder, surfaceResolver, store, store.currentClaim());
+    }
+
+    /** Test seam, as above, writing with {@code claim}. */
+    ReactRootOriginTracker(@NonNull final LifecycleSource lifecycle,
+            @NonNull final RootFinder rootFinder, @NonNull final SurfaceResolver surfaceResolver,
+            @NonNull final SecureRectangleStore store, final int claim) {
         this.lifecycle = lifecycle;
         this.rootFinder = rootFinder;
         this.surfaceResolver = surfaceResolver;
         this.store = store;
+        this.claim = claim;
         lifecycle.addLifecycleEventListener(this);
         refreshSoon();
     }
@@ -332,7 +349,7 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         for (final Integer surfaceKey : new ArrayList<>(pendingSurfaces)) {
             if (!store.hasRectangles(surfaceKey)) {
                 pendingSurfaces.remove(surfaceKey);
-                store.dropSurfaceIfEmpty(surfaceKey);
+                store.dropSurfaceIfEmptyForRuntime(claim, surfaceKey);
                 continue;
             }
             watchSurfaceNow(surfaceKey);
@@ -370,10 +387,10 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             return;
         }
         if (store.hasRectangles(surfaceKey)) {
-            store.forgetOrigin(surfaceKey);
+            store.forgetOriginForRuntime(claim, surfaceKey);
             pendingSurfaces.add(surfaceKey);
         } else {
-            store.dropSurfaceIfEmpty(surfaceKey);
+            store.dropSurfaceIfEmptyForRuntime(claim, surfaceKey);
         }
     }
 
@@ -418,7 +435,7 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         // The activity root is the main surface whatever its own view id:
         // JS publishes everything outside a <Modal> there.
         final int surface = primary ? SecureRectangleStore.MAIN_SURFACE : handle.surfaceKey();
-        store.setOrigin(snapshot.displayId, surface, origin[0], origin[1]);
+        store.setOriginForRuntime(claim, snapshot.displayId, surface, origin[0], origin[1]);
         if (primary) {
             lastOrigin = origin;
         } else {

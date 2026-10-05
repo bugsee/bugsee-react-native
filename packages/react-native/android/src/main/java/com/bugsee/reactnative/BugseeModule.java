@@ -126,7 +126,7 @@ public class BugseeModule extends NativeBugseeSpec
             Log.d(TAG, "secure runtime claimed: dropped " + leftBehind
                     + " Modal surface(s) the previous runtime left");
         }
-        originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared());
+        originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared(), secureRuntime);
         // refreshSoon only posts to the UI thread, which is all the SDK's pull
         // thread may do.
         pullRefresher = originTracker::refreshSoon;
@@ -303,7 +303,10 @@ public class BugseeModule extends NativeBugseeSpec
             // the store serves them moved by that surface's display origin,
             // which the tracker keeps current. Re-read now too, in case the
             // window moved without a layout pass.
-            if (!SecureRectangleStore.shared().publishOrLog((int) display, surface, flat)) {
+            // Ignored once a newer runtime has claimed the store: this
+            // module's late writes (a reload's teardown) must not touch
+            // the next runtime's lanes, whose keys may be the same tags.
+            if (!SecureRectangleStore.shared().publishForRuntime(secureRuntime, (int) display, surface, flat)) {
                 return;
             }
             originTracker.refreshSoon();

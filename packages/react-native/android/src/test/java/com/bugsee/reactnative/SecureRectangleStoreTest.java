@@ -525,6 +525,84 @@ public class SecureRectangleStoreTest {
         assertFalse(store.hasSurface(MODAL_SURFACE));
     }
 
+    // ---- Writes from a runtime that is no longer current (PR 48) ---------
+
+    /**
+     * The old module is not invalidated yet when the new one claims: its late
+     * publish must not put back the Modal lane the claim dropped, which would
+     * fail closed over the whole display for the rest of the process.
+     */
+    @Test
+    public void aStaleNonEmptyWriteDoesNotRecreateADroppedLane() {
+        final SecureRectangleStore store = located();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        final int old = store.claimRuntime();
+        assertTrue(store.publishForRuntime(old, DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 }));
+        store.claimRuntime();
+        assertFalse(store.hasSurface(MODAL_SURFACE));
+        final int[] before = store.snapshot(DISPLAY);
+
+        assertFalse(store.publishForRuntime(old, DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 }));
+        store.setOriginForRuntime(old, DISPLAY, MODAL_SURFACE, 7, 9);
+
+        assertFalse(store.hasSurface(MODAL_SURFACE));
+        assertArrayEquals(before, store.snapshot(DISPLAY));
+    }
+
+    /**
+     * Fabric numbers React tags from 1 again after a reload, so the old
+     * runtime's unmount clears the same key the new runtime's Modal now
+     * publishes on. That empty write must not uncover the new Modal.
+     */
+    @Test
+    public void aStaleEmptyWriteDoesNotClearTheNewRuntimesLaneOnTheSameTag() {
+        final SecureRectangleStore store = located();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        final int old = store.claimRuntime();
+        store.publishForRuntime(old, DISPLAY, MODAL_SURFACE, new int[] { 1, 2, 3, 4 });
+        final int current = store.claimRuntime();
+        store.publishForRuntime(current, DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
+        store.setOriginForRuntime(current, DISPLAY, MODAL_SURFACE, 10, 20);
+        final int[] before = store.snapshot(DISPLAY);
+        assertArrayEquals(new int[] { 110, 220, 160, 270 }, rectanglesOf(before));
+
+        assertFalse(store.publishForRuntime(old, DISPLAY, MODAL_SURFACE, new int[0]));
+        store.forgetOriginForRuntime(old, MODAL_SURFACE);
+        store.dropSurfaceIfEmptyForRuntime(old, MODAL_SURFACE);
+        store.setOriginForRuntime(old, DISPLAY, MODAL_SURFACE, 500, 500);
+
+        assertArrayEquals(before, store.snapshot(DISPLAY));
+    }
+
+    @Test
+    public void theCurrentRuntimesWritesStillApply() {
+        final SecureRectangleStore store = located();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        store.claimRuntime();
+        final int current = store.claimRuntime();
+
+        assertTrue(store.publishForRuntime(current, DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 }));
+        assertArrayEquals(new int[] { 0, 0, WIDTH, HEIGHT }, rectanglesOf(store.snapshot(DISPLAY)));
+        store.setOriginForRuntime(current, DISPLAY, MODAL_SURFACE, 10, 20);
+        assertArrayEquals(new int[] { 110, 220, 160, 270 }, rectanglesOf(store.snapshot(DISPLAY)));
+        store.forgetOriginForRuntime(current, MODAL_SURFACE);
+        assertArrayEquals(new int[] { 0, 0, WIDTH, HEIGHT }, rectanglesOf(store.snapshot(DISPLAY)));
+        assertTrue(store.publishForRuntime(current, DISPLAY, MODAL_SURFACE, new int[0]));
+        assertEquals(0, store.snapshot(DISPLAY)[1]);
+        store.dropSurfaceIfEmptyForRuntime(current, MODAL_SURFACE);
+        assertFalse(store.hasSurface(MODAL_SURFACE));
+    }
+
+    /** A malformed write from the current runtime is still rejected, not applied. */
+    @Test
+    public void theCurrentRuntimesMalformedWriteIsStillRejected() {
+        final SecureRectangleStore store = located();
+        final int current = store.claimRuntime();
+
+        assertFalse(store.publishForRuntime(current, DISPLAY, MODAL_SURFACE, new int[] { 1, 2, 3 }));
+        assertFalse(store.hasSurface(MODAL_SURFACE));
+    }
+
     @Test
     public void anEmptySurfaceWithNoOriginServesNothing() {
         final SecureRectangleStore store = new SecureRectangleStore();
