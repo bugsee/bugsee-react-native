@@ -44,9 +44,7 @@ export function endpointFor(
     // Not "assume iOS": a wrong platform string would then produce an iOS
     // payload that the other SDK silently ignores, which looks like the
     // endpoint simply not working.
-    throw new Error(
-      `endpointFor expects "ios" or "android", got ${JSON.stringify(platform)}`,
-    );
+    throw new Error('endpointFor expects "ios" or "android"');
   }
 
   // Strip a trailing slash first, so a value ending in "/" does not become

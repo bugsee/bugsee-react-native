@@ -105,6 +105,37 @@ describe('the shared re-measure loop', () => {
     jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
 
     expect(healthy).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith('[Bugsee] a secure-region measurer threw', error);
+    // The class name only: the error's message is the app's, and may carry app data.
+    expect(warn).toHaveBeenCalledWith('[Bugsee] a secure-region measurer threw', 'Error');
+  });
+
+  // errorName runs inside the isolating catch; an error whose name getter
+  // throws must not escape it and abort the tick.
+  it('a measurer throwing an error with a throwing name still does not starve the others', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    class Weird extends Error {
+      override get name(): string {
+        throw this;
+      }
+    }
+    loop.addMeasurer(() => {
+      throw new Weird('s3cret');
+    });
+    const healthy = jest.fn();
+    loop.addMeasurer(healthy);
+
+    // Not `.not.toThrow()`: Jest would describe the thrown value by reading
+    // the same hostile `name`.
+    let escaped = false;
+    try {
+      jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
+    } catch {
+      escaped = true;
+    }
+    expect(escaped).toBe(false);
+
+    expect(healthy).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[Bugsee] a secure-region measurer threw', 'Error');
   });
 });
+

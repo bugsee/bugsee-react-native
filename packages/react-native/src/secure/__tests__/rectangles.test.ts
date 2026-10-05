@@ -77,4 +77,28 @@ describe('flattenSecureRectangles', () => {
       { x: 0, y: 0, width: -1, height: 1 },
     ])).toThrow(/\[1\]/);
   });
+
+  // The index and the field name say which rectangle is wrong; the number
+  // itself stays out of the message.
+  it('names the rectangle and the field, never the offending number', () => {
+    expect(() => flattenSecureRectangles([{ x: 0, y: 0, width: -7, height: 1 }])).toThrow(
+      new RangeError(
+        'secure rectangle [0] has a negative extent; a mirrored region would redact the wrong pixels',
+      ),
+    );
+    expect(() => flattenSecureRectangles([{ x: Number.NaN, y: 0, width: 1, height: 1 }])).toThrow(
+      new RangeError('secure rectangle [0] has a non-finite x'),
+    );
+    expect(() => flattenSecureRectangles([{ x: 2_147_483_600, y: 0, width: 100, height: 1 }])).toThrow(
+      new RangeError(
+        'secure rectangle [0] has a right that does not fit int32 and would wrap to a region elsewhere',
+      ),
+    );
+    expect(() => flattenSecureRectangles([], -3)).toThrow(
+      new RangeError(
+        'secure rectangle scale must be a positive, finite number; ' +
+          'a wrong scale redacts the wrong region while looking like it works',
+      ),
+    );
+  });
 });

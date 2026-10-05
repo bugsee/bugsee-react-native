@@ -149,9 +149,8 @@ function apply(name: FeedbackAppearanceName, color: string): void {
   }
   const parsed = parseFeedbackColor(color);
   if (parsed === undefined) {
-    throw new RangeError(
-      `Bugsee feedback appearance ${name} requires a hex color, got ${JSON.stringify(color)}`,
-    );
+    // The key only: the rejected text is the app's.
+    throw new RangeError(`Bugsee feedback appearance ${name} requires a hex color`);
   }
   const key = nativeKey(name, Platform.OS);
   NativeBugseeFeedback.setAppearanceColor(key, parsed.r, parsed.g, parsed.b, parsed.a);

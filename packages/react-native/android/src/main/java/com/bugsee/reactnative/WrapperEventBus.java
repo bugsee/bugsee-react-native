@@ -103,7 +103,7 @@ final class WrapperEventBus {
         try {
             current.onLifecycleEvent(name, reportId);
         } catch (final Throwable e) {
-            Log.w(TAG, "Failed to deliver lifecycle event " + name, e);
+            Log.w(TAG, "Failed to deliver lifecycle event " + name + ": " + e.getClass().getName());
         }
     }
 

@@ -195,21 +195,21 @@ describe('addNetworkEvent', () => {
     );
   });
 
-  it('names the stage that does not map', () => {
+  it('rejects a stage that does not map without echoing it', () => {
     expect(() =>
       Bugsee.addNetworkEvent({
         url: 'https://e2e.example/keep',
         method: 'GET',
         stage: 'done',
       }),
-    ).toThrow('Bugsee.addNetworkEvent stage must name a network stage, got done');
+    ).toThrow(new TypeError('Bugsee.addNetworkEvent stage must name a network stage'));
     expect(() =>
       Bugsee.addNetworkEvent({
         url: 'https://e2e.example/keep',
         method: 'GET',
         stage: 3 as never,
       }),
-    ).toThrow('Bugsee.addNetworkEvent stage must name a network stage, got 3');
+    ).toThrow(new TypeError('Bugsee.addNetworkEvent stage must name a network stage'));
     expect(native.addNetworkEvent).not.toHaveBeenCalled();
   });
 
@@ -300,27 +300,21 @@ describe('addNetworkEvent', () => {
         method: 'GET',
         responseCode: Number.NaN,
       }),
-    ).toThrow(
-      'Bugsee.addNetworkEvent responseCode must be a finite number, got NaN',
-    );
+    ).toThrow(new TypeError('Bugsee.addNetworkEvent responseCode must be a finite number'));
     expect(() =>
       Bugsee.addNetworkEvent({
         url: 'https://e2e.example/keep',
         method: 'GET',
         responseCode: Number.POSITIVE_INFINITY,
       }),
-    ).toThrow(
-      'Bugsee.addNetworkEvent responseCode must be a finite number, got Infinity',
-    );
+    ).toThrow(new TypeError('Bugsee.addNetworkEvent responseCode must be a finite number'));
     expect(() =>
       Bugsee.addNetworkEvent({
         url: 'https://e2e.example/keep',
         method: 'GET',
         responseCode: '201' as never,
       }),
-    ).toThrow(
-      'Bugsee.addNetworkEvent responseCode must be a finite number, got 201',
-    );
+    ).toThrow(new TypeError('Bugsee.addNetworkEvent responseCode must be a finite number'));
     expect(native.addNetworkEvent).not.toHaveBeenCalled();
   });
 

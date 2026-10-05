@@ -7,7 +7,7 @@
 import React from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import type { ExceptionOptions } from './options';
-import { encodeExceptionOptions } from './options';
+import { encodeExceptionOptions, exceptionOptionsMessage } from './options';
 import { markReported, reportHandled } from './report';
 
 export interface ErrorBoundaryFallbackProps {
@@ -54,7 +54,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     } catch (cause) {
       console.warn(
         '[Bugsee] ErrorBoundary options rejected; reporting without options',
-        cause,
+        exceptionOptionsMessage(cause),
       );
       options = undefined;
     }

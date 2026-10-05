@@ -250,7 +250,8 @@ describe('ErrorBoundary', () => {
 
     expect(warn).toHaveBeenCalledWith(
       '[Bugsee] ErrorBoundary options rejected; reporting without options',
-      expect.any(RangeError),
+      // The package's own validation message: field names only, never a value.
+      'ExceptionOptions.domain must be non-empty',
     );
     expect(markReported).toHaveBeenCalledWith(error);
     expect(reportHandled).toHaveBeenCalledWith(

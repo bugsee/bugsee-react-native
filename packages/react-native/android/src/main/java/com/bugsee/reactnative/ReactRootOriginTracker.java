@@ -179,7 +179,8 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
                         + " served=" + Arrays.toString(store.snapshot(snapshot.displayId)));
             }
         } catch (Throwable t) {
-            Log.w(TAG, "secure rectangles: could not read the React root's display origin", t);
+            Log.w(TAG, "secure rectangles: could not read the React root's display origin: "
+                    + t.getClass().getName());
         }
     }
 

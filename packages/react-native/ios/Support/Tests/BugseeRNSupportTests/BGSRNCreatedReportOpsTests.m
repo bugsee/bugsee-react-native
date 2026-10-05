@@ -119,6 +119,8 @@
   XCTAssertFalse([BGSRNCreatedReportOps addData:@"AQ==" name:@"fourth" toReport:_report error:&error]);
   XCTAssertEqual(error.code, BGSRNReportErrorAttachmentRejected);
   XCTAssertEqualObjects(BGSRNReportErrorWireCode(error), @"E_REPORT_ATTACHMENT_REJECTED");
+  // A literal now (the scanner requires one); BGSRNCreatedReportAttachmentMaxCount is 3.
+  XCTAssertEqualObjects(BGSRNErrorMessage(error), @"a created report holds at most 3 attachments");
   XCTAssertEqual(_report.attachments.count, 3u);
   NSArray *names = [BGSRNCreatedReportOps readReport:_report][@"attachmentNames"];
   XCTAssertFalse([names containsObject:@"fourth"]);

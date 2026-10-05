@@ -225,7 +225,7 @@ final class ReportHandlerBridge {
         } catch (final Throwable e) {
             // A dead bridge throws from the emit, on the SDK's thread. JS will
             // never answer, so answer for it now.
-            Log.w(TAG, "report handler " + handle.id + " could not reach JS", e);
+            Log.w(TAG, "report handler " + handle.id + " could not reach JS: " + e.getClass().getName());
             finish(handle, "no-handler");
         }
     }
@@ -274,7 +274,7 @@ final class ReportHandlerBridge {
         try {
             sdkCompletion.run();
         } catch (final Throwable e) {
-            Log.w(TAG, "report handler completion threw", e);
+            Log.w(TAG, "report handler completion threw: " + e.getClass().getName());
         }
     }
 
@@ -282,7 +282,7 @@ final class ReportHandlerBridge {
         try {
             timer.cancel();
         } catch (final Throwable e) {
-            Log.w(TAG, "report handler timer cancel threw", e);
+            Log.w(TAG, "report handler timer cancel threw: " + e.getClass().getName());
         }
     }
 
@@ -308,7 +308,7 @@ final class ReportHandlerBridge {
                 seconds = ((Number) value).intValue();
             }
         } catch (final Throwable e) {
-            Log.w(TAG, "could not read the report handler timeout option", e);
+            Log.w(TAG, "could not read the report handler timeout option: " + e.getClass().getName());
         }
         return ReportHandlerDeadlines.liveMs(seconds);
     }

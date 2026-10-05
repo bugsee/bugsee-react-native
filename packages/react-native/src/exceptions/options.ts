@@ -1,3 +1,5 @@
+import { errorName } from '../errorName';
+
 /**
  * Options for a handled JS exception (`Bugsee.logException`).
  *
@@ -19,6 +21,28 @@ export const EXCEPTION_DOMAIN_MAX_LENGTH = 256;
 
 const ALLOWED_KEYS = new Set(['domain', 'labels', 'includeVideo']);
 
+/** Every error `encodeExceptionOptions` threw: by identity, not by text. */
+const thrownHere = new WeakSet<Error>();
+
+function refuse(error: Error): never {
+  thrownHere.add(error);
+  throw error;
+}
+
+/**
+ * What a log line may say about `cause`: the message of an error
+ * `encodeExceptionOptions` threw -- this package's own validation text, which
+ * names fields and never values (`scripts/raw-messages.ts` checks every one
+ * of them) -- and only the class name of anything else. Never throws.
+ */
+export function exceptionOptionsMessage(cause: unknown): string {
+  // WeakSet.has, not instanceof: it never runs app code (a Proxy trap), never
+  // throws, and is false for a primitive, so this is safe inside the catch
+  // that calls it. A member is one of this file's own TypeError/RangeError
+  // instances, whose `message` is a plain data property.
+  return thrownHere.has(cause as Error) ? (cause as Error).message : errorName(cause);
+}
+
 /**
  * TypeError or RangeError naming the field and never its value; null for
  * undefined or {}.
@@ -30,13 +54,13 @@ export function encodeExceptionOptions(
     return null;
   }
   if (typeof options !== 'object' || options === null || Array.isArray(options)) {
-    throw new TypeError('ExceptionOptions must be a plain object');
+    refuse(new TypeError('ExceptionOptions must be a plain object'));
   }
 
   const record = options as Record<string, unknown>;
   for (const key of Object.keys(record)) {
     if (!ALLOWED_KEYS.has(key)) {
-      throw new TypeError(`ExceptionOptions has unknown key "${key}"`);
+      refuse(new TypeError(`ExceptionOptions has unknown key "${key}"`));
     }
   }
 
@@ -45,26 +69,26 @@ export function encodeExceptionOptions(
 
   if (record.domain !== undefined) {
     if (typeof record.domain !== 'string') {
-      throw new TypeError('ExceptionOptions.domain must be a string');
+      refuse(new TypeError('ExceptionOptions.domain must be a string'));
     }
     if (record.domain.length === 0) {
-      throw new RangeError('ExceptionOptions.domain must be non-empty');
+      refuse(new RangeError('ExceptionOptions.domain must be non-empty'));
     }
     if (record.domain.length > EXCEPTION_DOMAIN_MAX_LENGTH) {
-      throw new RangeError(
+      refuse(new RangeError(
         `ExceptionOptions.domain must be at most ${EXCEPTION_DOMAIN_MAX_LENGTH} characters`,
-      );
+      ));
     }
     out.domain = record.domain;
   }
 
   if (record.labels !== undefined) {
     if (!Array.isArray(record.labels)) {
-      throw new TypeError('ExceptionOptions.labels must be an array of strings');
+      refuse(new TypeError('ExceptionOptions.labels must be an array of strings'));
     }
     for (const label of record.labels) {
       if (typeof label !== 'string') {
-        throw new TypeError('ExceptionOptions.labels must be an array of strings');
+        refuse(new TypeError('ExceptionOptions.labels must be an array of strings'));
       }
     }
     out.labels = [...record.labels];
@@ -72,7 +96,7 @@ export function encodeExceptionOptions(
 
   if (record.includeVideo !== undefined) {
     if (typeof record.includeVideo !== 'boolean') {
-      throw new TypeError('ExceptionOptions.includeVideo must be a boolean');
+      refuse(new TypeError('ExceptionOptions.includeVideo must be a boolean'));
     }
     out.includeVideo = record.includeVideo;
   }

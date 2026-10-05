@@ -43,8 +43,12 @@ describe('setSecureRectangles', () => {
   // A non-integer display would reach a native `(int)` cast and silently
   // address display 0, redacting the wrong screen.
   it.each([1.5, Number.NaN, -1])('rejects the display index %p', (display) => {
-    expect(() => Bugsee.setSecureRectangles([], display))
-      .toThrow(/display/i);
+    expect(() => Bugsee.setSecureRectangles([], display)).toThrow(
+      new RangeError(
+        'display must be a non-negative integer; ' +
+          'a fractional index reaches the native cast and silently addresses display 0',
+      ),
+    );
     expect(native.setSecureRectangles).not.toHaveBeenCalled();
   });
 });

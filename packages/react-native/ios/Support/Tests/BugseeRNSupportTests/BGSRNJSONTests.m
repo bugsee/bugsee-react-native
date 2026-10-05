@@ -29,7 +29,7 @@
   XCTAssertNil(BGSRNJSONObject(json, &error), @"accepted %@", json);
   XCTAssertNotNil(error, @"no error for %@", json);
   XCTAssertEqualObjects(error.domain, BGSRNJSONErrorDomain);
-  XCTAssertGreaterThan(error.localizedDescription.length, 0u);
+  XCTAssertGreaterThan(BGSRNErrorMessage(error).length, 0u);
 }
 
 static BOOL IsCFBoolean(id value) {
@@ -268,6 +268,14 @@ static BOOL IsFloatNumber(id value) {
   XCTAssertEqual(error.code, BGSRNReportErrorBadArgument);
   XCTAssertEqualObjects(report.fakeSummary, @"old summary");
   XCTAssertEqualObjects(report.mutations, @[]);
+}
+
+/// The system parser's own diagnostic can repeat fragments of the text it
+/// choked on; the message is fixed instead.
+- (void)testMalformedTextIsAFixedMessage {
+  NSError *error = nil;
+  XCTAssertNil(BGSRNJSONObject(@"{\"a\": \"s3cret", &error));
+  XCTAssertEqualObjects(BGSRNErrorMessage(error), @"malformed JSON");
 }
 
 @end

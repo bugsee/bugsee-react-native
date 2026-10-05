@@ -253,7 +253,7 @@ final class DataRequestBridge {
             } catch (final Throwable e) {
                 // A dead bridge throws from the emit, on the SDK's thread. JS
                 // will never answer, so answer for it now.
-                Log.w(TAG, "data request " + id + " could not reach JS", e);
+                Log.w(TAG, "data request " + id + " could not reach JS: " + e.getClass().getName());
                 finish(armed, null, "sink-threw");
             }
         } catch (final Throwable e) {
@@ -265,7 +265,7 @@ final class DataRequestBridge {
             // completed through finish(): replying directly here and leaving
             // the entry behind would both leak it and let a later detach()
             // reply to the SDK a second time.
-            Log.w(TAG, "data request failed unexpectedly", e);
+            Log.w(TAG, "data request failed unexpectedly: " + e.getClass().getName());
             if (entry != null) {
                 finish(entry, null, "failed");
             } else {
@@ -340,7 +340,7 @@ final class DataRequestBridge {
         try {
             reply.onResult(payload);
         } catch (final Throwable e) {
-            Log.w(TAG, "data request reply threw", e);
+            Log.w(TAG, "data request reply threw: " + e.getClass().getName());
         }
     }
 
@@ -348,7 +348,7 @@ final class DataRequestBridge {
         try {
             timer.cancel();
         } catch (final Throwable e) {
-            Log.w(TAG, "data request timer cancel threw", e);
+            Log.w(TAG, "data request timer cancel threw: " + e.getClass().getName());
         }
     }
 

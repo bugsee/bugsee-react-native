@@ -107,7 +107,7 @@ final class SecureRectanglePulls {
         try {
             current.run();
         } catch (Throwable t) {
-            Log.w(TAG, "secure rectangles: could not schedule an origin refresh", t);
+            Log.w(TAG, "secure rectangles: could not schedule an origin refresh: " + t.getClass().getName());
         }
     }
 }

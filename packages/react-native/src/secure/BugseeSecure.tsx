@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import type { LayoutChangeEvent, ViewProps } from 'react-native';
 import { addMeasurer } from './measureLoop';
 import { clearOwner, setOwnerRectangles } from './registry';
+import { errorName } from '../errorName';
 
 export interface BugseeSecureProps extends ViewProps {
   /** While false, nothing is redacted and nothing is measured. Default true. */
@@ -50,7 +51,7 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
     const failed = (error: unknown): void => {
       if (!warned.current) {
         warned.current = true;
-        console.warn('[Bugsee] BugseeSecure could not measure', error);
+        console.warn('[Bugsee] BugseeSecure could not measure', errorName(error));
       }
     };
 

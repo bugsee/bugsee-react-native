@@ -27,9 +27,8 @@ export function isValidSeverityValue(value: unknown): value is IssueSeverity {
 
 export function validateSeverity(value: unknown): IssueSeverity {
   if (!isValidSeverityValue(value)) {
-    badArgument(
-      `severity must be an integer 1..5, got ${JSON.stringify(value)}`,
-    );
+    // Never the value itself: anything JSON allows can arrive here.
+    badArgument('severity must be an integer 1..5');
   }
   return value as IssueSeverity;
 }
@@ -117,9 +116,8 @@ export function normalizeFilePath(path: string): string {
   try {
     return decodeURIComponent(path.slice(FILE_URL_PREFIX.length));
   } catch {
-    return badArgument(
-      `path is not valid percent-encoding: ${JSON.stringify(path)}`,
-    );
+    // Never the path itself: a path is app data (it can name the user).
+    return badArgument('path is not valid percent-encoding');
   }
 }
 

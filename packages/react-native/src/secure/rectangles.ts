@@ -39,8 +39,8 @@ export function flattenSecureRectangles(
 ): number[] {
   if (!Number.isFinite(scale) || scale <= 0) {
     throw new RangeError(
-      `secure rectangle scale must be a positive, finite number, got ${String(scale)}; ` +
-        `a wrong scale redacts the wrong region while looking like it works`,
+      'secure rectangle scale must be a positive, finite number; ' +
+        'a wrong scale redacts the wrong region while looking like it works',
     );
   }
 
@@ -51,16 +51,14 @@ export function flattenSecureRectangles(
 
     for (const [name, value] of Object.entries({ x, y, width, height })) {
       if (!Number.isFinite(value)) {
-        throw new RangeError(
-          `secure rectangle [${index}] has a non-finite ${name}: ${String(value)}`,
-        );
+        throw new RangeError(`secure rectangle [${index}] has a non-finite ${name}`);
       }
     }
 
     if (width < 0 || height < 0) {
       throw new RangeError(
-        `secure rectangle [${index}] has a negative extent ` +
-          `(${width} x ${height}); a mirrored region would redact the wrong pixels`,
+        `secure rectangle [${index}] has a negative extent; ` +
+          'a mirrored region would redact the wrong pixels',
       );
     }
 
@@ -82,8 +80,8 @@ export function flattenSecureRectangles(
     for (const [name, value] of Object.entries({ left, top, right, bottom })) {
       if (value < INT32_MIN || value > INT32_MAX) {
         throw new RangeError(
-          `secure rectangle [${index}] has a ${name} of ${value}, ` +
-            `which does not fit int32 and would wrap to a region elsewhere`,
+          `secure rectangle [${index}] has a ${name} that does not fit int32 ` +
+            'and would wrap to a region elsewhere',
         );
       }
     }

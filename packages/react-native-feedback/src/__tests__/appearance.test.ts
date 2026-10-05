@@ -155,6 +155,12 @@ describe('appearance', () => {
     expect(native.setAppearanceColor).not.toHaveBeenCalled();
   });
 
+  it('names the key, never the rejected color', () => {
+    expect(() => {
+      appearance.backgroundColor = 's3cret';
+    }).toThrow(new RangeError('Bugsee feedback appearance backgroundColor requires a hex color'));
+  });
+
   it('refuses a bad color before calling native', () => {
     expect(() => {
       appearance.backgroundColor = 'red';

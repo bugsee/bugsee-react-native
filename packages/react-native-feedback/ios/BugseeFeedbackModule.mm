@@ -6,6 +6,7 @@
 #import <Bugsee/BugseeTheme.h>
 
 #include <exception>
+#include <typeinfo>
 
 // BugseeFeedback itself is imported by BugseeFeedbackClient.m. This file is
 // Objective-C++ with C++ modules off, so it cannot import that Swift module,
@@ -27,11 +28,12 @@ static BOOL FeedbackGuardedEmit(dispatch_block_t emit, NSString *what) {
       emit();
       return YES;
     } @catch (NSException *exception) {
-      NSLog(@"[Bugsee] %@ could not be emitted: %@", what, exception);
+      NSLog(@"[Bugsee] %@ could not be emitted: %@", what, NSStringFromClass(exception.class));
       return NO;
     }
   } catch (const std::exception &e) {
-    NSLog(@"[Bugsee] %@ could not be emitted: %s", what, e.what());
+    // The type only: what() is the exception's own message.
+    NSLog(@"[Bugsee] %@ could not be emitted: %s", what, typeid(e).name());
     return NO;
   } catch (...) {
     NSLog(@"[Bugsee] %@ could not be emitted: a non-std C++ exception", what);

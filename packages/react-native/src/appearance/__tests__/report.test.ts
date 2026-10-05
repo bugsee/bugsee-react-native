@@ -155,6 +155,12 @@ describe('report appearance mapping', () => {
     }).toThrow(RangeError);
     expect(native.setAppearanceColor).not.toHaveBeenCalled();
   });
+
+  it('names the key, never the rejected color', () => {
+    expect(() => {
+      Bugsee.appearance.backgroundColor = 's3cret';
+    }).toThrow(new RangeError('Bugsee appearance backgroundColor requires a hex color'));
+  });
 });
 
 describe('deleteCollectedDataOnDevice', () => {

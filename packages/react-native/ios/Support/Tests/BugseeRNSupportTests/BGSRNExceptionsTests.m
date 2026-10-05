@@ -81,4 +81,12 @@
   XCTAssertNil(opts.mergingRules);
 }
 
+/// Malformed options say so in the bridge's own words, never the system
+/// parser's, which can repeat the text it choked on.
+- (void)testMalformedOptionsAreTheBridgesOwnMessage {
+  NSError *error = nil;
+  XCTAssertNil([BGSRNExceptions loggingOptionsFromJSON:@"{\"domain\": \"s3cret" error:&error]);
+  XCTAssertEqualObjects(BGSRNErrorMessage(error), @"exception options are not a JSON object: malformed JSON");
+}
+
 @end

@@ -137,7 +137,9 @@ public final class FeedbackBridge {
 
     private static void checkComponent(final int value) {
         if (value < 0 || value > 255) {
-            throw new IllegalArgumentException("color component out of range: " + value);
+            // The range only: the component is the app's value, and this message
+            // reaches JS (a synchronous method) or a crash log.
+            throw new IllegalArgumentException("color component out of range 0..255");
         }
     }
 }

@@ -537,7 +537,7 @@ function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
     // falling through, so a `Task` built with any other `kind` is caught
     // here instead of silently being treated as a fiber to visit.
     if ((task as { kind: unknown }).kind !== 'visit') {
-      throw new Error(`unreachable view-tree task kind: ${String((task as { kind: unknown }).kind)}`);
+      throw new Error('unreachable view-tree task kind');
     }
     const { fiber, secure, depthRemaining, frame } = task;
 
@@ -685,7 +685,7 @@ function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
       // Exhaustive given `classify`'s declared return type: 'transparent' is
       // handled above, leaving only 'host' and 'composite'. Reached only if
       // a change to `classify` stops honouring that.
-      throw new Error(`unreachable view-tree fiber kind: ${String(kind)}`);
+      throw new Error('unreachable view-tree fiber kind');
     } catch {
       frame.truncated = true;
       continue;
