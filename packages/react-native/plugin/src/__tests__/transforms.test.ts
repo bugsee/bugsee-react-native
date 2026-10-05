@@ -481,7 +481,7 @@ describe('Archive post-action script', () => {
       const run = () =>
         spawnSync('/bin/sh', ['-c', DSYM_POST_ACTION_SCRIPT], {
           encoding: 'utf8',
-          env: { PATH: '/usr/bin:/bin', PROJECT_DIR: join(dir, 'ios'), NODE_BINARY: process.execPath },
+          env: { PATH: '/usr/bin:/bin', BUGSEE_ENDPOINT: 'http://127.0.0.1:9', PROJECT_DIR: join(dir, 'ios'), NODE_BINARY: process.execPath },
         });
       expect(run().status).toBe(9);
 
@@ -511,7 +511,7 @@ describe('Archive post-action script', () => {
       writeFileSync(join(dir, 'ios/.xcode.env'), `export NODE_BINARY=${process.execPath}\n`);
       const result = spawnSync('/bin/sh', ['-c', DSYM_POST_ACTION_SCRIPT], {
         encoding: 'utf8',
-        env: { PATH: '/usr/bin:/bin', PROJECT_DIR: join(dir, 'ios') },
+        env: { PATH: '/usr/bin:/bin', BUGSEE_ENDPOINT: 'http://127.0.0.1:9', PROJECT_DIR: join(dir, 'ios') },
       });
       // Node was found: the failure is the missing CLI, not a missing node.
       expect(result.status).toBe(1);
