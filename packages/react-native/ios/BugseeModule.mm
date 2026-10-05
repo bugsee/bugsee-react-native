@@ -282,7 +282,15 @@ static NSMapTable<NSNumber *, UIView *> *BGSRNModalHosts(void) {
 
 /// The mounted `<Modal>` host component view with React tag `surface`, among
 /// the windows the SDK walks. Fabric sets each component view's `tag` to its
-/// React tag (`RCTComponentViewRegistry`). nil when there is none.
+/// React tag (`RCTComponentViewRegistry`), but a window's tags are not a
+/// React namespace: a native view can carry the same integer. So the walk
+/// matches the class AND the tag, and a wrong-class view with that tag does
+/// not end it (`BGSRNTaggedView`), where `viewWithTag:` stopped at the first.
+/// Not the Fabric registry: a module reaches it only through
+/// `viewRegistry_DEPRECATED` (bridgeless backs it with the surface
+/// presenter's `findComponentViewWithTag_DO_NOT_USE_DEPRECATED:`), and the
+/// pull path that calls this is the wrapper's, which has no module. nil when
+/// there is none.
 static UIView *_Nullable BGSRNModalHost(NSInteger surface) {
   static Class modalHostClass;
   static dispatch_once_t once;
@@ -297,13 +305,12 @@ static UIView *_Nullable BGSRNModalHost(NSInteger surface) {
   if (cached != nil && cached.tag == surface && cached.window != nil) {
     return cached;
   }
-  UIWindow *keyWindow = BGSRNSdkKeyWindow();
-  for (UIWindow *window in BGSRNSdkWalkedWindows(keyWindow)) {
-    UIView *found = [window viewWithTag:surface];
-    if (found != nil && [found isKindOfClass:modalHostClass]) {
-      [BGSRNModalHosts() setObject:found forKey:key];
-      return found;
-    }
+  UIView *found = BGSRNTaggedView(BGSRNSdkWalkedWindows(BGSRNSdkKeyWindow()), surface, ^BOOL(UIView *view) {
+    return [view isKindOfClass:modalHostClass];
+  }, BGSRNModalHostSearchBudget);
+  if (found != nil) {
+    [BGSRNModalHosts() setObject:found forKey:key];
+    return found;
   }
   [BGSRNModalHosts() removeObjectForKey:key];
   return nil;

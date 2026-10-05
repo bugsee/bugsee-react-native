@@ -2,6 +2,8 @@
 
 const NSUInteger BGSRNReactRootSearchBudget = 2000;
 
+const NSUInteger BGSRNModalHostSearchBudget = 10000;
+
 UIWindow *BGSRNSdkKeyWindow(void) {
   UIApplication *application = UIApplication.sharedApplication;
   if (application == nil) {
@@ -99,4 +101,19 @@ NSValue *BGSRNReactRootOrigin(UIWindow *keyWindow, NSArray<UIWindow *> *windows,
   // `frame.origin`, NOT the window's position in the screen's coordinate
   // space: the SDK adds exactly this (BGSCaptureViewHierarchyEngine.m:335-336).
   return [NSValue valueWithCGPoint:window.frame.origin];
+}
+
+UIView *BGSRNTaggedView(NSArray<UIWindow *> *windows, NSInteger tag, BOOL (^matches)(UIView *), NSUInteger budget) {
+  for (UIWindow *window in windows) {
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:window];
+    NSUInteger head = 0;
+    while (head < queue.count && head < budget) {
+      UIView *view = queue[head++];
+      if (view.tag == tag && matches(view)) {
+        return view;
+      }
+      [queue addObjectsFromArray:view.subviews];
+    }
+  }
+  return nil;
 }

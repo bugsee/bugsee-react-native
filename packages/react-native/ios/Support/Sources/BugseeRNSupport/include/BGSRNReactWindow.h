@@ -50,4 +50,23 @@ FOUNDATION_EXPORT NSValue *_Nullable BGSRNReactRootOrigin(UIWindow *_Nullable ke
                                                           NSArray<UIWindow *> *windows,
                                                           BOOL (^isReactRoot)(UIView *view));
 
+/// How many views `BGSRNTaggedView` inspects per window before moving on to
+/// the next. A `<Modal>` host sits inside the React tree, deeper than a root,
+/// so this is larger than `BGSRNReactRootSearchBudget`; it still keeps a
+/// pathological native hierarchy from costing the main thread on every pull.
+FOUNDATION_EXPORT const NSUInteger BGSRNModalHostSearchBudget;
+
+/// The first view whose `tag` is `tag` and that `matches` accepts, searching
+/// each of `windows` in order, breadth-first, over at most `budget` views per
+/// window. A view with that tag that `matches` rejects does not end the
+/// search, in its window or any other: Fabric sets a component view's `tag`
+/// to its React tag, but it does not own every `tag` in a window, so a native
+/// view (or another runtime's) can carry the same small integer. Unlike
+/// `-[UIView viewWithTag:]`, which returns the first view with the tag
+/// whatever it is. nil when none.
+FOUNDATION_EXPORT UIView *_Nullable BGSRNTaggedView(NSArray<UIWindow *> *windows,
+                                                    NSInteger tag,
+                                                    BOOL (^matches)(UIView *view),
+                                                    NSUInteger budget);
+
 NS_ASSUME_NONNULL_END
