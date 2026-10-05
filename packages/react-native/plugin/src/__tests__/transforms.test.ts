@@ -858,3 +858,80 @@ describe('react.hermesCommand: comments, strings and continuations', () => {
     );
   });
 });
+
+describe('lexer and react block, exactly', () => {
+  const rewritten = `    ${HERMES_COMMAND}`;
+  const rewrite = (source: string): string => beforeHook(ensureAppAppliesPlugin(source, null));
+  const applied = 'apply plugin: "com.bugsee.android.gradle"';
+
+  it('returns to code after a multi-line string or a block comment closing at column 0', () => {
+    expect(rewrite('def doc = """\nx\n"""\nreact {\n    hermesCommand = "a"\n}\n')).toContain(`react {\n${rewritten}\n}`);
+    expect(rewrite("def doc = '''\nx\n'''\nreact {\n}\n")).toContain(`react {\n${rewritten}\n}`);
+    expect(rewrite('/* c\n*/\nreact {\n    hermesCommand = "a"\n}\n')).toContain(`react {\n${rewritten}\n}`);
+  });
+
+  it('reads a one-line triple-quoted value as a value, and a comment as whitespace', () => {
+    expect(rewrite('react {\n    hermesCommand = """x"""\n}\n')).toContain(`react {\n${rewritten}\n}`);
+    expect(rewrite('react/* c */{\n}\n')).toContain(`react/* c */{\n${rewritten}\n}`);
+    // Groovy reads a comment as whitespace: these are two tokens, not the setting.
+    const split = 'react {\n    hermes/* x */Command = "y"\n}\n';
+    expect(rewrite(split)).toContain(`react {\n${rewritten}\n    hermes/* x */Command = "y"\n}`);
+  });
+
+  it('does not close a block comment on its own opening slash', () => {
+    expect(rewrite('/*/\nreact {\n*/\n')).not.toContain(HERMES_COMMAND);
+  });
+
+  it('finds a react block on the first line, and only the first react block', () => {
+    expect(ensureAppAppliesPlugin(`react {\n}\n${applied}\n`, null).startsWith(`react {\n${rewritten}\n}\n`)).toBe(true);
+    const two = rewrite('react {\n}\nreact {\n}\n');
+    expect(two).toContain(`react {\n${rewritten}\n}\nreact {\n}`);
+    expect(two.match(/hermesCommand =/g)).toHaveLength(1);
+  });
+
+  it('looks past whitespace-only lines for a continuation, and handles a setting on the last line', () => {
+    expect(() => ensureAppAppliesPlugin('react {\n    hermesCommand = file("x")\n    \n        .absolutePath\n}\n', null)).toThrow(
+      HERMES_COMMAND_UNREWRITABLE,
+    );
+    expect(ensureAppAppliesPlugin(`${applied}\nreact {\n    hermesCommand = "x"`, null)).toContain(`react {\n${rewritten}`);
+  });
+});
+
+describe('hook lines, exactly', () => {
+  const marker = '// bugsee-sourcemaps: debug ids and source-map upload for release bundles (@bugsee/react-native).';
+  const legacyMarker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
+  const hook = (() => {
+    const fresh = ensureAppAppliesPlugin('x\n', null);
+    return fresh.slice(fresh.indexOf(marker)).trimEnd();
+  })();
+  const apply = hook.split('\n')[1] as string;
+  const applied = 'apply plugin: "com.bugsee.android.gradle"';
+
+  it('drops a marker that ends the file, keeps a comment that only names the script', () => {
+    const next = ensureAppAppliesPlugin(`${applied}\nx()\n// see scripts/bugsee-sourcemaps.gradle\n${marker}`, null);
+    expect(next).toContain('x()\n// see scripts/bugsee-sourcemaps.gradle\n');
+    expect(next.split('\n').filter((line) => line === marker)).toHaveLength(1);
+    expect(next.endsWith(`${hook}\n`)).toBe(true);
+  });
+
+  it('takes an indented apply line after the marker as the hook', () => {
+    const source = `${applied}\nx()\n${marker}\n    ${apply.trim()}\ny()\n`;
+    const next = ensureAppAppliesPlugin(source, null);
+    expect(next.startsWith(`${applied}\nx()\n${hook}\ny()\n`)).toBe(true);
+  });
+
+  it('keeps the hook where the first complete one was', () => {
+    const legacy = `${legacyMarker}\nafterEvaluate {\n    old()\n}`;
+    const source = `${applied}\na()\n${legacy}\nb()\n${hook}\nc()\n`;
+    expect(ensureAppAppliesPlugin(source, null).startsWith(`${applied}\na()\n${hook}\nb()\nc()\n`)).toBe(true);
+    // A hook first in the file stays first.
+    const first = `${hook}\na()\n${hook}\n${applied}\n`;
+    expect(ensureAppAppliesPlugin(first, null).startsWith(`${hook}\na()\n${applied}\n`)).toBe(true);
+  });
+
+  it('does not take a legacy marker followed by a code line with a trailing comment as a hook', () => {
+    const user = 'x() // note\nafterEvaluate {\n    println("mine")\n}';
+    const next = ensureAppAppliesPlugin(`${applied}\n${legacyMarker}\n${user}\n`, null);
+    expect(next).toContain(`${applied}\n${user}\n`);
+  });
+});
