@@ -47,6 +47,26 @@ running, or a token the backend rejects — without that being an error worth
 throwing on. Capture comes up asynchronously, so poll `getStatus()` rather
 than assuming a resolved `launch` means recording has begun.
 
+## Expo config plugin
+
+```json
+{
+  "expo": {
+    "plugins": [
+      ["@bugsee/react-native", { "appToken": { "ios": "<ios token>", "android": "<android token>" } }]
+    ]
+  }
+}
+```
+
+`appToken` is one string for both platforms, or one token per platform. On
+`expo prebuild` the plugin wires the Bugsee Gradle plugin, the Hermes debug-id
+hooks and the iOS dSYM Archive action. Release builds then upload their source
+maps, and Archives upload their dSYMs, whenever a real token is set.
+`uploadSourcemaps: false` and `uploadSymbols: false` turn those uploads off.
+A committed `ios/` (`project.pbxproj` and the shared scheme) or
+`android/bugsee.properties` carries the token.
+
 ## Licence
 
 Commercial. See [LICENSE](./LICENSE) and https://www.bugsee.com/terms.

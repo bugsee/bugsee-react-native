@@ -40,7 +40,8 @@ export interface BugseePluginProps {
    * post-action and the bundle phase (BUGSEE_PLUGIN_APP_TOKEN), so an
    * Archive from the Xcode GUI works without a shell environment;
    * BUGSEE_APP_TOKEN, BUGSEE_TOKEN_IOS and credentials.json still apply
-   * when it is not set.
+   * when it is not set. A committed `ios/` (project.pbxproj and the shared
+   * scheme) or `android/bugsee.properties` carries the token.
    */
   appToken?: AppTokenOption;
   /**
@@ -159,7 +160,8 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   config = withXcodeProject(config, (cfg) => {
     rewriteProjectBundlePhase(cfg.modResults as unknown as XcodeProjectLike, {
       uploadSourcemaps,
-      iosAppToken: iosToken,
+      // Only the upload reads it; the Archive action carries its own copy.
+      iosAppToken: uploadSourcemaps ? iosToken : undefined,
     });
     return cfg;
   });
