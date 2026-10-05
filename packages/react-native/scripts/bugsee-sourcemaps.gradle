@@ -1,8 +1,10 @@
 // Bugsee: debug ids and source-map upload for React Native release bundles.
 //
 // Apply it at the end of the app module's build.gradle. The Expo config
-// plugin writes that line; a bare app adds
-//   apply from: file("../../node_modules/@bugsee/react-native/scripts/bugsee-sourcemaps.gradle")
+// plugin writes that line; a bare app resolves the package through node, so
+// a hoisted or nested install works too (README, "Android source maps"):
+//   def bugseeDir = new File(["node", "--print", "require.resolve('@bugsee/react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile()
+//   apply from: new File(new File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle")
 //
 // After each createBundle<Variant>JsAndAssets:
 // - Hermes on: hermesc must have run through hermesc-preserve-js.sh

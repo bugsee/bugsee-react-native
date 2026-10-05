@@ -787,4 +787,40 @@ describe('preserve directory paths', () => {
       path.join('b', 'intermediates', 'bugsee-sourcemaps', 'x'),
     );
   });
+
+  it('takes the last generated/assets, as the Gradle hook does, when one sits above the build directory', () => {
+    expect(
+      preserveDirFor('/srv/generated/assets/app/android/app/build/generated/assets/react/release/index.android.bundle', path.posix),
+    ).toBe('/srv/generated/assets/app/android/app/build/intermediates/bugsee-sourcemaps/react/release');
+    // The bundle right in generated/assets has no <x> to map: its own directory, as in Gradle.
+    expect(preserveDirFor('/b/generated/assets/index.android.bundle', path.posix)).toBe('/b/generated/assets');
+  });
+
+  it('the shell wrapper takes the last generated/assets too', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-preserve-dir-'));
+    try {
+      const assets = path.join(root, 'generated/assets/app/build/generated/assets/react/release');
+      fs.mkdirSync(assets, { recursive: true });
+      const packaged = path.join(assets, 'index.android.bundle');
+      fs.writeFileSync(packaged, 'console.log("bugsee-fixture")\n');
+      const hermesc = path.join(root, 'hermesc');
+      fs.writeFileSync(hermesc, '#!/bin/sh\nexit 0\n');
+      fs.chmodSync(hermesc, 0o755);
+      const saved = cp.spawnSync(
+        path.join(__dirname, '..', 'hermesc-preserve-js.sh'),
+        ['-w', '-emit-binary', '-out', `${packaged}.hbc`, packaged],
+        { env: { ...process.env, BUGSEE_REAL_HERMESC: hermesc }, encoding: 'utf8' },
+      );
+      expect(saved.status).toBe(0);
+      const preserved = path.join(
+        root,
+        'generated/assets/app/build/intermediates/bugsee-sourcemaps/react/release/index.android.bundle.bugsee-js-source',
+      );
+      expect(fs.existsSync(preserved)).toBe(true);
+      expect(fs.existsSync(path.join(root, 'intermediates'))).toBe(false);
+      expect(preserveDirFor(packaged)).toBe(path.dirname(preserved));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
