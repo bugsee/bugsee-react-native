@@ -26,7 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * a drop of the same message both update that entry with {@code compute}, so
  * a credit is never appended to a deque the map has already dropped. The map
  * itself is capped at {@link #MAX_MESSAGES}, the same bound as iOS
- * {@code BGSRNEchoNoteCap}.
+ * {@code BGSRNEchoNoteCap}, and so is the number of credits one message
+ * holds. Nothing here grows past that bound.
  */
 final class ConsoleEchoDedup {
 
@@ -35,7 +36,8 @@ final class ConsoleEchoDedup {
 
     /**
      * Distinct messages remembered at once. Matches iOS {@code BGSRNEchoNoteCap}.
-     * A further distinct message drops the oldest key.
+     * A further distinct message drops the oldest key. It is also the most
+     * credits one message holds: a further note of it drops its oldest credit.
      */
     static final int MAX_MESSAGES = 32;
 
@@ -71,6 +73,9 @@ final class ConsoleEchoDedup {
             final ArrayDeque<Long> next = queue == null ? new ArrayDeque<>() : queue;
             discardExpired(next, now);
             next.addLast(expiry);
+            while (next.size() > MAX_MESSAGES) {
+                next.removeFirst();
+            }
             return next;
         });
         syncOrder(message);
