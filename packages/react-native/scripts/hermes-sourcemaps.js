@@ -336,7 +336,7 @@ function uploadComposedSourceMap({
     say('source map upload skipped: uploadSourcemaps is off');
     return { status: 'skipped', reason: 'disabled' };
   }
-  if (/Debug/.test(configuration ?? '') && !allowDebug) {
+  if (String(configuration).includes('Debug') && !allowDebug) {
     say('source map upload skipped: Debug configuration (set BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true to upload)');
     return { status: 'skipped', reason: 'debug' };
   }
