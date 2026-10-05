@@ -64,6 +64,9 @@ components.variants << new FakeVariant(name: 'release', outputs: [output('1.0', 
 // A flavor declared with a capital: AGP keeps the variant name, the task name is the same.
 components.variants << new FakeVariant(name: 'StagingRelease', outputs: [output('5.0', 5)])
 components.variants << new FakeVariant(name: 'customRelease', outputs: [output('6.0', 6)])
+// Starts with an "i": under the tr_TR locale this build runs in, String.toUpperCase()
+// would give "İnternalRelease", while RN's task name title-cases it to "InternalRelease".
+components.variants << new FakeVariant(name: 'internalRelease', outputs: [output('7.0', 70)])
 extensions.add('androidComponents', components)
 
 apply from: 'scripts/bugsee-sourcemaps.gradle'
@@ -71,7 +74,8 @@ apply from: 'scripts/bugsee-sourcemaps.gradle'
 apply from: 'scripts/bugsee-sourcemaps.gradle'
 
 def bundle = { String variant, boolean hermes, String bundleDir = null ->
-    def cap = variant.substring(0, 1).toUpperCase() + variant.substring(1)
+    // As React Native names the task: replaceFirstChar { it.titlecase() }.
+    def cap = String.valueOf(Character.toTitleCase(variant.charAt(0))) + variant.substring(1)
     tasks.register("createBundle\${cap}JsAndAssets", FakeBundle) { t ->
         t.bundleAssetName.set('index.android.bundle')
         t.jsBundleDir.set(layout.buildDirectory.dir(bundleDir ?: "generated/assets/react/\${variant}"))
@@ -91,6 +95,7 @@ bundle('release', false)
 bundle('StagingRelease', false)
 // Outside generated/assets: no preserve directory to map to, and none needed with Hermes off.
 bundle('customRelease', false, 'custom/js')
+bundle('internalRelease', false)
 `;
 
 // Records argv, then does what finish would to the files it was given.
@@ -121,9 +126,13 @@ function argOf(argv, name) {
     fs.copyFileSync(HOOK, path.join(dir, 'scripts', 'bugsee-sourcemaps.gradle'));
     fs.writeFileSync(path.join(dir, 'scripts', 'hermes-sourcemaps.js'), FAKE_FINISH);
     fs.writeFileSync(path.join(dir, 'settings.gradle'), "rootProject.name = 'bugsee-hook-fixture'\n");
-    fs.writeFileSync(path.join(dir, 'gradle.properties'), 'org.gradle.jvmargs=-Xmx512m\n');
+    // The whole build runs under the Turkish locale, where toUpperCase() is not what RN does.
+    fs.writeFileSync(
+      path.join(dir, 'gradle.properties'),
+      'org.gradle.jvmargs=-Xmx512m -Duser.language=tr -Duser.country=TR\n',
+    );
     fs.writeFileSync(path.join(dir, 'build.gradle'), BUILD_GRADLE);
-    for (const variant of ['freeRelease', 'paidRelease', 'brokenRelease', 'noversionRelease', 'release', 'StagingRelease']) {
+    for (const variant of ['freeRelease', 'paidRelease', 'brokenRelease', 'noversionRelease', 'release', 'StagingRelease', 'internalRelease']) {
       fs.mkdirSync(assets(variant), { recursive: true });
       fs.writeFileSync(path.join(assets(variant), 'index.android.bundle'), 'bundle');
       fs.writeFileSync(path.join(assets(variant), 'index.android.bundle.bugsee-recompile'), 'stale copy');
@@ -155,6 +164,7 @@ function argOf(argv, name) {
         'createBundleReleaseJsAndAssets',
         'createBundleStagingReleaseJsAndAssets',
         'createBundleCustomReleaseJsAndAssets',
+        'createBundleInternalReleaseJsAndAssets',
       ],
       { encoding: 'utf8', timeout: 10 * 60 * 1000 },
     );
@@ -183,6 +193,12 @@ function argOf(argv, name) {
     // No version anywhere: empty, and the upload gate says so.
     expect(argOf(callFor('noversionRelease'), '--app-version')).toBe('');
     expect(argOf(callFor('noversionRelease'), '--app-build')).toBe('');
+  });
+
+  it('keys the variant locale-insensitively: an "i" flavor under tr_TR still finds its version', () => {
+    expect(`${result.stdout}${result.stderr}`).toContain('createBundleInternalReleaseJsAndAssets');
+    expect(argOf(callFor('internalRelease'), '--app-version')).toBe('7.0');
+    expect(argOf(callFor('internalRelease'), '--app-build')).toBe('70');
   });
 
   it('finishes a Hermes bundle from the preserved JS and cleans every preserve file', () => {
@@ -225,7 +241,7 @@ function argOf(argv, name) {
     expect(calls.some((argv) => argOf(argv, '--bundle').includes('/react/brokenRelease/'))).toBe(false);
     // Only that task failed; --continue ran the other six, each once although
     // the script was applied twice.
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(7);
     expect(output.match(/compiled the bundle with Hermes/g)).toHaveLength(1);
   });
 
