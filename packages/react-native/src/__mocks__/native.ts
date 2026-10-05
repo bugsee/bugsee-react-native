@@ -17,6 +17,7 @@ const EMPTY_REPORT_SNAPSHOT = {
 /** What a freshly reset mock resolves, for the calls that return something. */
 /** Synchronous returns. A Promise default would make a boolean read back a Promise. */
 const SYNC_RETURNS: Record<string, unknown> = {
+  noteConsoleEcho: true,
   setAppearanceColor: true,
   getAppearanceColor: '',
 };
@@ -198,7 +199,7 @@ export const native = {
 
   setLogFilterEnabled: jest.fn<void, [boolean]>(),
   replyLogFilter: jest.fn<void, [string, string | null]>(),
-  noteConsoleEcho: jest.fn<void, [string]>(),
+  noteConsoleEcho: jest.fn<boolean, [string]>(() => true),
 
   /**
    * `level` is the name (`debug`, `info`, `warning`, `error`, `fatal`).

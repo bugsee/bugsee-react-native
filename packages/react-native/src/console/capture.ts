@@ -55,6 +55,11 @@ function loggingHost(): NativeLoggingHost {
  * call it will forward, the hook's message is claimed before the original
  * hook runs. That is before logcat is written, so the claim exists when the
  * echo is filtered, even if the channel line has not been noted yet.
+ *
+ * `noteConsoleEcho` returns a value, so codegen runs it here on the JS
+ * thread, and the native credit exists before the original hook writes
+ * the line. A `void` method would be queued, and the SDK's logcat reader
+ * could filter the echo first.
  */
 function installNativeHook(): void {
   const host = loggingHost();
@@ -66,8 +71,9 @@ function installNativeHook(): void {
     if (expectingEcho) {
       expectingEcho = false;
       claimEcho(message);
-      // Before the original hook writes logcat or os_log, so the native
-      // drop is armed when the echo is captured. Not a second log route.
+      // Synchronous, before the original hook writes logcat or os_log, so
+      // the native drop is armed when the echo is captured. Not a second
+      // log route. The returned value carries nothing.
       try {
         NativeBugsee.noteConsoleEcho(message);
       } catch {

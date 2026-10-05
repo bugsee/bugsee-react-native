@@ -478,10 +478,16 @@ public class BugseeModule extends NativeBugseeSpec
     /**
      * Arms the logcat drop for one console echo. Does not record a line.
      * {@code Bugsee.log} does not call this, so it does not arm a drop.
+     *
+     * <p>Returns {@code true}. The return keeps the call on the JS thread:
+     * codegen queues a {@code void} method onto the native modules thread,
+     * and the SDK's logcat reader could then filter the echo before this
+     * credit existed. The console hook calls this before it writes the line.
      */
     @Override
-    public void noteConsoleEcho(final String message) {
+    public boolean noteConsoleEcho(final String message) {
         LogFilterBridge.shared().noteEcho(message);
+        return true;
     }
 
     @Override

@@ -125,6 +125,39 @@ public class ConsoleEchoDedupTest {
     }
 
     /**
+     * One message logged many times before any echo is read holds at most
+     * {@link ConsoleEchoDedup#MAX_MESSAGES} credits, the same bound as the
+     * number of keys. The newest credits are the ones kept.
+     */
+    @Test
+    public void oneMessageHoldsAtMostTheCapInCredits() {
+        for (int i = 0; i < ConsoleEchoDedup.MAX_MESSAGES + 8; i++) {
+            dedup.note("burst");
+        }
+        for (int i = 0; i < ConsoleEchoDedup.MAX_MESSAGES; i++) {
+            assertTrue("credit " + i, echo("burst"));
+        }
+        assertFalse(echo("burst"));
+        assertEquals(0, dedup.size());
+        assertEquals(0, dedup.orderSize());
+    }
+
+    /** The cap drops the oldest credit of the message, so the window follows the newest note. */
+    @Test
+    public void theCreditCapDropsTheOldestCredit() {
+        dedup.note("burst");
+        now += 1_000L;
+        for (int i = 0; i < ConsoleEchoDedup.MAX_MESSAGES; i++) {
+            dedup.note("burst");
+        }
+        now += ConsoleEchoDedup.WINDOW_MS - 500L;
+        for (int i = 0; i < ConsoleEchoDedup.MAX_MESSAGES; i++) {
+            assertTrue("credit " + i, echo("burst"));
+        }
+        assertFalse(echo("burst"));
+    }
+
+    /**
      * {@code dropEcho} may remove the deque while {@code note} is about to
      * append. The new credit has to land in the map, so the next echo is
      * still dropped.

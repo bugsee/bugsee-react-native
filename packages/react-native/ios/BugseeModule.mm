@@ -1297,8 +1297,12 @@ RCT_EXPORT_MODULE(Bugsee)
   }
 }
 
-- (void)noteConsoleEcho:(NSString *)message {
+/// `NSNumber`, not void: codegen queues a void method on the method queue,
+/// and the SDK could capture the console echo before the note existed. The
+/// console hook calls this on the JS thread before it writes the line.
+- (NSNumber *)noteConsoleEcho:(NSString *)message {
   BGSRNNoteConsoleEcho(message);
+  return @YES;
 }
 
 

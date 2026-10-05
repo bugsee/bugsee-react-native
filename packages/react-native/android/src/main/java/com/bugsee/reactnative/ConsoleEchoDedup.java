@@ -25,8 +25,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Credits for one message live in the map under that message. A note and
  * a drop of the same message both update that entry with {@code compute}, so
  * a credit is never appended to a deque the map has already dropped. The map
- * itself is capped at {@link #MAX_MESSAGES}, the same bound as iOS
- * {@code BGSRNEchoNoteCap}.
+ * holds at most {@link #MAX_MESSAGES} messages, and one message at most
+ * {@link #MAX_MESSAGES} credits, so at most 32 x 32 credits in all. That is
+ * looser than iOS, where {@code BGSRNEchoNoteCap} caps all notes at 32. Every
+ * cap fails toward a second filter call, never a lost line: a burst of more
+ * than 32 identical lines, or 32 newer distinct ones, before the logcat reader
+ * drains them lets the oldest echoes through.
  */
 final class ConsoleEchoDedup {
 
@@ -34,8 +38,9 @@ final class ConsoleEchoDedup {
     static final long WINDOW_MS = 2_000L;
 
     /**
-     * Distinct messages remembered at once. Matches iOS {@code BGSRNEchoNoteCap}.
-     * A further distinct message drops the oldest key.
+     * Distinct messages remembered at once. A further distinct message drops
+     * the oldest key. It is also the most
+     * credits one message holds: a further note of it drops its oldest credit.
      */
     static final int MAX_MESSAGES = 32;
 
@@ -71,6 +76,9 @@ final class ConsoleEchoDedup {
             final ArrayDeque<Long> next = queue == null ? new ArrayDeque<>() : queue;
             discardExpired(next, now);
             next.addLast(expiry);
+            while (next.size() > MAX_MESSAGES) {
+                next.removeFirst();
+            }
             return next;
         });
         syncOrder(message);

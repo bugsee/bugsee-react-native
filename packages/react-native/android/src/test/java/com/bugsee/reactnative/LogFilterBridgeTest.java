@@ -304,6 +304,86 @@ public class LogFilterBridgeTest {
     }
 
     /**
+     * The note is synchronous, so it precedes the logcat write. The echo and
+     * the channel line then race on two threads (the SDK's logcat reader and
+     * the native modules thread). With the echo filtered first, it is still
+     * dropped and the channel line is the one line asked.
+     */
+    @Test
+    public void anEchoFilteredBeforeTheChannelLineIsDroppedAndTheChannelLineAsked() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.setEnabled(true);
+        bridge.noteEcho("dedup-raw n");
+
+        final RecordingCallback echoCallback = new RecordingCallback();
+        bridge.route(echo("dedup-raw n"), echoCallback);
+        assertEquals(0, sink.ids.size());
+        assertEquals(1, echoCallback.runs);
+        assertTrue(echoCallback.sawNull);
+
+        final RecordingCallback channelCallback = new RecordingCallback();
+        bridge.route(new SourcedLog(LogSource.Custom, null, "dedup-raw n"), channelCallback);
+        assertEquals(1, sink.ids.size());
+        assertEquals(0, channelCallback.runs);
+    }
+
+    /**
+     * Two identical console calls are two lines. Each notes before its own
+     * write, so two credits exist. Both channel lines are asked, in any
+     * interleaving with the echoes, and both echoes are dropped. A third
+     * equal logcat line has no credit and is kept.
+     */
+    @Test
+    public void twoIdenticalConsoleLinesAreAskedTwiceAndBothEchoesDropped() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.setEnabled(true);
+        bridge.noteEcho("same");
+        bridge.noteEcho("same");
+
+        final RecordingCallback firstEcho = new RecordingCallback();
+        bridge.route(echo("same"), firstEcho);
+        bridge.route(new SourcedLog(LogSource.Custom, null, "same"), new RecordingCallback());
+        bridge.route(new SourcedLog(LogSource.Custom, null, "same"), new RecordingCallback());
+        final RecordingCallback secondEcho = new RecordingCallback();
+        bridge.route(echo("same"), secondEcho);
+
+        assertEquals(2, sink.ids.size());
+        assertTrue(firstEcho.sawNull);
+        assertTrue(secondEcho.sawNull);
+
+        final RecordingCallback third = new RecordingCallback();
+        bridge.route(echo("same"), third);
+        assertEquals(3, sink.ids.size());
+        assertEquals(0, third.runs);
+    }
+
+    /**
+     * Why the note must reach native before the write: an echo filtered
+     * before its note has no credit, so it is an ordinary
+     * {@code ReactNativeJS} line and is asked. With {@code noteConsoleEcho}
+     * queued as a {@code void} call this was the WOD_LX1 double filter.
+     */
+    @Test
+    public void anEchoFilteredBeforeItsNoteIsKept() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.setEnabled(true);
+
+        final RecordingCallback echoCallback = new RecordingCallback();
+        bridge.route(echo("late note"), echoCallback);
+        bridge.noteEcho("late note");
+
+        assertEquals(1, sink.ids.size());
+        assertEquals(0, echoCallback.runs);
+    }
+
+    private static SourcedLog echo(final String message) {
+        return new SourcedLog(LogSource.LogCat, ConsoleEchoDedup.JS_CONSOLE_TAG, message);
+    }
+
+    /**
      * No user callback, and no sink. The noted logcat echo is dropped. A
      * different tag and the Custom line are returned, not dropped.
      */

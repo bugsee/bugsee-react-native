@@ -6,7 +6,11 @@
  * must still keep the line. `duration` stays 90.
  *
  * Marker, from scenarios/console-dedup.ts:
- *   BUGSEE_E2E dedup-result nonce=<n> calls=1
+ *   BUGSEE_E2E dedup-result nonce=<n> calls=<c> rawCalls=<r>
+ *
+ * `calls` counts the marker line (its iOS echo is a stamped stderr line),
+ * `rawCalls` the non-marker `dedup-raw` line (its iOS Debug echo is a raw
+ * stdio line). Each must be filtered once.
  */
 import {
   type PulledBundle,
@@ -64,6 +68,7 @@ describeDevice(`console dedup on ${TARGET_NAME} (${RELEASE ? 'release' : 'debug'
   let run: Run;
   let nonce: string;
   let bundles: PulledBundle[];
+  let result: { calls: number; rawCalls: number };
 
   beforeAll(async () => {
     if (ON_IOS) {
@@ -81,15 +86,18 @@ describeDevice(`console dedup on ${TARGET_NAME} (${RELEASE ? 'release' : 'debug'
     report('banner', run.banner.text.trim());
     report('dev', run.dev);
 
-    must(
+    const line = must(
       await log.waitFor(
-        new RegExp(`BUGSEE_E2E dedup-result nonce=${nonce} calls=1`),
+        new RegExp(`BUGSEE_E2E dedup-result nonce=${nonce} calls=\\d+ rawCalls=\\d+`),
         30_000,
         run.launched.index,
       ),
-      'the filter running once',
+      'the filter result marker',
       run.start,
     );
+    const counts = /calls=(\d+) rawCalls=(\d+)/.exec(line.text);
+    result = { calls: Number(counts?.[1]), rawCalls: Number(counts?.[2]) };
+    report('filter calls', result);
 
     bundles = await awaitBundles(1);
     report('bundle files', bundles.map(b => b.file));
@@ -133,6 +141,7 @@ describeDevice(`console dedup on ${TARGET_NAME} (${RELEASE ? 'release' : 'debug'
   });
 
   it('one console.log is filtered once and kept as Custom', () => {
+    expect(result.calls).toBe(1);
     expect(bundles).toHaveLength(1);
     const events = logEventsOf(bundles[0]!);
     const marker = `BUGSEE_E2E dedup-line ${nonce}`;
@@ -145,5 +154,18 @@ describeDevice(`console dedup on ${TARGET_NAME} (${RELEASE ? 'release' : 'debug'
     expect(event.level).toBe(3);
     const doubled = events.filter(event => messageOf(event).includes(`${marker} #2`));
     expect(doubled).toHaveLength(0);
+  });
+
+  // The raw-stdio echo: in an iOS Debug build this line reaches the SDK both
+  // through the console patch and as an unstamped stderr line.
+  it('a non-marker console.log is filtered once and kept once', () => {
+    expect(result.rawCalls).toBe(1);
+    expect(bundles).toHaveLength(1);
+    const events = logEventsOf(bundles[0]!);
+    const raw = `dedup-raw ${nonce}`;
+    const matches = events.filter(event => messageOf(event).includes(raw));
+    report('raw matches', matches);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.message).toBe(`${raw} #1`);
   });
 });
