@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.HERMES_COMMAND_UNREWRITABLE = void 0;
 exports.ensureMavenCentral = ensureMavenCentral;
 exports.ensureGradlePluginDeclared = ensureGradlePluginDeclared;
 exports.ensureAppAppliesPlugin = ensureAppAppliesPlugin;
@@ -111,9 +112,10 @@ const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
  * Off removes only the block this plugin inserted. Maven Hermes and
  * `libreactnative.so` are pre-stripped; the comment does not claim those
  * two are symbolicated. The Hermes preserve command and the finish hook
- * are the JS source-map path, so they are written either way. After the
- * debug id is final the hook uploads the composed map, unless
- * `bugseeUploadSourcemaps=false` or no real token is configured.
+ * are the JS source-map path, so they are written either way. The hook
+ * applies the package's scripts/bugsee-sourcemaps.gradle, which injects the
+ * debug id and uploads the composed map unless `bugseeUploadSourcemaps=false`
+ * or no real token is configured.
  */
 function ensureAppAppliesPlugin(appBuildGradle, ndkVersion) {
     let next = appBuildGradle;
@@ -305,130 +307,114 @@ function removeInsertedSymbolTable(source) {
     return kept.join('\n');
 }
 const HERMES_COMMAND_EXPR = 'new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/scripts/hermesc-preserve-js.sh"';
-const PRESERVE_REFUSAL = 'Bugsee preserve directory is the packaged asset directory';
-/** First line of the finish hook; marks it for replacement. */
-const FINISH_HOOK_MARKER = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
-const HERMES_FINISH_HOOK = [
-    FINISH_HOOK_MARKER,
-    '// finish injects the debug id into the composed map and the bytecode, then',
-    '// uploads that map (hermes-sourcemaps.js runs the CLI) when android/bugsee.properties (or',
-    '// BUGSEE_APP_TOKEN) holds a real token. bugseeUploadSourcemaps=false in',
-    '// gradle.properties, or BUGSEE_UPLOAD_SOURCEMAPS=false, turns the upload off;',
-    '// a placeholder or missing token skips it with one line. A failed upload',
-    '// warns and the build goes on.',
-    'def bugseeHermesSourcemaps = new File(new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/hermes-sourcemaps.js")',
-    'def bugseeComposeSourceMaps = new File(new File(["node", "--print", "require.resolve(\'react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/compose-source-maps.js")',
-    'afterEvaluate {',
-    "    def bugseeUploadSourcemaps = String.valueOf(findProperty('bugseeUploadSourcemaps') ?: 'true')",
-    "    def bugseeAppVersion = String.valueOf(android.defaultConfig.versionName ?: '')",
-    "    def bugseeAppBuild = String.valueOf(android.defaultConfig.versionCode ?: '')",
-    '    def bugseeProperties = rootProject.file("bugsee.properties")',
-    '    tasks.matching { task ->',
-    '        task.name.startsWith("createBundle") && task.name.endsWith("JsAndAssets")',
-    '    }.configureEach { bundleTask ->',
-    '        bundleTask.doLast {',
-    '            def asset = bundleTask.bundleAssetName.get()',
-    '            def assetDir = bundleTask.jsBundleDir.get().asFile',
-    '            // Same rewrite as hermesc-preserve-js.sh: assets are packaged, intermediates are not.',
-    '            def preserveDir = new File(assetDir.absolutePath.replace(',
-    '                "/generated/assets/",',
-    '                "/intermediates/bugsee-sourcemaps/"',
-    '            ))',
-    '            if (preserveDir.absolutePath == assetDir.absolutePath) {',
-    `                throw new GradleException("${PRESERVE_REFUSAL}")`,
-    '            }',
-    '            def preserved = new File(preserveDir, asset + ".bugsee-js-source")',
-    '            def hermescNote = new File(preserveDir, asset + ".bugsee-hermesc")',
-    '            def packagedCopies = [',
-    '                new File(assetDir, asset + ".bugsee-js-source"),',
-    '                new File(assetDir, asset + ".bugsee-hermesc"),',
-    '                new File(assetDir, asset + ".bugsee-recompile"),',
-    '                new File(assetDir, asset + ".bugsee-recompile.map"),',
-    '            ]',
-    '            try {',
-    '                if (!bundleTask.hermesEnabled.get()) {',
-    '                    // hermesc did not run, so a preserve file here is an earlier build\'s.',
-    '                    bundleTask.logger.lifecycle("bugsee: Hermes is off for ${bundleTask.name}; no debug id is injected")',
-    '                } else if (!preserved.isFile()) {',
-    '                    bundleTask.logger.warn("bugsee: ${bundleTask.name} ran hermesc without hermesc-preserve-js.sh " +',
-    '                        "(check react.hermesCommand); no debug id is injected and no source map is uploaded")',
-    '                } else {',
-    '                    def composed = new File(bundleTask.jsSourceMapsDir.get().asFile, asset + ".map")',
-    '                    def interDir = bundleTask.jsIntermediateSourceMapsDir.get().asFile',
-    '                    def hook = bugseeHermesSourcemaps',
-    '                    def compose = bugseeComposeSourceMaps',
-    '                    def cmd = []',
-    '                    cmd.addAll(bundleTask.nodeExecutableAndArgs.get())',
-    '                    cmd.addAll([',
-    '                        hook.absolutePath, "finish",',
-    '                        "--bundle", preserved.absolutePath,',
-    '                        "--bytecode", new File(assetDir, asset).absolutePath,',
-    '                        "--composed", composed.absolutePath,',
-    '                        "--intermediate", new File(interDir, asset + ".compiler.map").absolutePath,',
-    '                        "--packager", new File(interDir, asset + ".packager.map").absolutePath,',
-    '                        "--compose", compose.absolutePath,',
-    '                        "--platform", "android",',
-    '                        "--properties", bugseeProperties.absolutePath,',
-    '                        "--upload-sourcemaps", bugseeUploadSourcemaps,',
-    '                        "--app-version", bugseeAppVersion,',
-    '                        "--app-build", bugseeAppBuild,',
-    '                    ])',
-    '                    if (hermescNote.isFile()) {',
-    '                        cmd.add("--hermesc")',
-    '                        cmd.add(hermescNote.getText("UTF-8").trim())',
-    '                    }',
-    '                    bundleTask.hermesFlags.get().each { flag ->',
-    '                        cmd.add("--hermes-arg")',
-    '                        cmd.add(flag)',
-    '                    }',
-    '                    // Gradle 9 removed Project.exec.',
-    '                    bundleTask.services.get(org.gradle.process.ExecOperations).exec {',
-    '                        commandLine cmd',
-    '                    }',
-    '                }',
-    '            } finally {',
-    '                packagedCopies.each { copy -> copy.delete() }',
-    '                // This build\'s only: a later build must never recompile them.',
-    '                preserved.delete()',
-    '                hermescNote.delete()',
-    '            }',
-    '        }',
-    '    }',
-    '}',
+const SOURCEMAPS_SCRIPT = 'scripts/bugsee-sourcemaps.gradle';
+/** First line of the hook this plugin writes. */
+const SOURCEMAPS_HOOK_MARKER = '// bugsee-sourcemaps: debug ids and source-map upload for release bundles (@bugsee/react-native).';
+/**
+ * The hook is the package's own Gradle script, so the bare example and Expo
+ * apps run the same code: inject after compose, upload, fail the bundle
+ * task when Hermes skipped hermesc-preserve-js.sh.
+ */
+const SOURCEMAPS_HOOK = [
+    SOURCEMAPS_HOOK_MARKER,
+    `apply from: new File(new File(["node", "--print", "require.resolve('@bugsee/react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile(), "${SOURCEMAPS_SCRIPT}")`,
 ].join('\n');
+/** First line of the inline hook earlier versions wrote. */
+const LEGACY_HOOK_MARKER = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
+exports.HERMES_COMMAND_UNREWRITABLE = 'react.hermesCommand in android/app/build.gradle spans several lines, so @bugsee/react-native ' +
+    'cannot point it at scripts/hermesc-preserve-js.sh. Put it on one line, or delete it, and prebuild again.';
+/** Brackets and quotes all close, and the text does not end in an operator. */
+function completeExpression(text) {
+    let depth = 0;
+    let quote = null;
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (quote !== null) {
+            if (ch === '\\') {
+                i += 1;
+            }
+            else if (ch === quote) {
+                quote = null;
+            }
+        }
+        else if (ch === '"' || ch === "'") {
+            quote = ch;
+        }
+        else if ('([{'.includes(ch)) {
+            depth += 1;
+        }
+        else if (')]}'.includes(ch)) {
+            depth -= 1;
+        }
+    }
+    return depth === 0 && quote === null && !/[-+*/,([.?:&|=]$/.test(text.trimEnd());
+}
+const HERMES_COMMAND = /^([ \t]*)hermesCommand(\s*=|\.set\()(.*)$/gm;
+/**
+ * Points react.hermesCommand at hermesc-preserve-js.sh. A one-line
+ * `hermesCommand = …` or `hermesCommand.set(…)` is rewritten; a value that
+ * continues on the next line is refused, since rewriting one line of it
+ * would break the file. A react block without the setting gets one. With
+ * no react block the file is left alone, and the bundle task fails with
+ * the fix instead.
+ */
 function rewriteHermesCommand(source) {
-    return source.replace(/^([ \t]*)hermesCommand\s*=\s*.+$/gm, (line, indent) => {
+    let found = false;
+    const rewritten = source.replace(HERMES_COMMAND, (line, indent, form, rest) => {
+        found = true;
         if (line.includes('hermesc-preserve-js.sh')) {
             return line;
         }
+        const value = form === '.set(' ? `(${rest}` : rest;
+        if (!completeExpression(value)) {
+            throw new Error(exports.HERMES_COMMAND_UNREWRITABLE);
+        }
         return `${indent}hermesCommand = ${HERMES_COMMAND_EXPR}`;
     });
+    if (found) {
+        return rewritten;
+    }
+    const react = /^([ \t]*)react\s*\{[ \t]*$/m.exec(rewritten);
+    if (!react) {
+        return rewritten;
+    }
+    const at = react.index + react[0].length;
+    return `${rewritten.slice(0, at)}\n${react[1]}    hermesCommand = ${HERMES_COMMAND_EXPR}${rewritten.slice(at)}`;
 }
 /**
- * The hook runs from its marker comment to the brace closing the first
- * `afterEvaluate {` after it. A hook an earlier version wrote (without the
- * upload, or still calling `project.exec`, which Gradle 9 removed) is
- * replaced whole. Returns null when there is no complete hook.
+ * Where the hook sits: this version's two lines, or an earlier version's
+ * inline hook, from its marker to the brace closing the first
+ * `afterEvaluate {` after it. Either is replaced whole. Null when there is
+ * no complete hook.
  */
-function finishHookExtent(source) {
-    const start = source.indexOf(FINISH_HOOK_MARKER);
-    if (start < 0) {
+function hookExtent(source) {
+    const current = source.indexOf(SOURCEMAPS_HOOK_MARKER);
+    if (current >= 0) {
+        const line = source.indexOf(SOURCEMAPS_SCRIPT, current);
+        if (line < 0) {
+            return null;
+        }
+        const eol = source.indexOf('\n', line);
+        return { start: current, end: eol < 0 ? source.length : eol };
+    }
+    const legacy = source.indexOf(LEGACY_HOOK_MARKER);
+    if (legacy < 0) {
         return null;
     }
-    const open = source.indexOf('afterEvaluate {', start);
+    const open = source.indexOf('afterEvaluate {', legacy);
     if (open < 0) {
         return null;
     }
     const close = matchingBrace(source, source.indexOf('{', open));
-    return close === null ? null : { start, end: close + 1 };
+    return close === null ? null : { start: legacy, end: close + 1 };
 }
 function ensureHermesHooks(source) {
     const rewritten = rewriteHermesCommand(source);
-    const extent = finishHookExtent(rewritten);
+    const extent = hookExtent(rewritten);
     if (extent) {
-        return rewritten.slice(0, extent.start) + HERMES_FINISH_HOOK + rewritten.slice(extent.end);
+        return rewritten.slice(0, extent.start) + SOURCEMAPS_HOOK + rewritten.slice(extent.end);
     }
-    return `${rewritten.replace(/\s*$/, '')}\n\n${HERMES_FINISH_HOOK}\n`;
+    return `${rewritten.replace(/\s*$/, '')}\n\n${SOURCEMAPS_HOOK}\n`;
 }
 const UPLOADS_OFF_MARKER = '// bugsee-upload-symbols-off:';
 const UPLOADS_OFF_BLOCK = [

@@ -32,7 +32,7 @@ expect android/build.gradle "id 'com.bugsee.android.gradle' version '$plugin_ver
 expect android/app/build.gradle 'apply plugin: "com.bugsee.android.gradle"'
 expect android/app/build.gradle "implementation \"com.bugsee:bugsee-android-ndk:$sdk_version\""
 expect android/app/build.gradle 'scripts/hermesc-preserve-js.sh'
-expect android/app/build.gradle '"--upload-sourcemaps", bugseeUploadSourcemaps,'
+expect android/app/build.gradle 'scripts/bugsee-sourcemaps.gradle")'
 expect android/app/build.gradle "debugSymbolLevel 'SYMBOL_TABLE'"
 expect android/bugsee.properties 'No app token configured.'
 expect ios/BugseeExpo.xcodeproj/project.pbxproj 'scripts/bugsee-xcode.sh'

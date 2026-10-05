@@ -76,6 +76,11 @@ export interface BugseePluginProps {
   autoLaunch?: boolean;
 }
 
+export const APP_GRADLE_NOT_GROOVY =
+  '@bugsee/react-native edits android/app/build.gradle in Groovy; a Kotlin build.gradle.kts app module is not ' +
+  'supported. Apply scripts/bugsee-sourcemaps.gradle and set react.hermesCommand by hand (see the package README, ' +
+  '"Android source maps").';
+
 const TOKEN_SHAPE = /^[0-9A-Za-z._-]+$/;
 
 /** The token for one platform, or undefined. Refuses anything that is not token-shaped. */
@@ -117,6 +122,9 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   });
 
   config = withAppBuildGradle(config, (cfg) => {
+    if (cfg.modResults.language !== 'groovy') {
+      throw new Error(APP_GRADLE_NOT_GROOVY);
+    }
     cfg.modResults.contents = ensureSymbolUploads(
       ensureAppAppliesPlugin(cfg.modResults.contents, ndkVersion),
       uploadSymbols,

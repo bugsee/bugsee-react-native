@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.APP_GRADLE_NOT_GROOVY = void 0;
 exports.platformToken = platformToken;
 exports.listSchemes = listSchemes;
 const node_fs_1 = require("node:fs");
@@ -13,6 +14,9 @@ const manifest_1 = require("./manifest");
 const native_versions_1 = require("./native-versions");
 const properties_1 = require("./properties");
 const scheme_1 = require("./scheme");
+exports.APP_GRADLE_NOT_GROOVY = '@bugsee/react-native edits android/app/build.gradle in Groovy; a Kotlin build.gradle.kts app module is not ' +
+    'supported. Apply scripts/bugsee-sourcemaps.gradle and set react.hermesCommand by hand (see the package README, ' +
+    '"Android source maps").';
 const TOKEN_SHAPE = /^[0-9A-Za-z._-]+$/;
 /** The token for one platform, or undefined. Refuses anything that is not token-shaped. */
 function platformToken(appToken, platform) {
@@ -43,6 +47,9 @@ const withBugsee = (config, props) => {
         return cfg;
     });
     config = (0, config_plugins_1.withAppBuildGradle)(config, (cfg) => {
+        if (cfg.modResults.language !== 'groovy') {
+            throw new Error(exports.APP_GRADLE_NOT_GROOVY);
+        }
         cfg.modResults.contents = (0, gradle_1.ensureSymbolUploads)((0, gradle_1.ensureAppAppliesPlugin)(cfg.modResults.contents, ndkVersion), uploadSymbols);
         return cfg;
     });

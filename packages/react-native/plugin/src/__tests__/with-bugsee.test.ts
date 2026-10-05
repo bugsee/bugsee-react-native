@@ -1,12 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
 import { compileModsAsync } from '@expo/config-plugins';
 import type { ExpoConfig } from '@expo/config-types';
 
-import withBugsee, { platformToken } from '../index';
+import withBugsee, { APP_GRADLE_NOT_GROOVY, platformToken } from '../index';
 import type { BugseePluginProps } from '../index';
 import type * as NativeVersions from '../native-versions';
 import type * as NodePath from 'node:path';
@@ -112,7 +112,7 @@ describe('withBugsee through the Expo mod compiler', () => {
     const app = read('app');
     expect(app).toContain('apply plugin: "com.bugsee.android.gradle"');
     expect(app).toContain(`implementation "com.bugsee:bugsee-android-ndk:${baked.sdk}"`);
-    expect(app).toContain('"--upload-sourcemaps", bugseeUploadSourcemaps,');
+    expect(app).toContain('"scripts/bugsee-sourcemaps.gradle")');
     expect(app).toContain('hermesc-preserve-js.sh');
     expect(app).not.toContain('bugsee-upload-symbols-off:');
     expect(read('gradleProperties')).not.toContain('bugseeUploadSourcemaps');
@@ -183,7 +183,7 @@ describe('withBugsee through the Expo mod compiler', () => {
     expect(read('gradleProperties')).toMatch(/^bugseeUploadSourcemaps=false$/m);
     expect(read('pbxproj')).toContain('export BUGSEE_UPLOAD_SOURCEMAPS=false');
     expect(read('pbxproj').match(/bugsee settings, written/g)).toHaveLength(1);
-    expect(read('app')).toContain("findProperty('bugseeUploadSourcemaps')");
+    expect(read('app')).toContain('scripts/bugsee-sourcemaps.gradle');
 
     await prebuild({ appToken: ANDROID_TOKEN, uploadSourcemaps: true });
     expect(snapshot(projectRoot)).toEqual(first);
@@ -247,6 +247,13 @@ describe('withBugsee through the Expo mod compiler', () => {
     expect(() => withBugsee(baseConfig(), { appToken: { ios: 'a b' } })).toThrow(
       '@bugsee/react-native: the ios appToken is not a Bugsee app token',
     );
+  });
+
+  it('refuses a Kotlin app module at prebuild', async () => {
+    const app = join(projectRoot, 'android/app');
+    renameSync(join(app, 'build.gradle'), join(app, 'build.gradle.kts'));
+    await expect(prebuild({}, ['android'])).rejects.toThrow(APP_GRADLE_NOT_GROOVY);
+    expect(APP_GRADLE_NOT_GROOVY).toContain('bugsee-sourcemaps.gradle');
   });
 
   it('fails loudly without an iOS project or a shared scheme', async () => {

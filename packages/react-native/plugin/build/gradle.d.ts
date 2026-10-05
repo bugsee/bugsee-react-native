@@ -25,11 +25,13 @@ export declare function ensureGradlePluginDeclared(projectBuildGradle: string, v
  * Off removes only the block this plugin inserted. Maven Hermes and
  * `libreactnative.so` are pre-stripped; the comment does not claim those
  * two are symbolicated. The Hermes preserve command and the finish hook
- * are the JS source-map path, so they are written either way. After the
- * debug id is final the hook uploads the composed map, unless
- * `bugseeUploadSourcemaps=false` or no real token is configured.
+ * are the JS source-map path, so they are written either way. The hook
+ * applies the package's scripts/bugsee-sourcemaps.gradle, which injects the
+ * debug id and uploads the composed map unless `bugseeUploadSourcemaps=false`
+ * or no real token is configured.
  */
 export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string;
+export declare const HERMES_COMMAND_UNREWRITABLE: string;
 /**
  * `uploadSymbols: false` on Android: disables every `uploadBugsee*` task
  * (mapping, NDK symbols, build info) inside a marked block. On again

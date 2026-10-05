@@ -9,6 +9,7 @@ import { rewriteBundlePhase, rewriteProjectBundlePhase } from '../bundle-phase';
 import type { XcodeProjectLike } from '../bundle-phase';
 import { DSYM_POST_ACTION_SCRIPT, dsymPostActionScript } from '../dsym-script';
 import {
+  HERMES_COMMAND_UNREWRITABLE,
   ensureAppAppliesPlugin,
   ensureGradlePluginDeclared,
   ensureMavenCentral,
@@ -24,7 +25,7 @@ const lines = (...parts: string[]): string => parts.join('\n');
 
 /** The app file up to the finish hook, which other tests pin. */
 function beforeHook(source: string): string {
-  const at = source.indexOf('// After compose-source-maps.js');
+  const at = source.indexOf('// bugsee-sourcemaps:');
   if (at < 0) {
     throw new Error('finish hook missing');
   }
@@ -288,13 +289,14 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     const user = 'android {\n}\nafterEvaluate {\n    println("mine")\n}\n';
     const next = ensureAppAppliesPlugin(user, null);
     expect(next.startsWith(`apply plugin: "com.bugsee.android.gradle"\n${user}`)).toBe(true);
-    expect(next.match(/afterEvaluate \{/g)).toHaveLength(2);
+    expect(next.match(/afterEvaluate \{/g)).toHaveLength(1);
+    expect(next.endsWith('scripts/bugsee-sourcemaps.gradle")\n')).toBe(true);
   });
 
   it('replaces from the marker even when a block opens before it', () => {
     const marker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
     const fresh = ensureAppAppliesPlugin('android { }\n', null);
-    const hook = fresh.slice(fresh.indexOf(marker));
+    const hook = fresh.slice(fresh.indexOf('// bugsee-sourcemaps:'));
     expect(ensureAppAppliesPlugin(`android { }\n${marker}\nafterEvaluate {\n    old()\n}\n`, null)).toBe(
       `apply plugin: "com.bugsee.android.gradle"\nandroid { }\n${hook}\n${exclude}\n`,
     );
@@ -610,7 +612,7 @@ describe('finish hook placement', () => {
     "configurations.configureEach {\n    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'\n}";
   const hook = (() => {
     const fresh = ensureAppAppliesPlugin('x\n', null);
-    return fresh.slice(fresh.indexOf(marker));
+    return fresh.slice(fresh.indexOf('// bugsee-sourcemaps:'));
   })();
 
   it('appends after a user afterEvaluate block and leaves it whole', () => {
@@ -698,6 +700,54 @@ describe('baked versions error', () => {
       expect(((error as Error).cause as NodeJS.ErrnoException).code).toBe('ENOENT');
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('react.hermesCommand forms', () => {
+  const rewritten = (indent: string): string => `${indent}${HERMES_COMMAND}`;
+
+  it('rewrites a one-line setter call as well as an assignment', () => {
+    const source = 'react {\n    hermesCommand.set("$rootDir/hermesc")\n}\n';
+    expect(beforeHook(ensureAppAppliesPlugin(source, null))).toContain(`react {\n${rewritten('    ')}\n}`);
+    const nested = 'react {\n    hermesCommand.set(file("x").absolutePath)\n}\n';
+    expect(beforeHook(ensureAppAppliesPlugin(nested, null))).toContain(`react {\n${rewritten('    ')}\n}`);
+  });
+
+  it('refuses a value that continues on the next line, at prebuild', () => {
+    for (const source of [
+      'react {\n    hermesCommand = "$rootDir/" +\n        "hermesc"\n}\n',
+      'react {\n    hermesCommand = new File(\n        "x").absolutePath\n}\n',
+      'react {\n    hermesCommand.set(\n        "x")\n}\n',
+      "react {\n    hermesCommand = 'unclosed\n}\n",
+      'react {\n    hermesCommand = [\n    "a"].join()\n}\n',
+    ]) {
+      expect(() => ensureAppAppliesPlugin(source, null)).toThrow(HERMES_COMMAND_UNREWRITABLE);
+    }
+    expect(HERMES_COMMAND_UNREWRITABLE).toContain('hermesc-preserve-js.sh');
+  });
+
+  it('accepts quotes and brackets that close on the same line', () => {
+    const source = "react {\n    hermesCommand = ['a', \"b(\"].join('/') + \"\\\"x\\\"\"\n}\n";
+    expect(beforeHook(ensureAppAppliesPlugin(source, null))).toContain(`react {\n${rewritten('    ')}\n}`);
+  });
+
+  it('adds the setting to a react block without one, and leaves a file without a react block', () => {
+    expect(beforeHook(ensureAppAppliesPlugin('react {\n    debuggableVariants = []\n}\n', null))).toContain(
+      `react {\n${rewritten('    ')}\n    debuggableVariants = []\n}`,
+    );
+    expect(beforeHook(ensureAppAppliesPlugin('  react {\n  }\n', null))).toContain(`  react {\n${rewritten('      ')}\n  }`);
+    // Another word ending in "react" is not the block.
+    expect(beforeHook(ensureAppAppliesPlugin('notreact {\n}\n', null))).not.toContain('hermesCommand');
+    expect(beforeHook(ensureAppAppliesPlugin('android {\n}\n', null))).not.toContain('hermesCommand');
+  });
+
+  it('keeps a setting that already points at the wrapper, in either form', () => {
+    for (const line of [
+      '    hermesCommand = "/x/hermesc-preserve-js.sh"',
+      '    hermesCommand.set("/x/hermesc-preserve-js.sh")',
+    ]) {
+      expect(beforeHook(ensureAppAppliesPlugin(`react {\n${line}\n}\n`, null))).toContain(`react {\n${line}\n}`);
     }
   });
 });
