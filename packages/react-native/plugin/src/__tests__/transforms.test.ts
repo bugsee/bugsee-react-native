@@ -290,6 +290,29 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     );
   });
 
+  it('takes only the build types directly under buildTypes', () => {
+    const nested = 'android {\n    buildTypes {\n        debug {\n            release { }\n        }\n    }\n}\n';
+    expect(beforeHook(ensureAppAppliesPlugin(nested, '7.3.0'))).toBe(
+      lines(
+        'apply plugin: "com.bugsee.android.gradle"',
+        'android {',
+        '    buildTypes {',
+        '        debug {',
+        '            release { }',
+        SYMBOL_BLOCK('            '),
+        '        }',
+        '    }',
+        '}',
+        '',
+        'dependencies {',
+        ndkLine,
+        '}',
+        '',
+        '',
+      ),
+    );
+  });
+
   it('leaves build types that already set a symbol level or have an ndk block', () => {
     const source = lines(
       'android {',
@@ -667,10 +690,11 @@ describe('finish hook placement', () => {
   const marker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
   const exclude =
     "configurations.configureEach {\n    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'\n}";
-  const hook = (() => {
+  let hook = '';
+  beforeAll(() => {
     const fresh = ensureAppAppliesPlugin('x\n', null);
-    return fresh.slice(fresh.indexOf('// bugsee-sourcemaps:'));
-  })();
+    hook = fresh.slice(fresh.indexOf('// bugsee-sourcemaps:'));
+  });
 
   it('appends after a user afterEvaluate block and leaves it whole', () => {
     const user = 'android {\n}\nafterEvaluate {\n    println("mine")\n}\n';
@@ -996,12 +1020,14 @@ describe('refusals name the construct left open', () => {
 describe('hook lines, exactly', () => {
   const marker = '// bugsee-sourcemaps: debug ids and source-map upload for release bundles (@bugsee/react-native).';
   const legacyMarker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
-  const hook = (() => {
-    const fresh = ensureAppAppliesPlugin('x\n', null);
-    return fresh.slice(fresh.indexOf(marker)).trimEnd();
-  })();
-  const apply = hook.split('\n')[1] as string;
   const applied = 'apply plugin: "com.bugsee.android.gradle"';
+  let hook = '';
+  let apply = '';
+  beforeAll(() => {
+    const fresh = ensureAppAppliesPlugin('x\n', null);
+    hook = fresh.slice(fresh.indexOf(marker)).trimEnd();
+    apply = hook.split('\n')[1] as string;
+  });
 
   it('drops a marker that ends the file, keeps a comment that only names the script', () => {
     const next = ensureAppAppliesPlugin(`${applied}\nx()\n// see scripts/bugsee-sourcemaps.gradle\n${marker}`, null);
@@ -1023,6 +1049,20 @@ describe('hook lines, exactly', () => {
     // A hook first in the file stays first.
     const first = `${hook}\na()\n${hook}\n${applied}\n`;
     expect(ensureAppAppliesPlugin(first, null).startsWith(`${hook}\na()\n${applied}\n`)).toBe(true);
+  });
+
+  it('drops a marker that is the last line when nothing is appended after it', () => {
+    // NDK on with its line present and no build types: the hook step sees the marker last.
+    const ndk = '    implementation "com.bugsee:bugsee-android-ndk:7.3.0"';
+    const source = `${applied}\ndependencies {\n${ndk}\n}\n${marker}`;
+    expect(ensureAppAppliesPlugin(source, '7.3.0')).toBe(`${applied}\ndependencies {\n${ndk}\n}\n\n${hook}\n`);
+  });
+
+  it('reads a marker followed only by comment lines to the end of the file', () => {
+    const legacy = `${applied}\nx()\n${legacyMarker}\n// one\n// two`;
+    expect(ensureAppAppliesPlugin(legacy, '7.3.0')).toContain(`x()\n// one\n// two\n`);
+    const symbol = `${applied}\nx()\n// bugsee-symbol-table: x\n// more`;
+    expect(ensureAppAppliesPlugin(symbol, null)).toContain(`x()\n// bugsee-symbol-table: x\n// more\n`);
   });
 
   it('does not take a legacy marker followed by a code line with a trailing comment as a hook', () => {

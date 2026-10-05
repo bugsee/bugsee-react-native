@@ -31,16 +31,21 @@ const REACT_APPLY = 'apply plugin: "com.facebook.react"';
 const LEGACY_HOOK_000 = read('finish-hook-0.0.0.gradle').trimEnd();
 const LEGACY_HOOK_R1 = read('finish-hook-13.6-r1.gradle').trimEnd();
 
-/** The wrapper expression the plugin writes, read off its own output. */
-const EXPR = ((): string => {
+/**
+ * The wrapper expression the plugin writes, read off its own output. Read in
+ * beforeAll, not at load: a transform that throws must fail a test, not the
+ * module, or a mutation run cannot see it.
+ */
+let EXPR = '';
+beforeAll(() => {
   const line = ensureAppAppliesPlugin('react {\n}\n', null)
     .split('\n')
     .find((entry) => /^\s*hermesCommand = /.test(entry));
   if (!line) {
     throw new Error('the plugin did not write hermesCommand');
   }
-  return line.replace(/^\s*hermesCommand = /, '');
-})();
+  EXPR = line.replace(/^\s*hermesCommand = /, '');
+});
 
 const EXCLUDE_BLOCK = [
   'configurations.configureEach {',
@@ -480,6 +485,64 @@ const appCases: Case[] = [
     refuse: true,
   },
   {
+    name: 'a tab before the slash counts as that spacing too',
+    segments: [u(REACT_APPLY), u('def q = a\t/b/'), u(userDeps)],
+    refuse: true,
+  },
+  {
+    name: 'division continued on the next line, and tabs around a division',
+    segments: [u(REACT_APPLY), u('def seventh = 4 /\n    2\ndef eighth = 4\t/\t2\ndef ninth = /a/ / 2\ndef $money = 1\ndef sq = \'${\'\ndef fn = foo {/}/}'), u(userDeps)],
+  },
+  {
+    name: 'division continued on the next line, CRLF',
+    segments: [u(REACT_APPLY), u('def seventh = 4 /\n    2'), u(userDeps)],
+    crlf: true,
+  },
+  {
+    name: 'a backslash before the closing slash of a slashy string escapes it',
+    segments: [u(REACT_APPLY), u('def a = /a\\\\/'), u(userDeps)],
+    refuse: true,
+  },
+  {
+    name: 'a dollar before the closing slash of a dollar-slashy string escapes it',
+    segments: [u(REACT_APPLY), u('def ds = $/a$/$'), u(userDeps)],
+    refuse: true,
+  },
+  {
+    name: 'dollar-slashy escapes and a dollar before a newline',
+    segments: [u(REACT_APPLY), u('def ds = $/a$$/$\ndef ds2 = $/a$\nb/$'), u(userDeps)],
+  },
+  {
+    name: 'a string, a dollar-slashy string or interpolation right before a division in the hermesCommand value',
+    segments: [u(REACT_APPLY), u(reactOpen), h('    hermesCommand = "a" / 2'), h('    hermesCommand = $/a/$ / 2'), h('    hermesCommand = /a${"/"}b/'), u(reactClose)],
+  },
+  {
+    name: 'a legacy fingerprint line followed by a user block at column 0',
+    segments: [u(REACT_APPLY), b(LEGACY_MARKER), u('def bugseeHermesSourcemaps = "x"'), u(userDeps)],
+  },
+  {
+    name: 'a dependencies block nested on one line, and one after a closed block on the same line',
+    segments: [
+      u(REACT_APPLY),
+      u('if (x) { dependencies { implementation("in-if") } }'),
+      u('foo { } dependencies {\n    implementation("first")\n}'),
+      u(userDeps),
+    ],
+    check: (output, option) => {
+      if (option.ndk !== null) {
+        expect(output).toContain(`foo { } dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n    implementation("first")\n}`);
+      }
+    },
+  },
+  {
+    name: 'a build type with a call before its brace',
+    segments: [
+      u(REACT_APPLY),
+      u('android {\n    buildTypes {\n        getByName("release") { minifyEnabled true }\n        release {\n            x()\n        }\n    }\n}'),
+    ],
+    check: (output, option) => expect(countLines(output, "debugSymbolLevel 'SYMBOL_TABLE'")).toBe(option.ndk === null ? 0 : 1),
+  },
+  {
     name: 'a trailing block comment then a line comment on the hermesCommand line',
     segments: [u(REACT_APPLY), u(reactOpen), h('    hermesCommand = "/x" /* a */ // b', ' /* a */ // b'), u(reactClose)],
   },
@@ -530,6 +593,12 @@ const appCases: Case[] = [
       u(userDeps),
       u('dependencies {\n    implementation("second")\n}'),
     ],
+    check: (output, option) => {
+      if (option.ndk !== null) {
+        // The first top-level block, not the one inside buildscript.
+        expect(output).toContain(`}\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n    implementation("com.example:kept:1.0")\n}`);
+      }
+    },
   },
   {
     name: 'blank lines at the end of the file',
@@ -576,7 +645,7 @@ const appCases: Case[] = [
   },
   {
     name: 'a line starting with a slash is ambiguous and refused',
-    segments: [u(REACT_APPLY), u('def a = (4\n/ 2)'), u(userDeps)],
+    segments: [u(REACT_APPLY), u('def a = (4\n/ 2 /)'), u(userDeps)],
     refuse: true,
   },
   {
