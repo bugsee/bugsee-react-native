@@ -19,6 +19,11 @@
 - (void)setUp {
   [super setUp];
   _store = [[BGSRNSecureRectangles alloc] init];
+  // The main surface's origin read, as the first pull does: every test about
+  // publishing and versions starts here. The fail-closed tests use a bare
+  // store.
+  [_store setOrigin:CGPointZero forDisplay:0];
+  [_store setOrigin:CGPointZero forDisplay:1];
 }
 
 /// Reads the buffer as the SDK does: little-endian int32, `[version, count, …]`.
@@ -186,15 +191,46 @@
                         (@[ @10, @116, @30, @136, @107, @240, @157, @290 ]));
 }
 
-/// A Modal's rectangles before its origin is recorded redact the whole screen.
-- (void)testASurfaceWithNoOriginYetServesTheWholeDisplay {
+/// A Modal's rectangles before its origin is recorded redact exactly the screen.
+- (void)testASurfaceWithNoOriginYetServesTheScreenBounds {
   const int32_t modalRects[] = {100, 200, 150, 250, 1, 2, 3, 4};
+  [_store setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
   [_store setCoordinates:modalRects count:8 forDisplay:0 surface:42];
 
   NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
   XCTAssertEqualObjects(packed[1], @1);
-  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 4)],
-                        (@[ @0, @0, @(1 << 20), @(1 << 20) ]));
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 4)], (@[ @0, @0, @402, @874 ]));
+}
+
+- (void)testAFractionalScreenSizeIsRoundedUp {
+  const int32_t rects[] = {1, 2, 3, 4};
+  [_store setDisplaySize:CGSizeMake(402.5, 873.2) forDisplay:0];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42];
+
+  XCTAssertEqualObjects([[self unpack:[_store snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[ @0, @0, @403, @874 ]));
+}
+
+- (void)testBeforeTheScreenSizeIsKnownTheWholeDisplayIsTheFallbackSquare {
+  const int32_t rects[] = {1, 2, 3, 4};
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42];
+
+  XCTAssertEqualObjects([[self unpack:[_store snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[ @0, @0, @(BGSRNSecureFallbackDisplaySize), @(BGSRNSecureFallbackDisplaySize) ]));
+}
+
+- (void)testRecordingTheScreenSizeMovesTheVersionOnlyWhenWhatIsServedChanges {
+  const int32_t rects[] = {1, 2, 3, 4};
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42];
+  NSNumber *before = [self unpack:[_store snapshotForDisplay:0]][0];
+
+  [_store setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
+  NSNumber *sized = [self unpack:[_store snapshotForDisplay:0]][0];
+  [_store setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
+  [_store setDisplaySize:CGSizeZero forDisplay:0];
+
+  XCTAssertNotEqualObjects(sized, before);
+  XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][0], sized);
 }
 
 - (void)testRecordingTheSurfacesOriginReplacesTheWholeDisplayRectangle {
@@ -209,13 +245,19 @@
   XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(2, 4)], (@[ @100, @200, @150, @250 ]));
 }
 
-/// The main surface keeps (0, 0) until its origin is recorded.
-- (void)testTheMainSurfaceWithNoOriginServesItsRectanglesUnmoved {
+/// The main surface fails closed too, until its first origin is recorded.
+- (void)testTheMainSurfaceWithNoOriginYetServesTheScreenBounds {
+  BGSRNSecureRectangles *bare = [[BGSRNSecureRectangles alloc] init];
   const int32_t rects[] = {10, 20, 30, 40};
-  [_store setCoordinates:rects count:4 forDisplay:0];
+  [bare setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
+  [bare setCoordinates:rects count:4 forDisplay:0];
 
-  XCTAssertEqualObjects([[self unpack:[_store snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(2, 4)],
-                        (@[ @10, @20, @30, @40 ]));
+  XCTAssertEqualObjects([[self unpack:[bare snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[ @0, @0, @402, @874 ]));
+
+  [bare setOrigin:CGPointMake(0, 59) forDisplay:0];
+  XCTAssertEqualObjects([[self unpack:[bare snapshotForDisplay:0]] subarrayWithRange:NSMakeRange(2, 4)],
+                        (@[ @10, @79, @30, @99 ]));
 }
 
 /// A fractional origin grows the rectangle by under a point, never shrinks it.

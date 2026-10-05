@@ -60,6 +60,8 @@ public class ReactRootOriginTrackerTest {
         boolean attached = true;
         int[] location = { 0, 0 };
         Point viewport = new Point();
+        /** The display's real size this root reports, or null. */
+        Point displaySize;
         int displayId;
         int surfaceKey = SecureRectangleStore.MAIN_SURFACE;
         /** A ReactRoot (the activity root) rather than a dialog root. */
@@ -84,7 +86,8 @@ public class ReactRootOriginTrackerTest {
             if (viewGone) {
                 return null;
             }
-            return new OriginSnapshot(new int[] { location[0], location[1] }, viewport, displayId, reactRoot);
+            return new OriginSnapshot(new int[] { location[0], location[1] }, viewport, displayId, reactRoot,
+                    displaySize);
         }
 
         @Override
@@ -493,7 +496,7 @@ public class ReactRootOriginTrackerTest {
         store.set(0, 56, new int[] { 208, 560, 608, 760 });
 
         tracker.watchSurfaceNow(56);
-        assertArrayEquals(SecureRectangleStore.FULL_DISPLAY,
+        assertArrayEquals(WHOLE_FALLBACK,
                 java.util.Arrays.copyOfRange(store.snapshot(0), 2, 6));
         assertNull(tracker.cachedSurfaceOrigin(56));
 
@@ -548,7 +551,7 @@ public class ReactRootOriginTrackerTest {
         tracker.refresh();
 
         assertEquals(2, calls[0]);
-        assertArrayEquals(SecureRectangleStore.FULL_DISPLAY,
+        assertArrayEquals(WHOLE_FALLBACK,
                 java.util.Arrays.copyOfRange(store.snapshot(0), 2, 6));
     }
 
@@ -588,7 +591,7 @@ public class ReactRootOriginTrackerTest {
     }
 
     @Test
-    public void detachForgetsPendingSurfaces() {
+    public void aPendingSurfaceWithNoRectanglesIsPrunedNotRetried() {
         final FakeResolver resolver = new FakeResolver();
         final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
                 new FakeLifecycleSource(), new QueueRootFinder(), resolver, new SecureRectangleStore());
@@ -597,6 +600,139 @@ public class ReactRootOriginTrackerTest {
         tracker.refresh();
 
         assertEquals(1, resolver.calls);
+    }
+
+    private static final int[] WHOLE_FALLBACK = {
+            0, 0, SecureRectangleStore.FALLBACK_DISPLAY_SIZE, SecureRectangleStore.FALLBACK_DISPLAY_SIZE };
+
+    private static int[] served(final SecureRectangleStore store) {
+        final int[] packed = store.snapshot(0);
+        return java.util.Arrays.copyOfRange(packed, 2, packed.length);
+    }
+
+    /** N3: a Modal cleared after its host is gone leaves nothing pending and no lane. */
+    @Test
+    public void clearingAPendingSurfacesRectanglesDropsItAndItsLane() {
+        final FakeResolver resolver = new FakeResolver();
+        final SecureRectangleStore store = new SecureRectangleStore();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, store);
+        store.set(0, 56, new int[] { 1, 2, 3, 4 });
+        tracker.watchSurfaceNow(56);
+        tracker.refresh();
+        assertEquals(2, resolver.calls);
+
+        store.set(0, 56, new int[0]);
+        tracker.refresh();
+        tracker.refresh();
+
+        assertEquals(2, resolver.calls);
+        assertFalse(store.hasSurface(56));
+    }
+
+    /** N2: a dialog root seen detached while its surface holds rectangles fails closed and is re-watched. */
+    @Test
+    public void aDetachedDialogRootWithRectanglesFailsClosedAndIsWatchedAgain() {
+        final FakeResolver resolver = new FakeResolver();
+        final FakeRoot first = dialog(56, 0, 0);
+        resolver.answer = first;
+        final SecureRectangleStore store = new SecureRectangleStore();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, store);
+        store.set(0, 56, new int[] { 208, 560, 608, 760 });
+        tracker.watchSurfaceNow(56);
+        assertArrayEquals(new int[] { 208, 560, 608, 760 }, served(store));
+
+        // The dialog is recreated: the old root leaves its window, and the
+        // resolver cannot find the new one yet.
+        first.attached = false;
+        resolver.answer = null;
+        tracker.refresh();
+
+        assertArrayEquals(WHOLE_FALLBACK, served(store));
+        assertEquals(1, first.lastToken.releaseCalls);
+        assertNull(tracker.cachedSurfaceOrigin(56));
+
+        // A later refresh finds it again, now at a different place.
+        resolver.answer = dialog(56, 0, 30);
+        tracker.refresh();
+
+        assertArrayEquals(new int[] { 208, 590, 608, 790 }, served(store));
+    }
+
+    /** N2: an activity destroyed with a Modal open keeps the surface failing closed, and pending. */
+    @Test
+    public void detachKeepsASurfaceWithRectanglesPendingAndFailingClosed() {
+        final FakeResolver resolver = new FakeResolver();
+        resolver.answer = dialog(56, 0, 0);
+        final SecureRectangleStore store = new SecureRectangleStore();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, store);
+        store.set(0, 56, new int[] { 208, 560, 608, 760 });
+        tracker.watchSurfaceNow(56);
+
+        tracker.detach();
+        assertArrayEquals(WHOLE_FALLBACK, served(store));
+
+        resolver.answer = dialog(56, 0, 0);
+        tracker.refresh();
+        assertArrayEquals(new int[] { 208, 560, 608, 760 }, served(store));
+        assertEquals(2, resolver.calls);
+    }
+
+    /** N2: a root that is not attached records no origin; its first layout after attaching does. */
+    @Test
+    public void aRootThatIsNotAttachedRecordsNoOrigin() {
+        final FakeResolver resolver = new FakeResolver();
+        final FakeRoot notYet = dialog(56, 0, 40);
+        notYet.attached = false;
+        resolver.answer = notYet;
+        final SecureRectangleStore store = new SecureRectangleStore();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, store);
+        store.set(0, 56, new int[] { 1, 2, 3, 4 });
+
+        tracker.watchSurfaceNow(56);
+        assertArrayEquals(WHOLE_FALLBACK, served(store));
+        assertNull(tracker.cachedSurfaceOrigin(56));
+        assertEquals(1, notYet.listenerRegistrations);
+
+        notYet.attached = true;
+        tracker.refresh();
+        assertArrayEquals(new int[] { 1, 42, 3, 44 }, served(store));
+    }
+
+    @Test
+    public void anActivityRootThatIsNotAttachedRecordsNoOrigin() {
+        final FakeRoot main = new FakeRoot();
+        main.attached = false;
+        main.location = new int[] { 0, 51 };
+        final QueueRootFinder finder = new QueueRootFinder();
+        finder.queue.add(main);
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(0, new int[] { 10, 20, 30, 40 });
+
+        new ReactRootOriginTracker(new FakeLifecycleSource(), finder, store).refresh();
+
+        assertArrayEquals(WHOLE_FALLBACK, served(store));
+    }
+
+    /** N1: the root's display size bounds what a fail-closed surface serves. */
+    @Test
+    public void theRootsDisplaySizeBoundsAFailClosedSurface() {
+        final FakeRoot main = new FakeRoot();
+        main.displaySize = new Point();
+        main.displaySize.x = 720;
+        main.displaySize.y = 1612;
+        final QueueRootFinder finder = new QueueRootFinder();
+        finder.queue.add(main);
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(0, 56, new int[] { 1, 2, 3, 4 });
+
+        new ReactRootOriginTracker(new FakeLifecycleSource(), finder, store).refresh();
+
+        assertTrue(store.hasDisplayBounds(0));
+        assertArrayEquals(new int[] { 0, 0, 720, 1612 }, served(store));
     }
 
     @Test

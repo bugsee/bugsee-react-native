@@ -43,12 +43,18 @@ import java.util.concurrent.ConcurrentHashMap;
  * ReactRootOriginTracker#surfaceOrigin}). A single origin for the whole
  * display cannot serve both.
  *
- * <p>Fails closed. A surface other than {@link #MAIN_SURFACE} whose origin
- * has not been read yet serves its rectangles as one {@link #FULL_DISPLAY}
- * rectangle: an unknown origin must not place a secure region anywhere it
- * could miss, so until the tracker reads it the whole display is redacted.
- * The main surface keeps (0, 0) until its origin is read, as before
- * surfaces existed: the activity root is tracked from module start.
+ * <p>Fails closed. A surface whose origin has not been read yet, or whose
+ * root was forgotten ({@link #forgetOrigin}), serves its rectangles as one
+ * rectangle covering the whole display: an unknown origin must not place a
+ * secure region anywhere it could miss. That includes the main surface, so
+ * the very first publish masks the whole display until the tracker's first
+ * read, a fraction of a second.
+ *
+ * <p>Every served rectangle is clamped to the display's real size once it
+ * is known ({@link #setDisplayBounds}). The SDK's native video mask clamps a
+ * rectangle's rows to the frame but not its right edge to a row, so a
+ * rectangle wider than the frame would black out the start of the next row
+ * on every row: it must never be handed one.
  *
  * <h2>Threading</h2>
  *
@@ -86,11 +92,12 @@ final class SecureRectangleStore {
     static final int MAIN_SURFACE = 0;
 
     /**
-     * What a surface whose origin is unknown serves in place of its
-     * rectangles: larger than any display, small enough that the SDK's own
-     * scaling cannot overflow an {@code int}.
+     * The bounds a display serves a fail-closed lane as when its real size
+     * has not been recorded ({@link #setDisplayBounds}): bigger than any
+     * phone or tablet panel, and small enough that a renderer that does not
+     * clip a rectangle's right edge per row still stays cheap.
      */
-    static final int[] FULL_DISPLAY = { 0, 0, 1 << 20, 1 << 20 };
+    static final int FALLBACK_DISPLAY_SIZE = 16384;
 
     /** One surface's raw measurements and the origin that places them. */
     private static final class Lane {
@@ -98,37 +105,29 @@ final class SecureRectangleStore {
         final int[] raw;
         final int originX;
         final int originY;
-        /** Whether {@link #originX}/{@link #originY} were ever read. */
+        /** Whether {@link #originX}/{@link #originY} were read (and still hold). */
         final boolean originKnown;
-        /** Whether an unknown origin redacts the whole display (every non-main surface). */
-        final boolean failClosed;
-        /** {@link #raw} moved by this surface's origin: what the SDK is served. */
-        final int[] coordinates;
 
-        Lane(@NonNull final int[] raw, final int originX, final int originY,
-                final boolean originKnown, final boolean failClosed) {
+        Lane(@NonNull final int[] raw, final int originX, final int originY, final boolean originKnown) {
             this.raw = raw;
             this.originX = originX;
             this.originY = originY;
             this.originKnown = originKnown;
-            this.failClosed = failClosed;
-            if (raw.length == 0) {
-                this.coordinates = NO_COORDINATES;
-            } else if (!originKnown && failClosed) {
-                this.coordinates = FULL_DISPLAY.clone();
-            } else {
-                this.coordinates = translate(raw, originX, originY);
-            }
         }
 
         @NonNull
         Lane withRaw(@NonNull final int[] newRaw) {
-            return new Lane(newRaw, originX, originY, originKnown, failClosed);
+            return new Lane(newRaw, originX, originY, originKnown);
         }
 
         @NonNull
         Lane withOrigin(final int newOriginX, final int newOriginY) {
-            return new Lane(raw, newOriginX, newOriginY, true, failClosed);
+            return new Lane(raw, newOriginX, newOriginY, true);
+        }
+
+        @NonNull
+        Lane withOriginUnknown() {
+            return new Lane(raw, originX, originY, false);
         }
     }
 
@@ -137,42 +136,95 @@ final class SecureRectangleStore {
         final int version;
         /** Surface key → lane. TreeMap so the served order is stable. */
         final TreeMap<Integer, Lane> lanes;
-        /** Every lane's translated coordinates, concatenated in surface-key order. */
+        /** The display's real size {@code {width, height}} in pixels, or {@code null}. */
+        @Nullable
+        final int[] bounds;
+        /** What the SDK is served: every lane in surface-key order, clamped to {@link #bounds}. */
         final int[] coordinates;
 
-        Snapshot(final int version, @NonNull final TreeMap<Integer, Lane> lanes) {
+        Snapshot(final int version, @NonNull final TreeMap<Integer, Lane> lanes, @Nullable final int[] bounds) {
             this.version = version;
-            // Defensive copy: callers must not retain a mutable reference.
+            // Defensive copies: callers must not retain a mutable reference.
             this.lanes = new TreeMap<>(lanes);
-            this.coordinates = merge(this.lanes);
+            this.bounds = bounds == null ? null : bounds.clone();
+            this.coordinates = serve(this.lanes, this.bounds);
         }
 
         @NonNull
         Snapshot withVersion(final int newVersion) {
-            return new Snapshot(newVersion, lanes);
+            return new Snapshot(newVersion, lanes, bounds);
         }
 
         @NonNull
-        private static int[] merge(@NonNull final TreeMap<Integer, Lane> lanes) {
+        Snapshot withLanes(@NonNull final TreeMap<Integer, Lane> nextLanes) {
+            return new Snapshot(0, nextLanes, bounds);
+        }
+
+        @NonNull
+        Snapshot withBounds(@NonNull final int[] nextBounds) {
+            return new Snapshot(0, lanes, nextBounds);
+        }
+
+        /**
+         * A lane whose origin is unknown serves the whole display; any other
+         * serves its rectangles moved by its origin. Every rectangle is then
+         * clamped to the display, and one left with no area is dropped: a
+         * renderer is never handed a rectangle that runs off the panel.
+         */
+        @NonNull
+        private static int[] serve(@NonNull final TreeMap<Integer, Lane> lanes, @Nullable final int[] bounds) {
+            final int width = bounds == null ? FALLBACK_DISPLAY_SIZE : bounds[0];
+            final int height = bounds == null ? FALLBACK_DISPLAY_SIZE : bounds[1];
             int total = 0;
             for (final Lane lane : lanes.values()) {
-                total += lane.coordinates.length;
+                total += lane.raw.length == 0 ? 0 : lane.originKnown ? lane.raw.length : COORDINATES_PER_RECTANGLE;
             }
             if (total == 0) {
                 return NO_COORDINATES;
             }
-            final int[] merged = new int[total];
+            final int[] served = new int[total];
             int at = 0;
             for (final Lane lane : lanes.values()) {
-                System.arraycopy(lane.coordinates, 0, merged, at, lane.coordinates.length);
-                at += lane.coordinates.length;
+                if (lane.raw.length == 0) {
+                    continue;
+                }
+                if (!lane.originKnown) {
+                    served[at++] = 0;
+                    served[at++] = 0;
+                    served[at++] = width;
+                    served[at++] = height;
+                    continue;
+                }
+                final int[] moved = translate(lane.raw, lane.originX, lane.originY);
+                for (int i = 0; i < moved.length; i += COORDINATES_PER_RECTANGLE) {
+                    if (bounds == null) {
+                        System.arraycopy(moved, i, served, at, COORDINATES_PER_RECTANGLE);
+                        at += COORDINATES_PER_RECTANGLE;
+                        continue;
+                    }
+                    final int left = clamp(moved[i], width);
+                    final int top = clamp(moved[i + 1], height);
+                    final int right = clamp(moved[i + 2], width);
+                    final int bottom = clamp(moved[i + 3], height);
+                    if (right <= left || bottom <= top) {
+                        continue;
+                    }
+                    served[at++] = left;
+                    served[at++] = top;
+                    served[at++] = right;
+                    served[at++] = bottom;
+                }
             }
-            return merged;
+            return at == served.length ? served : Arrays.copyOf(served, at);
+        }
+
+        private static int clamp(final int value, final int max) {
+            return Math.max(0, Math.min(value, max));
         }
     }
 
     /** What a display serves before anything is secured or located. */
-    private static final Snapshot EMPTY = new Snapshot(INITIAL_VERSION, new TreeMap<>());
+    private static final Snapshot EMPTY = new Snapshot(INITIAL_VERSION, new TreeMap<>(), null);
 
     /**
      * The process-wide set of secured regions.
@@ -283,6 +335,56 @@ final class SecureRectangleStore {
     }
 
     /**
+     * Records {@code display}'s real size in pixels: what a fail-closed lane
+     * serves, and what every rectangle is clamped to.
+     */
+    void setDisplayBounds(final int display, final int width, final int height) {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        update(display, previous -> previous.bounds != null
+                && previous.bounds[0] == width && previous.bounds[1] == height
+                ? previous
+                : previous.withBounds(new int[] { width, height }));
+    }
+
+    /** Whether {@code display}'s real size has been recorded. */
+    boolean hasDisplayBounds(final int display) {
+        final Snapshot current = byDisplay.get(display);
+        return current != null && current.bounds != null;
+    }
+
+    /**
+     * {@code surface}'s root is gone: its origin no longer holds, so every
+     * display serves its rectangles as the whole display again until a new
+     * origin is read. An empty lane is unaffected.
+     */
+    void forgetOrigin(final int surface) {
+        for (final Integer display : byDisplay.keySet()) {
+            update(display, previous -> {
+                final Lane lane = previous.lanes.get(surface);
+                if (lane == null || !lane.originKnown) {
+                    return previous;
+                }
+                final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
+                nextLanes.put(surface, lane.withOriginUnknown());
+                return previous.withLanes(nextLanes);
+            });
+        }
+    }
+
+    /** Whether {@code surface} holds rectangles on any display. */
+    boolean hasRectangles(final int surface) {
+        for (final Snapshot snapshot : byDisplay.values()) {
+            final Lane lane = snapshot.lanes.get(surface);
+            if (lane != null && lane.raw.length > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Forgets {@code surface} on every display where it holds no rectangles:
      * its root is gone, and a later root may reuse the key. A surface that
      * still holds rectangles stays (fails closed): only its owner clearing
@@ -300,7 +402,7 @@ final class SecureRectangleStore {
                 }
                 final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
                 nextLanes.remove(surface);
-                return new Snapshot(0, nextLanes);
+                return previous.withLanes(nextLanes);
             });
         }
     }
@@ -342,11 +444,9 @@ final class SecureRectangleStore {
             @NonNull final LaneChange change) {
         final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
         final Lane prior = nextLanes.get(surface);
-        final Lane base = prior == null
-                ? new Lane(NO_COORDINATES, 0, 0, false, surface != MAIN_SURFACE)
-                : prior;
+        final Lane base = prior == null ? new Lane(NO_COORDINATES, 0, 0, false) : prior;
         nextLanes.put(surface, change.apply(base));
-        return new Snapshot(0, nextLanes);
+        return previous.withLanes(nextLanes);
     }
 
     /**

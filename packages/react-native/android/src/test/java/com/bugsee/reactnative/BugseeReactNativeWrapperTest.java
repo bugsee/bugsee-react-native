@@ -90,6 +90,9 @@ public class BugseeReactNativeWrapperTest {
      */
     @Test
     public void securedRegionsSurviveTheWrapperBeingReplaced() {
+        // The main surface's origin read, as the tracker does at start;
+        // before that read the store serves the whole display (fail closed).
+        SecureRectangleStore.shared().setOrigin(0, 0, 0);
         SecureRectangleStore.shared().set(0, new int[] { 1, 2, 3, 4 });
 
         final int[] packed = wrapper(context()).getSecureRectangles(0);

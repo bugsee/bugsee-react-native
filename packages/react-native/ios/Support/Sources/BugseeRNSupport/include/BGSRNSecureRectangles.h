@@ -7,9 +7,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// surface land here.
 FOUNDATION_EXPORT const NSInteger BGSRNSecureMainSurface;
 
-/// What a surface whose origin is unknown serves in place of its rectangles:
-/// one rectangle larger than any screen, `{0, 0, 2^20, 2^20}`.
-FOUNDATION_EXPORT const int32_t BGSRNSecureFullDisplay[4];
+/// The side of the square a surface whose origin is unknown serves before its
+/// display's size is recorded (`setDisplaySize:forDisplay:`).
+FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 
 /// The regions the app has asked Bugsee not to record, in the form the SDK
 /// pulls them.
@@ -43,8 +43,9 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFullDisplay[4];
 /// right and bottom ones up: a rectangle may grow by under a point, never
 /// shrink. Edges saturate at the int32 range rather than wrap.
 ///
-/// Fails closed: a surface other than the main one whose origin has not been
-/// recorded yet serves `BGSRNSecureFullDisplay` instead of its rectangles.
+/// Fails closed: a surface whose origin has not been recorded yet, the main
+/// one included, serves one rectangle covering its display (the screen's
+/// bounds) instead of its rectangles.
 ///
 /// ## Threading
 ///
@@ -86,6 +87,10 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFullDisplay[4];
 /// Records where one surface's `measureInWindow` (0, 0) sits on `display`'s
 /// screen, in points. Only that surface's rectangles move.
 - (void)setOrigin:(CGPoint)origin forDisplay:(NSInteger)display surface:(NSInteger)surface;
+
+/// Records `display`'s screen size in points: what a surface whose origin is
+/// unknown serves. Re-recording the same size costs nothing.
+- (void)setDisplaySize:(CGSize)size forDisplay:(NSInteger)display;
 
 /// The surfaces other than the main one that `display` has lanes for, in key
 /// order: the ones whose origin the pull refreshes.

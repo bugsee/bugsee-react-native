@@ -12,7 +12,7 @@ static const int32_t kInitialVersion = 1;
 
 const NSInteger BGSRNSecureMainSurface = 0;
 
-const int32_t BGSRNSecureFullDisplay[4] = {0, 0, 1 << 20, 1 << 20};
+const int32_t BGSRNSecureFallbackDisplaySize = 16384;
 
 /// Steps the version, skipping the value that means "nothing secured yet":
 /// landing back on it would make a real set look identical to the empty one to
@@ -67,22 +67,14 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
 
 @implementation BGSRNSecureLane
 
-- (instancetype)initWithRaw:(NSData *)raw
-                     origin:(CGPoint)origin
-                originKnown:(BOOL)originKnown
-                 failClosed:(BOOL)failClosed {
+- (instancetype)initWithRaw:(NSData *)raw origin:(CGPoint)origin originKnown:(BOOL)originKnown {
   self = [super init];
   if (self) {
     _raw = [raw copy] ?: [NSData data];
     _origin = origin;
     _originKnown = originKnown;
-    if (_raw.length == 0) {
-      _served = [NSData data];
-    } else if (!originKnown && failClosed) {
-      _served = [NSData dataWithBytes:BGSRNSecureFullDisplay length:sizeof(BGSRNSecureFullDisplay)];
-    } else {
-      _served = BGSRNMovedCoordinates(_raw, origin);
-    }
+    // An unknown origin is served as the whole display, sized at serve time.
+    _served = _raw.length == 0 || !originKnown ? [NSData data] : BGSRNMovedCoordinates(_raw, origin);
   }
   return self;
 }
@@ -92,6 +84,8 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
 @implementation BGSRNSecureRectangles {
   /// display -> (surface -> lane). Served in surface-key order.
   NSMutableDictionary<NSNumber *, NSMutableDictionary<NSNumber *, BGSRNSecureLane *> *> *_lanesByDisplay;
+  /// display -> its screen's size in points, a CGSize, once recorded.
+  NSMutableDictionary<NSNumber *, NSValue *> *_boundsByDisplay;
   /// display -> its current version. Absent until the served set first changes.
   NSMutableDictionary<NSNumber *, NSNumber *> *_versionsByDisplay;
   /// Serialises the JS-thread write against the main-thread pull. A plain lock
@@ -114,6 +108,7 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
   if (self) {
     _lanesByDisplay = [NSMutableDictionary dictionary];
     _versionsByDisplay = [NSMutableDictionary dictionary];
+    _boundsByDisplay = [NSMutableDictionary dictionary];
     _lock = [[NSLock alloc] init];
   }
   return self;
@@ -145,11 +140,10 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
   [_lock lock];
   [self changeLaneLockedForDisplay:display
                            surface:surface
-                            change:^BGSRNSecureLane *(BGSRNSecureLane *prior, BOOL failClosed) {
+                            change:^BGSRNSecureLane *(BGSRNSecureLane *prior) {
                               return [[BGSRNSecureLane alloc] initWithRaw:published
                                                                    origin:prior.origin
-                                                              originKnown:prior.originKnown
-                                                               failClosed:failClosed];
+                                                              originKnown:prior.originKnown];
                             }];
   [_lock unlock];
 
@@ -170,12 +164,28 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
   }
   [self changeLaneLockedForDisplay:display
                            surface:surface
-                            change:^BGSRNSecureLane *(BGSRNSecureLane *prior, BOOL failClosed) {
+                            change:^BGSRNSecureLane *(BGSRNSecureLane *prior) {
                               return [[BGSRNSecureLane alloc] initWithRaw:prior.raw
                                                                    origin:origin
-                                                              originKnown:YES
-                                                               failClosed:failClosed];
+                                                              originKnown:YES];
                             }];
+  [_lock unlock];
+}
+
+- (void)setDisplaySize:(CGSize)size forDisplay:(NSInteger)display {
+  if (!(size.width > 0) || !(size.height > 0)) {
+    return;
+  }
+  NSNumber *key = @(display);
+  [_lock lock];
+  CGSize previous = CGSizeZero;
+  NSValue *recorded = _boundsByDisplay[key];
+  [recorded getValue:&previous size:sizeof(previous)];
+  if (recorded == nil || !CGSizeEqualToSize(previous, size)) {
+    NSData *previousServed = [self servedLockedForDisplay:display];
+    _boundsByDisplay[key] = [NSValue valueWithBytes:&size objCType:@encode(CGSize)];
+    [self moveVersionLockedForDisplay:display ifServedDiffersFrom:previousServed];
+  }
   [_lock unlock];
 }
 
@@ -210,7 +220,7 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
 /// changes. Caller holds `_lock`.
 - (void)changeLaneLockedForDisplay:(NSInteger)display
                            surface:(NSInteger)surface
-                            change:(BGSRNSecureLane * (^)(BGSRNSecureLane *prior, BOOL failClosed))change {
+                            change:(BGSRNSecureLane * (^)(BGSRNSecureLane *prior))change {
   NSNumber *displayKey = @(display);
   NSNumber *surfaceKey = @(surface);
   NSData *previousServed = [self servedLockedForDisplay:display];
@@ -219,13 +229,16 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
     lanes = [NSMutableDictionary dictionary];
     _lanesByDisplay[displayKey] = lanes;
   }
-  const BOOL failClosed = surface != BGSRNSecureMainSurface;
   BGSRNSecureLane *prior = lanes[surfaceKey]
-      ?: [[BGSRNSecureLane alloc] initWithRaw:[NSData data]
-                                       origin:CGPointZero
-                                  originKnown:NO
-                                   failClosed:failClosed];
-  lanes[surfaceKey] = change(prior, failClosed);
+      ?: [[BGSRNSecureLane alloc] initWithRaw:[NSData data] origin:CGPointZero originKnown:NO];
+  lanes[surfaceKey] = change(prior);
+  [self moveVersionLockedForDisplay:display ifServedDiffersFrom:previousServed];
+}
+
+/// Steps the display's version when what it serves now differs from
+/// `previousServed`. Caller holds `_lock`.
+- (void)moveVersionLockedForDisplay:(NSInteger)display ifServedDiffersFrom:(NSData *)previousServed {
+  NSNumber *displayKey = @(display);
   NSData *nextServed = [self servedLockedForDisplay:display];
   if (![previousServed isEqualToData:nextServed]) {
     const int32_t currentVersion = _versionsByDisplay[displayKey]
@@ -235,15 +248,30 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
   }
 }
 
-/// Every lane's served coordinates, in surface-key order. Caller holds `_lock`.
+/// Every lane's served coordinates, in surface-key order. A lane whose origin
+/// is unknown serves one rectangle covering the display: its screen's size,
+/// rounded up, or the fallback square before that is recorded. Caller holds
+/// `_lock`.
 - (NSData *)servedLockedForDisplay:(NSInteger)display {
   NSMutableDictionary<NSNumber *, BGSRNSecureLane *> *lanes = _lanesByDisplay[@(display)];
   if (lanes.count == 0) {
     return [NSData data];
   }
+  NSValue *recorded = _boundsByDisplay[@(display)];
+  CGSize size = CGSizeMake(BGSRNSecureFallbackDisplaySize, BGSRNSecureFallbackDisplaySize);
+  [recorded getValue:&size size:sizeof(size)];
+  const int32_t whole[4] = {0, 0, (int32_t)ceil(size.width), (int32_t)ceil(size.height)};
   NSMutableData *merged = [NSMutableData data];
   for (NSNumber *key in [lanes.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
-    [merged appendData:lanes[key].served];
+    BGSRNSecureLane *lane = lanes[key];
+    if (lane.raw.length == 0) {
+      continue;
+    }
+    if (lane.originKnown) {
+      [merged appendData:lane.served];
+    } else {
+      [merged appendBytes:whole length:sizeof(whole)];
+    }
   }
   return [merged copy];
 }

@@ -26,17 +26,29 @@ public class SecureRectangleStoreTest {
 
     private static final int DISPLAY = 0;
 
+    /**
+     * A store whose main surface's origin has been read, at (0, 0), on
+     * displays 0 and 1: what every test about publishing, versions and
+     * translation starts from. The fail-closed tests below build a bare one.
+     */
+    private static SecureRectangleStore located() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.setOrigin(DISPLAY, 0, 0);
+        store.setOrigin(1, 0, 0);
+        return store;
+    }
+
     /** `[version, count]` with no rectangles, not an empty buffer. */
     @Test
     public void publishesAnEmptySetBeforeAnythingIsSecured() {
-        final int[] packed = new SecureRectangleStore().snapshot(DISPLAY);
+        final int[] packed = located().snapshot(DISPLAY);
         assertEquals(2, packed.length);
         assertEquals(0, packed[1]);
     }
 
     @Test
     public void packsVersionCountThenEachRectangle() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, new int[] { 1, 2, 3, 4, 10, 20, 30, 40 });
 
         final int[] packed = store.snapshot(DISPLAY);
@@ -48,7 +60,7 @@ public class SecureRectangleStoreTest {
 
     @Test
     public void movesTheVersionWhenTheRectanglesChange() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         final int before = store.snapshot(DISPLAY)[0];
 
         store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
@@ -59,7 +71,7 @@ public class SecureRectangleStoreTest {
     /** Re-publishing the same set must not make the SDK re-read it. */
     @Test
     public void holdsTheVersionWhenNothingChanges() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
         final int settled = store.snapshot(DISPLAY)[0];
 
@@ -75,7 +87,7 @@ public class SecureRectangleStoreTest {
      */
     @Test
     public void movesTheVersionWhenOnlyTheCoordinatesChange() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
         final int before = store.snapshot(DISPLAY)[0];
 
@@ -87,7 +99,7 @@ public class SecureRectangleStoreTest {
     /** Clearing is a change like any other: the last secret region must stop. */
     @Test
     public void movesTheVersionWhenTheLastRectangleIsRemoved() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
         final int before = store.snapshot(DISPLAY)[0];
 
@@ -100,7 +112,7 @@ public class SecureRectangleStoreTest {
     /** The freshness clock is per display, so one screen cannot stale another. */
     @Test
     public void versionsEachDisplayIndependently() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         final int otherBefore = store.snapshot(1)[0];
 
         store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
@@ -116,7 +128,7 @@ public class SecureRectangleStoreTest {
      */
     @Test
     public void handsOutASnapshotThatCannotAliasTheStore() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
 
         final int[] first = store.snapshot(DISPLAY);
@@ -129,7 +141,7 @@ public class SecureRectangleStoreTest {
     /** Callers cannot keep writing through the array they handed us either. */
     @Test
     public void copiesWhatItIsGiven() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         final int[] mutable = { 1, 2, 3, 4 };
         store.set(DISPLAY, mutable);
 
@@ -145,7 +157,7 @@ public class SecureRectangleStoreTest {
      */
     @Test
     public void rejectsACoordinateListThatIsNotWholeRectangles() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         final IllegalArgumentException thrown = assertThrows(
                 IllegalArgumentException.class,
                 () -> store.set(DISPLAY, new int[] { 1, 2, 3 }));
@@ -155,7 +167,7 @@ public class SecureRectangleStoreTest {
     @Test
     public void rejectsNullCoordinates() {
         assertThrows(IllegalArgumentException.class,
-                () -> new SecureRectangleStore().set(DISPLAY, null));
+                () -> located().set(DISPLAY, null));
     }
 
     // ---- Display origin -------------------------------------------------
@@ -169,7 +181,7 @@ public class SecureRectangleStoreTest {
 
     @Test
     public void translatesEveryRectangleByTheDisplayOrigin() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.setOrigin(DISPLAY, 7, 96);
         store.set(DISPLAY, new int[] { 10, 20, 30, 40, 50, 60, 70, 80 });
 
@@ -187,7 +199,7 @@ public class SecureRectangleStoreTest {
      */
     @Test
     public void anOriginChangeMovesPublishedRectanglesAndTheVersion() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
         final int before = store.snapshot(DISPLAY)[0];
 
@@ -202,7 +214,7 @@ public class SecureRectangleStoreTest {
     /** The origin is re-reported on every layout pass; an unchanged one is free. */
     @Test
     public void anUnchangedOriginHoldsTheVersion() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.setOrigin(DISPLAY, 0, 96);
         store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
         final int settled = store.snapshot(DISPLAY)[0];
@@ -215,7 +227,7 @@ public class SecureRectangleStoreTest {
     /** A republish after an origin change keeps the origin, not (0, 0). */
     @Test
     public void keepsTheOriginAcrossRepublishes() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.setOrigin(DISPLAY, 0, 96);
         store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
         store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
@@ -227,7 +239,7 @@ public class SecureRectangleStoreTest {
 
     @Test
     public void anOriginAppliesOnlyToItsOwnDisplay() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.setOrigin(1, 0, 96);
         store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
 
@@ -239,7 +251,7 @@ public class SecureRectangleStoreTest {
     /** An origin with nothing secured serves the empty set, at the empty version. */
     @Test
     public void anOriginAloneSecuresNothing() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         final int[] empty = store.snapshot(DISPLAY);
 
         store.setOrigin(DISPLAY, 0, 96);
@@ -250,7 +262,7 @@ public class SecureRectangleStoreTest {
     /** Past int32 the sum saturates outwards rather than wrapping elsewhere. */
     @Test
     public void saturatesOutwardsInsteadOfWrapping() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.setOrigin(DISPLAY, -10, 10);
         store.set(DISPLAY, new int[] {
                 Integer.MIN_VALUE + 5, 0, 0, Integer.MAX_VALUE - 5 });
@@ -290,7 +302,7 @@ public class SecureRectangleStoreTest {
 
     @Test
     public void theMainOriginDoesNotMoveAnotherSurfacesRectangle() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, MAIN_SURFACE, new int[] { 10, 20, 30, 40 });
         store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
         store.setOrigin(DISPLAY, MAIN_SURFACE, 0, 96);
@@ -305,7 +317,7 @@ public class SecureRectangleStoreTest {
 
     @Test
     public void anotherSurfacesOwnOriginMovesOnlyItsRectangle() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, MAIN_SURFACE, new int[] { 10, 20, 30, 40 });
         store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
         store.setOrigin(DISPLAY, MAIN_SURFACE, 0, 96);
@@ -318,23 +330,99 @@ public class SecureRectangleStoreTest {
                 java.util.Arrays.copyOfRange(packed, 2, packed.length));
     }
 
-    // ---- Failing closed -------------------------------------------------
+    // ---- Failing closed, and the display's bounds ------------------------
 
-    /** A <Modal>'s rectangles before its origin is read redact the whole display. */
+    private static final int WIDTH = 720;
+    private static final int HEIGHT = 1612;
+    private static final int[] WHOLE_DISPLAY = { 0, 0, WIDTH, HEIGHT };
+
+    private static int[] rectanglesOf(final int[] packed) {
+        return java.util.Arrays.copyOfRange(packed, 2, packed.length);
+    }
+
+    /** A <Modal>'s rectangles before its origin is read redact exactly the whole display. */
     @Test
-    public void aSurfaceWithNoOriginYetServesTheWholeDisplay() {
+    public void aSurfaceWithNoOriginYetServesTheDisplayBounds() {
         final SecureRectangleStore store = new SecureRectangleStore();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
         store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250, 1, 2, 3, 4 });
 
         final int[] packed = store.snapshot(DISPLAY);
         assertEquals(1, packed[1]);
-        assertArrayEquals(SecureRectangleStore.FULL_DISPLAY,
-                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+        assertArrayEquals(WHOLE_DISPLAY, rectanglesOf(packed));
+    }
+
+    /** N4: the main surface fails closed too, until its first origin read. */
+    @Test
+    public void theMainSurfaceWithNoOriginYetServesTheDisplayBounds() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+
+        assertArrayEquals(WHOLE_DISPLAY, rectanglesOf(store.snapshot(DISPLAY)));
+
+        store.setOrigin(DISPLAY, 0, 51);
+        assertArrayEquals(new int[] { 10, 71, 30, 91 }, rectanglesOf(store.snapshot(DISPLAY)));
+    }
+
+    @Test
+    public void withoutTheDisplaysSizeTheWholeDisplayIsTheFallbackSquare() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 1, 2, 3, 4 });
+
+        final int size = SecureRectangleStore.FALLBACK_DISPLAY_SIZE;
+        assertArrayEquals(new int[] { 0, 0, size, size }, rectanglesOf(store.snapshot(DISPLAY)));
+    }
+
+    @Test
+    public void recordingTheDisplaysSizeShrinksTheWholeDisplayRectangleAndMovesTheVersion() {
+        final SecureRectangleStore store = new SecureRectangleStore();
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 1, 2, 3, 4 });
+        final int before = store.snapshot(DISPLAY)[0];
+
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertNotEquals(before, packed[0]);
+        assertArrayEquals(WHOLE_DISPLAY, rectanglesOf(packed));
+        assertTrue(store.hasDisplayBounds(DISPLAY));
+        assertFalse(store.hasDisplayBounds(1));
+    }
+
+    @Test
+    public void recordingTheSameSizeAgainHoldsTheVersion() {
+        final SecureRectangleStore store = located();
+        store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        final int settled = store.snapshot(DISPLAY)[0];
+
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        store.setDisplayBounds(DISPLAY, 0, HEIGHT);
+
+        assertEquals(settled, store.snapshot(DISPLAY)[0]);
+    }
+
+    /** N1: a renderer is never handed a rectangle that runs off the panel. */
+    @Test
+    public void everyServedRectangleIsClampedToTheDisplay() {
+        final SecureRectangleStore store = located();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        store.set(DISPLAY, new int[] {
+                -10, -20, 100, 200,          // off the top left: clamped
+                600, 1500, 900, 1800,        // off the bottom right: clamped
+                800, 100, 900, 200,          // wholly off the right: dropped
+                10, 10, 10, 50,              // no width: dropped
+        });
+
+        final int[] packed = store.snapshot(DISPLAY);
+        assertEquals(2, packed[1]);
+        assertArrayEquals(new int[] { 0, 0, 100, 200, 600, 1500, WIDTH, HEIGHT }, rectanglesOf(packed));
     }
 
     @Test
     public void readingTheSurfacesOriginReplacesTheWholeDisplayRectangle() {
         final SecureRectangleStore store = new SecureRectangleStore();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
         store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
         final int before = store.snapshot(DISPLAY)[0];
 
@@ -342,18 +430,46 @@ public class SecureRectangleStoreTest {
 
         final int[] packed = store.snapshot(DISPLAY);
         assertNotEquals(before, packed[0]);
-        assertArrayEquals(new int[] { 100, 200, 150, 250 },
-                java.util.Arrays.copyOfRange(packed, 2, packed.length));
+        assertArrayEquals(new int[] { 100, 200, 150, 250 }, rectanglesOf(packed));
     }
 
-    /** The main surface keeps (0, 0) until its origin is read, as before surfaces existed. */
+    /** N2: a forgotten root's surface fails closed again until a new origin is read. */
     @Test
-    public void theMainSurfaceWithNoOriginServesItsRectanglesUnmoved() {
-        final SecureRectangleStore store = new SecureRectangleStore();
-        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+    public void forgettingASurfacesOriginServesTheWholeDisplayAgain() {
+        final SecureRectangleStore store = located();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
+        store.setOrigin(DISPLAY, MODAL_SURFACE, 0, 0);
 
-        assertArrayEquals(new int[] { 10, 20, 30, 40 },
-                java.util.Arrays.copyOfRange(store.snapshot(DISPLAY), 2, 6));
+        store.forgetOrigin(MODAL_SURFACE);
+        assertArrayEquals(WHOLE_DISPLAY, rectanglesOf(store.snapshot(DISPLAY)));
+
+        store.setOrigin(DISPLAY, MODAL_SURFACE, 0, 30);
+        assertArrayEquals(new int[] { 100, 230, 150, 280 }, rectanglesOf(store.snapshot(DISPLAY)));
+    }
+
+    @Test
+    public void forgettingAnEmptyOrUnknownSurfaceChangesNothing() {
+        final SecureRectangleStore store = located();
+        store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
+        store.set(DISPLAY, MODAL_SURFACE, new int[0]);
+        final int[] before = store.snapshot(DISPLAY);
+
+        store.forgetOrigin(MODAL_SURFACE);
+        store.forgetOrigin(99);
+
+        assertArrayEquals(before, store.snapshot(DISPLAY));
+    }
+
+    @Test
+    public void hasRectanglesIsTrueOnlyForASurfaceThatHoldsSome() {
+        final SecureRectangleStore store = located();
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 1, 2, 3, 4 });
+        store.set(DISPLAY, 43, new int[0]);
+
+        assertTrue(store.hasRectangles(MODAL_SURFACE));
+        assertFalse(store.hasRectangles(43));
+        assertFalse(store.hasRectangles(99));
     }
 
     @Test
@@ -366,7 +482,7 @@ public class SecureRectangleStoreTest {
 
     @Test
     public void dropSurfaceIfEmptyForgetsOnlyAnEmptyNonMainLane() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, MODAL_SURFACE, new int[0]);
         store.set(DISPLAY, 43, new int[] { 1, 2, 3, 4 });
         store.set(DISPLAY, MAIN_SURFACE, new int[0]);
@@ -383,7 +499,7 @@ public class SecureRectangleStoreTest {
     /** Existing single-argument set/setOrigin keep meaning the main surface. */
     @Test
     public void theLegacySetAndSetOriginTargetTheMainSurface() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
         store.setOrigin(DISPLAY, 0, 96);
 
@@ -400,7 +516,7 @@ public class SecureRectangleStoreTest {
 
     @Test
     public void publishOrLogRejectsABadListWithoutThrowingOrTouchingTheSet() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
         store.set(DISPLAY, new int[] { 1, 2, 3, 4 });
         final int[] before = store.snapshot(DISPLAY);
 
@@ -412,7 +528,7 @@ public class SecureRectangleStoreTest {
 
     @Test
     public void publishOrLogPublishesAGoodList() {
-        final SecureRectangleStore store = new SecureRectangleStore();
+        final SecureRectangleStore store = located();
 
         assertTrue(store.publishOrLog(DISPLAY, new int[] { 1, 2, 3, 4 }));
 

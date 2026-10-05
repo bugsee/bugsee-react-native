@@ -118,6 +118,8 @@ static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface);
   // is not found yet keeps failing closed.
   if (NSThread.isMainThread) {
     BGSRNSecureRectangles *store = BGSRNSecureRectangles.shared;
+    // What a surface whose origin is unknown serves: the screen, not more.
+    [store setDisplaySize:UIScreen.mainScreen.bounds.size forDisplay:display];
     NSValue *origin = BGSRNReactOrigin();
     if (origin != nil) {
       [store setOrigin:origin.CGPointValue forDisplay:display];
@@ -315,6 +317,10 @@ static UIView *_Nullable BGSRNModalHost(NSInteger surface) {
 /// stops at the `ModalHostView` node with an identity transform, so this is
 /// the window's origin for a full-screen Modal and inset for a `pageSheet` or
 /// `formSheet` one. nil when the Modal is not presented, or off main.
+///
+/// For PR #30's rebase: the `window.frame.origin` term here must become the
+/// same window-placement value #30 gives the main lane, so both lanes share
+/// one convention.
 static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface) {
   if (!NSThread.isMainThread) {
     return nil;

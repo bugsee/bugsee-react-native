@@ -3,8 +3,12 @@ package com.bugsee.reactnative;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import android.content.Context;
+import android.graphics.Point;
+import android.hardware.display.DisplayManager;
 import android.util.Base64;
 import android.util.Log;
+import android.view.Display;
 
 import com.bugsee.library.Bugsee;
 import com.bugsee.library.contracts.exchange.Breadcrumb;
@@ -271,17 +275,24 @@ public class BugseeModule extends NativeBugseeSpec
             for (int i = 0; i < flat.length; i++) {
                 flat[i] = (int) Math.round(coordinates.getDouble(i));
             }
-            // Stored as measured (relative to that surface's viewport
-            // offset); the store serves them moved by that surface's display
-            // origin, which the tracker keeps current. Re-read now too, in
-            // case the window moved without a layout pass.
+            // The display's real size first: until an origin is read the
+            // store serves the whole display, and it must know how big that
+            // is. Display reads are safe off the UI thread.
+            recordDisplayBounds((int) display);
+            // Stored as measured (relative to that surface's own origin);
+            // the store serves them moved by that surface's display origin,
+            // which the tracker keeps current. Re-read now too, in case the
+            // window moved without a layout pass.
             if (!SecureRectangleStore.shared().publishOrLog((int) display, surface, flat)) {
                 return;
             }
             originTracker.refreshSoon();
-            // A <Modal>'s first publish: find and watch its dialog root.
-            // Until then its rectangles fail closed in the store.
-            originTracker.watchSurface(surface);
+            // A <Modal>'s first rectangles: find and watch its dialog root.
+            // Until then they fail closed in the store. An empty publish
+            // (the Modal clearing on unmount) watches nothing.
+            if (flat.length > 0) {
+                originTracker.watchSurface(surface);
+            }
             if (Log.isLoggable(TAG, Log.DEBUG)) {
                 Log.d(TAG, "secure published display=" + (int) display
                         + " surface=" + surface
@@ -292,6 +303,23 @@ public class BugseeModule extends NativeBugseeSpec
             Log.e(TAG, "setSecureRectangles failed; the previous set stays published: "
                     + e.getClass().getName());
         }
+    }
+
+    /** Records {@code display}'s real size in the store, once. */
+    private void recordDisplayBounds(final int display) {
+        final SecureRectangleStore store = SecureRectangleStore.shared();
+        if (store.hasDisplayBounds(display)) {
+            return;
+        }
+        final DisplayManager displays =
+                (DisplayManager) getReactApplicationContext().getSystemService(Context.DISPLAY_SERVICE);
+        final Display found = displays == null ? null : displays.getDisplay(display);
+        if (found == null) {
+            return;
+        }
+        final Point size = new Point();
+        found.getRealSize(size);
+        store.setDisplayBounds(display, size.x, size.y);
     }
 
     /**

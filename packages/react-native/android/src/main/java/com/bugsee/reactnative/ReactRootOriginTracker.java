@@ -319,12 +319,22 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         }
     }
 
+    /**
+     * Retries every pending surface. One whose rectangles JS has cleared
+     * meanwhile (its Modal unmounted before its root was found) is not
+     * retried: it is dropped with its empty lane.
+     */
     @UiThread
     private void resolvePending() {
         if (pendingSurfaces.isEmpty()) {
             return;
         }
         for (final Integer surfaceKey : new ArrayList<>(pendingSurfaces)) {
+            if (!store.hasRectangles(surfaceKey)) {
+                pendingSurfaces.remove(surfaceKey);
+                store.dropSurfaceIfEmpty(surfaceKey);
+                continue;
+            }
             watchSurfaceNow(surfaceKey);
         }
     }
@@ -336,12 +346,29 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             final WatchedRoot entry = it.next();
             if (!entry.handle.isAttachedToWindow()) {
                 it.remove();
-                entry.token.release();
-                surfaceOrigins.remove(entry.handle.surfaceKey());
-                store.dropSurfaceIfEmpty(entry.handle.surfaceKey());
+                forget(entry);
                 continue;
             }
             publishOrigin(entry.handle, false);
+        }
+    }
+
+    /**
+     * Stops watching a dialog root. If its surface still holds rectangles,
+     * its origin no longer holds: the store serves the surface as the whole
+     * display again and the key goes back to pending, so a later refresh
+     * watches whatever root then hosts it. Otherwise its empty lane goes.
+     */
+    @UiThread
+    private void forget(@NonNull final WatchedRoot entry) {
+        entry.token.release();
+        final int surfaceKey = entry.handle.surfaceKey();
+        surfaceOrigins.remove(surfaceKey);
+        if (store.hasRectangles(surfaceKey)) {
+            store.forgetOrigin(surfaceKey);
+            pendingSurfaces.add(surfaceKey);
+        } else {
+            store.dropSurfaceIfEmpty(surfaceKey);
         }
     }
 
@@ -369,9 +396,18 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         // not a cosmetic one, so a gone-mid-refresh view aborts the whole
         // read instead: nothing new is published and the previous origin
         // stands.
+        // A root that is not attached has no place on screen yet: its
+        // location reads (0, 0). Nothing is recorded; the surface keeps
+        // failing closed until its first layout after attaching.
+        if (!handle.isAttachedToWindow()) {
+            return;
+        }
         final OriginSnapshot snapshot = handle.resolveOrigin();
         if (snapshot == null) {
             return;
+        }
+        if (snapshot.displaySize != null) {
+            store.setDisplayBounds(snapshot.displayId, snapshot.displaySize.x, snapshot.displaySize.y);
         }
         final int[] origin = surfaceOrigin(snapshot);
         // The activity root is the main surface whatever its own view id:
@@ -416,11 +452,13 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     @UiThread
     void detach() {
         detachPrimary();
-        for (final WatchedRoot entry : watched) {
-            entry.token.release();
+        // Surfaces that still hold rectangles stay pending (failing closed)
+        // for a root a recreated activity brings back; refresh re-watches
+        // them. After dispose() nothing refreshes again.
+        for (final WatchedRoot entry : new ArrayList<>(watched)) {
+            forget(entry);
         }
         watched.clear();
-        pendingSurfaces.clear();
         surfaceOrigins.clear();
     }
 
@@ -510,6 +548,9 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         final Point viewport;
         final int displayId;
         final boolean reactRoot;
+        /** The display's real size in pixels ({@code Display.getRealSize}), or {@code null}. */
+        @Nullable
+        final Point displaySize;
 
         OriginSnapshot(final int[] onScreen, final Point viewport, final int displayId) {
             this(onScreen, viewport, displayId, true);
@@ -517,10 +558,16 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
 
         OriginSnapshot(final int[] onScreen, final Point viewport, final int displayId,
                 final boolean reactRoot) {
+            this(onScreen, viewport, displayId, reactRoot, null);
+        }
+
+        OriginSnapshot(final int[] onScreen, final Point viewport, final int displayId,
+                final boolean reactRoot, @Nullable final Point displaySize) {
             this.onScreen = onScreen;
             this.viewport = viewport;
             this.displayId = displayId;
             this.reactRoot = reactRoot;
+            this.displaySize = displaySize;
         }
     }
 
@@ -677,7 +724,12 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             final Point viewport = RootViewUtil.getViewportOffset(v);
             final Display display = v.getDisplay();
             final int displayId = display == null ? Display.DEFAULT_DISPLAY : display.getDisplayId();
-            return new OriginSnapshot(onScreen, viewport, displayId, reactRoot);
+            Point size = null;
+            if (display != null) {
+                size = new Point();
+                display.getRealSize(size);
+            }
+            return new OriginSnapshot(onScreen, viewport, displayId, reactRoot, size);
         }
 
         @Override
