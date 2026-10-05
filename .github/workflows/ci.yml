@@ -134,6 +134,10 @@ jobs:
       - name: Assemble the example
         working-directory: examples/bare/android
         run: ./gradlew assembleDebug :bugsee-e2e-native:testDebugUnitTest
+      # The source-map hook in a real Gradle build with stand-in AGP and React
+      # Native pieces. Off in the js job, which has no JDK set up.
+      - name: Test the source-map Gradle hook
+        run: BUGSEE_GRADLE_TESTS=1 yarn jest packages/react-native/scripts/__tests__/sourcemaps-gradle.test.js
 
   ios-unit:
     name: ios unit (BugseeRNSupport)

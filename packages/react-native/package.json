@@ -15,6 +15,7 @@
     "scripts/compose-then-inject.js",
     "scripts/bugsee-xcode.sh",
     "scripts/hermesc-preserve-js.sh",
+    "scripts/bugsee-sourcemaps.gradle",
     "react-native.config.js",
     "*.podspec"
   ],

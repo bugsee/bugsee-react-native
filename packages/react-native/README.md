@@ -67,6 +67,33 @@ maps, and Archives upload their dSYMs, whenever a real token is set.
 A committed `ios/` (`project.pbxproj` and the shared scheme) or
 `android/bugsee.properties` carries the token.
 
+## Android source maps
+
+Release builds give the Hermes bundle a debug id and upload its source map, so
+JS frames in a crash report resolve. An Expo app gets this from the config
+plugin. A bare app needs two edits in `android/app/build.gradle`:
+
+```groovy
+react {
+    // Copies the JS aside before hermesc compiles it, so the debug id can
+    // reach the bytecode.
+    hermesCommand = file("../../node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.sh").absolutePath
+}
+
+// At the end of the file.
+apply from: file("../../node_modules/@bugsee/react-native/scripts/bugsee-sourcemaps.gradle")
+```
+
+If Hermes compiles a bundle without going through `hermesc-preserve-js.sh`,
+the bundle task fails rather than ship a release without a debug id. With
+Hermes off, the plain JS bundle and Metro's map get the id instead.
+
+- **The upload needs a real token.** Set `app_token` in
+  `android/bugsee.properties`, or `BUGSEE_APP_TOKEN`. Without a token, or with
+  `-PbugseeUploadSourcemaps=false`, the build skips the upload with one line. A
+  failed upload warns and does not fail the build.
+- **The version and build number** are the variant's own, flavors included.
+
 ## Licence
 
 Commercial. See [LICENSE](./LICENSE) and https://www.bugsee.com/terms.
