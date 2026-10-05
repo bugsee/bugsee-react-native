@@ -69,6 +69,7 @@
 /// functions' definitions later in this file.
 static NSValue *_Nullable BGSRNReactOrigin(void);
 static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface);
+static Class _Nullable BGSRNModalHostClass(void);
 
 /// The conformance lives here rather than in the Support package so that the
 /// package stays buildable and testable without the SDK's headers. BGSRNWrapper
@@ -261,93 +262,39 @@ static NSValue *_Nullable BGSRNReactOrigin(void) {
   });
 }
 
-/// A `<Modal>` host's view controller. Declared here rather than imported:
-/// `RCTModalHostViewComponentView` implements `viewController` without
-/// declaring it in its header, and the call is guarded by
-/// `respondsToSelector:`.
-@interface UIView (BGSRNModalHost)
-- (UIViewController *)viewController;
-@end
-
-/// The `<Modal>` host component views found so far, by React tag. Weak: a
-/// host that unmounts must not be kept alive. Main thread only.
-static NSMapTable<NSNumber *, UIView *> *BGSRNModalHosts(void) {
-  static NSMapTable<NSNumber *, UIView *> *hosts;
-  static dispatch_once_t once;
-  dispatch_once(&once, ^{
-    hosts = [NSMapTable strongToWeakObjectsMapTable];
-  });
-  return hosts;
-}
-
-/// The mounted `<Modal>` host component view with React tag `surface`, among
-/// the windows the SDK walks. Fabric sets each component view's `tag` to its
-/// React tag (`RCTComponentViewRegistry`), but a window's tags are not a
-/// React namespace: a native view can carry the same integer. So the walk
-/// matches the class AND the tag, and a wrong-class view with that tag does
-/// not end it (`BGSRNTaggedView`), where `viewWithTag:` stopped at the first.
-/// Not the Fabric registry: a module reaches it only through
-/// `viewRegistry_DEPRECATED` (bridgeless backs it with the surface
-/// presenter's `findComponentViewWithTag_DO_NOT_USE_DEPRECATED:`), and the
-/// pull path that calls this is the wrapper's, which has no module. nil when
-/// there is none.
-static UIView *_Nullable BGSRNModalHost(NSInteger surface) {
+/// `RCTModalHostViewComponentView`, resolved by name rather than imported;
+/// Nil when this React Native has no such class.
+static Class _Nullable BGSRNModalHostClass(void) {
   static Class modalHostClass;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
     modalHostClass = NSClassFromString(@"RCTModalHostViewComponentView");
   });
-  if (modalHostClass == Nil || surface <= 0) {
-    return nil;
-  }
-  NSNumber *key = @(surface);
-  UIView *cached = [BGSRNModalHosts() objectForKey:key];
-  if (cached != nil && cached.tag == surface && cached.window != nil) {
-    return cached;
-  }
-  UIView *found = BGSRNTaggedView(BGSRNSdkWalkedWindows(BGSRNSdkKeyWindow()), surface, ^BOOL(UIView *view) {
-    return [view isKindOfClass:modalHostClass];
-  }, BGSRNModalHostSearchBudget);
-  if (found != nil) {
-    [BGSRNModalHosts() setObject:found forKey:key];
-    return found;
-  }
-  [BGSRNModalHosts() removeObjectForKey:key];
-  return nil;
+  return modalHostClass;
 }
 
 /// Where `measureInWindow`'s (0, 0) sits on the screen, in points, for the
-/// `<Modal>` whose host has React tag `surface`: the origin of its presented
-/// view controller's view in its window, plus the window's `frame.origin`.
-/// Fabric inserts the Modal's children into that view
-/// (`RCTModalHostViewComponentView`), and `measureInWindow` inside a Modal
-/// stops at the `ModalHostView` node with an identity transform, so this is
-/// the window's origin for a full-screen Modal and inset for a `pageSheet` or
-/// `formSheet` one. nil when the Modal is not presented, or off main.
-///
-/// For PR #30's rebase: the `window.frame.origin` term here must become the
-/// same window-placement value #30 gives the main lane, so both lanes share
-/// one convention.
+/// `<Modal>` whose host has React tag `surface` (`BGSRNModalHostOrigin`).
+/// Read from the current runtime's host, which its module names at publish
+/// time (`nameModalHostForSurface:`), the same shape as Android's
+/// `watchSurface`: a window can hold another runtime's host with the same
+/// tag during a reload, and only the module's own view registry tells them
+/// apart. Without a recorded host, the one class+tag match in the windows
+/// the SDK walks. nil (none or several, or off main) leaves the lane's
+/// origin as it was: unknown for a new lane, which is served as the whole
+/// display.
 static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface) {
   if (!NSThread.isMainThread) {
     return nil;
   }
-  UIView *host = BGSRNModalHost(surface);
-  if (host == nil || ![host respondsToSelector:@selector(viewController)]) {
+  Class modalHostClass = BGSRNModalHostClass();
+  if (modalHostClass == Nil || surface <= 0) {
     return nil;
   }
-  UIViewController *controller = [host viewController];
-  if (controller == nil || !controller.isViewLoaded) {
-    return nil;
-  }
-  UIView *content = controller.view;
-  UIWindow *window = content.window;
-  if (window == nil) {
-    return nil;
-  }
-  CGPoint inWindow = [content convertPoint:CGPointZero toView:nil];
-  CGPoint origin = CGPointMake(inWindow.x + window.frame.origin.x, inWindow.y + window.frame.origin.y);
-  return [NSValue valueWithCGPoint:origin];
+  return BGSRNSecureSurfaceOrigin(BGSRNSecureRectangles.shared, surface,
+                                  BGSRNSdkWalkedWindows(BGSRNSdkKeyWindow()), ^BOOL(UIView *view) {
+                                    return [view isKindOfClass:modalHostClass];
+                                  });
 }
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
@@ -923,6 +870,10 @@ static NSDictionary *BGSRNNoSpan(void) {
 }
 
 @synthesize spanHandles = _spanHandles;
+/// This runtime's view registry (set by React Native through
+/// `RCTBridgeModuleDecorator`): how a `<Modal>` host is found by its React
+/// tag without searching windows another runtime shares.
+@synthesize viewRegistry_DEPRECATED = _viewRegistry_DEPRECATED;
 
 RCT_EXPORT_MODULE(Bugsee)
 
@@ -1106,12 +1057,37 @@ RCT_EXPORT_MODULE(Bugsee)
   // Ignored once a newer runtime has claimed the store: this module's late
   // writes (a reload's teardown) must not touch the next runtime's lanes,
   // whose keys may be the same React tags.
-  [BGSRNSecureRectangles.shared setCoordinates:flat
-                                         count:count
-                                    forDisplay:(NSInteger)display
-                                       surface:(NSInteger)llround(surface)
-                                       runtime:_secureRuntime];
+  const NSInteger key = (NSInteger)llround(surface);
+  const BOOL published = [BGSRNSecureRectangles.shared setCoordinates:flat
+                                                                count:count
+                                                           forDisplay:(NSInteger)display
+                                                              surface:key
+                                                              runtime:_secureRuntime];
   free(flat);
+  // A <Modal>'s rectangles: name this runtime's lookup of its host, so the
+  // pull places them by this runtime's Modal. An empty publish (the Modal
+  // clearing on unmount) names nothing.
+  if (published && count > 0 && key != BGSRNSecureMainSurface) {
+    [self nameModalHostForSurface:key];
+  }
+}
+
+/// Names, under this module's claim, how the store finds the `<Modal>` host
+/// with React tag `surface`: this runtime's view registry, which another
+/// runtime's same-tag host is not in. Not looked up here: Fabric mounts the
+/// host after JS has measured and published inside it, so the pull asks (on
+/// main) until the host is there, then holds it weakly. No registry: nothing
+/// is named, and the pull falls back to a unique class+tag match.
+- (void)nameModalHostForSurface:(NSInteger)surface {
+  __weak RCTViewRegistry *registry = self.viewRegistry_DEPRECATED;
+  if (registry == nil) {
+    return;
+  }
+  [BGSRNSecureRectangles.shared setHostResolver:^id _Nullable(NSInteger tag) {
+    return [registry viewForReactTag:@(tag)];
+  }
+                                     forSurface:surface
+                                        runtime:_secureRuntime];
 }
 
 /// The screen origin `[x, y]` (points) of the `<Modal>` whose host has React

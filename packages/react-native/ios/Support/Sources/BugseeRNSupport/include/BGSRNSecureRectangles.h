@@ -64,9 +64,10 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 /// start the new module before the old one is invalidated, and Fabric numbers
 /// React tags from 1 again, so the old runtime's late writes would otherwise
 /// put back a lane the claim dropped, or clear the new runtime's lane on the
-/// same key and uncover its Modal. Origins, display sizes and empty-lane drops
-/// come from the wrapper's pull, which reads the live view tree and belongs to
-/// no runtime.
+/// same key and uncover its Modal. A Modal surface's host is named the same way
+/// (`setHostResolver:forSurface:runtime:`), so the pull reads each origin
+/// from the current runtime's host. Origins, display sizes and empty-lane drops are
+/// written by the wrapper's pull, which belongs to no runtime.
 ///
 /// ## Threading
 ///
@@ -75,6 +76,10 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 /// is explicit that a buffer rewritten by another thread while it reads is a
 /// use-after-free, so nothing here ever republishes into a buffer it has
 /// already handed out.
+/// A module's lookup of a surface's host by its React tag (see
+/// `setHostResolver:forSurface:runtime:`).
+typedef id _Nullable (^BGSRNSecureHostResolver)(NSInteger surface);
+
 @interface BGSRNSecureRectangles : NSObject
 
 /// The process-wide set of secured regions.
@@ -143,6 +148,33 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 /// The module holding `claim` is gone: drops every surface but the main one,
 /// unless a newer runtime has already claimed the store.
 - (void)releaseRuntime:(NSInteger)claim;
+
+/// Records `host`, held weakly, as the view whose origin places `surface`, a
+/// `<Modal>` lane of the module holding `claim`. The pull then reads the
+/// origin from this host rather than searching the windows for a view with
+/// the tag, which another runtime's host can share during a reload. Ignored
+/// (NO) when the claim is stale, `surface` is the main one, or no display has
+/// a lane for it. Every recorded host is forgotten on a claim and on a
+/// release that drops lanes, and a surface's host goes with its last lane.
+- (BOOL)setHost:(id)host forSurface:(NSInteger)surface runtime:(NSInteger)claim;
+
+/// Records how the module holding `claim` finds `surface`'s host: a lookup
+/// in its own runtime's view registry. A Modal's host is mounted after JS has
+/// measured and published inside it, so the lookup is kept and asked (on
+/// main, by `hostForSurface:accepting:`) until it finds the host, which is
+/// then recorded as by `setHost:forSurface:runtime:`. Same rules: ignored
+/// (NO) when the claim is stale, `surface` is the main one, or it has no
+/// lane; forgotten with the surface's last lane and on a claim.
+- (BOOL)setHostResolver:(BGSRNSecureHostResolver)resolver
+             forSurface:(NSInteger)surface
+                runtime:(NSInteger)claim;
+
+/// `surface`'s host: the recorded one while it lives; otherwise what the
+/// recorded lookup finds now, recorded if `accept` takes it and the claim it
+/// was named with is still current. nil when there is neither, or the lookup
+/// finds nothing acceptable. Calls the lookup outside the store's lock, on
+/// the caller's thread: main, for a view registry.
+- (nullable id)hostForSurface:(NSInteger)surface accepting:(BOOL (^)(id candidate))accept;
 
 /// Forgets `surface` on every display where it holds no rectangles (its
 /// Modal is gone). A surface that still holds rectangles stays.

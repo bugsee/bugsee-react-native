@@ -103,17 +103,65 @@ NSValue *BGSRNReactRootOrigin(UIWindow *keyWindow, NSArray<UIWindow *> *windows,
   return [NSValue valueWithCGPoint:window.frame.origin];
 }
 
-UIView *BGSRNTaggedView(NSArray<UIWindow *> *windows, NSInteger tag, BOOL (^matches)(UIView *), NSUInteger budget) {
+/// A `<Modal>` host's view controller. Declared here rather than imported:
+/// `RCTModalHostViewComponentView` implements `viewController` without
+/// declaring it in its header, and the call is guarded by
+/// `respondsToSelector:`.
+@interface UIView (BGSRNModalHostController)
+- (UIViewController *)viewController;
+@end
+
+UIView *BGSRNUniqueTaggedView(NSArray<UIWindow *> *windows, NSInteger tag, BOOL (^matches)(UIView *), NSUInteger budget) {
+  UIView *found = nil;
   for (UIWindow *window in windows) {
     NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:window];
     NSUInteger head = 0;
     while (head < queue.count && head < budget) {
       UIView *view = queue[head++];
       if (view.tag == tag && matches(view)) {
-        return view;
+        if (found != nil && found != view) {
+          return nil;
+        }
+        found = view;
       }
       [queue addObjectsFromArray:view.subviews];
     }
   }
-  return nil;
+  return found;
+}
+
+NSValue *BGSRNModalHostOrigin(UIView *host) {
+  if (![host respondsToSelector:@selector(viewController)]) {
+    return nil;
+  }
+  UIViewController *controller = [host viewController];
+  if (controller == nil || !controller.isViewLoaded) {
+    return nil;
+  }
+  UIView *content = controller.view;
+  UIWindow *window = content.window;
+  if (window == nil) {
+    return nil;
+  }
+  // For PR #30's rebase: the `window.frame.origin` term here must become the
+  // same window-placement value #30 gives the main lane, so both lanes share
+  // one convention.
+  CGPoint inWindow = [content convertPoint:CGPointZero toView:nil];
+  return [NSValue valueWithCGPoint:CGPointMake(inWindow.x + window.frame.origin.x, inWindow.y + window.frame.origin.y)];
+}
+
+NSValue *BGSRNSecureSurfaceOrigin(BGSRNSecureRectangles *store,
+                                  NSInteger surface,
+                                  NSArray<UIWindow *> *windows,
+                                  BOOL (^isHost)(UIView *)) {
+  UIView *host = [store hostForSurface:surface accepting:^BOOL(id candidate) {
+    return [candidate isKindOfClass:UIView.class] && ((UIView *)candidate).tag == surface && isHost(candidate);
+  }];
+  if (host != nil) {
+    // The current runtime's own host: not presented yet is no origin, not a
+    // search that could find another runtime's.
+    return BGSRNModalHostOrigin(host);
+  }
+  UIView *found = BGSRNUniqueTaggedView(windows, surface, isHost, BGSRNModalHostSearchBudget);
+  return found == nil ? nil : BGSRNModalHostOrigin(found);
 }

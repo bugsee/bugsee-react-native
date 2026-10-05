@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
 
+#import "BGSRNSecureRectangles.h"
+
 NS_ASSUME_NONNULL_BEGIN
 
 /// Where the `vh` request's origin comes from: the one number that puts the
@@ -50,23 +52,47 @@ FOUNDATION_EXPORT NSValue *_Nullable BGSRNReactRootOrigin(UIWindow *_Nullable ke
                                                           NSArray<UIWindow *> *windows,
                                                           BOOL (^isReactRoot)(UIView *view));
 
-/// How many views `BGSRNTaggedView` inspects per window before moving on to
-/// the next. A `<Modal>` host sits inside the React tree, deeper than a root,
-/// so this is larger than `BGSRNReactRootSearchBudget`; it still keeps a
-/// pathological native hierarchy from costing the main thread on every pull.
+/// How many views `BGSRNUniqueTaggedView` inspects per window before moving
+/// on to the next. A `<Modal>` host sits inside the React tree, deeper than a
+/// root, so this is larger than `BGSRNReactRootSearchBudget`; it still keeps
+/// a pathological native hierarchy from costing the main thread on a pull.
 FOUNDATION_EXPORT const NSUInteger BGSRNModalHostSearchBudget;
 
-/// The first view whose `tag` is `tag` and that `matches` accepts, searching
-/// each of `windows` in order, breadth-first, over at most `budget` views per
-/// window. A view with that tag that `matches` rejects does not end the
-/// search, in its window or any other: Fabric sets a component view's `tag`
-/// to its React tag, but it does not own every `tag` in a window, so a native
-/// view (or another runtime's) can carry the same small integer. Unlike
-/// `-[UIView viewWithTag:]`, which returns the first view with the tag
-/// whatever it is. nil when none.
-FOUNDATION_EXPORT UIView *_Nullable BGSRNTaggedView(NSArray<UIWindow *> *windows,
-                                                    NSInteger tag,
-                                                    BOOL (^matches)(UIView *view),
-                                                    NSUInteger budget);
+/// The one view whose `tag` is `tag` and that `matches` accepts, searching
+/// each of `windows` breadth-first over at most `budget` views per window.
+/// nil when there is none, AND when there is more than one: Fabric sets a
+/// component view's `tag` to its React tag, but tags are not a window-wide
+/// namespace. A native view can carry the same small integer (a non-matching
+/// view does not end the search, unlike `-[UIView viewWithTag:]`), and during
+/// a reload two runtimes' hosts can share one tag, so two matches cannot say
+/// which is current.
+FOUNDATION_EXPORT UIView *_Nullable BGSRNUniqueTaggedView(NSArray<UIWindow *> *windows,
+                                                          NSInteger tag,
+                                                          BOOL (^matches)(UIView *view),
+                                                          NSUInteger budget);
+
+/// Where `measureInWindow`'s (0, 0) sits on the screen, in points, inside the
+/// `<Modal>` whose host component view is `host`: the origin of the host's
+/// presented view controller's view in its window, plus the window's
+/// `frame.origin`. Fabric inserts the Modal's children into that view
+/// (`RCTModalHostViewComponentView`), and `measureInWindow` inside a Modal
+/// stops at the `ModalHostView` node with an identity transform, so this is
+/// the window's origin for a full-screen Modal and inset for a `pageSheet` or
+/// `formSheet` one. nil when `host` has no `viewController`, or that view is
+/// not loaded or has no window (the Modal is not presented).
+FOUNDATION_EXPORT NSValue *_Nullable BGSRNModalHostOrigin(UIView *host);
+
+/// The screen origin of `surface`, a `<Modal>` lane in `store`. Read from the
+/// current runtime's host (`hostForSurface:accepting:`, which takes a view
+/// `isHost` accepts with that tag) when there is one, even when that gives no
+/// origin yet. Otherwise, the registry lookup being unavailable or not
+/// finding it, the one view `isHost` accepts with that tag in `windows`
+/// (`BGSRNUniqueTaggedView`); nil when there are none or several. A nil
+/// leaves the lane's origin as it was: unknown for a new lane, which is
+/// served as the whole display. Main thread only.
+FOUNDATION_EXPORT NSValue *_Nullable BGSRNSecureSurfaceOrigin(BGSRNSecureRectangles *store,
+                                                              NSInteger surface,
+                                                              NSArray<UIWindow *> *windows,
+                                                              BOOL (^isHost)(UIView *view));
 
 NS_ASSUME_NONNULL_END

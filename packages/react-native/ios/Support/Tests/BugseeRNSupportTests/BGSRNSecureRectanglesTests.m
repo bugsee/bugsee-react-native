@@ -464,6 +464,100 @@
   XCTAssertEqualObjects([_store surfacesForDisplay:0], @[]);
 }
 
+#pragma mark - A Modal surface's host (PR 48, round 2)
+
+static BOOL (^const BGSRNAcceptAny)(id) = ^BOOL(id candidate) {
+  return YES;
+};
+
+- (void)testAHostIsRecordedOnlyForTheCurrentRuntimesModalLane {
+  NSObject *host = [NSObject new];
+  const int32_t rects[] = {1, 2, 3, 4};
+  const NSInteger old = [_store claimRuntime];
+  XCTAssertFalse([_store setHost:host forSurface:42 runtime:old], @"no lane for 42 yet");
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:old];
+  XCTAssertFalse([_store setHost:host forSurface:BGSRNSecureMainSurface runtime:old]);
+  XCTAssertTrue([_store setHost:host forSurface:42 runtime:old]);
+  XCTAssertEqual([_store hostForSurface:42 accepting:BGSRNAcceptAny], host);
+
+  const NSInteger current = [_store claimRuntime];
+  XCTAssertNil([_store hostForSurface:42 accepting:BGSRNAcceptAny]);
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:current];
+  XCTAssertFalse([_store setHost:host forSurface:42 runtime:old]);
+  XCTAssertNil([_store hostForSurface:42 accepting:BGSRNAcceptAny]);
+  XCTAssertTrue([_store setHost:host forSurface:42 runtime:current]);
+  XCTAssertEqual([_store hostForSurface:42 accepting:BGSRNAcceptAny], host);
+}
+
+- (void)testALookupIsNamedOnlyByTheCurrentRuntime {
+  NSObject *host = [NSObject new];
+  const int32_t rects[] = {1, 2, 3, 4};
+  BGSRNSecureHostResolver lookup = ^id _Nullable(NSInteger tag) {
+    return host;
+  };
+  const NSInteger old = [_store claimRuntime];
+  XCTAssertFalse([_store setHostResolver:lookup forSurface:42 runtime:old], @"no lane for 42 yet");
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:old];
+  [_store claimRuntime];
+  const NSInteger current = [_store claimRuntime];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:current];
+
+  XCTAssertFalse([_store setHostResolver:lookup forSurface:42 runtime:old]);
+  XCTAssertNil([_store hostForSurface:42 accepting:BGSRNAcceptAny]);
+  XCTAssertTrue([_store setHostResolver:lookup forSurface:42 runtime:current]);
+  XCTAssertEqual([_store hostForSurface:42 accepting:BGSRNAcceptAny], host);
+}
+
+/// A claim that lands while a lookup is running: what it found is not kept.
+- (void)testAHostFoundAcrossANewClaimIsNotKept {
+  NSObject *host = [NSObject new];
+  const int32_t rects[] = {1, 2, 3, 4};
+  const NSInteger old = [_store claimRuntime];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:old];
+  BGSRNSecureRectangles *store = _store;
+  [_store setHostResolver:^id _Nullable(NSInteger tag) {
+    const NSInteger current = [store claimRuntime];
+    const int32_t again[] = {1, 2, 3, 4};
+    [store setCoordinates:again count:4 forDisplay:0 surface:42 runtime:current];
+    return host;
+  }
+               forSurface:42
+                  runtime:old];
+
+  XCTAssertNil([_store hostForSurface:42 accepting:BGSRNAcceptAny]);
+  XCTAssertNil([_store hostForSurface:42 accepting:BGSRNAcceptAny]);
+}
+
+- (void)testASurfacesHostGoesWithItsLastLane {
+  NSObject *host = [NSObject new];
+  const int32_t rects[] = {1, 2, 3, 4};
+  const NSInteger claim = [_store claimRuntime];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:claim];
+  [_store setHost:host forSurface:42 runtime:claim];
+  [_store setHostResolver:^id _Nullable(NSInteger tag) {
+    return host;
+  }
+               forSurface:42
+                  runtime:claim];
+
+  [_store setCoordinates:NULL count:0 forDisplay:0 surface:42 runtime:claim];
+  [_store dropSurfaceIfEmpty:42];
+
+  XCTAssertNil([_store hostForSurface:42 accepting:BGSRNAcceptAny]);
+}
+
+- (void)testReleasingTheCurrentRuntimeForgetsItsHosts {
+  NSObject *host = [NSObject new];
+  const int32_t rects[] = {1, 2, 3, 4};
+  const NSInteger claim = [_store claimRuntime];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42 runtime:claim];
+  [_store setHost:host forSurface:42 runtime:claim];
+
+  [_store releaseRuntime:claim];
+
+  XCTAssertNil([_store hostForSurface:42 accepting:BGSRNAcceptAny]);
+}
+
 /// The shared store outlives any one wrapper: the init provider registers one
 /// before launch and setWrapperInfo swaps in another, and the regions the app
 /// marked secret must survive that.

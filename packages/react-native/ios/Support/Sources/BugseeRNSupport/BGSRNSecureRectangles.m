@@ -83,6 +83,18 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
 
 @end
 
+/// A Modal surface's host, as its owning module named it: the host itself,
+/// held weakly once found (a host that unmounts must not be kept alive), and
+/// the module's lookup that finds it, with that module's claim.
+@interface BGSRNSurfaceHost : NSObject
+@property (nonatomic, weak) id host;
+@property (nonatomic, copy, nullable) BGSRNSecureHostResolver resolver;
+@property (nonatomic, assign) NSInteger claim;
+@end
+
+@implementation BGSRNSurfaceHost
+@end
+
 @implementation BGSRNSecureRectangles {
   /// display -> (surface -> lane). Served in surface-key order.
   NSMutableDictionary<NSNumber *, NSMutableDictionary<NSNumber *, BGSRNSecureLane *> *> *_lanesByDisplay;
@@ -96,6 +108,10 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
   NSLock *_lock;
   /// The current JS runtime's claim; see `claimRuntime`. Under `_lock`.
   NSInteger _runtime;
+  /// surface -> its host as the owning module named it (`setHost:...`,
+  /// `setHostResolver:...`). Under `_lock`. An entry goes with the surface's
+  /// last lane, and on a claim.
+  NSMutableDictionary<NSNumber *, BGSRNSurfaceHost *> *_hostsBySurface;
 }
 
 + (BGSRNSecureRectangles *)shared {
@@ -114,6 +130,7 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
     _versionsByDisplay = [NSMutableDictionary dictionary];
     _boundsByDisplay = [NSMutableDictionary dictionary];
     _lock = [[NSLock alloc] init];
+    _hostsBySurface = [NSMutableDictionary dictionary];
   }
   return self;
 }
@@ -280,6 +297,82 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
     }
     [self moveVersionLockedForDisplay:display.integerValue ifServedDiffersFrom:previousServed];
   }
+  // Every host recorded so far belongs to a runtime whose lanes just went.
+  [_hostsBySurface removeAllObjects];
+}
+
+- (BOOL)setHost:(id)host forSurface:(NSInteger)surface runtime:(NSInteger)claim {
+  if (host == nil) {
+    return NO;
+  }
+  [_lock lock];
+  BGSRNSurfaceHost *entry = [self hostEntryLockedForSurface:surface runtime:claim];
+  entry.host = host;
+  [_lock unlock];
+  return entry != nil;
+}
+
+- (BOOL)setHostResolver:(BGSRNSecureHostResolver)resolver forSurface:(NSInteger)surface runtime:(NSInteger)claim {
+  if (resolver == nil) {
+    return NO;
+  }
+  [_lock lock];
+  BGSRNSurfaceHost *entry = [self hostEntryLockedForSurface:surface runtime:claim];
+  entry.resolver = resolver;
+  [_lock unlock];
+  return entry != nil;
+}
+
+/// `surface`'s host entry for the module holding `claim`, made if needed;
+/// nil when the claim is stale, `surface` is the main one, or no display has
+/// a lane for it. Caller holds `_lock`.
+- (nullable BGSRNSurfaceHost *)hostEntryLockedForSurface:(NSInteger)surface runtime:(NSInteger)claim {
+  if (surface == BGSRNSecureMainSurface || ![self isCurrentLocked:claim] || ![self hasLaneLockedForSurface:surface]) {
+    return nil;
+  }
+  BGSRNSurfaceHost *entry = _hostsBySurface[@(surface)];
+  if (entry == nil) {
+    entry = [BGSRNSurfaceHost new];
+    entry.claim = claim;
+    _hostsBySurface[@(surface)] = entry;
+  }
+  return entry;
+}
+
+- (id)hostForSurface:(NSInteger)surface accepting:(BOOL (^)(id candidate))accept {
+  [_lock lock];
+  BGSRNSurfaceHost *entry = _hostsBySurface[@(surface)];
+  id host = entry.host;
+  BGSRNSecureHostResolver resolver = entry.resolver;
+  const NSInteger claim = entry.claim;
+  [_lock unlock];
+  if (host != nil || resolver == nil) {
+    return host;
+  }
+  // Outside the lock: the lookup is the module's, and may take its own.
+  id candidate = nil;
+  @try {
+    candidate = resolver(surface);
+  } @catch (NSException *exception) {
+    NSLog(@"BugseeRN secure host lookup threw: %@", NSStringFromClass(exception.class));
+    return nil;
+  }
+  if (candidate == nil || !accept(candidate)) {
+    return nil;
+  }
+  // Pinned under the claim it was named with: a newer runtime's claim since
+  // the lookup started forgets it instead.
+  return [self setHost:candidate forSurface:surface runtime:claim] ? candidate : nil;
+}
+
+/// Whether any display has a lane for `surface`. Caller holds `_lock`.
+- (BOOL)hasLaneLockedForSurface:(NSInteger)surface {
+  for (NSNumber *display in _lanesByDisplay) {
+    if (_lanesByDisplay[display][@(surface)] != nil) {
+      return YES;
+    }
+  }
+  return NO;
 }
 
 - (NSArray<NSNumber *> *)surfacesForDisplay:(NSInteger)display {
@@ -305,6 +398,9 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
       // An empty lane serves nothing, so removing it leaves the version alone.
       [_lanesByDisplay[display] removeObjectForKey:@(surface)];
     }
+  }
+  if (![self hasLaneLockedForSurface:surface]) {
+    [_hostsBySurface removeObjectForKey:@(surface)];
   }
   [_lock unlock];
 }
