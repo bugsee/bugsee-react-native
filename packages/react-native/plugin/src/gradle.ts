@@ -147,7 +147,7 @@ function scan(source: string, file: string): Scan {
       masked.push('S');
       kinds.push(KIND_STRING);
     } else if (top()?.kind === 'comment') {
-      masked.push(ch === '\r' ? ch : ' ');
+      masked.push(' ');
       kinds.push(KIND_COMMENT);
     } else {
       masked.push(ch);
@@ -159,9 +159,12 @@ function scan(source: string, file: string): Scan {
       emit(source[from + k] as string);
     }
   };
-  const noteCode = (ch: string): void => {
+  // `ch` is the code character at `at`, or a sentinel for a string that just
+  // ended. An identifier continues only when the previous source character
+  // is a word character too: whitespace ends it.
+  const noteCode = (ch: string, at: number): void => {
     commentAt = null;
-    word = isWordChar(ch) && isWordChar(last) ? word + ch : isWordChar(ch) ? ch : '';
+    word = isWordChar(ch) && isWordChar(source[at - 1] ?? '') ? word + ch : isWordChar(ch) ? ch : '';
     last = ch;
   };
   const endLine = (end: number): void => {
@@ -172,7 +175,8 @@ function scan(source: string, file: string): Scan {
       depth: lineDepth,
       depthAfter: depth,
       openAtStart: lineOpenAtStart,
-      openAtEnd: stack.length > 0,
+      // A line comment ends with its line; everything else carries over.
+      openAtEnd: stack.some((frame) => frame.kind !== 'comment' || frame.block),
       commentAt,
     });
   };
@@ -264,13 +268,14 @@ function scan(source: string, file: string): Scan {
         i += 2;
         continue;
       }
-      const spaced = i > 0 && isBlank(source[i - 1] as string);
-      const tight = next !== undefined && !isBlank(next) && next !== '\n';
+      const spaced = isBlank(source[i - 1] ?? '');
+      const after = next ?? '\n';
+      const tight = !isBlank(after) && after !== '\n';
       const slashy = slashyAllowed(last, word, spaced, tight);
       if (slashy === null) {
         throw unreadable(file, `line ${lineNo}: cannot tell whether the / starts a slashy string or divides`);
       }
-      noteCode(slashy ? STRING_END : ch);
+      noteCode(slashy ? STRING_END : ch, i);
       if (slashy) {
         stack.push({ kind: 'string', close: '/', interpolates: true, escape: 'slashy', oneLine: false, line: lineNo });
       }
@@ -279,7 +284,7 @@ function scan(source: string, file: string): Scan {
       continue;
     }
     if (ch === '$' && source[i + 1] === '/') {
-      noteCode(STRING_END);
+      noteCode(STRING_END, i);
       stack.push({ kind: 'string', close: '/$', interpolates: true, escape: 'dollar', oneLine: false, line: lineNo });
       emitN(i, 2);
       i += 2;
@@ -287,7 +292,7 @@ function scan(source: string, file: string): Scan {
     }
     if (ch === '"' || ch === "'") {
       const triple = source.startsWith(ch.repeat(3), i);
-      noteCode(STRING_END);
+      noteCode(STRING_END, i);
       stack.push({
         kind: 'string',
         close: triple ? ch.repeat(3) : ch,
@@ -307,7 +312,7 @@ function scan(source: string, file: string): Scan {
         depth += 1;
         openBraces.push(lineNo);
       }
-      noteCode(ch);
+      noteCode(ch, i);
       emit(ch);
       i += 1;
       continue;
@@ -325,13 +330,13 @@ function scan(source: string, file: string): Scan {
         depth -= 1;
         openBraces.pop();
       }
-      noteCode(ch);
+      noteCode(ch, i);
       emit(ch);
       i += 1;
       continue;
     }
     if (!isBlank(ch)) {
-      noteCode(ch);
+      noteCode(ch, i);
     }
     emit(ch);
     i += 1;
@@ -351,9 +356,6 @@ function scan(source: string, file: string): Scan {
   }
   if (depth > 0) {
     throw unreadable(file, `line ${openBraces[openBraces.length - 1]}: a brace opened on this line never closes`);
-  }
-  if (open?.kind === 'comment') {
-    stack.pop();
   }
   endLine(source.length);
   const text = masked.join('');
@@ -466,7 +468,7 @@ function blockExtent(s: Scan, keyword: string, from = 0, to = s.masked.length): 
 
 /** Brace depth, code only, just before `index`. */
 function depthAt(s: Scan, index: number): number {
-  const line = s.lines.find((entry) => index >= entry.start && index <= entry.start + entry.raw.length) as Line;
+  const line = s.lines.find((entry) => index >= entry.start && index < entry.start + entry.raw.length) as Line;
   let depth = line.depth;
   for (let i = line.start; i < index; i += 1) {
     if (s.masked[i] === '{') {
@@ -756,7 +758,7 @@ function buildTypeSpans(s: Scan): BuildTypeSpan[] {
 }
 
 const lineIndexAt = (s: Scan, index: number): number =>
-  s.lines.findIndex((line) => index >= line.start && index <= line.start + line.raw.length);
+  s.lines.findIndex((line) => index >= line.start && index < line.start + line.raw.length);
 
 function isSymbolTableMarker(line: Line): boolean {
   return isLineComment(line) && line.raw.includes(SYMBOL_TABLE_MARKER);
@@ -951,8 +953,9 @@ function legacyHookEnd(lines: readonly Line[], start: number): number | null {
   while (j < lines.length && isLineComment(lines[j] as Line)) {
     j += 1;
   }
+  // After a line comment the next line is always code, so no open check here.
   const fingerprint = lines[j];
-  if (fingerprint === undefined || fingerprint.openAtStart || !fingerprint.raw.startsWith(LEGACY_HOOK_FINGERPRINT)) {
+  if (fingerprint === undefined || !fingerprint.raw.startsWith(LEGACY_HOOK_FINGERPRINT)) {
     return null;
   }
   while (j < lines.length && !(lines[j] as Line).openAtStart && (lines[j] as Line).raw.startsWith('def bugsee')) {

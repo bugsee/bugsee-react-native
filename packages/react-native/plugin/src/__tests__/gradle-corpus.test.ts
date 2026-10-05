@@ -458,7 +458,57 @@ const appCases: Case[] = [
   },
   {
     name: 'division and regex operators',
-    segments: [u(REACT_APPLY), u('def half = 10 / 2\ndef third = (9) / 3\ndef ok = "a" ==~ /a+/\ndef m = x =~ /\\/{/'), u(userDeps)],
+    segments: [
+      u(REACT_APPLY),
+      u('def half = 10 / 2\ndef third = (9) / 3\ndef ok = "a" ==~ /a+/\ndef m = x =~ /\\/{/'),
+      u('def fourth = [8][0] / 2\ndef fifth = "10" / 2\ndef sixth = a/ b\ndef f = { -> return /a{b/ }\ndef g = x in /c{d/'),
+      u('def r = /a${[1].collect { it }}b/\ndef ds = $/a$$b$/c{/$'),
+      u(userDeps),
+    ],
+  },
+  {
+    name: 'a fourth quote is content, and a backslash before a newline is one character',
+    segments: [u(REACT_APPLY), u('def four = """x"""" + "{"\ndef cont = """a\\\nb"""'), u(userDeps)],
+  },
+  {
+    name: 'a fourth single quote is content too',
+    segments: [u(REACT_APPLY), u("def five = '''y'''' + '{'"), u(userDeps)],
+  },
+  {
+    name: 'a slash spaced like a regex argument is ambiguous and refused',
+    segments: [u(REACT_APPLY), u('def q = a /b/'), u(userDeps)],
+    refuse: true,
+  },
+  {
+    name: 'a trailing block comment then a line comment on the hermesCommand line',
+    segments: [u(REACT_APPLY), u(reactOpen), h('    hermesCommand = "/x" /* a */ // b', ' /* a */ // b'), u(reactClose)],
+  },
+  {
+    name: 'a Bugsee apply line with a trailing comment is user code',
+    segments: [u(REACT_APPLY), u(`${APPLY} // mine`), u(userDeps)],
+  },
+  {
+    name: 'the exclude block inside a user if block is not the plugin block',
+    segments: [u(REACT_APPLY), u(`if (x) {\n${EXCLUDE_BLOCK}\n}`), u(userDeps)],
+    quoted: { exclude: 1 },
+  },
+  {
+    name: 'a symbol marker with code before it, or in a block comment, starts no block',
+    segments: [u(REACT_APPLY), u('a() // bugsee-symbol-table: x\nndk {\n}\n/* bugsee-symbol-table: y */\nndk {\n}'), u(userDeps)],
+  },
+  {
+    name: 'the react plugin apply inside a block comment is not the apply line',
+    segments: [u(`/*\n${REACT_APPLY}\n*/`), u(REACT_APPLY), u(userDeps)],
+    check: (output) => expect(output).toContain(`*/\n${REACT_APPLY}\n${PLUGIN_APPLY}\n`),
+  },
+  {
+    name: 'a nested react block is not the react block',
+    segments: [u(REACT_APPLY), u('android {\n    react {\n    }\n}'), u(userDeps)],
+    check: (output) => expect(output).not.toContain(EXPR),
+  },
+  {
+    name: 'a legacy fingerprint line that opens a string is not a hook',
+    segments: [u(REACT_APPLY), b(LEGACY_MARKER), u('def bugseeHermesSourcemaps = """\nafterEvaluate {\n"""'), u(userAfter)],
   },
   {
     name: 'hermesCommand compared, not assigned',
