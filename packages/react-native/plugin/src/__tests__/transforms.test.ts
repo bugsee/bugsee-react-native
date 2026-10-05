@@ -751,3 +751,53 @@ describe('react.hermesCommand forms', () => {
     }
   });
 });
+
+describe('react.hermesCommand edge cases', () => {
+  const rewritten = `    ${HERMES_COMMAND}`;
+  const ndkLine = '    implementation "com.bugsee:bugsee-android-ndk:7.3.0"';
+
+  it('reads an escaped quote as part of the string', () => {
+    const source = 'react {\n    hermesCommand = "a\\"b"\n}\n';
+    expect(beforeHook(ensureAppAppliesPlugin(source, null))).toContain(`react {\n${rewritten}\n}`);
+  });
+
+  it('refuses an unclosed bracket even without a trailing operator, and trailing spaces after one', () => {
+    for (const source of [
+      'react {\n    hermesCommand = foo(bar\n}\n',
+      'react {\n    hermesCommand.set(foo\n}\n',
+      'react {\n    hermesCommand = "a" +   \n        "b"\n}\n',
+    ]) {
+      expect(() => ensureAppAppliesPlugin(source, null)).toThrow(HERMES_COMMAND_UNREWRITABLE);
+    }
+  });
+
+  it('finds a react block written without a space or with trailing spaces, not a one-line one', () => {
+    expect(beforeHook(ensureAppAppliesPlugin('react{\n}\n', null))).toContain(`react{\n${rewritten}\n}`);
+    expect(beforeHook(ensureAppAppliesPlugin('react {  \n}\n', null))).toContain(`react {  \n${rewritten}\n}`);
+    const oneLine = 'react { debuggableVariants = [] }\n';
+    expect(beforeHook(ensureAppAppliesPlugin(oneLine, null))).not.toContain('hermesCommand');
+  });
+
+  it('replaces a current hook at the very start or the very end of the file', () => {
+    const fresh = ensureAppAppliesPlugin('dependencies {\n}\n', '7.3.0');
+    const hook = fresh.slice(fresh.indexOf('// bugsee-sourcemaps:')).trimEnd();
+    const head = `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n`;
+    // At the end with no newline after it: replaced in place, nothing duplicated.
+    const atEnd = `${head}\n${hook}`;
+    expect(ensureAppAppliesPlugin(atEnd, '7.3.0')).toBe(atEnd);
+    // First in the file.
+    const atStart = `${hook}\n${head}`;
+    expect(ensureAppAppliesPlugin(atStart, '7.3.0')).toBe(atStart);
+  });
+
+  it('trims every trailing blank line before appending the hook', () => {
+    const source = `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n\n\n\n`;
+    const hook = (() => {
+      const fresh = ensureAppAppliesPlugin('x\n', '7.3.0');
+      return fresh.slice(fresh.indexOf('// bugsee-sourcemaps:'));
+    })();
+    expect(ensureAppAppliesPlugin(source, '7.3.0')).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n\n${hook}`,
+    );
+  });
+});
