@@ -831,9 +831,9 @@ function dropNdkImplementation(source: string, log: (message: string) => void): 
     (line) => !line.openAtStart && line.depth === 0 && stripCr(line.raw) === NDK_OPENER,
   );
   if (opener !== -1) {
+    // The block the plugin appended has no blank lines of its own: nothing left means the closer comes next.
     const closer = stripped.lines.findIndex((entry, i) => i > opener && entry.depthAfter === 0);
-    const empty = stripped.lines.slice(opener + 1, closer).every((entry) => stripCr(entry.raw).trim() === '');
-    if (empty && isCloserLine(stripped.lines[closer] as Line)) {
+    if (closer === opener + 1 && isCloserLine(stripped.lines[closer] as Line)) {
       const rest = lines;
       removeBlock(rest, opener, closer);
       return rest.join('\n');
@@ -941,7 +941,8 @@ function symbolBlockLinesAt(lines: readonly Line[], start: number): number {
   let count = 0;
   while (count < SYMBOL_TABLE_BLOCK.length) {
     const line = lines[start + count];
-    if (line === undefined || line.openAtStart || stripCr(line.raw) !== `${indent}${SYMBOL_TABLE_BLOCK[count]}`) {
+    // The first line is a marker in code, and no block line opens a string, so none of them starts inside one.
+    if (line === undefined || stripCr(line.raw) !== `${indent}${SYMBOL_TABLE_BLOCK[count]}`) {
       break;
     }
     count += 1;
@@ -1105,8 +1106,9 @@ function legacyHookEnd(lines: readonly Line[], start: number): number | null {
   if (open === undefined || stripCr(open.raw) !== 'afterEvaluate {') {
     return null;
   }
+  // Braces balance, so some line from j on returns to the opener's depth.
   const close = lines.findIndex((line, k) => k >= j && line.depthAfter === open.depth);
-  return close !== -1 && stripCr((lines[close] as Line).raw) === '}' ? close : null;
+  return stripCr((lines[close] as Line).raw) === '}' ? close : null;
 }
 
 /**
