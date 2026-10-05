@@ -323,98 +323,188 @@ const SOURCEMAPS_HOOK = [
 const LEGACY_HOOK_MARKER = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
 exports.HERMES_COMMAND_UNREWRITABLE = 'react.hermesCommand in android/app/build.gradle spans several lines, so @bugsee/react-native ' +
     'cannot point it at scripts/hermesc-preserve-js.sh. Put it on one line, or delete it, and prebuild again.';
-/** Brackets and quotes all close, and the text does not end in an operator. */
-function completeExpression(text) {
-    let depth = 0;
-    let quote = null;
-    for (let i = 0; i < text.length; i += 1) {
-        const ch = text[i];
-        if (quote !== null) {
-            if (ch === '\\') {
+/**
+ * A Groovy lexer just deep enough to tell code from comments and strings,
+ * line by line: `//` and block comments, '…' and "…" strings (with
+ * backslash escapes), and ''' / """ strings across lines. Slashy strings
+ * are read as division.
+ */
+function scanLines(source) {
+    const out = [];
+    let state = 'code';
+    for (const line of source.split('\n')) {
+        const start = state;
+        let code = '';
+        let unclosed = false;
+        let i = 0;
+        while (i < line.length) {
+            if (state !== 'code') {
+                const close = state === 'block' ? '*/' : state;
+                const at = line.indexOf(close, i);
+                if (at < 0) {
+                    i = line.length;
+                }
+                else {
+                    code += state === 'block' ? ' ' : 'S';
+                    state = 'code';
+                    i = at + close.length;
+                }
+                continue;
+            }
+            const two = line.slice(i, i + 2);
+            const three = line.slice(i, i + 3);
+            if (two === '//') {
+                break;
+            }
+            if (two === '/*') {
+                state = 'block';
+                i += 2;
+            }
+            else if (three === "'''" || three === '"""') {
+                state = three;
+                i += 3;
+            }
+            else if (line[i] === '"' || line[i] === "'") {
+                const quote = line[i];
+                let j = i + 1;
+                while (j < line.length && line[j] !== quote) {
+                    j += line[j] === '\\' ? 2 : 1;
+                }
+                unclosed = unclosed || j >= line.length;
+                code += 'S';
+                i = j + 1;
+            }
+            else {
+                code += line[i];
                 i += 1;
             }
-            else if (ch === quote) {
-                quote = null;
-            }
         }
-        else if (ch === '"' || ch === "'") {
-            quote = ch;
-        }
-        else if ('([{'.includes(ch)) {
+        out.push({ start, code, open: unclosed || state !== 'code' });
+    }
+    return out;
+}
+/** Brackets all close, something is there, and it does not end in an operator. */
+function completeExpression(code) {
+    let depth = 0;
+    for (const ch of code) {
+        if ('([{'.includes(ch)) {
             depth += 1;
         }
         else if (')]}'.includes(ch)) {
             depth -= 1;
         }
     }
-    return depth === 0 && quote === null && !/[-+*/,([.?:&|=]$/.test(text.trimEnd());
+    return depth === 0 && code.trim().length > 0 && !/[-+*/,([.?:&|=]$/.test(code.trimEnd());
 }
-const HERMES_COMMAND = /^([ \t]*)hermesCommand(\s*=|\.set\()(.*)$/gm;
+/** The next code line starts by continuing the previous expression. */
+const CONTINUATION = /^(\?\.|\.|\?|:|\+|-|\*|\/|&&|\|\|)/;
+const HERMES_COMMAND = /^([ \t]*)hermesCommand(\s*=|\.set\()/;
+const REACT_BLOCK = /^\s*react\s*\{\s*$/;
 /**
- * Points react.hermesCommand at hermesc-preserve-js.sh. A one-line
- * `hermesCommand = …` or `hermesCommand.set(…)` is rewritten; a value that
- * continues on the next line is refused, since rewriting one line of it
- * would break the file. A react block without the setting gets one. With
- * no react block the file is left alone, and the bundle task fails with
- * the fix instead.
+ * Points react.hermesCommand at hermesc-preserve-js.sh. Only code counts:
+ * a setting inside a comment or a multi-line string is left alone. A
+ * one-line `hermesCommand = …` or `hermesCommand.set(…)` is rewritten,
+ * a trailing comment included. Anything this cannot read with certainty
+ * (a value that continues on the next line, an open bracket, quote or
+ * block comment, nothing after `=`) is refused. A react block without
+ * the setting gets one. With no react block the file is left alone, and
+ * the bundle task fails with the fix instead.
  */
 function rewriteHermesCommand(source) {
+    const lines = source.split('\n');
+    const scanned = scanLines(source);
     let found = false;
-    const rewritten = source.replace(HERMES_COMMAND, (line, indent, form, rest) => {
-        found = true;
-        if (line.includes('hermesc-preserve-js.sh')) {
-            return line;
+    let react = -1;
+    scanned.forEach((scan, i) => {
+        if (scan.start !== 'code') {
+            return;
         }
-        const value = form === '.set(' ? `(${rest}` : rest;
-        if (!completeExpression(value)) {
+        if (react < 0 && REACT_BLOCK.test(scan.code)) {
+            react = i;
+        }
+        const match = HERMES_COMMAND.exec(scan.code);
+        if (!match) {
+            return;
+        }
+        found = true;
+        if (lines[i].includes('hermesc-preserve-js.sh')) {
+            return;
+        }
+        const value = `${match[2] === '.set(' ? '(' : ''}${scan.code.slice(match[0].length)}`;
+        const next = scanned.slice(i + 1).find((later) => later.code.trim().length > 0);
+        if (scan.open || !completeExpression(value) || (next !== undefined && CONTINUATION.test(next.code.trim()))) {
             throw new Error(exports.HERMES_COMMAND_UNREWRITABLE);
         }
-        return `${indent}hermesCommand = ${HERMES_COMMAND_EXPR}`;
+        lines[i] = `${match[1]}hermesCommand = ${HERMES_COMMAND_EXPR}`;
     });
-    if (found) {
-        return rewritten;
+    if (!found && react >= 0) {
+        const indent = /^[ \t]*/.exec(lines[react])?.[0] ?? '';
+        lines.splice(react + 1, 0, `${indent}    hermesCommand = ${HERMES_COMMAND_EXPR}`);
     }
-    const react = /^([ \t]*)react\s*\{[ \t]*$/m.exec(rewritten);
-    if (!react) {
-        return rewritten;
-    }
-    const at = react.index + react[0].length;
-    return `${rewritten.slice(0, at)}\n${react[1]}    hermesCommand = ${HERMES_COMMAND_EXPR}${rewritten.slice(at)}`;
+    return lines.join('\n');
+}
+function isApplyLine(line) {
+    return line !== undefined && line.trim().startsWith('apply from:') && line.includes(SOURCEMAPS_SCRIPT);
 }
 /**
- * Where the hook sits: this version's two lines, or an earlier version's
- * inline hook, from its marker to the brace closing the first
- * `afterEvaluate {` after it. Either is replaced whole. Null when there is
- * no complete hook.
+ * Index of the last line of an inline hook an earlier version wrote, which
+ * starts at `start` with its marker: comment and `def bugsee…` lines, then
+ * `afterEvaluate {` through its matching `}`, alone at column 0. Null when
+ * the lines after the marker are anything else, so a stray marker never
+ * takes user code with it.
  */
-function hookExtent(source) {
-    const current = source.indexOf(SOURCEMAPS_HOOK_MARKER);
-    if (current >= 0) {
-        const line = source.indexOf(SOURCEMAPS_SCRIPT, current);
-        if (line < 0) {
-            return null;
-        }
-        const eol = source.indexOf('\n', line);
-        return { start: current, end: eol < 0 ? source.length : eol };
+function legacyHookEnd(lines, start) {
+    let j = start + 1;
+    while (j < lines.length && /^(\/\/|def bugsee)/.test(lines[j])) {
+        j += 1;
     }
-    const legacy = source.indexOf(LEGACY_HOOK_MARKER);
-    if (legacy < 0) {
+    if (lines[j] !== 'afterEvaluate {') {
         return null;
     }
-    const open = source.indexOf('afterEvaluate {', legacy);
-    if (open < 0) {
+    // The brace that matches afterEvaluate's, alone on a line at column 0.
+    const rest = lines.slice(j).join('\n');
+    const close = matchingBrace(rest, rest.indexOf('{'));
+    if (close === null) {
         return null;
     }
-    const close = matchingBrace(source, source.indexOf('{', open));
-    return close === null ? null : { start: legacy, end: close + 1 };
+    const closeLine = j + rest.slice(0, close).split('\n').length - 1;
+    return lines[closeLine] === '}' ? closeLine : null;
 }
+/**
+ * Leaves exactly one hook: the marker and, on the very next line, the
+ * apply line. A complete hook (this version's or an earlier inline one)
+ * keeps its place; every other Bugsee leftover — a marker without its
+ * apply line, an apply line without its marker, a second hook — goes, one
+ * line at a time, and nothing else is touched. With no complete hook the
+ * new one is appended.
+ */
 function ensureHermesHooks(source) {
-    const rewritten = rewriteHermesCommand(source);
-    const extent = hookExtent(rewritten);
-    if (extent) {
-        return rewritten.slice(0, extent.start) + SOURCEMAPS_HOOK + rewritten.slice(extent.end);
+    const lines = rewriteHermesCommand(source).split('\n');
+    const kept = [];
+    let hookAt = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        let end = null;
+        if (line === SOURCEMAPS_HOOK_MARKER) {
+            end = isApplyLine(lines[i + 1]) ? i + 1 : null;
+        }
+        else if (line === LEGACY_HOOK_MARKER) {
+            end = legacyHookEnd(lines, i);
+        }
+        else if (!isApplyLine(line)) {
+            kept.push(line);
+            continue;
+        }
+        if (end !== null) {
+            hookAt = hookAt < 0 ? kept.length : hookAt;
+            i = end;
+        }
     }
-    return `${rewritten.replace(/\s*$/, '')}\n\n${SOURCEMAPS_HOOK}\n`;
+    if (hookAt >= 0) {
+        kept.splice(hookAt, 0, SOURCEMAPS_HOOK);
+        return kept.join('\n');
+    }
+    return `${kept.join('\n').replace(/\s*$/, '')}\n\n${SOURCEMAPS_HOOK}\n`;
 }
 const UPLOADS_OFF_MARKER = '// bugsee-upload-symbols-off:';
 const UPLOADS_OFF_BLOCK = [

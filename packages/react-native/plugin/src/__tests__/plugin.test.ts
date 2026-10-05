@@ -980,6 +980,96 @@ describe('source-map hook upgrade', () => {
   });
 });
 
+describe('hook leftovers never cost user code', () => {
+  const versions = loadNativeVersions(join(__dirname, '..', '..', 'build'));
+  const currentMarker = SOURCEMAPS_HOOK_TEXT.split('\n')[0] as string;
+  const applyLine = SOURCEMAPS_HOOK_TEXT.split('\n')[1] as string;
+  const legacyMarker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
+  const legacyHook = readFileSync(join(__dirname, 'fixtures', 'finish-hook-13.6-r1.gradle'), 'utf8').trimEnd();
+  const userDeps = 'dependencies {\n    implementation("com.example:kept:1.0")\n}';
+
+  function hookCount(text: string): number {
+    return text.split('\n').filter((line) => line === currentMarker).length;
+  }
+
+  it('keeps the user block after an orphaned marker across two --no-clean prebuilds', () => {
+    // The user deleted the apply line and kept the marker.
+    const source = `apply plugin: "com.facebook.react"\n\n${currentMarker}\n${userDeps}\n`;
+    const once = ensureAppAppliesPlugin(source, versions.sdk);
+    const twice = ensureAppAppliesPlugin(once, versions.sdk);
+    for (const text of [once, twice]) {
+      expect(text).toContain('implementation("com.example:kept:1.0")');
+      expect(hookCount(text)).toBe(1);
+      expect(text).toContain(`${currentMarker}\n${applyLine}`);
+    }
+    expect(twice).toBe(once);
+  });
+
+  it('takes a legacy marker as a hook only when afterEvaluate follows its comments directly', () => {
+    const userAfter = 'afterEvaluate {\n    println("mine")\n}';
+    const source = `apply plugin: "com.facebook.react"\n${legacyMarker}\nandroid { }\n${userAfter}\n`;
+    const next = ensureAppAppliesPlugin(source, versions.sdk);
+    expect(next).not.toContain(legacyMarker);
+    expect(next).toContain(`android { }\n${userAfter}\n`);
+    expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
+  });
+
+  it('never closes a legacy hook on a brace that is not its own', () => {
+    // Unclosed afterEvaluate: the user's dependencies block must not become its end.
+    const unclosed = `apply plugin: "com.facebook.react"\n${legacyMarker}\nafterEvaluate {\n${userDeps}\n`;
+    const next = ensureAppAppliesPlugin(unclosed, versions.sdk);
+    expect(next).toContain('implementation("com.example:kept:1.0")');
+    expect(next).toContain('afterEvaluate {\ndependencies {');
+    expect(next).not.toContain(legacyMarker);
+    // A matching brace that is indented is not the hook's either.
+    const indented = `apply plugin: "com.facebook.react"\n${legacyMarker}\nafterEvaluate {\n    x()\n  }\n${userDeps}\n`;
+    const kept = ensureAppAppliesPlugin(indented, versions.sdk);
+    expect(kept).toContain('afterEvaluate {\n    x()\n  }\n');
+    expect(kept).toContain('implementation("com.example:kept:1.0")');
+  });
+
+  it('removes every combination of leftovers and nothing else', () => {
+    const leftovers: Record<string, string> = {
+      orphanCurrent: currentMarker,
+      currentHook: `${currentMarker}\n${applyLine}`,
+      orphanLegacy: legacyMarker,
+      legacyHook,
+      strayApply: applyLine,
+    };
+    const names = Object.keys(leftovers);
+    const userParts = [
+      'apply plugin: "com.facebook.react"',
+      'android {\n    namespace "com.example"\n}',
+      userDeps,
+      'task hello {\n    doLast { println("hi") }\n}',
+      '// a user comment',
+    ];
+    const plain = ensureAppAppliesPlugin(`${userParts.join('\n')}\n`, versions.sdk);
+    const withoutHook = (text: string): string =>
+      text
+        .split('\n')
+        .filter((line) => line !== currentMarker && line !== applyLine)
+        .join('\n')
+        .replace(/\s*$/, '');
+    for (let mask = 1; mask < 1 << names.length; mask += 1) {
+      const parts: string[] = [];
+      userParts.forEach((part, i) => {
+        parts.push(part);
+        const name = names[i];
+        if (name !== undefined && mask & (1 << i)) {
+          parts.push(leftovers[name] as string);
+        }
+      });
+      const next = ensureAppAppliesPlugin(`${parts.join('\n')}\n`, versions.sdk);
+      expect([mask, withoutHook(next)]).toEqual([mask, withoutHook(plain)]);
+      expect([mask, hookCount(next)]).toEqual([mask, 1]);
+      expect([mask, next.includes(`${currentMarker}\n${applyLine}\n`)]).toEqual([mask, true]);
+      expect([mask, next.includes(legacyMarker)]).toEqual([mask, false]);
+      expect([mask, ensureAppAppliesPlugin(next, versions.sdk)]).toEqual([mask, next]);
+    }
+  });
+});
+
 describe('native pins after a wrapper bump (--no-clean)', () => {
   it('rewrites the declared Gradle plugin version in place', () => {
     const project = [

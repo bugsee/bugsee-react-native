@@ -300,10 +300,10 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     expect(ensureAppAppliesPlugin(`android { }\n${marker}\nafterEvaluate {\n    old()\n}\n`, null)).toBe(
       `apply plugin: "com.bugsee.android.gradle"\nandroid { }\n${hook}\n${exclude}\n`,
     );
-    // An unclosed hook is not replaced; a complete one is appended.
+    // An unclosed hook is not a hook: only its marker line goes, a complete one is appended.
     const unclosed = ensureAppAppliesPlugin(`android { }\n${marker}\nafterEvaluate {\n`, null);
     expect(unclosed).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\nandroid { }\n${marker}\nafterEvaluate {\n\n${exclude}\n\n${hook}`,
+      `apply plugin: "com.bugsee.android.gradle"\nandroid { }\nafterEvaluate {\n\n${exclude}\n\n${hook}`,
     );
   });
 });
@@ -622,9 +622,9 @@ describe('finish hook placement', () => {
     );
   });
 
-  it('appends when the marker has no afterEvaluate after it', () => {
+  it('drops a marker with no afterEvaluate after it and appends the hook', () => {
     expect(ensureAppAppliesPlugin(`android { }\n${marker}\n`, null)).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\nandroid { }\n${marker}\n\n${exclude}\n\n${hook}`,
+      `apply plugin: "com.bugsee.android.gradle"\nandroid { }\n\n${exclude}\n\n${hook}`,
     );
   });
 
@@ -798,6 +798,63 @@ describe('react.hermesCommand edge cases', () => {
     })();
     expect(ensureAppAppliesPlugin(source, '7.3.0')).toBe(
       `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n\n${hook}`,
+    );
+  });
+});
+
+describe('react.hermesCommand: comments, strings and continuations', () => {
+  const rewritten = `    ${HERMES_COMMAND}`;
+  const rewrite = (source: string): string => beforeHook(ensureAppAppliesPlugin(source, null));
+
+  it('refuses a leading-dot continuation and a value on the next line', () => {
+    for (const source of [
+      'react {\n    hermesCommand = file("x")\n        .absolutePath\n}\n',
+      'react {\n    hermesCommand = file("x")\n\n        ?.absolutePath\n}\n',
+      'react {\n    hermesCommand = "a"\n        + "b"\n}\n',
+      'react {\n    hermesCommand =\n        "x"\n}\n',
+      'react {\n    hermesCommand = // set below\n        "x"\n}\n',
+      'react {\n    hermesCommand = "x" /* note\n    still a comment */\n}\n',
+    ]) {
+      expect(() => ensureAppAppliesPlugin(source, null)).toThrow(HERMES_COMMAND_UNREWRITABLE);
+    }
+  });
+
+  it('reads past a trailing line or block comment', () => {
+    expect(rewrite('react {\n    hermesCommand = "x" // don\'t touch (really\n}\n')).toContain(`react {\n${rewritten}\n}`);
+    expect(rewrite('react {\n    hermesCommand = "x" /* it\'s fine */\n}\n')).toContain(`react {\n${rewritten}\n}`);
+    expect(rewrite('react {\n    hermesCommand = "http://host/x" /* a */ + "y"\n}\n')).toContain(`react {\n${rewritten}\n}`);
+    // A comment after the value does not hide a continuation.
+    expect(() => ensureAppAppliesPlugin('react {\n    hermesCommand = "x" // c\n        .trim()\n}\n', null)).toThrow(
+      HERMES_COMMAND_UNREWRITABLE,
+    );
+  });
+
+  it('leaves the setting alone inside comments and multi-line strings', () => {
+    for (const hidden of [
+      '/*\n    hermesCommand = "a" +\n*/',
+      '    /* hermesCommand = (\n       */',
+      'def doc = """\n    hermesCommand = (\n"""',
+      "def doc = '''\nhermesCommand.set(\n'''",
+      '    // hermesCommand = (',
+    ]) {
+      const next = rewrite(`react {\n${hidden}\n}\n`);
+      // Not refused, not rewritten in place; the real setting is added to the block.
+      expect(next).toContain(hidden);
+      expect(next).toContain(`react {\n${rewritten}\n${hidden}\n}`);
+    }
+  });
+
+  it('finds a react block only in code', () => {
+    expect(rewrite('/*\nreact {\n*/\nandroid { }\n')).not.toContain(HERMES_COMMAND);
+    expect(rewrite('react { // the RN block\n}\n')).toContain(`react { // the RN block\n${rewritten}\n}`);
+  });
+
+  it('refuses a string that does not close on its line, after any comment', () => {
+    expect(() => ensureAppAppliesPlugin('react {\n    hermesCommand = "x /* y */\n}\n', null)).toThrow(
+      HERMES_COMMAND_UNREWRITABLE,
+    );
+    expect(() => ensureAppAppliesPlugin("react {\n    hermesCommand = 'x\n}\n", null)).toThrow(
+      HERMES_COMMAND_UNREWRITABLE,
     );
   });
 });
