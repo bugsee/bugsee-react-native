@@ -1,6 +1,9 @@
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { LogLevel } from '../../options/enums';
 
 const CAPTURE_LOGS = 'com.bugsee.option.capture.logs';
@@ -391,6 +394,98 @@ describe('console capture', () => {
     const stamped =
       '2026-10-02 18:40:35.273 BareExample[60839:42420530] BUGSEE_E2E dedup-line';
     expect(classifyFilterRequest(stamped)).toBe('drop');
+  });
+
+  /**
+   * React Native's codegen dispatch rule (JavaTurboModule.cpp): a `void` or
+   * `Promise` method is queued with `invokeAsync` onto the native modules
+   * thread; any other return type runs inline on the JS thread. The SDK's
+   * logcat reader filters the echo on its own thread as soon as the hook
+   * has written it, so the credit has to exist before that write.
+   */
+  it('arms the echo drop before the hook writes the line, under codegen dispatch', () => {
+    const source = readFileSync(join(__dirname, '..', '..', 'NativeBugsee.ts'), 'utf8');
+    const declared = /\bnoteConsoleEcho\s*\([^)]*\)\s*:\s*([^;]+);/.exec(source)?.[1]?.trim();
+    const queued = declared === 'void' || declared?.startsWith('Promise') === true;
+
+    const { installConsoleCapture } = load();
+    const { native } = require('../../__mocks__/native') as {
+      native: { noteConsoleEcho: jest.Mock };
+    };
+    const armed = new Set<string>();
+    const nativeQueue: Array<() => void> = [];
+    native.noteConsoleEcho.mockImplementation((message: string) => {
+      const arm = (): void => {
+        armed.add(message);
+      };
+      if (queued) {
+        nativeQueue.push(arm);
+      } else {
+        arm();
+      }
+      return true;
+    });
+    const armedAtWrite: boolean[] = [];
+    (globalThis as { nativeLoggingHook?: (message: string, level: number) => void }).nativeLoggingHook =
+      (message: string) => {
+        // The line is in logcat now; the reader may filter it at once.
+        armedAtWrite.push(armed.has(message));
+      };
+    console.log = ((message: string) => {
+      const hook = (globalThis as {
+        nativeLoggingHook?: (message: string, level: number) => void;
+      }).nativeLoggingHook;
+      hook?.(message, 1);
+    }) as typeof console.log;
+
+    installConsoleCapture({});
+    console.log('dedup-raw 1');
+    for (const run of nativeQueue.splice(0)) {
+      run();
+    }
+
+    expect(armedAtWrite).toEqual([true]);
+    // Only a sync return keeps the note on the JS thread. Same rule as the
+    // span setters and setAppearanceColor.
+    expect(declared).toBe('boolean');
+  });
+
+  it('two identical console lines are two notes, each before its own write', () => {
+    const order: string[] = [];
+    (globalThis as { nativeLoggingHook?: (message: string, level: number) => void }).nativeLoggingHook =
+      (message: string) => {
+        order.push(`write ${message}`);
+      };
+    const { installConsoleCapture, forwardLog } = load();
+    const { native } = require('../../__mocks__/native') as {
+      native: { noteConsoleEcho: jest.Mock };
+    };
+    native.noteConsoleEcho.mockImplementation((message: string) => {
+      order.push(`note ${message}`);
+      return true;
+    });
+    forwardLog.mockImplementation((message: string) => {
+      order.push(`forward ${message}`);
+    });
+    console.log = ((message: string) => {
+      const hook = (globalThis as {
+        nativeLoggingHook?: (message: string, level: number) => void;
+      }).nativeLoggingHook;
+      hook?.(message, 1);
+    }) as typeof console.log;
+
+    installConsoleCapture({});
+    console.log('same');
+    console.log('same');
+
+    expect(order).toEqual([
+      'note same',
+      'write same',
+      'forward same',
+      'note same',
+      'write same',
+      'forward same',
+    ]);
   });
 
   it('a throwing forwardLog does not escape console.log', () => {

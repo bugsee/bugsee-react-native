@@ -202,8 +202,14 @@ export interface Spec extends TurboModule {
    * is written. Android drops the later `ReactNativeJS` logcat line. iOS
    * drops a stderr stamp of `message`. It does not record a line, and a
    * `Bugsee.log` of the same text does not arm another drop.
+   *
+   * Returns `true`. The return is what keeps the call on the JS thread:
+   * codegen queues a `void` TurboModule method onto the native modules
+   * thread, and the SDK's logcat reader could then filter the echo before
+   * the drop was armed. The console hook calls this before the original
+   * hook writes the line, so a synchronous call is armed first.
    */
-  noteConsoleEcho(message: string): void;
+  noteConsoleEcho(message: string): boolean;
 
   /**
    * A network event the SDK is about to record, offered to the JS filter.

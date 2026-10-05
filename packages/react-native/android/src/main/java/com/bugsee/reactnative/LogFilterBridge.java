@@ -246,6 +246,11 @@ final class LogFilterBridge {
      * A later {@code ReactNativeJS} line with this text is the echo and is
      * dropped in {@link #route}. A {@code Bugsee.log} of the same text is
      * {@code Custom} and does not arm another drop.
+     *
+     * <p>Only a credit noted before the write can drop the echo: the SDK's
+     * logcat reader filters on its own thread, and an un-noted
+     * {@code ReactNativeJS} line is kept. {@code BugseeModule.noteConsoleEcho}
+     * returns a value so codegen runs it on the JS thread, ahead of the write.
      */
     void noteEcho(@Nullable final String message) {
         echoes.note(message);
