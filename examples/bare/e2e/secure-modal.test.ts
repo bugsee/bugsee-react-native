@@ -21,6 +21,12 @@
  * sheet's colour is on screen. The iPhone has no command-line screenshot, so
  * there only the colour check runs.
  *
+ * The video is checked too (the SDK masks it on a separate, native path): a
+ * witness inside the Modal, red and not secure, marks every frame that shows
+ * the Modal, and in each of those the Modal's secure view must be dark. Both
+ * crops come from the same frames, so the video's timestamp lag does not
+ * matter.
+ *
  * Android: WOD_LX1 with `E2E_EDGE_TO_EDGE` naming the installed build.
  * iOS: simulator or XS (`E2E_IOS_TARGET`).
  */
@@ -29,7 +35,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { type PulledBundle, airplane, removePulledBundles } from './bundles';
+import { type PulledBundle, airplane, captureEvents, removePulledBundles } from './bundles';
 import { ADB, ANDROID_SERIAL, IOS_SIMULATOR_ID, iosTarget } from './device';
 import {
   ON_IOS,
@@ -46,7 +52,18 @@ import {
   stopApp,
   stopDeviceLog,
 } from './harness';
-import { LUMA_BRIGHT_MIN, LUMA_DARK_MAX, colourOf, colourPixels } from './media';
+import {
+  LUMA_BRIGHT_MIN,
+  LUMA_DARK_MAX,
+  colourOf,
+  colourPixels,
+  frameLumas,
+  imageSize,
+  letterbox,
+  regionFrameLumas,
+  videoRegion,
+  widthFitRegion,
+} from './media';
 import { type DeviceLog, type LogLine, adb, resetScenario } from './scenario';
 import {
   type Media,
@@ -55,6 +72,7 @@ import {
   boundsIn,
   bundleBySummary,
   displaySize,
+  interiorFrames,
   markerScreen,
   moved,
   screenshotLumas,
@@ -69,6 +87,11 @@ jest.setTimeout(4 * 60_000);
 const SHEET_LABEL = 'bugsee-secure-modal-sheet';
 const MAIN_COLOUR = colourOf('#FF00FF');
 const SHEET_COLOUR = colourOf('#00FFFF');
+const WITNESS_COLOUR = colourOf('#FF0000');
+/** Video pixels trimmed off every edge of a crop, as in secure-component.test.ts. */
+const VIDEO_INSET = 3;
+/** The fewest witnessed frames a video check may rest on. */
+const MIN_FRAMES = 5;
 /** Pixels of a secure colour a report may show before it counts as a leak (antialiased edges). */
 const LEAK_MAX_PIXELS = 64;
 /** A secure view the device screenshot shows must be at least this big to count as found. */
@@ -113,6 +136,8 @@ for (const scenario of SCENARIOS) {
     let deviceShot: string | null;
     /** Where the device shows each secure view (display units); `main` is absent behind an opaque sheet. */
     let found: { main: Rect | null; sheet: Rect } | null = null;
+    /** Where the device shows the Modal's red witness (display units). */
+    let witness: Rect | null = null;
     let sheetFromDump: Rect | undefined;
     let mainFromJs: Rect | undefined;
     let servedLine: LogLine | undefined;
@@ -159,7 +184,11 @@ for (const scenario of SCENARIOS) {
       if (deviceShot !== null) {
         const main = await colourPixels(deviceShot, MAIN_COLOUR);
         const sheet = await colourPixels(deviceShot, SHEET_COLOUR);
-        report('device screenshot', { main, sheet });
+        const red = await colourPixels(deviceShot, WITNESS_COLOUR);
+        report('device screenshot', { main, sheet, witness: red });
+        if (red.box !== null) {
+          witness = toDisplay(red.box, red.width, display.width);
+        }
         if (sheet.box !== null) {
           found = {
             main: main.box === null ? null : toDisplay(main.box, main.width, display.width),
@@ -298,5 +327,55 @@ for (const scenario of SCENARIOS) {
         expect(served.rects.some(r => covers(r, sheetFromDump as Rect))).toBe(true);
       });
     }
+    it('every video frame that shows the Modal is masked over its secure view', async () => {
+      if (deviceShot === null) {
+        report('video', 'no device screenshot on this target to place the witness: skipped');
+        return;
+      }
+      if (found === null || witness === null) {
+        throw new Error("the device screenshot does not show the Modal's secure colour and its witness");
+      }
+      const video = media.video;
+      const size = await imageSize(video);
+      let region: (rect: Rect) => { x: number; y: number; w: number; h: number };
+      if (ON_IOS) {
+        // The iOS SDK scales by width from the top-left, as its screenshot.
+        expect(captureEvents(bundle, 'video.aux')).toEqual([]);
+        region = rect => widthFitRegion(rect, display, size, VIDEO_INSET);
+      } else {
+        const box = letterbox(display, size);
+        const aux = captureEvents(bundle, 'video.aux')[0] as
+          | { paddingH?: number; paddingV?: number; screenW?: number; screenH?: number }
+          | undefined;
+        report('video letterbox', { size, derived: box, aux });
+        expect(aux).toBeDefined();
+        expect({ screenW: aux!.screenW, screenH: aux!.screenH }).toEqual({ screenW: display.width, screenH: display.height });
+        expect(Math.abs(box.padH - aux!.paddingH!)).toBeLessThanOrEqual(1);
+        expect(Math.abs(box.padV - aux!.paddingV!)).toBeLessThanOrEqual(1);
+        region = rect => videoRegion(rect, display, size, VIDEO_INSET);
+      }
+      const centre = await frameLumas(video);
+      const { from, to } = interiorFrames(centre);
+      const series = async (rect: Rect): Promise<number[]> => {
+        const frames = await regionFrameLumas(video, region(rect));
+        // The same decode, frame for frame: the pairing below is by index.
+        expect(frames.map(f => f.t)).toEqual(centre.map(f => f.t));
+        return frames.slice(from, to).map(f => Math.round(f.luma));
+      };
+      const t = centre.slice(from, to).map(f => f.t);
+      const witnessLuma = await series(witness);
+      const sheetLuma = await series(found.sheet);
+      report('video frames (t, witness, sheet)', t.map((time, i) => [time, witnessLuma[i], sheetLuma[i]]));
+
+      // The witness is white stage before the Modal shows, and red (or black,
+      // under a whole-display mask while an origin is unknown) once it does.
+      // Every frame that shows it must hide the secure view, and the Modal is
+      // still up when the report is taken.
+      const shown = witnessLuma.map((l, i) => i).filter(i => witnessLuma[i]! < LUMA_BRIGHT_MIN);
+      expect(shown.length).toBeGreaterThanOrEqual(MIN_FRAMES);
+      expect(shown[shown.length - 1]).toBe(witnessLuma.length - 1);
+      const leaked = shown.map(i => ({ t: t[i], l: sheetLuma[i]! })).filter(frame => frame.l > LUMA_DARK_MAX);
+      expect(leaked).toEqual([]);
+    });
   });
 }

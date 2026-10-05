@@ -82,6 +82,13 @@ export const SECURE_MODAL_SHEET_LABEL = 'bugsee-secure-modal-sheet';
  */
 export const SECURE_MODAL_MAIN_COLOUR = '#FF00FF';
 export const SECURE_MODAL_SHEET_COLOUR = '#00FFFF';
+/**
+ * A witness inside the Modal, not secure, in a colour of its own: a video
+ * frame that shows it shows the Modal, so the frames the test checks the
+ * Modal's secure view in are found from the video itself.
+ */
+export const SECURE_MODAL_WITNESS_COLOUR = '#FF0000';
+const MODAL_WITNESS_RECT = { position: 'absolute', top: 340, left: 80, width: 80, height: 80 } as const;
 
 /**
  * The Modal each `secure-modal*` scenario shows:
@@ -396,6 +403,7 @@ function SecureModalProbe({ nonce, setMoving, variant }: ProbeProps & { variant:
             style={{ ...MODAL_SHEET_RECT, backgroundColor: SECURE_MODAL_SHEET_COLOUR }}
           />
           <View ref={sheetTwin} collapsable={false} pointerEvents="none" style={MODAL_SHEET_RECT} />
+          <View style={{ ...MODAL_WITNESS_RECT, backgroundColor: SECURE_MODAL_WITNESS_COLOUR }} />
         </View>
       </Modal>
     </>
