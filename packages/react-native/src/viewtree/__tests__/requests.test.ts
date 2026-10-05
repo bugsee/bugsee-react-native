@@ -121,6 +121,91 @@ describe('a vh request', () => {
   });
 });
 
+// A <Modal> is its own React surface: the walk asks native for the origin of
+// a Modal by its host's native tag, once per Modal per walk.
+describe('the walk env, per surface', () => {
+  const RENDERER_PROXY = 'react-native/Libraries/ReactNative/RendererProxy';
+
+  function envOf(): {
+    originForSurface: (surface: number) => { x: number; y: number } | null;
+    nativeTagOf: (fiber: FiberLike) => number | null;
+  } {
+    const { instance } = anchorUnderNewRoot();
+    requests.registerAnchor(instance);
+    emit();
+    return buildViewTree.mock.calls[0][1];
+  }
+
+  afterEach(() => {
+    jest.dontMock(RENDERER_PROXY);
+  });
+
+  it("resolves a tag's origin through secureSurfaceOrigin", () => {
+    native.secureSurfaceOrigin.mockReturnValue([40, 200.5]);
+
+    expect(envOf().originForSurface(77)).toEqual({ x: 40, y: 200.5 });
+    expect(native.secureSurfaceOrigin).toHaveBeenCalledWith(77);
+  });
+
+  it.each([
+    ['empty', []],
+    ['one number', [40]],
+    ['a NaN x', [Number.NaN, 1]],
+    ['an infinite y', [1, Number.POSITIVE_INFINITY]],
+    ['not an array', { 0: 1, 1: 2, length: 2 }],
+    ['null', null],
+  ])('knows no origin when native answers %s', (_name, answer) => {
+    native.secureSurfaceOrigin.mockReturnValue(answer as never);
+
+    expect(envOf().originForSurface(77)).toBeNull();
+  });
+
+  it('knows no origin when native throws', () => {
+    native.secureSurfaceOrigin.mockImplementation(() => {
+      throw new Error('no root');
+    });
+
+    expect(envOf().originForSurface(77)).toBeNull();
+  });
+
+  it("reads a host fiber's tag off its public instance", () => {
+    const fiber = makeFiber();
+    const seen: unknown[] = [];
+    jest.doMock(RENDERER_PROXY, () => ({
+      getPublicInstanceFromInternalInstanceHandle: (handle: unknown) => {
+        seen.push(handle);
+        return { __nativeTag: 77 };
+      },
+    }));
+
+    expect(envOf().nativeTagOf(fiber)).toBe(77);
+    expect(seen).toEqual([fiber]);
+  });
+
+  it.each([
+    ['no public instance', null],
+    ['no tag', {}],
+    ['a NaN tag', { __nativeTag: Number.NaN }],
+    ['a string tag', { __nativeTag: '77' }],
+  ])('has no tag for %s', (_name, instance) => {
+    jest.doMock(RENDERER_PROXY, () => ({
+      getPublicInstanceFromInternalInstanceHandle: () => instance,
+    }));
+
+    expect(envOf().nativeTagOf(makeFiber())).toBeNull();
+  });
+
+  it('has no tag when the renderer throws', () => {
+    jest.doMock(RENDERER_PROXY, () => ({
+      getPublicInstanceFromInternalInstanceHandle: () => {
+        throw new Error('unmounted');
+      },
+    }));
+
+    expect(envOf().nativeTagOf(makeFiber())).toBeNull();
+  });
+});
+
 describe('a walk that finds nothing', () => {
   // `buildViewTree` returns `null` whenever no surface emits a node: nothing
   // measurable yet, everything under a hidden Offscreen, or every root's
@@ -494,6 +579,7 @@ describe('the real walk env', () => {
   function mockMeasuring(): void {
     jest.doMock(RENDERER_PROXY_PATH, () => ({
       getPublicInstanceFromInternalInstanceHandle: (fiber: FiberLike) => ({
+        __nativeTag: (fiber.stateNode as { tag?: number } | null)?.tag,
         measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => {
           const rect = (fiber.stateNode as { rect?: { x: number; y: number; width: number; height: number } } | null)?.rect;
           if (rect) {
@@ -521,11 +607,17 @@ describe('the real walk env', () => {
   }
 
   /** Builds `HostRoot -> WrapMarker -> [appHost, BugseeSecure -> secureHost, anchor]` and registers a real anchor instance for it, returning the parsed 'vh' reply payload. */
-  function runRealWalk(platform: 'ios' | 'android', origin: { x: number; y: number } = { x: 0, y: 0 }): Node {
+  function runRealWalk(
+    platform: 'ios' | 'android',
+    origin: { x: number; y: number } = { x: 0, y: 0 },
+    arrange: () => void = () => undefined,
+    inModal = false,
+  ): Node {
     jest.unmock('../walk');
     jest.resetModules();
     ({ native } = require('../../__mocks__/native'));
     native.reset();
+    arrange();
     jest.doMock('react-native', () => ({
       Platform: { OS: platform },
       PixelRatio: { get: () => 3 },
@@ -544,6 +636,9 @@ describe('the real walk env', () => {
       memoizedProps: { testID: 'app-root' },
       stateNode: { rect: { x: 1, y: 2, width: 10, height: 20 } },
     });
+    // Unmeasurable, like a real Modal host on Android: its children are
+    // promoted, carrying the Modal's origin.
+    const modalHost = makeFiber({ type: 'RCTModalHostView', stateNode: { tag: 56 }, child: appHost });
     const secureHost = makeFiber({
       type: 'SecretView',
       memoizedProps: { testID: 'nope' },
@@ -588,8 +683,14 @@ describe('the real walk env', () => {
     secureBoundary.sibling = secureBoundaryViaElementType;
     secureBoundaryViaElementType.sibling = anchor;
 
-    const wrapFiber = makeFiber({ tag: FiberTag.FunctionComponent, type: WrapMarker, child: appHost });
-    appHost.return = wrapFiber;
+    const firstChild = inModal ? modalHost : appHost;
+    if (inModal) {
+      modalHost.sibling = appHost.sibling;
+      appHost.sibling = null;
+      appHost.return = modalHost;
+    }
+    const wrapFiber = makeFiber({ tag: FiberTag.FunctionComponent, type: WrapMarker, child: firstChild });
+    firstChild.return = wrapFiber;
     secureBoundary.return = wrapFiber;
     secureBoundaryViaElementType.return = wrapFiber;
     anchor.return = wrapFiber;
@@ -654,5 +755,27 @@ describe('the real walk env', () => {
     // origin (100, 200) is added AFTER scaling, per androidBounds (walk.ts) --
     // it is already in display px, not a point value that itself needs 3x.
     expect(appNode?.bounds).toEqual([103, 206, 30, 60]);
+  });
+
+  it("places a node inside a Modal by the Modal's origin, asking once", () => {
+    const tree = runRealWalk(
+      'android',
+      { x: 100, y: 200 },
+      () => {
+        native.secureSurfaceOrigin.mockImplementation((tag: number) => (tag === 56 ? [40, 60] : []));
+      },
+      true,
+    );
+    const appNode = flatten(tree).find((n) => n.class_name === 'RootView');
+
+    // Scaled by 3 as above, then moved by (40, 60), not the request's (100, 200).
+    expect(appNode?.bounds).toEqual([43, 66, 30, 60]);
+    expect(native.secureSurfaceOrigin.mock.calls).toEqual([[56]]);
+  });
+
+  it('asks native nothing for a tree without a Modal', () => {
+    runRealWalk('android', { x: 100, y: 200 });
+
+    expect(native.secureSurfaceOrigin).not.toHaveBeenCalled();
   });
 });

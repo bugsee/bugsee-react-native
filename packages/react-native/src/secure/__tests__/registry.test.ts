@@ -205,3 +205,143 @@ describe('the secure-rectangle registry', () => {
     expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 40, 80, 120]);
   });
 });
+
+// Fabric measureInWindow is relative to the measured node's own React root,
+// and a <Modal> is its own root (an Android Dialog). Each surface's union is
+// published on its own, so native can translate it by that surface's origin.
+describe('the secure-rectangle registry, per surface', () => {
+  const MODAL = 42;
+
+  // The Android `doMock` above outlives its own test; these are in points.
+  beforeEach(() => {
+    jest.resetModules();
+    jest.doMock('react-native', () => ({ Platform: { OS: 'ios' } }));
+    native = require('../../__mocks__/native').native;
+    native.reset();
+    registry = require('../registry');
+  });
+
+  /** Every publish on display 0, in order, across both bridge methods. */
+  function publishes(): unknown[][] {
+    const calls: { order: number; call: unknown[] }[] = [];
+    native.setSecureRectangles.mock.calls.forEach((call, i) => {
+      calls.push({ order: native.setSecureRectangles.mock.invocationCallOrder[i] as number, call: ['main', ...call] });
+    });
+    native.setSecureRectanglesOnSurface.mock.calls.forEach((call, i) => {
+      calls.push({
+        order: native.setSecureRectanglesOnSurface.mock.invocationCallOrder[i] as number,
+        call: ['surface', ...call],
+      });
+    });
+    return calls.sort((a, b) => a.order - b.order).map(({ call }) => call);
+  }
+
+  it('names the main surface 0, as native does', () => {
+    expect(registry.MAIN_SURFACE).toBe(0);
+  });
+
+  it('publishes another surface through setSecureRectanglesOnSurface, apart from the main one', () => {
+    registry.setOwnerRectangles('manual:0', 0, [A]);
+    registry.setOwnerRectangles({}, 0, [B], MODAL);
+
+    expect(publishes()).toEqual([
+      ['main', 0, A_FLAT],
+      ['surface', 0, MODAL, B_FLAT],
+    ]);
+  });
+
+  it('an explicit main surface is the same lane as the default', () => {
+    registry.setOwnerRectangles('manual:0', 0, [A]);
+    registry.setOwnerRectangles({}, 0, [B], registry.MAIN_SURFACE);
+
+    expect(publishes()).toEqual([
+      ['main', 0, A_FLAT],
+      ['main', 0, [...A_FLAT, ...B_FLAT]],
+    ]);
+  });
+
+  it('keeps each surface its own union', () => {
+    const first = {};
+    const second = {};
+    registry.setOwnerRectangles(first, 0, [A], MODAL);
+    registry.setOwnerRectangles(second, 0, [B], MODAL);
+    registry.setOwnerRectangles({}, 0, [A], 7);
+
+    expect(publishes()).toEqual([
+      ['surface', 0, MODAL, A_FLAT],
+      ['surface', 0, MODAL, [...A_FLAT, ...B_FLAT]],
+      ['surface', 0, 7, A_FLAT],
+    ]);
+  });
+
+  it('an unchanged surface union does not cross the bridge again', () => {
+    const component = {};
+    registry.setOwnerRectangles(component, 0, [A], MODAL);
+    registry.setOwnerRectangles(component, 0, [{ ...A }], MODAL);
+
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(1);
+  });
+
+  it('the first publish on a surface always crosses, even when empty', () => {
+    registry.setOwnerRectangles('manual:0', 0, []);
+    registry.setOwnerRectangles({}, 0, [], MODAL);
+
+    expect(publishes()).toEqual([
+      ['main', 0, []],
+      ['surface', 0, MODAL, []],
+    ]);
+  });
+
+  it('an owner that moves surface covers the new one before it uncovers the old', () => {
+    const component = {};
+    registry.setOwnerRectangles(component, 0, [A]);
+    registry.setOwnerRectangles(component, 0, [A], MODAL);
+
+    expect(publishes()).toEqual([
+      ['main', 0, A_FLAT],
+      ['surface', 0, MODAL, A_FLAT],
+      ['main', 0, []],
+    ]);
+  });
+
+  it('an owner that moves display and surface leaves the old display\'s surface', () => {
+    const component = {};
+    registry.setOwnerRectangles(component, 0, [A], MODAL);
+    registry.setOwnerRectangles(component, 1, [A]);
+
+    expect(publishes()).toEqual([
+      ['surface', 0, MODAL, A_FLAT],
+      ['main', 1, A_FLAT],
+      // Display 1 never had this surface: its first publish crosses, empty.
+      ['surface', 1, MODAL, []],
+      ['surface', 0, MODAL, []],
+    ]);
+  });
+
+  it('clearing an owner republishes only its own surface', () => {
+    const component = {};
+    registry.setOwnerRectangles('manual:0', 0, [A]);
+    registry.setOwnerRectangles(component, 0, [B], MODAL);
+
+    registry.clearOwner(component);
+
+    expect(publishes()).toEqual([
+      ['main', 0, A_FLAT],
+      ['surface', 0, MODAL, B_FLAT],
+      ['surface', 0, MODAL, []],
+    ]);
+  });
+
+  it('retries a surface publish the bridge threw on', () => {
+    native.setSecureRectanglesOnSurface.mockImplementationOnce(() => {
+      throw new Error('bridge down');
+    });
+    const component = {};
+    expect(() => registry.setOwnerRectangles(component, 0, [A], MODAL)).toThrow('bridge down');
+
+    registry.setOwnerRectangles(component, 0, [A], MODAL);
+
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(2);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, MODAL, A_FLAT);
+  });
+});

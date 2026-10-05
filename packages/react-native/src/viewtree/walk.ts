@@ -20,6 +20,7 @@
  * away, and `.child`/`.sibling`/`.return` being `undefined` or some other
  * non-object value is tolerated the same as `null` throughout.
  */
+import { MODAL_HOST_TYPE } from '../secure/surface';
 import { FiberTag } from './fiber';
 import type { FiberLike, WindowRect } from './fiber';
 
@@ -66,11 +67,27 @@ export interface WalkEnv {
   scale: number;
   originX: number;
   originY: number;
+  /**
+   * Display origin of the `<Modal>` whose host has React tag `surface`, when
+   * known. `measureInWindow` inside a Modal is relative to the Modal's own
+   * content, so its subtree must not take the request's origin. Asked at
+   * most once per Modal per walk; a `null` answer keeps the enclosing
+   * origin for that subtree.
+   */
+  originForSurface?: (surface: number) => Origin | null;
+  /** Native tag of a host fiber's public instance, when measurable. */
+  nativeTagOf?: (fiber: FiberLike) => number | null;
   /** ms; the budget is measured from this function's first call. */
   now(): number;
 }
 
 type Bounds = [number, number, number, number];
+
+/** Where `measureInWindow`'s (0, 0) sits, in the units `bounds` are in. */
+export interface Origin {
+  x: number;
+  y: number;
+}
 
 interface Ctx {
   env: WalkEnv;
@@ -83,6 +100,8 @@ interface Ctx {
   anyTruncated: boolean;
   /** Every fiber visited so far, across every root — a repeat means a cycle, not a legitimate second visit (a well-formed tree never revisits a fiber). */
   visited: Set<FiberLike>;
+  /** Each `<Modal>` surface's origin for this walk, asked of `originForSurface` once. */
+  surfaceOrigins: Map<number, Origin | null>;
 }
 
 /** The children collected for one fiber (or one fiber root), plus whether that list is known to be incomplete. */
@@ -92,7 +111,7 @@ interface Frame {
 }
 
 type Task =
-  | { kind: 'visit'; fiber: FiberLike; secure: boolean; depthRemaining: number; frame: Frame }
+  | { kind: 'visit'; fiber: FiberLike; secure: boolean; depthRemaining: number; frame: Frame; origin: Origin }
   | {
       kind: 'finishHost';
       frame: Frame;
@@ -121,26 +140,58 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function androidBounds(rect: WindowRect, env: WalkEnv): Bounds {
+function androidBounds(rect: WindowRect, env: WalkEnv, originX: number, originY: number): Bounds {
   return [
-    Math.round(rect.x * env.scale) + env.originX,
-    Math.round(rect.y * env.scale) + env.originY,
+    Math.round(rect.x * env.scale) + originX,
+    Math.round(rect.y * env.scale) + originY,
     Math.round(rect.width * env.scale),
     Math.round(rect.height * env.scale),
   ];
 }
 
-function iosBounds(rect: WindowRect, env: WalkEnv): Bounds {
+function iosBounds(rect: WindowRect, env: WalkEnv, originX: number, originY: number): Bounds {
   return [
-    round2(rect.x + env.originX),
-    round2(rect.y + env.originY),
+    round2(rect.x + originX),
+    round2(rect.y + originY),
     round2(rect.width),
     round2(rect.height),
   ];
 }
 
-function toBounds(rect: WindowRect, env: WalkEnv): Bounds {
-  return env.platform === 'android' ? androidBounds(rect, env) : iosBounds(rect, env);
+/**
+ * The origin `fiber`'s children are measured from: a `<Modal>` host starts a
+ * surface of its own (its subtree is relative to the Modal's content), every
+ * other fiber passes `origin` down unchanged. The Modal host itself is
+ * measured in its parent's surface, so its own bounds keep `origin`.
+ */
+function childOriginOf(fiber: FiberLike, origin: Origin, ctx: Ctx): Origin {
+  if (!isModalHost(fiber)) {
+    return origin;
+  }
+  const { env } = ctx;
+  const tag = env.nativeTagOf?.(fiber) ?? null;
+  if (tag === null || env.originForSurface === undefined) {
+    return origin;
+  }
+  if (!ctx.surfaceOrigins.has(tag)) {
+    ctx.surfaceOrigins.set(tag, env.originForSurface(tag));
+  }
+  return ctx.surfaceOrigins.get(tag) ?? origin;
+}
+
+/** Whether `fiber` is a `<Modal>` host. A throwing `.type` getter is not one (`safeHostClassName` names it). */
+function isModalHost(fiber: FiberLike): boolean {
+  try {
+    return fiber.type === MODAL_HOST_TYPE;
+  } catch {
+    return false;
+  }
+}
+
+function toBounds(rect: WindowRect, env: WalkEnv, origin: Origin): Bounds {
+  return env.platform === 'android'
+    ? androidBounds(rect, env, origin.x, origin.y)
+    : iosBounds(rect, env, origin.x, origin.y);
 }
 
 function unionBounds(boxes: readonly Bounds[], env: WalkEnv): Bounds {
@@ -469,14 +520,21 @@ function makeNode(
 }
 
 /** Pushes the work to flatten `fiber`'s children directly into `parentFrame` — used for every "this fiber emits nothing of its own" case (transparent tags, the wrap component/anchor, a visible Offscreen/LegacyHidden, and an unmeasurable host promoting its children per the plan's "no measurable host" rule). */
-function pushFlatten(stack: Task[], fiber: FiberLike, secure: boolean, depthRemaining: number, parentFrame: Frame): void {
+function pushFlatten(
+  stack: Task[],
+  fiber: FiberLike,
+  secure: boolean,
+  depthRemaining: number,
+  parentFrame: Frame,
+  origin: Origin,
+): void {
   const child = linkOf(fiber.child);
   if (child === null) {
     return;
   }
   const frame: Frame = { nodes: [], truncated: false };
   stack.push({ kind: 'finishFlatten', frame, parentFrame });
-  stack.push({ kind: 'visit', fiber: child, secure, depthRemaining, frame });
+  stack.push({ kind: 'visit', fiber: child, secure, depthRemaining, frame, origin });
 }
 
 /**
@@ -487,7 +545,10 @@ function pushFlatten(stack: Task[], fiber: FiberLike, secure: boolean, depthRema
  * JS call stack or loop forever.
  */
 function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
-  const stack: Task[] = [{ kind: 'visit', fiber: rootFiber, secure: false, depthRemaining: VH_MAX_DEPTH, frame: outerFrame }];
+  const rootOrigin: Origin = { x: ctx.env.originX, y: ctx.env.originY };
+  const stack: Task[] = [
+    { kind: 'visit', fiber: rootFiber, secure: false, depthRemaining: VH_MAX_DEPTH, frame: outerFrame, origin: rootOrigin },
+  ];
 
   while (stack.length > 0) {
     const task = stack.pop() as Task;
@@ -539,7 +600,7 @@ function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
     if ((task as { kind: unknown }).kind !== 'visit') {
       throw new Error('unreachable view-tree task kind');
     }
-    const { fiber, secure, depthRemaining, frame } = task;
+    const { fiber, secure, depthRemaining, frame, origin } = task;
 
     // N5 (fix round 2): everything from here on reads fields off `fiber`
     // itself — `.tag`, `.sibling`, `.child`, `.type`, `.elementType`,
@@ -585,7 +646,7 @@ function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
       // outcome for anything this walk produces.
       const sibling = linkOf(fiber.sibling);
       if (sibling !== null && !ctx.stopped) {
-        stack.push({ kind: 'visit', fiber: sibling, secure, depthRemaining, frame });
+        stack.push({ kind: 'visit', fiber: sibling, secure, depthRemaining, frame, origin });
       }
 
       ctx.fiberVisits += 1;
@@ -601,7 +662,7 @@ function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
       const secureHere = secure || safeIsSecureBoundary(ctx.env, fiber);
 
       if (safeIsWrapper(ctx.env, fiber)) {
-        pushFlatten(stack, fiber, secureHere, depthRemaining, frame);
+        pushFlatten(stack, fiber, secureHere, depthRemaining, frame, origin);
         continue;
       }
 
@@ -609,24 +670,25 @@ function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
         if (isHidden(fiber)) {
           continue;
         }
-        pushFlatten(stack, fiber, secureHere, depthRemaining, frame);
+        pushFlatten(stack, fiber, secureHere, depthRemaining, frame, origin);
         continue;
       }
 
       const kind = classify(fiber.tag);
 
       if (kind === 'transparent') {
-        pushFlatten(stack, fiber, secureHere, depthRemaining, frame);
+        pushFlatten(stack, fiber, secureHere, depthRemaining, frame, origin);
         continue;
       }
 
       if (kind === 'host') {
+        const childOrigin = childOriginOf(fiber, origin, ctx);
         const rect = safeMeasure(ctx.env, fiber);
         if (rect === null) {
           // No measurable host here — promote whatever children it has
           // (as if this fiber were transparent) rather than dropping a
           // subtree that might still have something to show underneath.
-          pushFlatten(stack, fiber, secureHere, depthRemaining, frame);
+          pushFlatten(stack, fiber, secureHere, depthRemaining, frame, childOrigin);
           continue;
         }
 
@@ -635,14 +697,21 @@ function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
         const child = linkOf(fiber.child);
         const atDepthLimit = child !== null && depthRemaining <= 1;
         const depthCut = atDepthLimit && hasVisibleContentChild(child as FiberLike);
-        const bounds = toBounds(rect, ctx.env);
+        const bounds = toBounds(rect, ctx.env, origin);
         const tagOpts = secureHere ? {} : tagOptions(fiber);
         const className = safeHostClassName(fiber);
 
         if (child !== null && !atDepthLimit) {
           const childFrame: Frame = { nodes: [], truncated: false };
           stack.push({ kind: 'finishHost', frame: childFrame, parentFrame: frame, className, bounds, secureHere, tagOpts, depthCut: false });
-          stack.push({ kind: 'visit', fiber: child, secure: secureHere, depthRemaining: depthRemaining - 1, frame: childFrame });
+          stack.push({
+            kind: 'visit',
+            fiber: child,
+            secure: secureHere,
+            depthRemaining: depthRemaining - 1,
+            frame: childFrame,
+            origin: childOrigin,
+          });
         } else {
           stack.push({
             kind: 'finishHost',
@@ -669,7 +738,7 @@ function runWalk(rootFiber: FiberLike, ctx: Ctx, outerFrame: Frame): void {
         if (child !== null && !atDepthLimit) {
           const childFrame: Frame = { nodes: [], truncated: false };
           stack.push({ kind: 'finishComposite', frame: childFrame, parentFrame: frame, className, secureHere });
-          stack.push({ kind: 'visit', fiber: child, secure: secureHere, depthRemaining: depthRemaining - 1, frame: childFrame });
+          stack.push({ kind: 'visit', fiber: child, secure: secureHere, depthRemaining: depthRemaining - 1, frame: childFrame, origin });
         } else {
           stack.push({
             kind: 'finishComposite',
@@ -744,6 +813,7 @@ export function buildViewTree(roots: readonly { current: FiberLike }[], env: Wal
     stopped: false,
     anyTruncated: false,
     visited: new Set<FiberLike>(),
+    surfaceOrigins: new Map<number, Origin | null>(),
   };
 
   const surfaces: ManagedNode[] = [];

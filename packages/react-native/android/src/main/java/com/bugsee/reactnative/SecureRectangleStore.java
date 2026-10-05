@@ -7,6 +7,7 @@ import androidx.annotation.Nullable;
 
 import java.util.Arrays;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -29,6 +30,55 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>The version is kept per display because the SDK's freshness comparison is
  * per display: a change on one screen must not invalidate another's.
+ *
+ * <h2>Surfaces</h2>
+ *
+ * <p>JS measures with {@code measureInWindow}, which Fabric makes relative to
+ * the measured node's nearest {@code RootNodeKind} ancestor
+ * ({@code LayoutableShadowNode.cpp} stops the ancestor walk there;
+ * {@code ModalHostViewShadowNode} sets that trait). The activity React root
+ * and a {@code <Modal>}'s {@code DialogRootViewGroup} are different surfaces:
+ * each rectangle is stored under the surface it was measured in, and served
+ * translated by <em>that</em> surface's display origin (see {@link
+ * ReactRootOriginTracker#surfaceOrigin}). A single origin for the whole
+ * display cannot serve both.
+ *
+ * <p>Fails closed. A surface whose origin has not been read yet, or whose
+ * root was forgotten ({@link #forgetOrigin}), serves its rectangles as one
+ * rectangle covering the whole display: an unknown origin must not place a
+ * secure region anywhere it could miss. That includes the main surface, so
+ * the very first publish masks the whole display until the tracker's first
+ * read, a fraction of a second. While no React root can be found at all,
+ * the main surface's rectangles stay one whole-display rectangle: there is
+ * no origin to read, and the store will not guess one (ruled, N8).
+ *
+ * <p>A {@code <Modal>} surface belongs to one JS runtime: its key is a React
+ * tag that the next runtime does not know. A reload drops every surface but
+ * the main one ({@link #claimRuntime}, {@link #releaseRuntime}), so a Modal
+ * that was open when the old runtime went away does not mask the display
+ * for the rest of the process. A claim also empties the main surface's
+ * rectangles, keeping its origin: they were the old runtime's, and its
+ * clearing write is ignored once stale (below), so without this a new tree
+ * that never publishes on the main surface would leave them masking until
+ * the process dies. The new runtime's first publish is then the only main
+ * set.
+ *
+ * <p>The claim also gates every lane write a runtime makes: the module's
+ * publish ({@link #publishForRuntime}) and its tracker's origin writes
+ * ({@link #setOriginForRuntime}, {@link #forgetOriginForRuntime}, {@link
+ * #dropSurfaceIfEmptyForRuntime}). A write whose claim is no longer current
+ * is ignored, under the same lock as the claim. A reload can construct the
+ * new module before the old one is invalidated, and Fabric numbers React
+ * tags from 1 again, so the old runtime's late writes would otherwise put
+ * back a lane the claim dropped or clear the new runtime's lane on the same
+ * key, uncovering its Modal. The display size is not a runtime's state: it
+ * is recorded by whoever reads it.
+ *
+ * <p>Every served rectangle is clamped to the display's real size once it
+ * is known ({@link #setDisplayBounds}). The SDK's native video mask clamps a
+ * rectangle's rows to the frame but not its right edge to a row, so a
+ * rectangle wider than the frame would black out the start of the next row
+ * on every row: it must never be handed one.
  *
  * <h2>Threading</h2>
  *
@@ -58,38 +108,147 @@ final class SecureRectangleStore {
 
     private static final int[] NO_COORDINATES = new int[0];
 
-    /** One immutable published set. Replaced wholesale, never edited. */
-    private static final class Snapshot {
-        final int version;
-        /** As JS published them: relative to React Native's viewport offset. */
+    /**
+     * The activity React root's surface key. Legacy {@link #set}/{@link
+     * #setOrigin} writers that do not name a surface land here; a {@code
+     * <Modal>}'s {@code DialogRootViewGroup} uses a different key.
+     */
+    static final int MAIN_SURFACE = 0;
+
+    /**
+     * The bounds a display serves a fail-closed lane as when its real size
+     * has not been recorded ({@link #setDisplayBounds}): bigger than any
+     * phone or tablet panel, and small enough that a renderer that does not
+     * clip a rectangle's right edge per row still stays cheap.
+     */
+    static final int FALLBACK_DISPLAY_SIZE = 16384;
+
+    /** One surface's raw measurements and the origin that places them. */
+    private static final class Lane {
+        /** As JS published them: relative to this surface's own origin. */
         final int[] raw;
         final int originX;
         final int originY;
-        /** {@link #raw} moved to the display origin: what the SDK is served. */
-        final int[] coordinates;
+        /** Whether {@link #originX}/{@link #originY} were read (and still hold). */
+        final boolean originKnown;
 
-        Snapshot(final int version, @NonNull final int[] raw,
-                final int originX, final int originY) {
-            this(version, raw, originX, originY, translate(raw, originX, originY));
-        }
-
-        private Snapshot(final int version, @NonNull final int[] raw,
-                final int originX, final int originY, @NonNull final int[] coordinates) {
-            this.version = version;
+        Lane(@NonNull final int[] raw, final int originX, final int originY, final boolean originKnown) {
             this.raw = raw;
             this.originX = originX;
             this.originY = originY;
-            this.coordinates = coordinates;
+            this.originKnown = originKnown;
+        }
+
+        @NonNull
+        Lane withRaw(@NonNull final int[] newRaw) {
+            return new Lane(newRaw, originX, originY, originKnown);
+        }
+
+        @NonNull
+        Lane withOrigin(final int newOriginX, final int newOriginY) {
+            return new Lane(raw, newOriginX, newOriginY, true);
+        }
+
+        @NonNull
+        Lane withOriginUnknown() {
+            return new Lane(raw, originX, originY, false);
+        }
+    }
+
+    /** One immutable published set for a display. Replaced wholesale. */
+    private static final class Snapshot {
+        final int version;
+        /** Surface key → lane. TreeMap so the served order is stable. */
+        final TreeMap<Integer, Lane> lanes;
+        /** The display's real size {@code {width, height}} in pixels, or {@code null}. */
+        @Nullable
+        final int[] bounds;
+        /** What the SDK is served: every lane in surface-key order, clamped to {@link #bounds}. */
+        final int[] coordinates;
+
+        Snapshot(final int version, @NonNull final TreeMap<Integer, Lane> lanes, @Nullable final int[] bounds) {
+            this.version = version;
+            // Defensive copies: callers must not retain a mutable reference.
+            this.lanes = new TreeMap<>(lanes);
+            this.bounds = bounds == null ? null : bounds.clone();
+            this.coordinates = serve(this.lanes, this.bounds);
         }
 
         @NonNull
         Snapshot withVersion(final int newVersion) {
-            return new Snapshot(newVersion, raw, originX, originY, coordinates);
+            return new Snapshot(newVersion, lanes, bounds);
+        }
+
+        @NonNull
+        Snapshot withLanes(@NonNull final TreeMap<Integer, Lane> nextLanes) {
+            return new Snapshot(0, nextLanes, bounds);
+        }
+
+        @NonNull
+        Snapshot withBounds(@NonNull final int[] nextBounds) {
+            return new Snapshot(0, lanes, nextBounds);
+        }
+
+        /**
+         * A lane whose origin is unknown serves the whole display; any other
+         * serves its rectangles moved by its origin. Every rectangle is then
+         * clamped to the display, and one left with no area is dropped: a
+         * renderer is never handed a rectangle that runs off the panel.
+         */
+        @NonNull
+        private static int[] serve(@NonNull final TreeMap<Integer, Lane> lanes, @Nullable final int[] bounds) {
+            final int width = bounds == null ? FALLBACK_DISPLAY_SIZE : bounds[0];
+            final int height = bounds == null ? FALLBACK_DISPLAY_SIZE : bounds[1];
+            int total = 0;
+            for (final Lane lane : lanes.values()) {
+                total += lane.raw.length == 0 ? 0 : lane.originKnown ? lane.raw.length : COORDINATES_PER_RECTANGLE;
+            }
+            if (total == 0) {
+                return NO_COORDINATES;
+            }
+            final int[] served = new int[total];
+            int at = 0;
+            for (final Lane lane : lanes.values()) {
+                if (lane.raw.length == 0) {
+                    continue;
+                }
+                if (!lane.originKnown) {
+                    served[at++] = 0;
+                    served[at++] = 0;
+                    served[at++] = width;
+                    served[at++] = height;
+                    continue;
+                }
+                final int[] moved = translate(lane.raw, lane.originX, lane.originY);
+                for (int i = 0; i < moved.length; i += COORDINATES_PER_RECTANGLE) {
+                    if (bounds == null) {
+                        System.arraycopy(moved, i, served, at, COORDINATES_PER_RECTANGLE);
+                        at += COORDINATES_PER_RECTANGLE;
+                        continue;
+                    }
+                    final int left = clamp(moved[i], width);
+                    final int top = clamp(moved[i + 1], height);
+                    final int right = clamp(moved[i + 2], width);
+                    final int bottom = clamp(moved[i + 3], height);
+                    if (right <= left || bottom <= top) {
+                        continue;
+                    }
+                    served[at++] = left;
+                    served[at++] = top;
+                    served[at++] = right;
+                    served[at++] = bottom;
+                }
+            }
+            return at == served.length ? served : Arrays.copyOf(served, at);
+        }
+
+        private static int clamp(final int value, final int max) {
+            return Math.max(0, Math.min(value, max));
         }
     }
 
     /** What a display serves before anything is secured or located. */
-    private static final Snapshot EMPTY = new Snapshot(INITIAL_VERSION, NO_COORDINATES, 0, 0);
+    private static final Snapshot EMPTY = new Snapshot(INITIAL_VERSION, new TreeMap<>(), null);
 
     /**
      * The process-wide set of secured regions.
@@ -111,13 +270,23 @@ final class SecureRectangleStore {
     private final Map<Integer, Snapshot> byDisplay = new ConcurrentHashMap<>();
 
     /**
-     * Publishes {@code coordinates} as the secure set for {@code display}, as a
-     * flat list of four-int rectangles.
+     * Publishes {@code coordinates} as the secure set for {@code display}'s
+     * main surface, as a flat list of four-int rectangles. Other surfaces on
+     * the same display are left alone.
      *
-     * <p>The version moves only when the set actually differs, so an app that
-     * re-publishes an unchanged layout on every render costs the SDK nothing.
+     * <p>The version moves only when the served set actually differs, so an
+     * app that re-publishes an unchanged layout on every render costs the SDK
+     * nothing.
      */
     void set(final int display, @Nullable final int[] coordinates) {
+        set(display, MAIN_SURFACE, coordinates);
+    }
+
+    /**
+     * Publishes {@code coordinates} for one surface on {@code display}. Other
+     * surfaces keep their rectangles and origins.
+     */
+    void set(final int display, final int surface, @Nullable final int[] coordinates) {
         if (coordinates == null) {
             throw new IllegalArgumentException(
                     "secure rectangles cannot be null; pass an empty array to clear them");
@@ -131,7 +300,7 @@ final class SecureRectangleStore {
         // Copy on the way in as well as out: the caller keeps its array and a
         // later write through it would edit a snapshot the SDK is reading.
         final int[] raw = coordinates.clone();
-        update(display, previous -> new Snapshot(0, raw, previous.originX, previous.originY));
+        update(display, previous -> withLane(previous, surface, lane -> lane.withRaw(raw)));
     }
 
     /**
@@ -143,8 +312,27 @@ final class SecureRectangleStore {
      * @return whether {@code coordinates} was published
      */
     boolean publishOrLog(final int display, @Nullable final int[] coordinates) {
+        return publishOrLog(display, MAIN_SURFACE, coordinates);
+    }
+
+    boolean publishOrLog(final int display, final int surface, @Nullable final int[] coordinates) {
+        return publishForRuntime(currentClaim(), display, surface, coordinates);
+    }
+
+    /**
+     * {@link #publishOrLog}, written by the module holding {@code claim}: ignored
+     * when a newer runtime has claimed the store since. What the TurboModule
+     * calls.
+     *
+     * @return whether {@code coordinates} was published
+     */
+    synchronized boolean publishForRuntime(final int claim, final int display, final int surface,
+            @Nullable final int[] coordinates) {
+        if (!isCurrentLocked(claim)) {
+            return false;
+        }
         try {
-            set(display, coordinates);
+            set(display, surface, coordinates);
             return true;
         } catch (IllegalArgumentException e) {
             Log.e(TAG, "setSecureRectangles rejected; the previous set stays published: "
@@ -154,8 +342,9 @@ final class SecureRectangleStore {
     }
 
     /**
-     * Records where the React root's viewport origin sits on {@code display},
-     * in display pixels, and serves every rectangle moved by it.
+     * Records where the main React root's viewport origin sits on {@code
+     * display}, in display pixels, and serves that surface's rectangles moved
+     * by it. Other surfaces keep their own origins.
      *
      * <p>JS measures with {@code measureInWindow}, which React Native makes
      * relative to the root's viewport offset
@@ -171,13 +360,239 @@ final class SecureRectangleStore {
      * for integer {@code k}.
      */
     void setOrigin(final int display, final int originX, final int originY) {
-        update(display, previous -> new Snapshot(0, previous.raw, originX, originY));
+        setOrigin(display, MAIN_SURFACE, originX, originY);
     }
 
     /**
-     * {@code locationOnScreen} of the React root less React Native's viewport
+     * Records where one surface's viewport origin sits on {@code display}.
+     * Only that surface's rectangles move; a {@code <Modal>} and the activity
+     * root must not share one origin.
+     */
+    void setOrigin(final int display, final int surface, final int originX, final int originY) {
+        update(display, previous -> withLane(previous, surface,
+                lane -> lane.withOrigin(originX, originY)));
+    }
+
+    /**
+     * {@link #setOrigin(int, int, int, int)}, written by the module holding
+     * {@code claim}: ignored when a newer runtime has claimed the store since.
+     * An old runtime's dialog root must not place the new runtime's Modal.
+     */
+    synchronized void setOriginForRuntime(final int claim, final int display, final int surface,
+            final int originX, final int originY) {
+        if (isCurrentLocked(claim)) {
+            setOrigin(display, surface, originX, originY);
+        }
+    }
+
+    /**
+     * Records {@code display}'s real size in pixels: what a fail-closed lane
+     * serves, and what every rectangle is clamped to.
+     */
+    void setDisplayBounds(final int display, final int width, final int height) {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        update(display, previous -> previous.bounds != null
+                && previous.bounds[0] == width && previous.bounds[1] == height
+                ? previous
+                : previous.withBounds(new int[] { width, height }));
+    }
+
+    /** The current JS runtime's claim; see {@link #claimRuntime}. Guarded by {@code this}. */
+    private int runtime;
+
+    /**
+     * The claim a runtime holds now. For writers that belong to no runtime
+     * of their own (tests, single-runtime callers); a module writes with the
+     * claim {@link #claimRuntime} gave it.
+     */
+    synchronized int currentClaim() {
+        return runtime;
+    }
+
+    /**
+     * Whether {@code claim} is still the current runtime's. A stale one is
+     * logged at debug, numbers only. Caller holds {@code this}.
+     */
+    private boolean isCurrentLocked(final int claim) {
+        if (claim == runtime) {
+            return true;
+        }
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "secure write ignored: runtime claim " + claim
+                    + " is stale, current " + runtime);
+        }
+        return false;
+    }
+
+    /**
+     * A new JS runtime's module is starting: drops every surface but the main
+     * one, whose keys the new runtime cannot know, empties the main one's
+     * rectangles (keeping its origin), and returns its claim. Synchronised
+     * with {@link #releaseRuntime} so an old module released after the new
+     * one started cannot drop the new runtime's surfaces.
+     */
+    synchronized int claimRuntime() {
+        runtime++;
+        dropNonMainSurfaces();
+        emptyMainSurface();
+        return runtime;
+    }
+
+    /**
+     * Empties the main surface's rectangles on every display, keeping its
+     * origin: the old runtime's set must not outlive it, and a new runtime
+     * that never publishes on the main surface would otherwise inherit it.
+     */
+    private void emptyMainSurface() {
+        for (final Integer display : byDisplay.keySet()) {
+            update(display, previous -> {
+                final Lane main = previous.lanes.get(MAIN_SURFACE);
+                if (main == null || main.raw.length == 0) {
+                    return previous;
+                }
+                final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
+                nextLanes.put(MAIN_SURFACE, main.withRaw(NO_COORDINATES));
+                return previous.withLanes(nextLanes);
+            });
+        }
+    }
+
+    /**
+     * The module holding {@code claim} is gone. Drops every surface but the
+     * main one, unless a newer runtime has already claimed the store.
+     */
+    synchronized void releaseRuntime(final int claim) {
+        if (claim == runtime) {
+            dropNonMainSurfaces();
+        }
+    }
+
+    /** How many surfaces other than the main one hold rectangles, on every display. */
+    int nonMainSurfacesWithRectangles() {
+        int count = 0;
+        for (final Snapshot snapshot : byDisplay.values()) {
+            for (final java.util.Map.Entry<Integer, Lane> entry : snapshot.lanes.entrySet()) {
+                if (entry.getKey() != MAIN_SURFACE && entry.getValue().raw.length > 0) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    /** Drops every surface but the main one, on every display. */
+    private void dropNonMainSurfaces() {
+        for (final Integer display : byDisplay.keySet()) {
+            update(display, previous -> {
+                if (previous.lanes.isEmpty()
+                        || (previous.lanes.size() == 1 && previous.lanes.containsKey(MAIN_SURFACE))) {
+                    return previous;
+                }
+                final TreeMap<Integer, Lane> nextLanes = new TreeMap<>();
+                final Lane main = previous.lanes.get(MAIN_SURFACE);
+                if (main != null) {
+                    nextLanes.put(MAIN_SURFACE, main);
+                }
+                return previous.withLanes(nextLanes);
+            });
+        }
+    }
+
+    /**
+     * {@link #forgetOrigin}, by the module holding {@code claim}: ignored when
+     * a newer runtime has claimed the store since.
+     */
+    synchronized void forgetOriginForRuntime(final int claim, final int surface) {
+        if (isCurrentLocked(claim)) {
+            forgetOrigin(surface);
+        }
+    }
+
+    /**
+     * {@link #dropSurfaceIfEmpty}, by the module holding {@code claim}: ignored
+     * when a newer runtime has claimed the store since.
+     */
+    synchronized void dropSurfaceIfEmptyForRuntime(final int claim, final int surface) {
+        if (isCurrentLocked(claim)) {
+            dropSurfaceIfEmpty(surface);
+        }
+    }
+
+    /** Whether {@code display}'s real size has been recorded. */
+    boolean hasDisplayBounds(final int display) {
+        final Snapshot current = byDisplay.get(display);
+        return current != null && current.bounds != null;
+    }
+
+    /**
+     * {@code surface}'s root is gone: its origin no longer holds, so every
+     * display serves its rectangles as the whole display again until a new
+     * origin is read. An empty lane is unaffected.
+     */
+    void forgetOrigin(final int surface) {
+        for (final Integer display : byDisplay.keySet()) {
+            update(display, previous -> {
+                final Lane lane = previous.lanes.get(surface);
+                if (lane == null || !lane.originKnown) {
+                    return previous;
+                }
+                final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
+                nextLanes.put(surface, lane.withOriginUnknown());
+                return previous.withLanes(nextLanes);
+            });
+        }
+    }
+
+    /** Whether {@code surface} holds rectangles on any display. */
+    boolean hasRectangles(final int surface) {
+        for (final Snapshot snapshot : byDisplay.values()) {
+            final Lane lane = snapshot.lanes.get(surface);
+            if (lane != null && lane.raw.length > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Forgets {@code surface} on every display where it holds no rectangles:
+     * its root is gone, and a later root may reuse the key. A surface that
+     * still holds rectangles stays (fails closed): only its owner clearing
+     * them removes the redaction.
+     */
+    void dropSurfaceIfEmpty(final int surface) {
+        if (surface == MAIN_SURFACE) {
+            return;
+        }
+        for (final Integer display : byDisplay.keySet()) {
+            update(display, previous -> {
+                final Lane lane = previous.lanes.get(surface);
+                if (lane == null || lane.raw.length > 0) {
+                    return previous;
+                }
+                final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
+                nextLanes.remove(surface);
+                return previous.withLanes(nextLanes);
+            });
+        }
+    }
+
+    /** Whether {@code surface} has a lane on any display. Tests and the tracker read it. */
+    boolean hasSurface(final int surface) {
+        for (final Snapshot snapshot : byDisplay.values()) {
+            if (snapshot.lanes.containsKey(surface)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * {@code locationOnScreen} of a React root less React Native's viewport
      * offset for it: the display-pixel position of the origin
-     * {@code measureInWindow} measures from.
+     * {@code measureInWindow} measures from on that surface.
      */
     @NonNull
     static int[] displayOrigin(@NonNull final int[] locationOnScreen,
@@ -185,10 +600,25 @@ final class SecureRectangleStore {
         return new int[] { locationOnScreen[0] - viewportX, locationOnScreen[1] - viewportY };
     }
 
+    private interface LaneChange {
+        @NonNull
+        Lane apply(@NonNull Lane previous);
+    }
+
     private interface Change {
         /** The next state, built from the current one; its version is ignored. */
         @NonNull
         Snapshot apply(@NonNull Snapshot previous);
+    }
+
+    @NonNull
+    private static Snapshot withLane(@NonNull final Snapshot previous, final int surface,
+            @NonNull final LaneChange change) {
+        final TreeMap<Integer, Lane> nextLanes = new TreeMap<>(previous.lanes);
+        final Lane prior = nextLanes.get(surface);
+        final Lane base = prior == null ? new Lane(NO_COORDINATES, 0, 0, false) : prior;
+        nextLanes.put(surface, change.apply(base));
+        return previous.withLanes(nextLanes);
     }
 
     /**

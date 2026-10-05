@@ -56,9 +56,31 @@ export interface Spec extends TurboModule {
    * has to answer immediately, and a rejected one would leave the caller
    * believing a region is redacted when it is not.
    *
-   * An empty list clears the display's set.
+   * An empty list clears the display's main-surface set. Rectangles measured
+   * inside a React Native `<Modal>` go through
+   * {@link setSecureRectanglesOnSurface} instead.
    */
   setSecureRectangles(display: number, coordinates: number[]): void;
+  /**
+   * Like {@link setSecureRectangles}, for one React surface on the display:
+   * `surface` is the React tag of the `<Modal>` host the rectangles were
+   * measured in (JS reads it off the fiber tree), or `-1` for a Modal whose
+   * tag is unknown. Fabric `measureInWindow` is relative to that Modal's
+   * content, so native finds and watches the Modal's root on the first
+   * publish and translates the rectangles by its origin at pull time. Until
+   * that origin is read, the surface redacts the whole display.
+   */
+  setSecureRectanglesOnSurface(
+    display: number,
+    surface: number,
+    coordinates: number[],
+  ): void;
+  /**
+   * The display origin `[x, y]` of the `<Modal>` whose host has React tag
+   * `surface`, in the units of the `vh` request's `originX`/`originY`. Empty
+   * when unknown. Synchronous: the `vh` walk asks once per Modal per walk.
+   */
+  secureSurfaceOrigin(surface: number): number[];
 
   /**
    * Suppresses everything that describes the screen: the video (black

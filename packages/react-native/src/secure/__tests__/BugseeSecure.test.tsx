@@ -281,3 +281,134 @@ describe('<BugseeSecure>', () => {
     expect(inner?.props.testID).toBe('inner');
   });
 });
+
+// Fabric measureInWindow is relative to the React root that holds the view,
+// and a <Modal> is its own root. The rectangle goes out under the surface of
+// the nearest Modal host above the view, read off the fiber tree once per
+// mount, with no native call.
+describe('<BugseeSecure> surfaces', () => {
+  const MODAL_TAG = 56;
+  /** Host fibers handed to RendererProxy, so a test can count the reads. */
+  let tagReads: unknown[];
+
+  beforeEach(() => {
+    tagReads = [];
+    jest.doMock('react-native/Libraries/ReactNative/RendererProxy', () => ({
+      getPublicInstanceFromInternalInstanceHandle: (fiber: { tagForTest?: unknown }) => {
+        tagReads.push(fiber);
+        return { __nativeTag: fiber.tagForTest };
+      },
+    }));
+  });
+
+  afterEach(() => {
+    jest.dontMock('react-native/Libraries/ReactNative/RendererProxy');
+  });
+
+  /** A host fiber for the view, under `ancestors` (nearest first). */
+  function fiberUnder(...ancestors: Array<Record<string, unknown>>): Record<string, unknown> {
+    const view: Record<string, unknown> = { tag: 5, type: 'RCTView', return: null };
+    let child = view;
+    for (const ancestor of ancestors) {
+      const parent = { ...ancestor, return: null };
+      child.return = parent;
+      child = parent;
+    }
+    return view;
+  }
+
+  const modalHost = (tag: unknown = MODAL_TAG) => ({ tag: 5, type: 'RCTModalHostView', tagForTest: tag });
+
+  function renderWithNode(element: ReactElement, node: Record<string, unknown>): ReactTestRenderer {
+    let renderer: ReactTestRenderer | undefined;
+    act(() => {
+      renderer = create(element, {
+        createNodeMock: () => ({ measureInWindow, ...node }),
+        unstable_isConcurrent: true,
+      } as Parameters<typeof create>[1]);
+    });
+    mounted.push(renderer as ReactTestRenderer);
+    return renderer as ReactTestRenderer;
+  }
+
+  it('publishes on the surface of the Modal it is in, asking native nothing', () => {
+    renderWithNode(<BugseeSecure />, {
+      __internalInstanceHandle: fiberUnder({ tag: 5, type: 'RCTView' }, modalHost(), { tag: 3, type: null }),
+    });
+
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, MODAL_TAG, MEASURED);
+    expect(native.setSecureRectangles).not.toHaveBeenCalled();
+    expect(native.secureSurfaceOrigin).not.toHaveBeenCalled();
+  });
+
+  it('a view outside every Modal publishes on the main surface', () => {
+    renderWithNode(<BugseeSecure />, {
+      __internalInstanceHandle: fiberUnder({ tag: 5, type: 'RCTView' }, { tag: 3, type: null }),
+    });
+
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, MEASURED);
+    expect(native.setSecureRectanglesOnSurface).not.toHaveBeenCalled();
+  });
+
+  it('a view with no fiber publishes on the main surface', () => {
+    renderWithNode(<BugseeSecure />, {});
+
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, MEASURED);
+  });
+
+  // Never the main surface: native serves a surface whose origin it cannot
+  // find as the whole display.
+  it('a Modal whose tag cannot be read publishes on the unknown-Modal surface', () => {
+    renderWithNode(<BugseeSecure />, { __internalInstanceHandle: fiberUnder(modalHost(null)) });
+
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, -1, MEASURED);
+    expect(native.setSecureRectangles).not.toHaveBeenCalled();
+  });
+
+  it('reads its surface once per mount, however often it measures', () => {
+    renderWithNode(<BugseeSecure />, { __internalInstanceHandle: fiberUnder(modalHost()) });
+
+    tick(5);
+
+    expect(tagReads).toHaveLength(1);
+    expect(measureInWindow.mock.calls.length).toBeGreaterThan(5);
+  });
+
+  it('reads it again after being re-enabled', () => {
+    const node = { __internalInstanceHandle: fiberUnder(modalHost()) };
+    const renderer = renderWithNode(<BugseeSecure />, node);
+
+    update(renderer, <BugseeSecure enabled={false} />);
+    update(renderer, <BugseeSecure enabled />);
+
+    expect(tagReads).toHaveLength(2);
+  });
+
+  it('removes its rectangle from that surface on unmount', () => {
+    const renderer = renderWithNode(<BugseeSecure />, { __internalInstanceHandle: fiberUnder(modalHost()) });
+
+    act(() => renderer.unmount());
+
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, MODAL_TAG, []);
+  });
+
+  // Same as any failed measurement: nothing is published, and the next
+  // measurement tries again.
+  it('a fiber tree that throws while it is read publishes nothing and warns once', () => {
+    const fiber = { tag: 5, type: 'RCTView' };
+    const failure = new Error('torn fiber');
+    Object.defineProperty(fiber, 'return', {
+      get(): never {
+        throw failure;
+      },
+    });
+
+    renderWithNode(<BugseeSecure />, { __internalInstanceHandle: fiber });
+    tick(2);
+
+    expect(native.setSecureRectangles).not.toHaveBeenCalled();
+    expect(native.setSecureRectanglesOnSurface).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[Bugsee] BugseeSecure could not measure', failure.name);
+  });
+});

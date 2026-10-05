@@ -15,30 +15,56 @@ import androidx.annotation.UiThread;
 import com.facebook.react.bridge.LifecycleEventListener;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.UiThreadUtil;
+import com.facebook.react.bridge.UIManager;
+import com.facebook.react.uimanager.ReactRoot;
 import com.facebook.react.uimanager.RootView;
 import com.facebook.react.uimanager.RootViewUtil;
+import com.facebook.react.uimanager.UIManagerHelper;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Keeps {@link SecureRectangleStore}'s display origin in step with the React
- * root view, so rectangles JS measured with {@code measureInWindow} are served
- * to the SDK in display pixels.
+ * Keeps {@link SecureRectangleStore}'s per-surface display origins in step
+ * with each React root view, so rectangles JS measured with {@code
+ * measureInWindow} are served to the SDK in display pixels.
  *
- * <p>The origin is the root's {@code getLocationOnScreen} less React Native's
- * own viewport offset for it ({@link RootViewUtil#getViewportOffset}, the
- * formula {@code ReactSurfaceView} feeds Fabric's layout constraints, which is
- * what {@code measureInWindow} adds to a view's position in its root). With
- * edge-to-edge on and a full-screen window that is (0, 0); with it off, it is
- * the status-bar/cutout inset; in split-screen or freeform it is also the
- * window's own position on the display.
+ * <p>The origin of the activity root (a {@link ReactRoot}) is its {@code
+ * getLocationOnScreen} less React Native's own viewport offset for it
+ * ({@link RootViewUtil#getViewportOffset}, the formula {@code
+ * ReactSurfaceView} feeds Fabric's layout constraints, which the root shadow
+ * node's {@code Translate(viewportOffset)} adds to {@code measureInWindow}).
+ * With edge-to-edge on and a full-screen window that is (0, 0); with it off,
+ * it is the status-bar/cutout inset; in split-screen or freeform it is also
+ * the window's own position on the display.
  *
- * <p>Re-read on every global layout of the root (rotation, insets arriving,
- * a window resize), on host resume, on every JS publish, and at most every
- * {@link SecureRectanglePulls#ORIGIN_REFRESH_MIN_INTERVAL_MS} while the SDK
- * pulls (a window can move without a relayout). All view access is on the UI
- * thread; the store is thread-safe.
+ * <p>Fabric {@code measureInWindow} stops at the nearest {@code RootNodeKind}
+ * ancestor ({@code ModalHostViewShadowNode} sets that trait), so a rectangle
+ * inside a {@code <Modal>} is relative to the modal's content, which is
+ * mounted in the dialog's {@code DialogRootViewGroup}. That root is a {@link
+ * RootView} but not a {@link ReactRoot}: nothing feeds its viewport offset to
+ * Fabric, and the modal host node's transform is the identity. Its origin is
+ * therefore its {@code getLocationOnScreen} alone ({@link #surfaceOrigin}).
+ * Each surface has its own origin; a single {@code setOrigin} for the display
+ * cannot serve both.
+ *
+ * <p>A surface's key is the React tag of its {@code <Modal>} host, which JS
+ * reads off the fiber tree; {@link #watchSurface} resolves the dialog root
+ * from it when JS first publishes there, and retries on every refresh until
+ * the dialog root exists.
+ *
+ * <p>Re-read on every global layout of a watched root (rotation, insets
+ * arriving, a window resize), on host resume, on every JS publish, and at
+ * most every {@link SecureRectanglePulls#ORIGIN_REFRESH_MIN_INTERVAL_MS}
+ * while the SDK pulls (a window can move without a relayout). All view access
+ * is on the UI thread; the store is thread-safe.
  */
 final class ReactRootOriginTracker implements LifecycleEventListener {
 
@@ -48,9 +74,22 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     private final RootFinder rootFinder;
     private final SecureRectangleStore store;
 
-    /** UI thread only. */
+    /**
+     * The owning module's claim on {@link #store}: every lane write carries
+     * it, so a tracker whose runtime has been replaced writes nothing.
+     */
+    private final int claim;
+
+    /** UI thread only: the activity React root, when found. */
     @Nullable
     private RootHandle root;
+
+    /**
+     * Extra surfaces (a {@code <Modal>}'s {@code DialogRootViewGroup})
+     * registered via {@link #watch}, each paired with the layout-listener
+     * token from {@link RootHandle#addOnGlobalLayoutListener}. UI thread only.
+     */
+    private final List<WatchedRoot> watched = new ArrayList<>();
 
     /**
      * The layout-listener registration for {@link #root}, if any, released
@@ -62,6 +101,34 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
      */
     @Nullable
     private LayoutListenerToken layoutToken;
+
+    /** A watched surface and the layout token that must be released with it. */
+    private static final class WatchedRoot {
+        final RootHandle handle;
+        final LayoutListenerToken token;
+
+        WatchedRoot(@NonNull final RootHandle handle,
+                @NonNull final LayoutListenerToken token) {
+            this.handle = handle;
+            this.token = token;
+        }
+    }
+
+    /** Finds a {@code <Modal>}'s dialog root from its host's React tag. */
+    private final SurfaceResolver surfaceResolver;
+
+    /**
+     * Surface keys JS has published on whose dialog root could not be found
+     * yet. Retried on every {@link #refresh}. UI thread only.
+     */
+    private final Set<Integer> pendingSurfaces = new LinkedHashSet<>();
+
+    /**
+     * Each watched surface's last origin, for {@link #cachedSurfaceOrigin}
+     * (the {@code vh} walk asks from the JS thread). Written on the UI
+     * thread.
+     */
+    private final Map<Integer, int[]> surfaceOrigins = new ConcurrentHashMap<>();
 
     /**
      * A copy of the {@code {x, y}} last passed to {@link
@@ -83,8 +150,9 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     private volatile boolean disposed;
 
     ReactRootOriginTracker(@NonNull final ReactApplicationContext context,
-            @NonNull final SecureRectangleStore store) {
-        this(new ContextLifecycleSource(context), new ActivityRootFinder(context), store);
+            @NonNull final SecureRectangleStore store, final int claim) {
+        this(new ContextLifecycleSource(context), new ActivityRootFinder(context),
+                new ModalSurfaceResolver(context), store, claim);
     }
 
     /**
@@ -98,9 +166,28 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
      */
     ReactRootOriginTracker(@NonNull final LifecycleSource lifecycle,
             @NonNull final RootFinder rootFinder, @NonNull final SecureRectangleStore store) {
+        this(lifecycle, rootFinder, surfaceKey -> null, store);
+    }
+
+    /**
+     * Test seam, as above, with a fake {@link SurfaceResolver} too. Writes
+     * with whatever claim {@code store} holds now.
+     */
+    ReactRootOriginTracker(@NonNull final LifecycleSource lifecycle,
+            @NonNull final RootFinder rootFinder, @NonNull final SurfaceResolver surfaceResolver,
+            @NonNull final SecureRectangleStore store) {
+        this(lifecycle, rootFinder, surfaceResolver, store, store.currentClaim());
+    }
+
+    /** Test seam, as above, writing with {@code claim}. */
+    ReactRootOriginTracker(@NonNull final LifecycleSource lifecycle,
+            @NonNull final RootFinder rootFinder, @NonNull final SurfaceResolver surfaceResolver,
+            @NonNull final SecureRectangleStore store, final int claim) {
         this.lifecycle = lifecycle;
         this.rootFinder = rootFinder;
+        this.surfaceResolver = surfaceResolver;
         this.store = store;
+        this.claim = claim;
         lifecycle.addLifecycleEventListener(this);
         refreshSoon();
     }
@@ -146,41 +233,222 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         try {
             RootHandle current = root;
             if (current == null || !current.isAttachedToWindow()) {
-                detach();
+                detachPrimary();
                 current = rootFinder.findCurrentRoot();
-                if (current == null) {
-                    return;
+                if (current != null) {
+                    layoutToken = current.addOnGlobalLayoutListener(this::refresh);
+                    root = current;
                 }
-                layoutToken = current.addOnGlobalLayoutListener(this::refresh);
-                root = current;
             }
 
-            // Resolved once, atomically: current holds the root's view only
-            // weakly, and reading location/viewport/display as separate
-            // calls could see the view collected partway through, mixing a
-            // real value read before that with a made-up default (0,0) /
-            // DEFAULT_DISPLAY read after it -- publishing a wrong origin is
-            // a privacy defect, not a cosmetic one, so a gone-mid-refresh
-            // view aborts the whole read instead: nothing new is published
-            // and the previous origin stands.
-            final OriginSnapshot snapshot = current.resolveOrigin();
-            if (snapshot == null) {
-                return;
+            if (current != null) {
+                publishOrigin(current, true);
             }
-            final int[] origin =
-                    SecureRectangleStore.displayOrigin(snapshot.onScreen, snapshot.viewport.x, snapshot.viewport.y);
-            store.setOrigin(snapshot.displayId, origin[0], origin[1]);
-            lastOrigin = origin;
-            if (Log.isLoggable(TAG, Log.DEBUG)) {
-                Log.d(TAG, "secure origin display=" + snapshot.displayId
-                        + " onScreen=" + snapshot.onScreen[0] + "," + snapshot.onScreen[1]
-                        + " viewport=" + snapshot.viewport.x + "," + snapshot.viewport.y
-                        + " origin=" + origin[0] + "," + origin[1]
-                        + " served=" + Arrays.toString(store.snapshot(snapshot.displayId)));
-            }
+            refreshWatched();
+            resolvePending();
         } catch (Throwable t) {
             Log.w(TAG, "secure rectangles: could not read the React root's display origin: "
                     + t.getClass().getName());
+        }
+    }
+
+    /**
+     * JS published on {@code surfaceKey} (a {@code <Modal>} host's tag):
+     * watch its dialog root. Safe from any thread: posts to the UI thread.
+     * Until the root is found its rectangles fail closed in the store.
+     */
+    void watchSurface(final int surfaceKey) {
+        if (surfaceKey <= SecureRectangleStore.MAIN_SURFACE) {
+            return;
+        }
+        UiThreadUtil.runOnUiThread(() -> watchSurfaceNow(surfaceKey));
+    }
+
+    /** Package-visible for the same reason as {@link #refresh()}. */
+    @UiThread
+    void watchSurfaceNow(final int surfaceKey) {
+        if (disposed || surfaceKey <= SecureRectangleStore.MAIN_SURFACE || isWatched(surfaceKey)) {
+            return;
+        }
+        final RootHandle handle = resolveQuietly(surfaceKey);
+        if (handle == null) {
+            pendingSurfaces.add(surfaceKey);
+            return;
+        }
+        pendingSurfaces.remove(surfaceKey);
+        watchNow(handle);
+    }
+
+    /**
+     * The display origin of {@code surfaceKey}'s dialog root, watching it
+     * first if needed; {@code null} when it cannot be found. For the {@code
+     * vh} walk, which asks once per {@code <Modal>} per walk.
+     */
+    @UiThread
+    @Nullable
+    int[] surfaceOriginNow(final int surfaceKey) {
+        watchSurfaceNow(surfaceKey);
+        for (final WatchedRoot entry : watched) {
+            if (entry.handle.surfaceKey() == surfaceKey) {
+                publishOrigin(entry.handle, false);
+            }
+        }
+        return cachedSurfaceOrigin(surfaceKey);
+    }
+
+    /** The last origin read for {@code surfaceKey}, or {@code null}. Any thread. */
+    @Nullable
+    int[] cachedSurfaceOrigin(final int surfaceKey) {
+        final int[] origin = surfaceOrigins.get(surfaceKey);
+        return origin == null ? null : origin.clone();
+    }
+
+    /** Package-visible for the same reason as {@link #refresh()}. */
+    @UiThread
+    void watchNow(@NonNull final RootHandle handle) {
+        if (disposed || isWatched(handle.surfaceKey())) {
+            return;
+        }
+        final LayoutListenerToken token = handle.addOnGlobalLayoutListener(this::refresh);
+        watched.add(new WatchedRoot(handle, token));
+        publishOrigin(handle, false);
+    }
+
+    @UiThread
+    private boolean isWatched(final int surfaceKey) {
+        for (final WatchedRoot existing : watched) {
+            if (existing.handle.surfaceKey() == surfaceKey) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @UiThread
+    @Nullable
+    private RootHandle resolveQuietly(final int surfaceKey) {
+        try {
+            return surfaceResolver.resolve(surfaceKey);
+        } catch (Throwable t) {
+            Log.w(TAG, "secure surface: could not resolve a dialog root ("
+                    + t.getClass().getSimpleName() + ")");
+            return null;
+        }
+    }
+
+    /**
+     * Retries every pending surface. One whose rectangles JS has cleared
+     * meanwhile (its Modal unmounted before its root was found) is not
+     * retried: it is dropped with its empty lane.
+     */
+    @UiThread
+    private void resolvePending() {
+        if (pendingSurfaces.isEmpty()) {
+            return;
+        }
+        for (final Integer surfaceKey : new ArrayList<>(pendingSurfaces)) {
+            if (!store.hasRectangles(surfaceKey)) {
+                pendingSurfaces.remove(surfaceKey);
+                store.dropSurfaceIfEmptyForRuntime(claim, surfaceKey);
+                continue;
+            }
+            watchSurfaceNow(surfaceKey);
+        }
+    }
+
+    @UiThread
+    private void refreshWatched() {
+        final Iterator<WatchedRoot> it = watched.iterator();
+        while (it.hasNext()) {
+            final WatchedRoot entry = it.next();
+            if (!entry.handle.isAttachedToWindow()) {
+                it.remove();
+                forget(entry);
+                continue;
+            }
+            publishOrigin(entry.handle, false);
+        }
+    }
+
+    /**
+     * Stops watching a dialog root. If its surface still holds rectangles,
+     * its origin no longer holds: the store serves the surface as the whole
+     * display again and the key goes back to pending, so a later refresh
+     * watches whatever root then hosts it. Otherwise its empty lane goes.
+     */
+    @UiThread
+    private void forget(@NonNull final WatchedRoot entry) {
+        entry.token.release();
+        final int surfaceKey = entry.handle.surfaceKey();
+        surfaceOrigins.remove(surfaceKey);
+        if (disposed) {
+            // The runtime is gone: its Modal surfaces are the module's to
+            // drop (SecureRectangleStore.releaseRuntime), not to retry.
+            return;
+        }
+        if (store.hasRectangles(surfaceKey)) {
+            store.forgetOriginForRuntime(claim, surfaceKey);
+            pendingSurfaces.add(surfaceKey);
+        } else {
+            store.dropSurfaceIfEmptyForRuntime(claim, surfaceKey);
+        }
+    }
+
+    /**
+     * Where {@code measureInWindow}'s (0, 0) sits on the display for the
+     * root in {@code snapshot}: {@code locationOnScreen - viewportOffset} for
+     * a {@link ReactRoot} (the activity root), {@code locationOnScreen} alone
+     * for any other {@link RootView} (a {@code <Modal>}'s dialog root). Pure,
+     * so a JVM test checks the choice.
+     */
+    @NonNull
+    static int[] surfaceOrigin(@NonNull final OriginSnapshot snapshot) {
+        return snapshot.reactRoot
+                ? SecureRectangleStore.displayOrigin(snapshot.onScreen, snapshot.viewport.x, snapshot.viewport.y)
+                : new int[] { snapshot.onScreen[0], snapshot.onScreen[1] };
+    }
+
+    @UiThread
+    private void publishOrigin(@NonNull final RootHandle handle, final boolean primary) {
+        // Resolved once, atomically: the handle holds the root's view only
+        // weakly, and reading location/viewport/display as separate calls
+        // could see the view collected partway through, mixing a real value
+        // read before that with a made-up default (0,0) / DEFAULT_DISPLAY
+        // read after it -- publishing a wrong origin is a privacy defect,
+        // not a cosmetic one, so a gone-mid-refresh view aborts the whole
+        // read instead: nothing new is published and the previous origin
+        // stands.
+        // A root that is not attached has no place on screen yet: its
+        // location reads (0, 0). Nothing is recorded; the surface keeps
+        // failing closed until its first layout after attaching.
+        if (!handle.isAttachedToWindow()) {
+            return;
+        }
+        final OriginSnapshot snapshot = handle.resolveOrigin();
+        if (snapshot == null) {
+            return;
+        }
+        if (snapshot.displaySize != null) {
+            store.setDisplayBounds(snapshot.displayId, snapshot.displaySize.x, snapshot.displaySize.y);
+        }
+        final int[] origin = surfaceOrigin(snapshot);
+        // The activity root is the main surface whatever its own view id:
+        // JS publishes everything outside a <Modal> there.
+        final int surface = primary ? SecureRectangleStore.MAIN_SURFACE : handle.surfaceKey();
+        store.setOriginForRuntime(claim, snapshot.displayId, surface, origin[0], origin[1]);
+        if (primary) {
+            lastOrigin = origin;
+        } else {
+            surfaceOrigins.put(surface, origin.clone());
+        }
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "secure origin display=" + snapshot.displayId
+                    + " surface=" + surface
+                    + " kind=" + (primary ? "activity" : "dialog")
+                    + " onScreen=" + snapshot.onScreen[0] + "," + snapshot.onScreen[1]
+                    + " viewport=" + snapshot.viewport.x + "," + snapshot.viewport.y
+                    + " origin=" + origin[0] + "," + origin[1]
+                    + " served=" + Arrays.toString(store.snapshot(snapshot.displayId)));
         }
     }
 
@@ -205,6 +473,28 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
     /** Package-visible for the same reason as {@link #refresh()}. */
     @UiThread
     void detach() {
+        detachPrimary();
+        // Surfaces that still hold rectangles stay pending (failing closed)
+        // for a root a recreated activity brings back; refresh re-watches
+        // them. After dispose() nothing refreshes again.
+        for (final WatchedRoot entry : new ArrayList<>(watched)) {
+            forget(entry);
+        }
+        watched.clear();
+        surfaceOrigins.clear();
+        if (disposed) {
+            pendingSurfaces.clear();
+        }
+    }
+
+    /** How many surfaces wait for their dialog root. Tests read it. */
+    @UiThread
+    int pendingSurfaceCount() {
+        return pendingSurfaces.size();
+    }
+
+    @UiThread
+    private void detachPrimary() {
         root = null;
         final LayoutListenerToken token = layoutToken;
         layoutToken = null;
@@ -249,6 +539,12 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         boolean isAttachedToWindow();
 
         /**
+         * Opaque key for {@link SecureRectangleStore}'s per-surface origin.
+         * The activity React root and a dialog root must not share one.
+         */
+        int surfaceKey();
+
+        /**
          * The root's current on-screen location, viewport offset and display
          * id, resolved as one atomic snapshot -- or {@code null} if the
          * underlying view is no longer reachable. Reading these as separate
@@ -266,16 +562,43 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         LayoutListenerToken addOnGlobalLayoutListener(Runnable onLayout);
     }
 
-    /** A root's location, viewport offset and display id, read together. */
+    /** Finds a {@code <Modal>}'s dialog root from its host's React tag. */
+    interface SurfaceResolver {
+        /** UI thread. {@code null} while the dialog root does not exist. */
+        @Nullable
+        RootHandle resolve(int surfaceKey);
+    }
+
+    /**
+     * A root's location, viewport offset, display id and kind, read
+     * together. {@code reactRoot} is whether the root is a {@link ReactRoot}
+     * (whose viewport offset Fabric applies) rather than a dialog root.
+     */
     static final class OriginSnapshot {
         final int[] onScreen;
         final Point viewport;
         final int displayId;
+        final boolean reactRoot;
+        /** The display's real size in pixels ({@code Display.getRealSize}), or {@code null}. */
+        @Nullable
+        final Point displaySize;
 
         OriginSnapshot(final int[] onScreen, final Point viewport, final int displayId) {
+            this(onScreen, viewport, displayId, true);
+        }
+
+        OriginSnapshot(final int[] onScreen, final Point viewport, final int displayId,
+                final boolean reactRoot) {
+            this(onScreen, viewport, displayId, reactRoot, null);
+        }
+
+        OriginSnapshot(final int[] onScreen, final Point viewport, final int displayId,
+                final boolean reactRoot, @Nullable final Point displaySize) {
             this.onScreen = onScreen;
             this.viewport = viewport;
             this.displayId = displayId;
+            this.reactRoot = reactRoot;
+            this.displaySize = displaySize;
         }
     }
 
@@ -321,7 +644,43 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
                 return null;
             }
             final View view = firstRootView(activity.getWindow().getDecorView());
-            return view == null ? null : new ViewRootHandle(view);
+            return view == null ? null : new ViewRootHandle(view, ViewRootHandle.surfaceKeyOf(view));
+        }
+    }
+
+    /**
+     * Production {@link SurfaceResolver}: the {@code <Modal>} host view for
+     * the tag forwards {@code getChildAt} to its {@code DialogRootViewGroup}
+     * ({@code ReactModalHostView}), so the dialog root is the React root of
+     * the host's first child. {@code null} until the modal has content.
+     */
+    private static final class ModalSurfaceResolver implements SurfaceResolver {
+        private final ReactApplicationContext context;
+
+        ModalSurfaceResolver(final ReactApplicationContext context) {
+            this.context = context;
+        }
+
+        @Nullable
+        @Override
+        public RootHandle resolve(final int surfaceKey) {
+            if (!context.hasActiveReactInstance()) {
+                return null;
+            }
+            final UIManager uiManager = UIManagerHelper.getUIManagerForReactTag(context, surfaceKey);
+            if (uiManager == null) {
+                return null;
+            }
+            final View host = uiManager.resolveView(surfaceKey);
+            if (!(host instanceof ViewGroup) || ((ViewGroup) host).getChildCount() == 0) {
+                return null;
+            }
+            final View child = ((ViewGroup) host).getChildAt(0);
+            final RootView root = child == null ? null : RootViewUtil.getRootView(child);
+            if (!(root instanceof View) || root instanceof ReactRoot) {
+                return null;
+            }
+            return new ViewRootHandle((View) root, surfaceKey);
         }
     }
 
@@ -349,9 +708,20 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
      */
     private static final class ViewRootHandle implements RootHandle {
         private final WeakReference<View> view;
+        private final int surfaceKey;
 
-        ViewRootHandle(final View view) {
+        ViewRootHandle(final View view, final int surfaceKey) {
             this.view = new WeakReference<>(view);
+            this.surfaceKey = surfaceKey;
+        }
+
+        /**
+         * React tags for RootViews are positive; {@link View#NO_ID} falls
+         * back to identity so two untagged roots still stay apart.
+         */
+        static int surfaceKeyOf(@NonNull final View view) {
+            final int id = view.getId();
+            return id != View.NO_ID ? id : System.identityHashCode(view);
         }
 
         @Nullable
@@ -365,6 +735,11 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             return v != null && v.isAttachedToWindow();
         }
 
+        @Override
+        public int surfaceKey() {
+            return surfaceKey;
+        }
+
         @Nullable
         @Override
         public OriginSnapshot resolveOrigin() {
@@ -374,10 +749,18 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
             }
             final int[] onScreen = new int[2];
             v.getLocationOnScreen(onScreen);
+            // Read for every root, so the log shows it; only a ReactRoot's is
+            // subtracted (surfaceOrigin).
+            final boolean reactRoot = v instanceof ReactRoot;
             final Point viewport = RootViewUtil.getViewportOffset(v);
             final Display display = v.getDisplay();
             final int displayId = display == null ? Display.DEFAULT_DISPLAY : display.getDisplayId();
-            return new OriginSnapshot(onScreen, viewport, displayId);
+            Point size = null;
+            if (display != null) {
+                size = new Point();
+                display.getRealSize(size);
+            }
+            return new OriginSnapshot(onScreen, viewport, displayId, reactRoot, size);
         }
 
         @Override

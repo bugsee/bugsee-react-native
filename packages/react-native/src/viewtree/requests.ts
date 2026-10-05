@@ -16,6 +16,7 @@ import { Platform } from 'react-native';
 import NativeBugsee from '../NativeBugsee';
 import { RootErrorReporter } from '../exceptions/RootErrorReporter';
 import { BugseeSecure } from '../secure/BugseeSecure';
+import { nativeTagOfFiber } from '../secure/surface';
 import { secureRectangleScale } from '../secure/unit';
 import { VH_ANCHOR_NATIVE_ID } from './constants';
 import { errorName } from '../errorName';
@@ -202,6 +203,19 @@ function buildEnv(event: DataRequestEvent): WalkEnv {
     scale: secureRectangleScale(),
     originX: event.originX,
     originY: event.originY,
+    nativeTagOf: nativeTagOfFiber,
+    originForSurface: (surface) => {
+      try {
+        const origin: unknown = NativeBugsee.secureSurfaceOrigin(surface);
+        // Number.isFinite never coerces, so a missing element fails it too.
+        if (Array.isArray(origin) && Number.isFinite(origin[0]) && Number.isFinite(origin[1])) {
+          return { x: origin[0] as number, y: origin[1] as number };
+        }
+      } catch {
+        // Keep the enclosing origin for that Modal's subtree.
+      }
+      return null;
+    },
     now: monotonicNow,
   };
 }

@@ -3,8 +3,12 @@ package com.bugsee.reactnative;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import android.content.Context;
+import android.graphics.Point;
+import android.hardware.display.DisplayManager;
 import android.util.Base64;
 import android.util.Log;
+import android.view.Display;
 
 import com.bugsee.library.Bugsee;
 import com.bugsee.library.contracts.exchange.Breadcrumb;
@@ -35,7 +39,10 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -102,12 +109,24 @@ public class BugseeModule extends NativeBugseeSpec
      */
     private final DataRequestBridge.Sink dataRequestSink = this::emitRequest;
 
+    /** This module's claim on the secure store (SecureRectangleStore#claimRuntime). */
+    private final int secureRuntime;
+
     /** Spans this module is holding. {@link #invalidate()} drops them. */
     private final SpanHandles spanHandles = new SpanHandles();
 
     public BugseeModule(final ReactApplicationContext context) {
         super(context);
-        originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared());
+        // A new JS runtime: Modal surfaces the previous one left behind (a
+        // reload with a secure Modal open) are dropped before this one's JS
+        // can publish.
+        final int leftBehind = SecureRectangleStore.shared().nonMainSurfacesWithRectangles();
+        secureRuntime = SecureRectangleStore.shared().claimRuntime();
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "secure runtime claimed: dropped " + leftBehind
+                    + " Modal surface(s) the previous runtime left");
+        }
+        originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared(), secureRuntime);
         // refreshSoon only posts to the UI thread, which is all the SDK's pull
         // thread may do.
         pullRefresher = originTracker::refreshSoon;
@@ -162,6 +181,14 @@ public class BugseeModule extends NativeBugseeSpec
         spanHandles.releaseAll();
         SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
+        // This runtime's Modal surfaces cannot be cleared by its JS any more.
+        // A no-op when the next module has already claimed the store.
+        final int open = SecureRectangleStore.shared().nonMainSurfacesWithRectangles();
+        SecureRectangleStore.shared().releaseRuntime(secureRuntime);
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "secure runtime released: " + open + " Modal surface(s) held, "
+                    + SecureRectangleStore.shared().nonMainSurfacesWithRectangles() + " left");
+        }
         super.invalidate();
     }
 
@@ -246,6 +273,16 @@ public class BugseeModule extends NativeBugseeSpec
 
     @Override
     public void setSecureRectangles(final double display, final ReadableArray coordinates) {
+        publishSecure(display, SecureRectangleStore.MAIN_SURFACE, coordinates);
+    }
+
+    @Override
+    public void setSecureRectanglesOnSurface(
+            final double display, final double surface, final ReadableArray coordinates) {
+        publishSecure(display, (int) Math.round(surface), coordinates);
+    }
+
+    private void publishSecure(final double display, final int surface, final ReadableArray coordinates) {
         // A void TurboModule method: anything thrown here has no promise to
         // reject and crashes the host app, over a call JS already validated.
         try {
@@ -258,16 +295,30 @@ public class BugseeModule extends NativeBugseeSpec
             for (int i = 0; i < flat.length; i++) {
                 flat[i] = (int) Math.round(coordinates.getDouble(i));
             }
-            // Stored as measured (relative to React Native's viewport
-            // offset); the store serves them moved to the React root's
-            // display origin, which the tracker keeps current. Re-read now
-            // too, in case the window moved without a layout pass.
-            if (!SecureRectangleStore.shared().publishOrLog((int) display, flat)) {
+            // The display's real size first: until an origin is read the
+            // store serves the whole display, and it must know how big that
+            // is. Display reads are safe off the UI thread.
+            recordDisplayBounds((int) display);
+            // Stored as measured (relative to that surface's own origin);
+            // the store serves them moved by that surface's display origin,
+            // which the tracker keeps current. Re-read now too, in case the
+            // window moved without a layout pass.
+            // Ignored once a newer runtime has claimed the store: this
+            // module's late writes (a reload's teardown) must not touch
+            // the next runtime's lanes, whose keys may be the same tags.
+            if (!SecureRectangleStore.shared().publishForRuntime(secureRuntime, (int) display, surface, flat)) {
                 return;
             }
             originTracker.refreshSoon();
+            // A <Modal>'s first rectangles: find and watch its dialog root.
+            // Until then they fail closed in the store. An empty publish
+            // (the Modal clearing on unmount) watches nothing.
+            if (flat.length > 0) {
+                originTracker.watchSurface(surface);
+            }
             if (Log.isLoggable(TAG, Log.DEBUG)) {
                 Log.d(TAG, "secure published display=" + (int) display
+                        + " surface=" + surface
                         + " raw=" + Arrays.toString(flat)
                         + " served=" + Arrays.toString(SecureRectangleStore.shared().snapshot((int) display)));
             }
@@ -275,6 +326,73 @@ public class BugseeModule extends NativeBugseeSpec
             Log.e(TAG, "setSecureRectangles failed; the previous set stays published: "
                     + e.getClass().getName());
         }
+    }
+
+    /** Records {@code display}'s real size in the store, once. */
+    private void recordDisplayBounds(final int display) {
+        final SecureRectangleStore store = SecureRectangleStore.shared();
+        if (store.hasDisplayBounds(display)) {
+            return;
+        }
+        final DisplayManager displays =
+                (DisplayManager) getReactApplicationContext().getSystemService(Context.DISPLAY_SERVICE);
+        final Display found = displays == null ? null : displays.getDisplay(display);
+        if (found == null) {
+            return;
+        }
+        final Point size = new Point();
+        found.getRealSize(size);
+        store.setDisplayBounds(display, size.x, size.y);
+    }
+
+    /**
+     * The display origin {@code [x, y]} of the {@code <Modal>} whose host has
+     * React tag {@code surface}, for the {@code vh} walk, which asks once per
+     * {@code <Modal>} per walk. Answered from the tracker's cache when the
+     * surface is watched; otherwise read on the UI thread, waiting at most
+     * {@link #SURFACE_ORIGIN_WAIT_MS}. Empty when unknown: the walk then
+     * keeps the request's origin for that subtree.
+     */
+    @Override
+    public WritableArray secureSurfaceOrigin(final double surface) {
+        final int key = (int) Math.round(surface);
+        int[] origin = originTracker.cachedSurfaceOrigin(key);
+        if (origin == null) {
+            origin = readSurfaceOriginOnUiThread(key);
+        }
+        final WritableArray out = Arguments.createArray();
+        if (origin != null) {
+            out.pushDouble(origin[0]);
+            out.pushDouble(origin[1]);
+        }
+        return out;
+    }
+
+    /** Well inside the walk's own 250 ms budget. */
+    private static final long SURFACE_ORIGIN_WAIT_MS = 100;
+
+    @Nullable
+    private int[] readSurfaceOriginOnUiThread(final int key) {
+        if (UiThreadUtil.isOnUiThread()) {
+            return originTracker.surfaceOriginNow(key);
+        }
+        final AtomicReference<int[]> result = new AtomicReference<>();
+        final CountDownLatch done = new CountDownLatch(1);
+        UiThreadUtil.runOnUiThread(() -> {
+            try {
+                result.set(originTracker.surfaceOriginNow(key));
+            } catch (Throwable t) {
+                Log.w(TAG, "secure surface origin failed (" + t.getClass().getSimpleName() + ")");
+            } finally {
+                done.countDown();
+            }
+        });
+        try {
+            done.await(SURFACE_ORIGIN_WAIT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return result.get();
     }
 
     // --- Blackout and view-hierarchy capture (design doc §4.1) -----------

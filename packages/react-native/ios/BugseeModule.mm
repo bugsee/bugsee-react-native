@@ -65,6 +65,12 @@
 #import "BGSRNErrorMessage.h"
 #endif
 
+/// Forward-declared: the wrapper's pull path refreshes the origins before the
+/// functions' definitions later in this file.
+static NSValue *_Nullable BGSRNReactOrigin(void);
+static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface);
+static Class _Nullable BGSRNModalHostClass(void);
+
 /// The conformance lives here rather than in the Support package so that the
 /// package stays buildable and testable without the SDK's headers. BGSRNWrapper
 /// already declares every property the protocol requires; this states that it
@@ -105,6 +111,29 @@
 /// secret must survive that swap. See `BGSRNSecureRectangles` for the version
 /// contract, which is what makes the SDK notice a change at all.
 - (NSData *)secureRectanglesForDisplay:(NSInteger)display {
+  // Every surface's origin is re-read on the pull, so a window move or a
+  // sheet settling still updates without waiting for the next JS publish,
+  // the same reason Android refreshes at pull time. The main surface is the
+  // React root's window; each <Modal> is its presented view controller's
+  // view. A Modal whose host is gone takes its empty lane with it; one that
+  // is not found yet keeps failing closed.
+  if (NSThread.isMainThread) {
+    BGSRNSecureRectangles *store = BGSRNSecureRectangles.shared;
+    // What a surface whose origin is unknown serves: the screen, not more.
+    [store setDisplaySize:UIScreen.mainScreen.bounds.size forDisplay:display];
+    NSValue *origin = BGSRNReactOrigin();
+    if (origin != nil) {
+      [store setOrigin:origin.CGPointValue forDisplay:display];
+    }
+    for (NSNumber *surface in [store surfacesForDisplay:display]) {
+      NSValue *modalOrigin = BGSRNModalSurfaceOrigin(surface.integerValue);
+      if (modalOrigin != nil) {
+        [store setOrigin:modalOrigin.CGPointValue forDisplay:display surface:surface.integerValue];
+      } else {
+        [store dropSurfaceIfEmpty:surface.integerValue];
+      }
+    }
+  }
   return [BGSRNSecureRectangles.shared snapshotForDisplay:display];
 }
 
@@ -231,6 +260,41 @@ static NSValue *_Nullable BGSRNReactOrigin(void) {
     return (surfaceHostingView != Nil && [view isKindOfClass:surfaceHostingView]) ||
            (legacyRootView != Nil && [view isKindOfClass:legacyRootView]);
   });
+}
+
+/// `RCTModalHostViewComponentView`, resolved by name rather than imported;
+/// Nil when this React Native has no such class.
+static Class _Nullable BGSRNModalHostClass(void) {
+  static Class modalHostClass;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    modalHostClass = NSClassFromString(@"RCTModalHostViewComponentView");
+  });
+  return modalHostClass;
+}
+
+/// Where `measureInWindow`'s (0, 0) sits on the screen, in points, for the
+/// `<Modal>` whose host has React tag `surface` (`BGSRNModalHostOrigin`).
+/// Read from the current runtime's host, which its module names at publish
+/// time (`nameModalHostForSurface:`), the same shape as Android's
+/// `watchSurface`: a window can hold another runtime's host with the same
+/// tag during a reload, and only the module's own view registry tells them
+/// apart. While that host has not mounted, unknown. Only without a
+/// registry, the one class+tag match in the windows the SDK walks. nil (none or several, or off main) leaves the lane's
+/// origin as it was: unknown for a new lane, which is served as the whole
+/// display.
+static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface) {
+  if (!NSThread.isMainThread) {
+    return nil;
+  }
+  Class modalHostClass = BGSRNModalHostClass();
+  if (modalHostClass == Nil || surface <= 0) {
+    return nil;
+  }
+  return BGSRNSecureSurfaceOrigin(BGSRNSecureRectangles.shared, surface,
+                                  BGSRNSdkWalkedWindows(BGSRNSdkKeyWindow()), ^BOOL(UIView *view) {
+                                    return [view isKindOfClass:modalHostClass];
+                                  });
 }
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
@@ -800,10 +864,16 @@ static NSDictionary *BGSRNNoSpan(void) {
 
 @implementation BugseeModule {
   os_unfair_lock _spanRegistryLock;
+  /// This module's claim on the secure store (`claimRuntime`).
+  NSInteger _secureRuntime;
   BOOL _spansRetired;
 }
 
 @synthesize spanHandles = _spanHandles;
+/// This runtime's view registry (set by React Native through
+/// `RCTBridgeModuleDecorator`): how a `<Modal>` host is found by its React
+/// tag without searching windows another runtime shares.
+@synthesize viewRegistry_DEPRECATED = _viewRegistry_DEPRECATED;
 
 RCT_EXPORT_MODULE(Bugsee)
 
@@ -815,6 +885,9 @@ RCT_EXPORT_MODULE(Bugsee)
 - (instancetype)init {
   if ((self = [super init])) {
     _spanRegistryLock = OS_UNFAIR_LOCK_INIT;
+    // A new JS runtime: Modal surfaces the previous one left behind (a reload
+    // with a secure Modal open) are dropped before this one's JS can publish.
+    _secureRuntime = [BGSRNSecureRectangles.shared claimRuntime];
     BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithoutJsRuntime], YES);
     BGSRNInstallConsoleCapture();
     BGSRNInstallLogEventFilter();
@@ -908,6 +981,9 @@ RCT_EXPORT_MODULE(Bugsee)
   // No super call: `invalidate` comes from RCTInvalidating, and
   // NativeBugseeSpecBase inherits NSObject, which does not declare it.
   [BGSRNEventBus.shared detach:self];
+  // This runtime's Modal surfaces cannot be cleared by its JS any more. A
+  // no-op when the next module has already claimed the store.
+  [BGSRNSecureRectangles.shared releaseRuntime:_secureRuntime];
   // Also completes every report handle this module's JS was given: the next
   // runtime cannot know them, so the reports must not wait out their
   // deadlines.
@@ -957,6 +1033,14 @@ RCT_EXPORT_MODULE(Bugsee)
 
 - (void)setSecureRectangles:(double)display
                 coordinates:(NSArray *)coordinates {
+  [self setSecureRectanglesOnSurface:display
+                             surface:BGSRNSecureMainSurface
+                         coordinates:coordinates];
+}
+
+- (void)setSecureRectanglesOnSurface:(double)display
+                             surface:(double)surface
+                         coordinates:(NSArray *)coordinates {
   const NSUInteger count = coordinates.count;
   // Codegen hands numbers across as double, because that is what a JS number
   // is. Rounding rather than truncating: the JS side has already rounded each
@@ -970,10 +1054,57 @@ RCT_EXPORT_MODULE(Bugsee)
     flat[i] = (int32_t)llround([coordinates[i] doubleValue]);
   }
 
-  [BGSRNSecureRectangles.shared setCoordinates:flat
-                                         count:count
-                                    forDisplay:(NSInteger)display];
+  // Ignored once a newer runtime has claimed the store: this module's late
+  // writes (a reload's teardown) must not touch the next runtime's lanes,
+  // whose keys may be the same React tags.
+  const NSInteger key = (NSInteger)llround(surface);
+  const BOOL published = [BGSRNSecureRectangles.shared setCoordinates:flat
+                                                                count:count
+                                                           forDisplay:(NSInteger)display
+                                                              surface:key
+                                                              runtime:_secureRuntime];
   free(flat);
+  // A <Modal>'s rectangles: name this runtime's lookup of its host, so the
+  // pull places them by this runtime's Modal. An empty publish (the Modal
+  // clearing on unmount) names nothing.
+  if (published && count > 0 && key != BGSRNSecureMainSurface) {
+    [self nameModalHostForSurface:key];
+  }
+}
+
+/// Names, under this module's claim, how the store finds the `<Modal>` host
+/// with React tag `surface`: this runtime's view registry, which another
+/// runtime's same-tag host is not in. Not looked up here: Fabric mounts the
+/// host after JS has measured and published inside it, so the pull asks (on
+/// main) until the host is there, then holds it weakly; until then the lane
+/// fails closed. No registry: nothing is named, and the pull falls back to a
+/// unique class+tag match.
+- (void)nameModalHostForSurface:(NSInteger)surface {
+  __weak RCTViewRegistry *registry = self.viewRegistry_DEPRECATED;
+  if (registry == nil) {
+    return;
+  }
+  [BGSRNSecureRectangles.shared setHostResolver:^id _Nullable(NSInteger tag) {
+    return [registry viewForReactTag:@(tag)];
+  }
+                                     forSurface:surface
+                                        runtime:_secureRuntime];
+}
+
+/// The screen origin `[x, y]` (points) of the `<Modal>` whose host has React
+/// tag `surface`, for the `vh` walk, which asks once per Modal per walk.
+/// Empty when the Modal is not presented.
+- (NSArray<NSNumber *> *)secureSurfaceOrigin:(double)surface {
+  __block NSArray<NSNumber *> *origin = @[];
+  const NSInteger key = (NSInteger)llround(surface);
+  BGSRNRunOnMainSync(^{
+    NSValue *value = BGSRNModalSurfaceOrigin(key);
+    if (value != nil) {
+      CGPoint p = value.CGPointValue;
+      origin = @[ @(p.x), @(p.y) ];
+    }
+  });
+  return origin;
 }
 
 #pragma mark - Blackout and view-hierarchy capture (design doc §4.1)
