@@ -4076,10 +4076,34 @@ Device: WOD_LX1 `AMRJCP4718402860`, Debug, logged `BUGSEE_E2E appearance nonce=9
 - [x] **13.1** Source maps: `bugsee-cli sourcemaps inject` then `debug-files upload --type sourcemaps`. Injection must happen on the **composed** Hermes map, after `compose-source-maps.js`, or the debug ID lands on a map nothing consults.
 - [x] **13.2** dSYM upload as an Xcode **scheme post-action** running `bugsee-cli xcode post-action`. A build phase also works but needs `BUGSEE_BUILD_INFO_ALL_ACTIONS=1`, and Xcode 15+ defaults `ENABLE_USER_SCRIPT_SANDBOXING` to `YES`, which blocks it.
 - [x] **13.3** Android mapping and NDK symbols — the Gradle plugin's job once applied. Write `android/bugsee.properties` with the **unprefixed** `app_token=` key (not `plugin.appToken`) at the *root* project, and default `plugin.ndk.enabled=true` for RN, since every RN app ships Hermes and `libreactnative.so` it did not write.
-- [x] **13.4** Expo config plugin, with a `prebuild --clean` test — the `.xcscheme` edit is the most fragile part and Expo has no helper for it. `CI=1 yarn expo prebuild --clean` in `examples/expo` exited 0 (CocoaPods installed) and left `bugsee-xcode.sh` on *Bundle React Native code and images* plus the Archive `Upload dSYMs` post-action.
+- [x] **13.4** Expo config plugin, with a `prebuild --clean` test — the `.xcscheme` edit is the most fragile part and Expo has no helper for it. `CI=1 yarn expo prebuild --clean` in `examples/expo` exited 0 (CocoaPods installed) and left `bugsee-xcode.sh` on *Bundle React Native code and images* plus the Archive `Upload dSYMs` post-action. Task 13.6 added option semantics:
+  - `appToken` takes `string | { ios, android }`.
+  - `uploadSourcemaps` maps to `bugseeUploadSourcemaps` / `BUGSEE_UPLOAD_SOURCEMAPS`.
+  - `uploadSymbols: false` also disables the Android `uploadBugsee*` tasks.
+  - A `--no-clean` prebuild rewrites the Gradle plugin and NDK pins in place.
 - [ ] **13.5** End-to-end: a release build whose JS stack symbolicates in the dashboard. This is the only test that proves the whole chain.
 
   Local half only. A debuggable release APK (`:app:assembleRelease -PbugseeE2eDebuggable=true`, arm64, Hermes) on WOD_LX1 `AMRJCP4718402860` reported `debug_ids` `{"index.android.bundle":"3c110b23-2416-5bc6-acac-e35ac7e69aa6"}`, the same UUID as `debug_id` on the composed map `index.android.bundle.map` after `compose-source-maps.js` (`hermes-sourcemaps.js` injects into that map). `debug-files upload` was not executed. The dashboard symbolication half is still open: nothing was uploaded and no Bugsee application was created, so this checkbox stays unchecked. iPhone XS (KRSFT, `00008020-000554DC2641002E`) was offline, so that run was not taken. An iOS device run is skipped unless `BUGSEE_COMPOSED_MAP` names the composed map. The iOS Simulator was not run: the SDK compiles `logException` out on the simulator, so a Release simulator build would not retain a `debug_ids` payload.
+
+  **Since Task 13.6, the build hooks upload.** Release builds upload the composed map with a real token; Gradle and Xcode both do it. Only the real-token dashboard run is open. To close it:
+  1. Put a real Android app token in `android/bugsee.properties` (or `BUGSEE_APP_TOKEN`).
+  2. Build the release. Its hook uploads that build's map.
+  3. Run a crash with airplane mode off.
+  4. Check the frame in the dashboard.
+- [x] **13.6** Review-gate fixes. All Phase 13 gate findings (I1, I2, M1–M7) are closed.
+  - **Upload (I1).** `hermes-sourcemaps.js finish` (Android) and `compose-then-inject.js` (iOS) run `bugsee-cli debug-files upload --type sourcemaps` on the composed map after the final re-stamp.
+    - The switch is `uploadSourcemaps` / `bugseeUploadSourcemaps` / `BUGSEE_UPLOAD_SOURCEMAPS`.
+    - The token must be real: a placeholder or missing token skips with one line.
+    - iOS Debug skips unless `BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true`.
+    - A failure warns and the build goes on.
+  - **Mutation gate (I2).** `stryker.plugin.json` (`yarn mutate:plugin`, CI) covers `plugin/src` and the two scripts. It scores 97.53, with break 97.
+  - **No real endpoints.** Jest, Stryker and CI default to the dead endpoint `http://127.0.0.1:9`, and a `jest setupFiles` guard refuses to spawn bugsee-cli with a non-loopback endpoint.
+  - **Bare Android release** (stub endpoint, synthetic token): the stub received the composed map with id `e0b734d3-5439-5d44-8445-8ffe54ba2de5`.
+    - The WOD_LX1 `AMRJCP4718402860` reported the same runtime `debug_ids` (`composed-debug-id.test.ts` 1/1).
+    - A placeholder token and `-PbugseeUploadSourcemaps=false` each logged their skip line.
+  - **Expo Android release:** the stub received `e50957da-6e9e-457b-b1b6-bbf791a1e1c0`. `uploadSymbols:false` skipped all `uploadBugsee*` tasks.
+  - **iOS bare Release, simulator SDK:** the stub received `5e9338a7-6377-53da-984f-a77c65988c3e`, the id in the shipped HBC.
+  - Report: `.superpowers/sdd/2026-09-16-implementation-plan/task-13.6-report.md`.
 - [ ] Review gate.
 
 ---

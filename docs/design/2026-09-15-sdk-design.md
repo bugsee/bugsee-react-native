@@ -408,8 +408,22 @@ Four implementation constraints:
 `plugin/src` compiled to `plugin/build`, exposed as `@bugsee/react-native/app.plugin.js`.
 
 - **Android:** `withSettingsGradle` adds `mavenCentral()` to `pluginManagement` — the plugin marker is on Maven Central, **not** the Gradle Plugin Portal; `withProjectBuildGradle` applies `com.bugsee.android.gradle`; `withDangerousMod` writes `android/bugsee.properties`; `withAndroidManifest` optionally writes the `com.bugsee.app-token` meta-data for 7.x manifest auto-launch.
-- **iOS:** `withXcodeProject` inserts the source-map build phase after *Bundle React Native code and images*, and `withDangerousMod` inserts the dSYM scheme post-action (§11.2). No Xcode surgery is needed for the SDK itself — the podspec vendors the xcframework at `pod install`.
-- **Options:** `appToken`, `uploadSourcemaps`, `uploadSymbols`, `nativeCrashReporting`, `gradlePluginVersion`, `autoLaunch`.
+- **iOS:** `withXcodeProject` rewrites the *Bundle React Native code and images* phase so it runs `bugsee-xcode.sh`: only the `react-native-xcode.sh` invocation is swapped, and an unrecognised phase is refused. `withDangerousMod` inserts the dSYM scheme post-action (§11.2). No Xcode surgery is needed for the SDK itself — the podspec vendors the xcframework at `pod install`.
+- **Options:**
+  - **`appToken`** — `string | { ios?, android? }`. A string means both platforms.
+    - Android: written as `app_token=` in `android/bugsee.properties`.
+    - iOS: baked into the dSYM post-action script, ahead of `BUGSEE_APP_TOKEN`, `BUGSEE_TOKEN_IOS` and `credentials.json`, which all still apply. When source maps upload, it is also exported in a marked settings block of the bundle phase as `BUGSEE_PLUGIN_APP_TOKEN`.
+    - A committed `ios/` or `android/bugsee.properties` therefore carries the token.
+  - **`uploadSourcemaps`** — default on. Release builds upload the composed Hermes map after the final debug-id re-stamp (§4.4), when a real token is configured.
+    - `false` writes `bugseeUploadSourcemaps=false` to `android/gradle.properties` and `BUGSEE_UPLOAD_SOURCEMAPS=false` into the bundle phase's settings block.
+    - The same switches work in a bare app.
+    - iOS Debug builds skip the upload unless `BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true`.
+  - **`uploadSymbols`** — default on, both platforms.
+    - iOS: `false` removes the Archive dSYM post-action.
+    - Android: `false` disables the Gradle plugin's `uploadBugsee*` tasks (R8 mapping, NDK symbols, build info) in a marked block, because Gradle plugin 4.0.7 has no switch of its own.
+  - **`nativeCrashReporting`** — default on (§11.1).
+  - **`gradlePluginVersion`** — default: the pin in `native-versions.json`. A `--no-clean` prebuild rewrites an older pin in place.
+  - **`autoLaunch`** — default off. Writes the manifest token for a real token only.
 
 The feedback package needs no plugin: autolinking picks up its Gradle dependency, and its podspec vendors its own xcframework the same way (§6.5).
 
@@ -465,7 +479,7 @@ So iOS ends up with **two** build-time integrations, at different stages for dif
 
 ## 13. CI and release
 
-GitHub Actions on `bugsee/bugsee-react-native`, matrixed across RN 0.81.x / 0.83.x / 0.86.x / 0.87.x. Jobs: lint + typecheck + unit; option-manifest parity; codegen freshness; declared-floor drift (`scripts/platform-floors.ts`); Android example build and test; iOS example build on macOS, asserting `Bugsee.framework` is actually embedded — the build alone proved nothing in the spike, since the `spm_dependency` variant built cleanly and then dyld-crashed; and `expo prebuild --clean` followed by a build, which is the only thing that proves the config plugin survives regeneration.
+GitHub Actions on `bugsee/bugsee-react-native`, matrixed across RN 0.81.x / 0.83.x / 0.86.x / 0.87.x. Jobs: lint + typecheck + unit; option-manifest parity; codegen freshness; declared-floor drift (`scripts/platform-floors.ts`); Android example build and test; iOS example build on macOS, asserting `Bugsee.framework` is actually embedded — the build alone proved nothing in the spike, since the `spm_dependency` variant built cleanly and then dyld-crashed; and `expo prebuild --clean` in `examples/expo` (`scripts/check-expo-prebuild.sh`), which checks every edit the config plugin makes and then requires a second `--no-clean` prebuild to change no file. It builds nothing yet: a build after the prebuild is still to be added, and it is the only thing that would prove the regenerated project compiles.
 
 Release via Changesets, matching `javascript/` and `rrweb`. Because the iOS SDK is beta, the package ships as `1.0.0-beta.N` on the **`beta`** npm dist-tag; `latest` stays unpublished until iOS reaches GA, so nobody installs a beta by accident.
 

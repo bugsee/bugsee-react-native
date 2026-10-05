@@ -111,8 +111,9 @@ const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
  * Off removes only the block this plugin inserted. Maven Hermes and
  * `libreactnative.so` are pre-stripped; the comment does not claim those
  * two are symbolicated. The Hermes preserve command and the finish hook
- * are the JS source-map path, so they are written either way. The hook
- * does not upload.
+ * are the JS source-map path, so they are written either way. After the
+ * debug id is final the hook uploads the composed map, unless
+ * `bugseeUploadSourcemaps=false` or no real token is configured.
  */
 function ensureAppAppliesPlugin(appBuildGradle, ndkVersion) {
     let next = appBuildGradle;
