@@ -71,17 +71,22 @@ A committed `ios/` (`project.pbxproj` and the shared scheme) or
 
 Release builds give the Hermes bundle a debug id and upload its source map, so
 JS frames in a crash report resolve. An Expo app gets this from the config
-plugin. A bare app needs two edits in `android/app/build.gradle`:
+plugin. A bare app needs two edits in `android/app/build.gradle`. Resolve the
+package through node, as React Native's own template resolves
+`react-native`, so a hoisted or nested install works too:
 
 ```groovy
+def bugseeDir = new File(["node", "--print", "require.resolve('@bugsee/react-native/package.json')"]
+    .execute(null, rootDir).text.trim()).getParentFile()
+
 react {
     // Copies the JS aside before hermesc compiles it, so the debug id can
     // reach the bytecode.
-    hermesCommand = file("../../node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.sh").absolutePath
+    hermesCommand = new File(new File(bugseeDir, "scripts"), "hermesc-preserve-js.sh").absolutePath
 }
 
-// At the end of the file.
-apply from: file("../../node_modules/@bugsee/react-native/scripts/bugsee-sourcemaps.gradle")
+// At the end of the file. Applying it twice is harmless.
+apply from: new File(new File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle")
 ```
 
 If Hermes compiles a bundle without going through `hermesc-preserve-js.sh`,
@@ -93,6 +98,9 @@ Hermes off, the plain JS bundle and Metro's map get the id instead.
   `-PbugseeUploadSourcemaps=false`, the build skips the upload with one line. A
   failed upload warns and does not fail the build.
 - **The version and build number** are the variant's own, flavors included.
+- **Limitations.** The preserve wrapper is a shell script, so Hermes release
+  builds on a Windows host are not supported yet. The hook has not yet been
+  verified with Gradle's configuration cache.
 
 ## Licence
 
