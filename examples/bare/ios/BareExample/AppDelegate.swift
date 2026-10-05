@@ -88,11 +88,16 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 /// Without this the e2e sees the app start and then nothing at all, which
 /// looks exactly like the SDK failing to launch.
 ///
-/// Debug mirrors every React Native log to stderr. Release only `NSLog`s
-/// lines that contain `BUGSEE_E2E`: a Release build does not compile the
-/// stderr mirror, and `console.log` otherwise stays in `os_log`, which
-/// `devicectl` console cannot stream. The native `BugseeRN` lines are already
-/// `NSLog`.
+/// A line that contains `BUGSEE_E2E` (an e2e marker) goes out once, through
+/// `NSLog`, in every configuration: `NSLog` still reaches the console while
+/// the SDK holds stderr, and it carries the wall-clock stamp the harness
+/// times markers by. Debug also mirrors every other React Native log to
+/// stderr. A marker must not take both paths: the console attachment
+/// (`simctl launch --console-pty`, `devicectl ... --console`) streams the
+/// process's stderr, so it would read the marker twice, and the e2e counts
+/// markers. Release does not compile the stderr mirror, and `console.log`
+/// otherwise stays in `os_log`, which `devicectl` console cannot stream. The
+/// native `BugseeRN` lines are already `NSLog`.
 private func mirrorReactNativeLogToStandardError() {
   let osLog = RCTDefaultLogFunction
   RCTSetLogFunction { level, source, fileName, lineNumber, message in
@@ -100,6 +105,7 @@ private func mirrorReactNativeLogToStandardError() {
     guard let message else { return }
     if message.contains("BUGSEE_E2E") {
       NSLog("%@", message)
+      return
     }
 #if DEBUG
     if let data = (message + "\n").data(using: .utf8) {
