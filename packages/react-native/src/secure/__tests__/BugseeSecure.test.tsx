@@ -409,6 +409,6 @@ describe('<BugseeSecure> surfaces', () => {
     expect(native.setSecureRectangles).not.toHaveBeenCalled();
     expect(native.setSecureRectanglesOnSurface).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith('[Bugsee] BugseeSecure could not measure', failure);
+    expect(warn).toHaveBeenCalledWith('[Bugsee] BugseeSecure could not measure', failure.name);
   });
 });
