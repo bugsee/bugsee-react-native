@@ -88,14 +88,12 @@ const isBlank = (ch: string): boolean => ch === ' ' || ch === '\t' || ch === '\r
 
 /**
  * Whether a `/` starts a slashy string (true), divides (false), or cannot be
- * told apart (null). `last` is the previous code character on the line, `word`
- * the identifier it ends, `spaced` whether whitespace separates it from the
- * slash, and `tight` whether the slash is followed by a non-space character.
+ * told apart (null). `last` is the previous code character on the line ('' at
+ * the start of the line), `word` the identifier it ends, `spaced` whether
+ * whitespace separates it from the slash, and `tight` whether the slash is
+ * followed by a non-space character.
  */
 function slashyAllowed(last: string, word: string, spaced: boolean, tight: boolean): boolean | null {
-  if (last === '') {
-    return null;
-  }
   if (last === ')' || last === ']' || last === STRING_END) {
     return false;
   }
@@ -106,7 +104,7 @@ function slashyAllowed(last: string, word: string, spaced: boolean, tight: boole
     // `a /b/` reads like a regex argument, `a / b` and `a/b` like division.
     return spaced && tight ? null : false;
   }
-  if (OPERATOR_BEFORE_SLASHY.includes(last)) {
+  if (last !== '' && OPERATOR_BEFORE_SLASHY.includes(last)) {
     return true;
   }
   return null;
@@ -129,12 +127,13 @@ function scan(source: string, file: string): Scan {
   const openBraces: number[] = [];
   let depth = 0;
   let lineNo = 1;
+  // Per-line state; startLine resets it for every line after the first.
   let lineStart = 0;
   let lineDepth = 0;
   let lineOpenAtStart = false;
   let commentAt: number | null = null;
+  /** The previous code character on the line, STRING_END for a string, '' at the line start. */
   let last = '';
-  let word = '';
 
   const top = (): Frame | undefined => stack[stack.length - 1];
   const inString = (): boolean => stack.some((frame) => frame.kind === 'string');
@@ -159,14 +158,14 @@ function scan(source: string, file: string): Scan {
       emit(source[from + k] as string);
     }
   };
-  // `ch` is the code character at `at`, or a sentinel for a string that just
-  // ended. An identifier continues only when the previous source character
-  // is a word character too: whitespace ends it.
-  const noteCode = (ch: string, at: number): void => {
+  /** `ch` is the code character just read, or a sentinel for a string that just ended. */
+  const noteCode = (ch: string): void => {
     commentAt = null;
-    word = isWordChar(ch) && isWordChar(source[at - 1] ?? '') ? word + ch : isWordChar(ch) ? ch : '';
     last = ch;
   };
+  /** The identifier that ends right before `at`, when `last` is a word character. */
+  const wordBefore = (at: number): string =>
+    (/[A-Za-z0-9_]+\s*$/.exec(source.slice(lineStart, at)) as RegExpExecArray)[0].trimEnd();
   const endLine = (end: number): void => {
     lines.push({
       start: lineStart,
@@ -175,8 +174,7 @@ function scan(source: string, file: string): Scan {
       depth: lineDepth,
       depthAfter: depth,
       openAtStart: lineOpenAtStart,
-      // A line comment ends with its line; everything else carries over.
-      openAtEnd: stack.some((frame) => frame.kind !== 'comment' || frame.block),
+      openAtEnd: stack.length > 0,
       commentAt,
     });
   };
@@ -186,10 +184,8 @@ function scan(source: string, file: string): Scan {
     lineOpenAtStart = stack.length > 0;
     commentAt = null;
     last = '';
-    word = '';
   };
 
-  startLine(0);
   let i = 0;
   while (i < source.length) {
     const ch = source[i] as string;
@@ -271,11 +267,11 @@ function scan(source: string, file: string): Scan {
       const spaced = isBlank(source[i - 1] ?? '');
       const after = next ?? '\n';
       const tight = !isBlank(after) && after !== '\n';
-      const slashy = slashyAllowed(last, word, spaced, tight);
+      const slashy = slashyAllowed(last, isWordChar(last) ? wordBefore(i) : '', spaced, tight);
       if (slashy === null) {
         throw unreadable(file, `line ${lineNo}: cannot tell whether the / starts a slashy string or divides`);
       }
-      noteCode(slashy ? STRING_END : ch, i);
+      noteCode(slashy ? STRING_END : ch);
       if (slashy) {
         stack.push({ kind: 'string', close: '/', interpolates: true, escape: 'slashy', oneLine: false, line: lineNo });
       }
@@ -284,7 +280,7 @@ function scan(source: string, file: string): Scan {
       continue;
     }
     if (ch === '$' && source[i + 1] === '/') {
-      noteCode(STRING_END, i);
+      noteCode(STRING_END);
       stack.push({ kind: 'string', close: '/$', interpolates: true, escape: 'dollar', oneLine: false, line: lineNo });
       emitN(i, 2);
       i += 2;
@@ -292,7 +288,7 @@ function scan(source: string, file: string): Scan {
     }
     if (ch === '"' || ch === "'") {
       const triple = source.startsWith(ch.repeat(3), i);
-      noteCode(STRING_END, i);
+      noteCode(STRING_END);
       stack.push({
         kind: 'string',
         close: triple ? ch.repeat(3) : ch,
@@ -312,7 +308,7 @@ function scan(source: string, file: string): Scan {
         depth += 1;
         openBraces.push(lineNo);
       }
-      noteCode(ch, i);
+      noteCode(ch);
       emit(ch);
       i += 1;
       continue;
@@ -330,13 +326,13 @@ function scan(source: string, file: string): Scan {
         depth -= 1;
         openBraces.pop();
       }
-      noteCode(ch, i);
+      noteCode(ch);
       emit(ch);
       i += 1;
       continue;
     }
     if (!isBlank(ch)) {
-      noteCode(ch, i);
+      noteCode(ch);
     }
     emit(ch);
     i += 1;
@@ -355,7 +351,11 @@ function scan(source: string, file: string): Scan {
     throw unreadable(file, `line ${open.line}: a \${ interpolation opened on this line never closes`);
   }
   if (depth > 0) {
-    throw unreadable(file, `line ${openBraces[openBraces.length - 1]}: a brace opened on this line never closes`);
+    throw unreadable(file, `line ${openBraces[0]}: a brace opened on this line never closes`);
+  }
+  // A line comment on the last line is popped so that the line reads as closed.
+  if (open !== undefined) {
+    stack.pop();
   }
   endLine(source.length);
   const text = masked.join('');
@@ -392,8 +392,14 @@ function isMarker(line: Line, marker: string): boolean {
 }
 
 /** Bugsee's own code line, exactly, alone as a statement, at the top level. */
-function isOwnStatement(line: Line, statement: string): boolean {
-  return !line.openAtStart && line.depth === 0 && line.commentAt === null && stripCr(line.raw).trim() === statement;
+function isOwnStatement(line: Line | undefined, statement: string): boolean {
+  return (
+    line !== undefined &&
+    !line.openAtStart &&
+    line.depth === 0 &&
+    line.commentAt === null &&
+    stripCr(line.raw).trim() === statement
+  );
 }
 
 /**
@@ -454,30 +460,25 @@ interface Extent {
 
 /** The first `keyword {` block in code, searched within [from, to). */
 function blockExtent(s: Scan, keyword: string, from = 0, to = s.masked.length): Extent | null {
+  // The mask has no keyword in a string or comment, so any match is code.
   const re = new RegExp(`(?<![A-Za-z0-9_])${keyword}\\s*\\{`, 'g');
-  const region = s.masked.slice(0, to);
   re.lastIndex = from;
-  for (let m = re.exec(region); m !== null; m = re.exec(region)) {
-    if (s.isCode(m.index)) {
-      const open = m.index + m[0].length - 1;
-      return { open, bodyStart: open + 1, bodyEnd: matchingBrace(s.masked, open) };
-    }
+  const m = re.exec(s.masked.slice(0, to));
+  if (m === null) {
+    return null;
   }
-  return null;
+  const open = m.index + m[0].length - 1;
+  return { open, bodyStart: open + 1, bodyEnd: matchingBrace(s.masked, open) };
 }
+
+/** Index of the line holding the character at `index`. */
+const lineIndexAt = (s: Scan, index: number): number => s.source.slice(0, index).split('\n').length - 1;
 
 /** Brace depth, code only, just before `index`. */
 function depthAt(s: Scan, index: number): number {
-  const line = s.lines.find((entry) => index >= entry.start && index < entry.start + entry.raw.length) as Line;
-  let depth = line.depth;
-  for (let i = line.start; i < index; i += 1) {
-    if (s.masked[i] === '{') {
-      depth += 1;
-    } else if (s.masked[i] === '}') {
-      depth -= 1;
-    }
-  }
-  return depth;
+  const line = s.lines[lineIndexAt(s, index)] as Line;
+  const before = s.masked.slice(line.start, index);
+  return line.depth + before.split('{').length - before.split('}').length;
 }
 
 /** Matches of `re` (global) in the source whose first character is code, within [from, to). */
@@ -495,7 +496,7 @@ function codeMatches(s: Scan, re: RegExp, from = 0, to = s.source.length): RegEx
 
 /** True when `needle` occurs in code or in a string, not only in comments. */
 function occursLive(s: Scan, needle: string): boolean {
-  for (let at = s.source.indexOf(needle); at >= 0; at = s.source.indexOf(needle, at + 1)) {
+  for (let at = s.source.indexOf(needle); at !== -1; at = s.source.indexOf(needle, at + 1)) {
     if (s.masked[at] !== ' ') {
       return true;
     }
@@ -663,7 +664,7 @@ function ensureNdkImplementation(source: string, ndkVersion: string): string {
   const s = scan(source, APP_GRADLE);
   const eol = eolOf(source);
   const existing = s.lines.findIndex((line) => !line.openAtStart && NDK_LINE.test(codeOf(line)));
-  if (existing >= 0) {
+  if (existing !== -1) {
     const lines = source.split('\n');
     const line = s.lines[existing] as Line;
     const code = codeOf(line);
@@ -671,10 +672,11 @@ function ensureNdkImplementation(source: string, ndkVersion: string): string {
     return lines.join('\n');
   }
   const dep = `    implementation "com.bugsee:bugsee-android-ndk:${ndkVersion}"`;
+  // The first top-level dependencies block in code (the mask hides the rest).
   const re = /(?<![A-Za-z0-9_.])dependencies\s*\{/g;
   for (let m = re.exec(s.masked); m !== null; m = re.exec(s.masked)) {
     const open = m.index + m[0].length - 1;
-    if (s.isCode(m.index) && depthAt(s, open) === 0) {
+    if (depthAt(s, open) === 0) {
       return `${source.slice(0, open + 1)}${eol}${dep}${source.slice(open + 1)}`;
     }
   }
@@ -683,21 +685,17 @@ function ensureNdkImplementation(source: string, ndkVersion: string): string {
 
 function dropNdkImplementation(source: string): string {
   const s = scan(source, APP_GRADLE);
-  const lines = source.split('\n');
-  for (let i = s.lines.length - 1; i >= 0; i -= 1) {
-    const line = s.lines[i] as Line;
-    if (!line.openAtStart && NDK_LINE.test(codeOf(line))) {
-      lines.splice(i, 1);
-    }
-  }
-  return lines.join('\n');
+  return s.lines
+    .filter((line) => line.openAtStart || !NDK_LINE.test(codeOf(line)))
+    .map((line) => line.raw)
+    .join('\n');
 }
 
 const NDK_EXCLUDE_BLOCK = ['configurations.configureEach {', `    ${NDK_EXCLUDE}`, '}'];
 
 function ensureNdkExcluded(source: string): string {
   const s = scan(source, APP_GRADLE);
-  if (findOwnBlock(s, NDK_EXCLUDE_BLOCK) >= 0) {
+  if (findOwnBlock(s, NDK_EXCLUDE_BLOCK) !== -1) {
     return source;
   }
   return appendBlock(source, NDK_EXCLUDE_BLOCK.join('\n'), eolOf(source));
@@ -757,9 +755,6 @@ function buildTypeSpans(s: Scan): BuildTypeSpan[] {
   return spans;
 }
 
-const lineIndexAt = (s: Scan, index: number): number =>
-  s.lines.findIndex((line) => index >= line.start && index < line.start + line.raw.length);
-
 function isSymbolTableMarker(line: Line): boolean {
   return isLineComment(line) && line.raw.includes(SYMBOL_TABLE_MARKER);
 }
@@ -768,11 +763,10 @@ function insertSymbolTable(source: string, span: BuildTypeSpan): string {
   const s = scan(source, APP_GRADLE);
   const firstLine = lineIndexAt(s, span.open);
   const lastLine = lineIndexAt(s, span.close);
-  const marked = s.lines.slice(firstLine, lastLine + 1).some(isSymbolTableMarker);
+  // The block this plugin wrote has an `ndk {` of its own, so it is covered here too.
   if (
-    marked ||
     codeMatches(s, /debugSymbolLevel\s+(['"])SYMBOL_TABLE\1/g, span.open, span.close).length > 0 ||
-    blockExtent(s, 'ndk', span.open + 1, span.close) !== null
+    blockExtent(s, 'ndk', span.open, span.close) !== null
   ) {
     return source;
   }
@@ -809,23 +803,25 @@ function ensureSymbolTable(source: string, enabled: boolean): string {
  * comment lines, or null when the marker does not start such a block.
  */
 function insertedBlockEnd(lines: readonly Line[], start: number): number | null {
-  let j = start;
-  while (j < lines.length && isLineComment(lines[j] as Line)) {
-    j += 1;
-  }
+  // After the marker's own comment lines; a line after a line comment is never inside a string.
+  const j = afterLineComments(lines, start);
   const open = lines[j];
-  if (open === undefined || open.openAtStart || codeOf(open).trim() !== 'ndk {') {
+  if (open === undefined || codeOf(open).trim() !== 'ndk {') {
     return null;
   }
   // The block this plugin writes closes at the indentation it opened at.
   const closing = `${open.raw.slice(0, open.raw.indexOf('ndk {'))}}`;
-  for (let k = j + 1; k < lines.length; k += 1) {
-    const line = lines[k] as Line;
-    if (line.depthAfter === open.depth) {
-      return line.raw.trimEnd() === closing ? k : null;
-    }
+  const close = lines.findIndex((line, k) => k > j && line.depthAfter === open.depth);
+  return (lines[close] as Line).raw.trimEnd() === closing ? close : null;
+}
+
+/** Index of the first line after `start` that is not a `//` comment line (may be lines.length). */
+function afterLineComments(lines: readonly Line[], start: number): number {
+  let j = start + 1;
+  while (j < lines.length && isLineComment(lines[j] as Line)) {
+    j += 1;
   }
-  return null;
+  return j;
 }
 
 function removeInsertedSymbolTable(source: string): string {
@@ -902,9 +898,10 @@ function rewriteHermesCommand(source: string): string {
   const lines = source.split('\n');
   const eol = eolOf(source);
   const react = s.lines.findIndex((line) => !line.openAtStart && line.depth === 0 && REACT_BLOCK.test(line.code));
-  if (react < 0) {
+  if (react === -1) {
     return source;
   }
+  // The block's lines, up to its closing brace (braces balance, so it exists).
   const end = s.lines.findIndex((line, i) => i > react && line.depthAfter === 0);
   let found = false;
   for (let i = react + 1; i < end; i += 1) {
@@ -917,15 +914,11 @@ function rewriteHermesCommand(source: string): string {
     if (line.raw.includes('hermesc-preserve-js.sh')) {
       continue;
     }
-    const code = line.code.slice(0, line.commentAt ?? line.code.length);
-    const value = `${match[2] === '.set(' ? '(' : ''}${code.slice(match[0].length)}`;
-    const next = s.lines.slice(i + 1).find((later) => later.code.trim().length > 0);
-    if (
-      line.openAtEnd ||
-      value.includes(';') ||
-      !completeExpression(value) ||
-      (next !== undefined && CONTINUATION.test(next.code.trim()))
-    ) {
+    // Comments are spaces in the mask, so the whole masked line is the value.
+    const value = `${match[2] === '.set(' ? '(' : ''}${line.code.slice(match[0].length)}`;
+    // The closing brace follows at the latest, so a next code line exists.
+    const next = s.lines.slice(i + 1).find((later) => later.code.trim().length > 0) as Line;
+    if (line.openAtEnd || value.includes(';') || !completeExpression(value) || CONTINUATION.test(next.code.trim())) {
       throw new Error(HERMES_COMMAND_UNREWRITABLE);
     }
     // The value is replaced; what follows it (whitespace, a comment, the CR) is kept.
@@ -949,29 +942,24 @@ function rewriteHermesCommand(source: string): string {
  * anything else, so a stray marker never takes user code with it.
  */
 function legacyHookEnd(lines: readonly Line[], start: number): number | null {
-  let j = start + 1;
-  while (j < lines.length && isLineComment(lines[j] as Line)) {
-    j += 1;
-  }
-  // After a line comment the next line is always code, so no open check here.
+  let j = afterLineComments(lines, start);
+  // A line after a line comment is never inside a string.
   const fingerprint = lines[j];
   if (fingerprint === undefined || !fingerprint.raw.startsWith(LEGACY_HOOK_FINGERPRINT)) {
     return null;
   }
-  while (j < lines.length && !(lines[j] as Line).openAtStart && (lines[j] as Line).raw.startsWith('def bugsee')) {
+  while (j < lines.length && (lines[j] as Line).raw.startsWith('def bugsee')) {
     j += 1;
   }
+  // An `afterEvaluate {` inside a string left open by a def line never counts:
+  // its brace is not code, so the depth after it is unchanged and the line
+  // itself would have to be the closing `}`.
   const open = lines[j];
-  if (open === undefined || open.openAtStart || stripCr(open.raw) !== 'afterEvaluate {') {
+  if (open === undefined || stripCr(open.raw) !== 'afterEvaluate {') {
     return null;
   }
-  for (let k = j; k < lines.length; k += 1) {
-    const line = lines[k] as Line;
-    if (line.depthAfter === open.depth) {
-      return stripCr(line.raw) === '}' ? k : null;
-    }
-  }
-  return null;
+  const close = lines.findIndex((line, k) => k >= j && line.depthAfter === open.depth);
+  return stripCr((lines[close] as Line).raw) === '}' ? close : null;
 }
 
 /**
@@ -995,8 +983,7 @@ function ensureHermesHooks(source: string): string {
     const line = s.lines[i] as Line;
     let end: number | null = null;
     if (isMarker(line, SOURCEMAPS_HOOK_MARKER)) {
-      const next = s.lines[i + 1];
-      end = next !== undefined && isOwnStatement(next, SOURCEMAPS_APPLY) ? i + 1 : null;
+      end = isOwnStatement(s.lines[i + 1], SOURCEMAPS_APPLY) ? i + 1 : null;
     } else if (isMarker(line, LEGACY_HOOK_MARKER)) {
       end = legacyHookEnd(s.lines, i);
     } else if (!isOwnStatement(line, SOURCEMAPS_APPLY)) {
