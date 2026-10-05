@@ -12,6 +12,7 @@
     "progress"
   ],
   "coverageAnalysis": "perTest",
+  "ignoreStatic": true,
   "mutate": [
     "scripts/**/*.ts",
     "!scripts/cli-*.ts",
