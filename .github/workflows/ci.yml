@@ -276,6 +276,15 @@ jobs:
           IOS_SIMULATOR_ID: ${{ steps.sim.outputs.udid }}
         run: yarn e2e launch.test.ts
 
+      # The e2e reads only the console pty. The app's own persisted log says
+      # whether a missing marker was never logged or logged and not streamed.
+      - name: App log on failure
+        if: failure() && steps.creds.outputs.have == 'true'
+        run: |
+          xcrun simctl spawn "${{ steps.sim.outputs.udid }}" log show --last 15m --style compact \
+            --predicate 'process == "BareExample"' \
+            | grep -E 'BUGSEE_E2E|Bugsee|BugseeRN|Metal' | cut -c1-300 | tail -300 || true
+
   ios:
     name: ios (${{ matrix.delivery }})
     runs-on: macos-15
