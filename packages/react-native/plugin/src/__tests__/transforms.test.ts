@@ -259,6 +259,21 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     );
   });
 
+  it('rewrites the NDK version in place and keeps a trailing comment; off removes only that line', () => {
+    const pinned = 'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0" // pinned\n    implementation("a")\n}\n';
+    expect(beforeHook(ensureAppAppliesPlugin(pinned, '7.3.0'))).toBe(
+      'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:7.3.0" // pinned\n    implementation("a")\n}\n\n',
+    );
+    expect(beforeHook(ensureAppAppliesPlugin(pinned, null))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation("a")\n}\n\n${exclude}\n\n`,
+    );
+    // A commented-out NDK line is not the dependency: a live one is added.
+    const commented = 'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    // implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n';
+    expect(beforeHook(ensureAppAppliesPlugin(commented, '7.3.0'))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n    // implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n\n`,
+    );
+  });
+
   it('refuses a one-line build type rather than split the user line', () => {
     const oneLine = 'android {\n    buildTypes {\n        release { minifyEnabled true }\n    }\n}\n';
     expect(() => ensureAppAppliesPlugin(oneLine, '7.3.0')).toThrow(
@@ -957,6 +972,24 @@ describe('lexer and react block, exactly', () => {
     expect(() => ensureAppAppliesPlugin(`${applied}\nreact {\n    hermesCommand = "x"`, null)).toThrow(
       `${CANNOT_EDIT} android/app/build.gradle: line 2: a brace opened on this line never closes`,
     );
+  });
+});
+
+describe('refusals name the construct left open', () => {
+  const at = (reason: string): string =>
+    `${CANNOT_EDIT} android/app/build.gradle: ${reason}. Fix that line, or make the Bugsee edits by hand (package README, "Android source maps"), then run expo prebuild again`;
+
+  it('says which line opened what', () => {
+    expect(() => ensureAppAppliesPlugin('a()\n/* open\nb()\n', null)).toThrow(at('line 2: a block comment opened on this line never closes'));
+    expect(() => ensureAppAppliesPlugin('a()\ndef s = """\nopen\n', null)).toThrow(at('line 2: a string opened on this line never closes'));
+    expect(() => ensureAppAppliesPlugin('def s = /open\n', null)).toThrow(at('line 1: a string opened on this line never closes'));
+    expect(() => ensureAppAppliesPlugin('def s = $/open\n', null)).toThrow(at('line 1: a string opened on this line never closes'));
+    expect(() => ensureAppAppliesPlugin('def s = "${open\n', null)).toThrow(at('line 1: a ${ interpolation opened on this line never closes'));
+    expect(() => ensureAppAppliesPlugin('a()\n}\n', null)).toThrow(at('line 2: a closing brace has no opening brace'));
+    expect(() => ensureAppAppliesPlugin('android {\n    x {\n}\n', null)).toThrow(at('line 1: a brace opened on this line never closes'));
+    expect(() => ensureAppAppliesPlugin('def a = { 1 } / 2\n', null)).toThrow(at('line 1: cannot tell whether the / starts a slashy string or divides'));
+    // A string open at the end of the file without a newline.
+    expect(() => ensureAppAppliesPlugin('def a = "x', null)).toThrow(at('line 1: a string opened on this line does not close on it'));
   });
 });
 
