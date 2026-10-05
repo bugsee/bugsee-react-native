@@ -48,7 +48,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * rectangle covering the whole display: an unknown origin must not place a
  * secure region anywhere it could miss. That includes the main surface, so
  * the very first publish masks the whole display until the tracker's first
- * read, a fraction of a second.
+ * read, a fraction of a second. While no React root can be found at all,
+ * the main surface's rectangles stay one whole-display rectangle: there is
+ * no origin to read, and the store will not guess one (ruled, N8).
+ *
+ * <p>A {@code <Modal>} surface belongs to one JS runtime: its key is a React
+ * tag that the next runtime does not know. A reload drops every surface but
+ * the main one ({@link #claimRuntime}, {@link #releaseRuntime}), so a Modal
+ * that was open when the old runtime went away does not mask the display
+ * for the rest of the process.
  *
  * <p>Every served rectangle is clamped to the display's real size once it
  * is known ({@link #setDisplayBounds}). The SDK's native video mask clamps a
@@ -346,6 +354,49 @@ final class SecureRectangleStore {
                 && previous.bounds[0] == width && previous.bounds[1] == height
                 ? previous
                 : previous.withBounds(new int[] { width, height }));
+    }
+
+    /** The current JS runtime's claim; see {@link #claimRuntime}. */
+    private int runtime;
+
+    /**
+     * A new JS runtime's module is starting: drops every surface but the main
+     * one, whose keys the new runtime cannot know, and returns its claim.
+     * Synchronised with {@link #releaseRuntime} so an old module released
+     * after the new one started cannot drop the new runtime's surfaces.
+     */
+    synchronized int claimRuntime() {
+        runtime++;
+        dropNonMainSurfaces();
+        return runtime;
+    }
+
+    /**
+     * The module holding {@code claim} is gone. Drops every surface but the
+     * main one, unless a newer runtime has already claimed the store.
+     */
+    synchronized void releaseRuntime(final int claim) {
+        if (claim == runtime) {
+            dropNonMainSurfaces();
+        }
+    }
+
+    /** Drops every surface but the main one, on every display. */
+    void dropNonMainSurfaces() {
+        for (final Integer display : byDisplay.keySet()) {
+            update(display, previous -> {
+                if (previous.lanes.isEmpty()
+                        || (previous.lanes.size() == 1 && previous.lanes.containsKey(MAIN_SURFACE))) {
+                    return previous;
+                }
+                final TreeMap<Integer, Lane> nextLanes = new TreeMap<>();
+                final Lane main = previous.lanes.get(MAIN_SURFACE);
+                if (main != null) {
+                    nextLanes.put(MAIN_SURFACE, main);
+                }
+                return previous.withLanes(nextLanes);
+            });
+        }
     }
 
     /** Whether {@code display}'s real size has been recorded. */

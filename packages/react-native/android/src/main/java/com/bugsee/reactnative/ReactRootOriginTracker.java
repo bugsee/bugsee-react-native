@@ -364,6 +364,11 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         entry.token.release();
         final int surfaceKey = entry.handle.surfaceKey();
         surfaceOrigins.remove(surfaceKey);
+        if (disposed) {
+            // The runtime is gone: its Modal surfaces are the module's to
+            // drop (SecureRectangleStore.releaseRuntime), not to retry.
+            return;
+        }
         if (store.hasRectangles(surfaceKey)) {
             store.forgetOrigin(surfaceKey);
             pendingSurfaces.add(surfaceKey);
@@ -460,6 +465,15 @@ final class ReactRootOriginTracker implements LifecycleEventListener {
         }
         watched.clear();
         surfaceOrigins.clear();
+        if (disposed) {
+            pendingSurfaces.clear();
+        }
+    }
+
+    /** How many surfaces wait for their dialog root. Tests read it. */
+    @UiThread
+    int pendingSurfaceCount() {
+        return pendingSurfaces.size();
     }
 
     @UiThread

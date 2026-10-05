@@ -109,11 +109,18 @@ public class BugseeModule extends NativeBugseeSpec
      */
     private final DataRequestBridge.Sink dataRequestSink = this::emitRequest;
 
+    /** This module's claim on the secure store (SecureRectangleStore#claimRuntime). */
+    private final int secureRuntime;
+
     /** Spans this module is holding. {@link #invalidate()} drops them. */
     private final SpanHandles spanHandles = new SpanHandles();
 
     public BugseeModule(final ReactApplicationContext context) {
         super(context);
+        // A new JS runtime: Modal surfaces the previous one left behind (a
+        // reload with a secure Modal open) are dropped before this one's JS
+        // can publish.
+        secureRuntime = SecureRectangleStore.shared().claimRuntime();
         originTracker = new ReactRootOriginTracker(context, SecureRectangleStore.shared());
         // refreshSoon only posts to the UI thread, which is all the SDK's pull
         // thread may do.
@@ -169,6 +176,9 @@ public class BugseeModule extends NativeBugseeSpec
         spanHandles.releaseAll();
         SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
+        // This runtime's Modal surfaces cannot be cleared by its JS any more.
+        // A no-op when the next module has already claimed the store.
+        SecureRectangleStore.shared().releaseRuntime(secureRuntime);
         super.invalidate();
     }
 

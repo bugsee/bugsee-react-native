@@ -325,6 +325,48 @@
   XCTAssertEqualObjects([self unpack:[_store snapshotForDisplay:0]][0], before);
 }
 
+/// A new runtime drops the Modal surfaces the old one left; the main one stays.
+- (void)testClaimingANewRuntimeDropsEveryModalSurfaceButKeepsTheMainOne {
+  const int32_t mainRects[] = {10, 20, 30, 40};
+  const int32_t modalRects[] = {100, 200, 150, 250};
+  [_store setDisplaySize:CGSizeMake(402, 874) forDisplay:0];
+  [_store setCoordinates:mainRects count:4 forDisplay:0];
+  [_store setCoordinates:modalRects count:4 forDisplay:0 surface:42];
+  [_store setCoordinates:modalRects count:4 forDisplay:1 surface:43];
+  NSNumber *before = [self unpack:[_store snapshotForDisplay:0]][0];
+
+  [_store claimRuntime];
+
+  XCTAssertEqualObjects([_store surfacesForDisplay:0], @[]);
+  XCTAssertEqualObjects([_store surfacesForDisplay:1], @[]);
+  NSArray *packed = [self unpack:[_store snapshotForDisplay:0]];
+  XCTAssertNotEqualObjects(packed[0], before);
+  XCTAssertEqualObjects([packed subarrayWithRange:NSMakeRange(1, 5)], (@[ @1, @10, @20, @30, @40 ]));
+}
+
+- (void)testReleasingTheCurrentRuntimeDropsItsModalSurfaces {
+  const int32_t rects[] = {1, 2, 3, 4};
+  const NSInteger claim = [_store claimRuntime];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42];
+
+  [_store releaseRuntime:claim];
+
+  XCTAssertEqualObjects([_store surfacesForDisplay:0], @[]);
+}
+
+/// A reload can start the new module before the old one is released.
+- (void)testReleasingAnOldRuntimeLeavesTheNewRuntimesSurfaces {
+  const int32_t rects[] = {1, 2, 3, 4};
+  const NSInteger old = [_store claimRuntime];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:42];
+  [_store claimRuntime];
+  [_store setCoordinates:rects count:4 forDisplay:0 surface:58];
+
+  [_store releaseRuntime:old];
+
+  XCTAssertEqualObjects([_store surfacesForDisplay:0], @[ @58 ]);
+}
+
 /// The shared store outlives any one wrapper: the init provider registers one
 /// before launch and setWrapperInfo swaps in another, and the regions the app
 /// marked secret must survive that.

@@ -472,6 +472,56 @@ public class SecureRectangleStoreTest {
         assertFalse(store.hasRectangles(99));
     }
 
+    // ---- A JS reload (N7) ------------------------------------------------
+
+    /** A new runtime drops the Modal surfaces the old one left; the main one stays. */
+    @Test
+    public void claimingANewRuntimeDropsEveryModalSurfaceButKeepsTheMainOne() {
+        final SecureRectangleStore store = located();
+        store.setDisplayBounds(DISPLAY, WIDTH, HEIGHT);
+        store.set(DISPLAY, new int[] { 10, 20, 30, 40 });
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
+        store.set(1, 43, new int[] { 1, 2, 3, 4 });
+        assertArrayEquals(new int[] { 10, 20, 30, 40, 0, 0, WIDTH, HEIGHT }, rectanglesOf(store.snapshot(DISPLAY)));
+        final int before = store.snapshot(DISPLAY)[0];
+
+        store.claimRuntime();
+
+        assertFalse(store.hasSurface(MODAL_SURFACE));
+        assertFalse(store.hasSurface(43));
+        assertTrue(store.hasSurface(MAIN_SURFACE));
+        final int[] packed = store.snapshot(DISPLAY);
+        assertNotEquals(before, packed[0]);
+        assertArrayEquals(new int[] { 10, 20, 30, 40 }, rectanglesOf(packed));
+        assertEquals(0, store.snapshot(1)[1]);
+    }
+
+    @Test
+    public void releasingTheCurrentRuntimeDropsItsModalSurfaces() {
+        final SecureRectangleStore store = located();
+        final int claim = store.claimRuntime();
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
+
+        store.releaseRuntime(claim);
+
+        assertFalse(store.hasSurface(MODAL_SURFACE));
+    }
+
+    /** A reload can start the new module before the old one is released. */
+    @Test
+    public void releasingAnOldRuntimeLeavesTheNewRuntimesSurfaces() {
+        final SecureRectangleStore store = located();
+        final int old = store.claimRuntime();
+        store.set(DISPLAY, MODAL_SURFACE, new int[] { 100, 200, 150, 250 });
+        store.claimRuntime();
+        store.set(DISPLAY, 58, new int[] { 1, 2, 3, 4 });
+
+        store.releaseRuntime(old);
+
+        assertTrue(store.hasSurface(58));
+        assertFalse(store.hasSurface(MODAL_SURFACE));
+    }
+
     @Test
     public void anEmptySurfaceWithNoOriginServesNothing() {
         final SecureRectangleStore store = new SecureRectangleStore();

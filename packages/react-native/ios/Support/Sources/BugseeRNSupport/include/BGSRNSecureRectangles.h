@@ -45,7 +45,14 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 ///
 /// Fails closed: a surface whose origin has not been recorded yet, the main
 /// one included, serves one rectangle covering its display (the screen's
-/// bounds) instead of its rectangles.
+/// bounds) instead of its rectangles. While no React root can be found at
+/// all, the main surface stays that one rectangle: there is no origin to
+/// record, and the store will not guess one (ruled, N8).
+///
+/// A Modal surface belongs to one JS runtime: its key is a React tag the next
+/// runtime does not know. A reload drops every surface but the main one
+/// (`claimRuntime`, `releaseRuntime:`), so a Modal that was open when the old
+/// runtime went away does not mask the screen for the rest of the process.
 ///
 /// ## Threading
 ///
@@ -95,6 +102,15 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 /// The surfaces other than the main one that `display` has lanes for, in key
 /// order: the ones whose origin the pull refreshes.
 - (NSArray<NSNumber *> *)surfacesForDisplay:(NSInteger)display;
+
+/// A new JS runtime's module is starting: drops every surface but the main
+/// one and returns its claim. Serialised with `releaseRuntime:`, so an old
+/// module released after the new one started cannot drop its surfaces.
+- (NSInteger)claimRuntime;
+
+/// The module holding `claim` is gone: drops every surface but the main one,
+/// unless a newer runtime has already claimed the store.
+- (void)releaseRuntime:(NSInteger)claim;
 
 /// Forgets `surface` on every display where it holds no rectangles (its
 /// Modal is gone). A surface that still holds rectangles stays.

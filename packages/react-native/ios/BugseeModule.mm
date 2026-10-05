@@ -910,6 +910,8 @@ static NSDictionary *BGSRNNoSpan(void) {
 
 @implementation BugseeModule {
   os_unfair_lock _spanRegistryLock;
+  /// This module's claim on the secure store (`claimRuntime`).
+  NSInteger _secureRuntime;
   BOOL _spansRetired;
 }
 
@@ -925,6 +927,9 @@ RCT_EXPORT_MODULE(Bugsee)
 - (instancetype)init {
   if ((self = [super init])) {
     _spanRegistryLock = OS_UNFAIR_LOCK_INIT;
+    // A new JS runtime: Modal surfaces the previous one left behind (a reload
+    // with a secure Modal open) are dropped before this one's JS can publish.
+    _secureRuntime = [BGSRNSecureRectangles.shared claimRuntime];
     BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithoutJsRuntime], YES);
     BGSRNInstallConsoleCapture();
     BGSRNInstallLogEventFilter();
@@ -1018,6 +1023,9 @@ RCT_EXPORT_MODULE(Bugsee)
   // No super call: `invalidate` comes from RCTInvalidating, and
   // NativeBugseeSpecBase inherits NSObject, which does not declare it.
   [BGSRNEventBus.shared detach:self];
+  // This runtime's Modal surfaces cannot be cleared by its JS any more. A
+  // no-op when the next module has already claimed the store.
+  [BGSRNSecureRectangles.shared releaseRuntime:_secureRuntime];
   // Also completes every report handle this module's JS was given: the next
   // runtime cannot know them, so the reports must not wait out their
   // deadlines.

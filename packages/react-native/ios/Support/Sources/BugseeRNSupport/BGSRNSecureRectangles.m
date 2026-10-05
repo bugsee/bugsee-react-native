@@ -92,6 +92,8 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
   /// rather than a queue: the pull happens on main once per captured frame and
   /// must not be made to hop.
   NSLock *_lock;
+  /// The current JS runtime's claim; see `claimRuntime`. Under `_lock`.
+  NSInteger _runtime;
 }
 
 + (BGSRNSecureRectangles *)shared {
@@ -187,6 +189,38 @@ static NSData *BGSRNMovedCoordinates(NSData *raw, CGPoint origin) {
     [self moveVersionLockedForDisplay:display ifServedDiffersFrom:previousServed];
   }
   [_lock unlock];
+}
+
+- (NSInteger)claimRuntime {
+  [_lock lock];
+  _runtime += 1;
+  const NSInteger claim = _runtime;
+  [self dropNonMainSurfacesLocked];
+  [_lock unlock];
+  return claim;
+}
+
+- (void)releaseRuntime:(NSInteger)claim {
+  [_lock lock];
+  if (claim == _runtime) {
+    [self dropNonMainSurfacesLocked];
+  }
+  [_lock unlock];
+}
+
+/// Drops every surface but the main one, moving each display's version when
+/// what it serves changes. Caller holds `_lock`.
+- (void)dropNonMainSurfacesLocked {
+  for (NSNumber *display in _lanesByDisplay.allKeys) {
+    NSMutableDictionary<NSNumber *, BGSRNSecureLane *> *lanes = _lanesByDisplay[display];
+    NSData *previousServed = [self servedLockedForDisplay:display.integerValue];
+    for (NSNumber *surface in lanes.allKeys) {
+      if (surface.integerValue != BGSRNSecureMainSurface) {
+        [lanes removeObjectForKey:surface];
+      }
+    }
+    [self moveVersionLockedForDisplay:display.integerValue ifServedDiffersFrom:previousServed];
+  }
 }
 
 - (NSArray<NSNumber *> *)surfacesForDisplay:(NSInteger)display {

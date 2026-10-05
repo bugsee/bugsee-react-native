@@ -735,6 +735,32 @@ public class ReactRootOriginTrackerTest {
         assertArrayEquals(new int[] { 0, 0, 720, 1612 }, served(store));
     }
 
+    /** N7: a disposed tracker (the old runtime) keeps nothing pending for a Modal it watched. */
+    @Test
+    public void disposingWithAnOpenModalLeavesNothingPending() {
+        final FakeResolver resolver = new FakeResolver();
+        resolver.answer = dialog(56, 0, 0);
+        final SecureRectangleStore store = new SecureRectangleStore();
+        final ReactRootOriginTracker tracker = new ReactRootOriginTracker(
+                new FakeLifecycleSource(), new QueueRootFinder(), resolver, store);
+        store.set(0, 56, new int[] { 208, 560, 608, 760 });
+        tracker.watchSurfaceNow(56);
+        // A second Modal whose root was never found: pending.
+        resolver.answer = null;
+        store.set(0, 57, new int[] { 1, 2, 3, 4 });
+        tracker.watchSurfaceNow(57);
+        assertEquals(1, tracker.pendingSurfaceCount());
+
+        tracker.dispose();
+        // dispose() posts detach() to the UI thread; run it as that would.
+        tracker.detach();
+        tracker.refresh();
+
+        assertEquals(0, tracker.pendingSurfaceCount());
+        // Nothing is resolved after dispose.
+        assertEquals(2, resolver.calls);
+    }
+
     @Test
     public void constructorRegistersAsALifecycleListener() {
         final FakeLifecycleSource lifecycle = new FakeLifecycleSource();
