@@ -616,9 +616,16 @@ public class BugseeModule extends NativeBugseeSpec
         emitOnNetworkFilterRequest(payload);
     }
 
+    /**
+     * Returns true. The return is what keeps the call on the JS thread:
+     * codegen queues a {@code void} TurboModule method onto the native
+     * modules thread, so a request started on the next line could be
+     * recorded before a queued install landed, unfiltered.
+     */
     @Override
-    public void setNetworkFilterEnabled(final boolean enabled) {
+    public boolean setNetworkFilterEnabled(final boolean enabled) {
         NetworkFilterBridge.shared().setEnabled(enabled);
+        return true;
     }
 
     @Override
@@ -809,9 +816,16 @@ public class BugseeModule extends NativeBugseeSpec
         emitOnLogFilterRequest(payload);
     }
 
+    /**
+     * Returns true. The return is what keeps the call on the JS thread:
+     * codegen queues a {@code void} TurboModule method onto the native
+     * modules thread, so a console line written on the next line could be
+     * captured before a queued flag flip landed.
+     */
     @Override
-    public void setLogFilterEnabled(final boolean enabled) {
+    public boolean setLogFilterEnabled(final boolean enabled) {
         LogFilterBridge.shared().setEnabled(enabled);
+        return true;
     }
 
     @Override

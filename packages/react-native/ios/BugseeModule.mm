@@ -1443,11 +1443,17 @@ RCT_EXPORT_MODULE(Bugsee)
 /// before this method returns: a later Bugsee call on the same turn already
 /// sees the filter. The block returns without waiting on JS. There is no
 /// deadline here.
-- (void)setNetworkFilterEnabled:(BOOL)enabled {
+///
+/// Returns `@YES`. The return is what keeps the call on the JS thread:
+/// codegen queues a `void` TurboModule method onto the module queue, so a
+/// request started on the next line could be recorded before a queued
+/// install landed, with its url, headers and body unfiltered. The SDK setter
+/// only takes a lock, so it is safe on the JS thread.
+- (NSNumber *)setNetworkFilterEnabled:(BOOL)enabled {
   if (enabled) {
     @synchronized (BGSRNNetworkFilterLock()) {
       if (BGSRNNetworkFilterInstalled) {
-        return;
+        return @YES;
       }
       BGSRNNetworkFilterInstalled = YES;
     }
@@ -1492,12 +1498,13 @@ RCT_EXPORT_MODULE(Bugsee)
           }
         }
   }];
-  return;
+  return @YES;
   }
   @synchronized (BGSRNNetworkFilterLock()) {
     BGSRNNetworkFilterInstalled = NO;
   }
   [Bugsee setNetworkEventFilter:nil];
+  return @YES;
 }
 
 - (BOOL)emitNetworkFilterRequest:(NSString *)requestId eventJson:(NSString *)eventJson {
@@ -1561,11 +1568,16 @@ RCT_EXPORT_MODULE(Bugsee)
   }
 }
 
-- (void)setLogFilterEnabled:(BOOL)enabled {
+/// Returns `@YES`. The return is what keeps the call on the JS thread:
+/// codegen queues a `void` TurboModule method onto the module queue, so a
+/// console line written on the next line could be captured before a queued
+/// flag flip landed. The flag write and the SDK setter only take locks.
+- (NSNumber *)setLogFilterEnabled:(BOOL)enabled {
   @synchronized (BGSRNLogFilterLock()) {
     BGSRNLogFilterUserEnabled = enabled;
   }
   BGSRNInstallLogEventFilter();
+  return @YES;
 }
 
 - (BOOL)emitLogFilterRequest:(NSString *)requestId line:(NSString *)line {

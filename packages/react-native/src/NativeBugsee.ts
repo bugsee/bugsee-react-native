@@ -248,8 +248,13 @@ export interface Spec extends TurboModule {
    * Installs or removes the native network filter (`setNetworkEventFilter`
    * on both SDKs). `true` registers the bridge; `false` passes `null`, which
    * is how both SDKs clear a filter.
+   *
+   * Returns `true`. The return is what keeps the call on the JS thread, in
+   * order with the request that follows: codegen queues a `void` TurboModule
+   * method onto the module queue, so a queued install could land after the
+   * next request was recorded and leak its url, headers and body.
    */
-  setNetworkFilterEnabled(enabled: boolean): void;
+  setNetworkFilterEnabled(enabled: boolean): boolean;
   /**
    * Answers one {@link onNetworkFilterRequest}. `eventJson` is the
    * replacement event to keep; `null` drops the event. A second reply for
@@ -279,8 +284,13 @@ export interface Spec extends TurboModule {
    * Installs or removes the native log filter (`setLogEventFilter` on both
    * SDKs). `true` registers the bridge; `false` passes `null`, which is how
    * both SDKs clear a filter. Lines are not filtered in JS as well.
+   *
+   * Returns `true`. The return is what keeps the call on the JS thread, in
+   * order with the console line that follows: codegen queues a `void`
+   * TurboModule method onto the module queue, so a queued flag flip could
+   * land after that line was captured and leak it unfiltered.
    */
-  setLogFilterEnabled(enabled: boolean): void;
+  setLogFilterEnabled(enabled: boolean): boolean;
   /**
    * Answers one {@link onLogFilterRequest}. `line` is the replacement to
    * keep; `null` drops the line. A second reply for the same `requestId` is

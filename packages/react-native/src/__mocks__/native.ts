@@ -175,7 +175,7 @@ export const native = {
     return networkFilterRequestSubscribeCalls;
   },
 
-  setNetworkFilterEnabled: jest.fn<void, [boolean]>(),
+  setNetworkFilterEnabled: jest.fn<boolean, [boolean]>(() => true),
   replyNetworkFilter: jest.fn<void, [string, string | null]>(),
 
   /**
@@ -201,7 +201,7 @@ export const native = {
     return logFilterRequestSubscribeCalls;
   },
 
-  setLogFilterEnabled: jest.fn<void, [boolean]>(),
+  setLogFilterEnabled: jest.fn<boolean, [boolean]>(() => true),
   replyLogFilter: jest.fn<void, [string, string | null]>(),
   noteConsoleEcho: jest.fn<boolean, [string]>(() => true),
 
