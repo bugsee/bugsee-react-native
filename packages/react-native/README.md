@@ -70,9 +70,20 @@ A committed `ios/` (`project.pbxproj` and the shared scheme) or
 The plugin's Gradle edits never remove or change a line of your own code, on a
 clean or a `--no-clean` prebuild, however often it runs: it adds its own
 marked lines, replaces only those, and rewrites exactly one of yours,
-`react.hermesCommand`, with any trailing comment kept. Where it cannot do that
-with certainty it refuses the prebuild with one error that names the file, the
-reason and the fix, and writes nothing. It refuses:
+`react.hermesCommand`, with any trailing comment kept. Its own lines are
+recognised only by their markers: the NDK dependency ends in `// bugsee:ndk`
+(as does the opener of the `dependencies` block it adds when the file has
+none), and the symbol-table block starts with `// bugsee-symbol-table:`. A
+`bugsee-android-ndk` dependency of your own, anywhere and however written, is
+never touched: the plugin then adds none of its own and says so in the
+prebuild log. Your own `ndk { }` block is never touched either, and a line of
+yours added inside the plugin's symbol-table block makes it refuse rather
+than delete. It inserts only at anchors that hold nothing but their brace
+(`dependencies {`, `buildscript … }`, `pluginManagement {`, `repositories {`,
+a build type's `{` and `}`; a trailing comment is fine), always as whole
+lines at your indentation, and never splits a line. Where it cannot do that
+with certainty it refuses the prebuild with one error that names the file,
+the reason and the fix, and writes nothing. It refuses:
 
 - a Kotlin DSL `settings.gradle.kts`, `build.gradle.kts` or app
   `build.gradle.kts`;
@@ -81,9 +92,18 @@ reason and the fix, and writes nothing. It refuses:
   not balance, or a `/` that could start a slashy string as well as divide;
 - a `react.hermesCommand` that spans several lines or shares its line with
   another statement after `;`;
-- a `debug` or `release` build type written on one line, which the symbol
-  block cannot join without splitting your line (with
-  `nativeCrashReporting` on).
+- an anchor brace that shares its line with code: a one-line
+  `dependencies { … }` or `release { … }`, a `minifyEnabled true }`, a
+  `buildscript { … }; …`, a one-line `pluginManagement` or `repositories`
+  block (with the option that needs that edit on);
+- its own symbol-table block with a line of yours inside it (with
+  `nativeCrashReporting` off);
+- a `gradlePluginVersion` option or a baked NDK version that is not a plain
+  version string.
+
+A declaration of `com.bugsee.android.gradle` in `android/build.gradle` is
+taken as the plugin's own pin, whoever wrote it: its version follows the
+wrapper's on each prebuild.
 
 ## Android source maps
 

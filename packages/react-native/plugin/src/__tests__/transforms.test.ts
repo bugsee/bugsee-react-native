@@ -73,8 +73,13 @@ describe('ensureMavenCentral, exactly', () => {
     expect(
       ensureMavenCentral(lines('pluginManagement {', '    repositories {', '        google()', '    }', '}', '')),
     ).toBe(lines('pluginManagement {', '    repositories {', '        google()', '        mavenCentral()', '    }', '}', ''));
-    expect(ensureMavenCentral('pluginManagement { repositories { google() } }\n')).toBe(
-      'pluginManagement { repositories { google()\n        mavenCentral() } }\n',
+    // A one-line repositories block has no line to insert before: refused, not split.
+    expect(() => ensureMavenCentral('pluginManagement { repositories { google() } }\n')).toThrow(
+      `${CANNOT_EDIT} android/settings.gradle: line 1: \`pluginManagement { repositories { google() } }\` shares its line with other code, so mavenCentral() cannot be added without rewriting that line. Put the brace alone on its line, or add mavenCentral() to pluginManagement.repositories yourself, then run expo prebuild again`,
+    );
+    // The entry's indentation is kept, and a trailing comment on the closer is fine.
+    expect(ensureMavenCentral(lines('pluginManagement {', '  repositories {', '\tgoogle()', '  } // repos', '}', ''))).toBe(
+      lines('pluginManagement {', '  repositories {', '\tgoogle()', '\tmavenCentral()', '  } // repos', '}', ''),
     );
   });
 
@@ -98,9 +103,25 @@ describe('ensureMavenCentral, exactly', () => {
   it('leaves a block that already has mavenCentral, and only looks inside pluginManagement', () => {
     const has = 'pluginManagement {\n    repositories { mavenCentral ( ) }\n}\n';
     expect(ensureMavenCentral(has)).toBe(has);
-    const outside = 'pluginManagement {\n    repositories { google() }\n}\nrepositories { mavenCentral() }\n';
+    const outside = 'pluginManagement {\n    repositories {\n        google()\n    }\n}\nrepositories { mavenCentral() }\n';
     expect(ensureMavenCentral(outside)).toBe(
-      'pluginManagement {\n    repositories { google()\n        mavenCentral() }\n}\nrepositories { mavenCentral() }\n',
+      'pluginManagement {\n    repositories {\n        google()\n        mavenCentral()\n    }\n}\nrepositories { mavenCentral() }\n',
+    );
+    // A one-line repositories block inside pluginManagement is refused even with mavenCentral elsewhere.
+    expect(() => ensureMavenCentral('pluginManagement {\n    repositories { google() }\n}\nrepositories { mavenCentral() }\n')).toThrow(
+      `${CANNOT_EDIT} android/settings.gradle: line 2:`,
+    );
+  });
+
+  it('adds a repositories block only before a pluginManagement closer that stands alone', () => {
+    expect(ensureMavenCentral(lines('pluginManagement {', '  includeBuild("x")', '  }', ''))).toBe(
+      lines('pluginManagement {', '  includeBuild("x")', '', '  repositories {', '      gradlePluginPortal()', '      google()', '      mavenCentral()', '  }', '  }', ''),
+    );
+    expect(() => ensureMavenCentral('pluginManagement { includeBuild("x") }\n')).toThrow(
+      `${CANNOT_EDIT} android/settings.gradle: line 1: \`pluginManagement { includeBuild("x") }\` shares its line with other code, so a repositories block with mavenCentral() cannot be added`,
+    );
+    expect(() => ensureMavenCentral('pluginManagement {\n    includeBuild("x") }\n')).toThrow(
+      `${CANNOT_EDIT} android/settings.gradle: line 2: \`includeBuild("x") }\` shares its line with other code`,
     );
   });
 
@@ -121,16 +142,31 @@ describe('ensureGradlePluginDeclared, exactly', () => {
     expect(ensureGradlePluginDeclared('apply plugin: "x"\n', '4.0.7')).toBe(`${declaration}\napply plugin: "x"\n`);
   });
 
-  it('refuses a version that is not a plain version string', () => {
+  it('refuses a version that is not a plain version string, as a refusal that names the option', () => {
     for (const bad of ['', '4.0.7 bad', 'bad 4.0.7', "4.0.7'", '4.0\n7']) {
-      expect(() => ensureGradlePluginDeclared('', bad)).toThrow(`refusing Gradle plugin version ${bad}`);
+      expect(() => ensureGradlePluginDeclared('', bad)).toThrow(
+        `${CANNOT_EDIT} android/build.gradle: the gradlePluginVersion option "${bad}" is not a plain version string. Fix the option in the Expo config (the @bugsee/react-native plugin entry), then run expo prebuild again`,
+      );
     }
     expect(ensureGradlePluginDeclared('', 'A-z_0.9+1')).toContain("version 'A-z_0.9+1'");
+    expect(() => ensureAppAppliesPlugin('', '7.4.0"; evil')).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: the NDK artifact version "7.4.0"; evil" (native-versions.json android.sdk) is not a plain version string. Fix the baked version, then run expo prebuild again`,
+    );
+  });
+
+  it('declares the plugin only after a buildscript closer that stands alone, at its indentation', () => {
+    expect(ensureGradlePluginDeclared('buildscript {\n  ext { x = 1 }\n  } // end\nallprojects { }\n', '1.0')).toBe(
+      "buildscript {\n  ext { x = 1 }\n  } // end\n  plugins {\n      id 'com.bugsee.android.gradle' version '1.0' apply false\n  }\n\nallprojects { }\n",
+    );
+    expect(() => ensureGradlePluginDeclared('buildscript { ext { x = 1 } }; allprojects { }\n', '1.0')).toThrow(
+      `${CANNOT_EDIT} android/build.gradle: line 1: \`buildscript { ext { x = 1 } }; allprojects { }\` shares its line with other code, so the plugins block that declares the Bugsee Gradle plugin cannot be added without rewriting that line. Put the brace alone on its line, or declare \`id 'com.bugsee.android.gradle' version '1.0' apply false\` in a plugins block yourself, then run expo prebuild again`,
+    );
   });
 });
 
 describe('ensureAppAppliesPlugin, exactly', () => {
-  const ndkLine = '    implementation "com.bugsee:bugsee-android-ndk:7.3.0"';
+  const ndkLine = '    implementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk';
+  const ndkBlock = `dependencies { // bugsee:ndk\n${ndkLine}\n}`;
   const exclude = lines(
     'configurations.configureEach {',
     "    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'",
@@ -139,7 +175,7 @@ describe('ensureAppAppliesPlugin, exactly', () => {
 
   it('applies the plugin first when there is no React plugin line, and adds dependencies', () => {
     expect(beforeHook(ensureAppAppliesPlugin('android {\n}\n', '7.3.0'))).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\nandroid {\n}\n\ndependencies {\n${ndkLine}\n}\n\n`,
+      `apply plugin: "com.bugsee.android.gradle"\nandroid {\n}\n\n${ndkBlock}\n\n`,
     );
   });
 
@@ -157,10 +193,20 @@ describe('ensureAppAppliesPlugin, exactly', () => {
   });
 
   it('swaps the NDK line for an exclude block when native crash reporting is off', () => {
+    // In the user's block: the line goes, the block stays.
     expect(
       beforeHook(ensureAppAppliesPlugin(`apply plugin: "com.facebook.react"\ndependencies {\n${ndkLine}\n}\n`, null)),
     ).toBe(
       `apply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\ndependencies {\n}\n\n${exclude}\n\n`,
+    );
+    // In the block the plugin appended: the block goes with it, blank line included.
+    expect(
+      beforeHook(ensureAppAppliesPlugin(`apply plugin: "com.facebook.react"\nandroid { }\n\n${ndkBlock}\n`, null)),
+    ).toBe(`apply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\nandroid { }\n\n${exclude}\n\n`);
+    // Unless the user put something of their own into it.
+    const shared = `apply plugin: "com.facebook.react"\n\ndependencies { // bugsee:ndk\n${ndkLine}\n    implementation("mine")\n}\n`;
+    expect(beforeHook(ensureAppAppliesPlugin(shared, null))).toBe(
+      `apply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\n\ndependencies { // bugsee:ndk\n    implementation("mine")\n}\n\n${exclude}\n\n`,
     );
   });
 
@@ -181,7 +227,7 @@ describe('ensureAppAppliesPlugin, exactly', () => {
   it('rewrites every hermesCommand assignment but not a commented one', () => {
     const source = 'react {\n    hermesCommand = "$rootDir/x"\n\thermesCommand="y"\n    // hermesCommand = "z"\n}\n';
     expect(beforeHook(ensureAppAppliesPlugin(source, '7.3.0'))).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\nreact {\n    ${HERMES_COMMAND}\n\t${HERMES_COMMAND}\n    // hermesCommand = "z"\n}\n\ndependencies {\n${ndkLine}\n}\n\n`,
+      `apply plugin: "com.bugsee.android.gradle"\nreact {\n    ${HERMES_COMMAND}\n\t${HERMES_COMMAND}\n    // hermesCommand = "z"\n}\n\n${ndkBlock}\n\n`,
     );
     const already = `apply plugin: "com.bugsee.android.gradle"\nreact {\n    hermesCommand = "/custom/hermesc-preserve-js.sh"\n}\n`;
     expect(beforeHook(ensureAppAppliesPlugin(already, null))).toContain('hermesCommand = "/custom/hermesc-preserve-js.sh"');
@@ -259,34 +305,64 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     );
   });
 
-  it('rewrites the NDK version in place and keeps a trailing comment; off removes only that line', () => {
+  it('rewrites only its own marked NDK line; a user NDK line is left alone, on or off, and noted', () => {
+    const own = `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n  implementation "com.bugsee:bugsee-android-ndk:1.0.0"   // bugsee:ndk\n    implementation("a")\n}\n`;
+    expect(beforeHook(ensureAppAppliesPlugin(own, '7.3.0'))).toBe(
+      'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n  implementation "com.bugsee:bugsee-android-ndk:7.3.0"   // bugsee:ndk\n    implementation("a")\n}\n\n',
+    );
     const pinned = 'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0" // pinned\n    implementation("a")\n}\n';
-    expect(beforeHook(ensureAppAppliesPlugin(pinned, '7.3.0'))).toBe(
-      'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:7.3.0" // pinned\n    implementation("a")\n}\n\n',
-    );
-    expect(beforeHook(ensureAppAppliesPlugin(pinned, null))).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation("a")\n}\n\n${exclude}\n\n`,
-    );
+    const log = jest.fn();
+    expect(beforeHook(ensureAppAppliesPlugin(pinned, '7.3.0', log))).toBe(`${pinned}\n`);
+    expect(beforeHook(ensureAppAppliesPlugin(pinned, null, log))).toBe(`${pinned}\n${exclude}\n\n`);
+    expect(log.mock.calls).toEqual([
+      ['@bugsee/react-native: android/app/build.gradle declares com.bugsee:bugsee-android-ndk itself; the plugin leaves that line alone and does not add or remove its own'],
+      ['@bugsee/react-native: android/app/build.gradle declares com.bugsee:bugsee-android-ndk itself; the plugin leaves that line alone and does not add or remove its own'],
+    ]);
+    // The user's artifact in a string anywhere, in any quoting, counts as theirs.
+    const quoted = "apply plugin: \"com.bugsee.android.gradle\"\ndef ndk = 'com.bugsee:bugsee-android-ndk:2.0.0'\ndependencies {\n    implementation(ndk)\n}\n";
+    expect(beforeHook(ensureAppAppliesPlugin(quoted, '7.3.0', log))).toBe(`${quoted}\n`);
     // A commented-out NDK line is not the dependency: a live one is added.
     const commented = 'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    // implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n';
     expect(beforeHook(ensureAppAppliesPlugin(commented, '7.3.0'))).toBe(
       `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n    // implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n\n`,
     );
+    // The plugin's line never carries any other comment, so a marker-less line with the artifact is the user's.
+    const unmarked = `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n`;
+    expect(beforeHook(ensureAppAppliesPlugin(unmarked, '7.3.0', () => undefined))).toBe(`${unmarked}\n`);
+  });
+
+  it('inserts the NDK line after a dependencies opener that stands alone, at the block\'s own indentation', () => {
+    const tabs = 'apply plugin: "com.bugsee.android.gradle"\ndependencies { // keep sorted\n\timplementation("a")\n}\n';
+    expect(beforeHook(ensureAppAppliesPlugin(tabs, '7.3.0'))).toBe(
+      'apply plugin: "com.bugsee.android.gradle"\ndependencies { // keep sorted\n\timplementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk\n\timplementation("a")\n}\n\n',
+    );
+    for (const opener of ['dependencies { implementation("a") }', 'dependencies { implementation("a")\n}', 'foo { }; dependencies {\n}']) {
+      expect(() => ensureAppAppliesPlugin(`${opener}\n`, '7.3.0')).toThrow(
+        `${CANNOT_EDIT} android/app/build.gradle: line 1: \`${opener.split('\n')[0]}\` shares its line with other code, so the Bugsee NDK dependency cannot be added without rewriting that line. Put the brace alone on its line, or declare \`implementation "com.bugsee:bugsee-android-ndk:7.3.0"\` yourself, then run expo prebuild again`,
+      );
+    }
   });
 
   it('refuses a one-line build type rather than split the user line', () => {
     const oneLine = 'android {\n    buildTypes {\n        release { minifyEnabled true }\n    }\n}\n';
     expect(() => ensureAppAppliesPlugin(oneLine, '7.3.0')).toThrow(
-      `${CANNOT_EDIT} android/app/build.gradle: the release build type is written on one line (release { minifyEnabled true }), so debugSymbolLevel 'SYMBOL_TABLE' cannot be added without rewriting that line. Put its closing brace on its own line, or set ndk { debugSymbolLevel 'SYMBOL_TABLE' } in it yourself, then run expo prebuild again`,
+      `${CANNOT_EDIT} android/app/build.gradle: line 3: \`release { minifyEnabled true }\` shares its line with other code, so debugSymbolLevel 'SYMBOL_TABLE' for the release build type cannot be added without rewriting that line. Put the brace alone on its line, or set ndk { debugSymbolLevel 'SYMBOL_TABLE' } in it yourself, then run expo prebuild again`,
+    );
+    // A closer that shares its line with code, or follows a comment on its line, is no anchor either.
+    expect(() => ensureAppAppliesPlugin('android {\n    buildTypes {\n        release {\n            minifyEnabled true }\n    }\n}\n', '7.3.0')).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 4: \`minifyEnabled true }\` shares its line with other code`,
+    );
+    expect(() => ensureAppAppliesPlugin('android {\n    buildTypes {\n        release {\n            /* end */ }\n    }\n}\n', '7.3.0')).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 4: \`/* end */ }\` shares its line with other code`,
     );
     // Off has nothing to add, so nothing to refuse.
     expect(beforeHook(ensureAppAppliesPlugin(oneLine, null))).toBe(
       `apply plugin: "com.bugsee.android.gradle"\n${oneLine}\n${exclude}\n\n`,
     );
-    // Blank lines before the closing brace are kept.
+    // The block goes right before the closer; the user's blank line stays where it was.
     const spaced = 'android {\n    buildTypes {\n        release {\n            minifyEnabled true\n\n        }\n    }\n}\n';
     expect(ensureAppAppliesPlugin(spaced, '7.3.0')).toContain(
-      `            minifyEnabled true\n${SYMBOL_BLOCK('            ')}\n\n        }\n`,
+      `            minifyEnabled true\n\n${SYMBOL_BLOCK('            ')}\n        }\n`,
     );
   });
 
@@ -304,7 +380,7 @@ describe('ensureAppAppliesPlugin, exactly', () => {
         '    }',
         '}',
         '',
-        'dependencies {',
+        'dependencies { // bugsee:ndk',
         ndkLine,
         '}',
         '',
@@ -328,29 +404,38 @@ describe('ensureAppAppliesPlugin, exactly', () => {
       '',
     );
     expect(beforeHook(ensureAppAppliesPlugin(source, '7.3.0'))).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\n${source}\ndependencies {\n${ndkLine}\n}\n\n`,
+      `apply plugin: "com.bugsee.android.gradle"\n${source}\n${ndkBlock}\n\n`,
     );
   });
 
-  it('removes only a marked block that is followed by an ndk block', () => {
+  it('removes exactly its own symbol block, at any indentation, and nothing after it', () => {
+    const block = SYMBOL_BLOCK('      ');
+    const file = `a()\n${block}\nb()\n`;
+    expect(beforeHook(ensureAppAppliesPlugin(file, null))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\na()\nb()\n\n${exclude}\n\n`,
+    );
+    // Comment lines that only resemble the marker, or a different block after it, are the user's.
     const kept = '// bugsee-symbol-table: a comment, no block\nother()\n';
     expect(beforeHook(ensureAppAppliesPlugin(kept, null))).toBe(
       `apply plugin: "com.bugsee.android.gradle"\n${kept}\n${exclude}\n\n`,
     );
-    const unclosed = 'a()\n    // bugsee-symbol-table: x\n    // more\n    ndk {\n        debugSymbolLevel \'SYMBOL_TABLE\'\n';
-    expect(() => ensureAppAppliesPlugin(unclosed, null)).toThrow(
-      `${CANNOT_EDIT} android/app/build.gradle: line 4: a brace opened on this line never closes`,
+    const marker = SYMBOL_BLOCK('').split('\n')[0] as string;
+    const orphan = `a()\n${marker}\nndk {\n    abiFilters "arm64-v8a"\n}\nb()\n`;
+    expect(beforeHook(ensureAppAppliesPlugin(orphan, null))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\na()\nndk {\n    abiFilters "arm64-v8a"\n}\nb()\n\n${exclude}\n\n`,
     );
-    // A block that closes at another indentation is not the one this plugin wrote.
-    const other = 'a()\n// bugsee-symbol-table: x\nndk {\n  }\nb()\n';
-    expect(beforeHook(ensureAppAppliesPlugin(other, null))).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\n${other}\n${exclude}\n\n`,
+    // Only the matching marker lines go when the block stops matching among the comments.
+    const twoLines = `a()\n${SYMBOL_BLOCK('').split('\n').slice(0, 2).join('\n')}\nndk {\n}\n`;
+    expect(beforeHook(ensureAppAppliesPlugin(twoLines, null))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\na()\nndk {\n}\n\n${exclude}\n\n`,
     );
-    const twice =
-      'a()\n// bugsee-symbol-table: x\nndk {\n    x { }\n}\nb()\n  // bugsee-symbol-table: y\n  ndk {\n  }  \nc()\n';
-    expect(beforeHook(ensureAppAppliesPlugin(twice, null))).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\na()\nb()\nc()\n\n${exclude}\n\n`,
+    // A user line inside the block makes the plugin refuse, never delete.
+    const edited = `a()\n${SYMBOL_BLOCK('').replace("    debugSymbolLevel 'SYMBOL_TABLE'", "    debugSymbolLevel 'SYMBOL_TABLE'\n    abiFilters \"arm64-v8a\"")}\n`;
+    expect(() => ensureAppAppliesPlugin(edited, null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 2: the Bugsee symbol-table block that starts here has been changed inside, so the plugin cannot tell its lines from yours. Restore the block as the plugin wrote it, or remove it and set ndk { debugSymbolLevel } yourself, then run expo prebuild again`,
     );
+    // On, an edited block still counts as the level being set.
+    expect(ensureAppAppliesPlugin(`android {\n    buildTypes {\n        release {\n${SYMBOL_BLOCK('            ').replace("'SYMBOL_TABLE'", "'FULL'")}\n        }\n    }\n}\n`, '7.3.0')).not.toContain("'SYMBOL_TABLE'");
   });
 
   it('keeps a user afterEvaluate block and adds the hook after it', () => {
@@ -647,14 +732,14 @@ describe('blocks found by keyword', () => {
     expect(
       beforeHook(ensureAppAppliesPlugin('dependencies {\n}\napply plugin: "com.facebook.react"\n', '7.3.0')),
     ).toBe(
-      'dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:7.3.0"\n}\napply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\n\n',
+      'dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk\n}\napply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\n\n',
     );
   });
 
   it('keeps every trailing blank line and appends after them', () => {
     const ndkOn = ensureAppAppliesPlugin('android {\n}\n\n\n', '7.3.0');
     expect(beforeHook(ndkOn)).toBe(
-      'apply plugin: "com.bugsee.android.gradle"\nandroid {\n}\n\n\n\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:7.3.0"\n}\n\n',
+      'apply plugin: "com.bugsee.android.gradle"\nandroid {\n}\n\n\n\ndependencies { // bugsee:ndk\n    implementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk\n}\n\n',
     );
     const ndkOff = ensureAppAppliesPlugin('android {\n}\n\n\n', null);
     expect(beforeHook(ndkOff)).toBe(
@@ -847,7 +932,7 @@ describe('react.hermesCommand forms', () => {
 
 describe('react.hermesCommand edge cases', () => {
   const rewritten = `    ${HERMES_COMMAND}`;
-  const ndkLine = '    implementation "com.bugsee:bugsee-android-ndk:7.3.0"';
+  const ndkLine = '    implementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk';
 
   it('reads an escaped quote as part of the string', () => {
     const source = 'react {\n    hermesCommand = "a\\"b"\n}\n';

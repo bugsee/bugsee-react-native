@@ -117,18 +117,19 @@ function editProjectBuildGradle(file: GradleFile, edits: GradleEdits): string {
   return ensureGradlePluginDeclared(file.contents, edits.gradlePluginVersion);
 }
 
-function editAppBuildGradle(file: GradleFile, edits: GradleEdits): string {
+function editAppBuildGradle(file: GradleFile, edits: GradleEdits, log: (message: string) => void = console.warn): string {
   if (file.language !== 'groovy') {
     throw new Error(APP_GRADLE_NOT_GROOVY);
   }
-  return ensureSymbolUploads(ensureAppAppliesPlugin(file.contents, edits.ndkVersion), edits.uploadSymbols);
+  return ensureSymbolUploads(ensureAppAppliesPlugin(file.contents, edits.ndkVersion, log), edits.uploadSymbols);
 }
 
 /** Runs every Gradle edit on the files as they are on disk, writing nothing. */
 async function refuseUnlessEditable(projectRoot: string, edits: GradleEdits): Promise<void> {
   editSettingsGradle(await AndroidConfig.Paths.getSettingsGradleAsync(projectRoot));
   editProjectBuildGradle(await AndroidConfig.Paths.getProjectBuildGradleAsync(projectRoot), edits);
-  editAppBuildGradle(await AndroidConfig.Paths.getAppBuildGradleAsync(projectRoot), edits);
+  // The mod that follows logs; the check stays quiet.
+  editAppBuildGradle(await AndroidConfig.Paths.getAppBuildGradleAsync(projectRoot), edits, () => undefined);
 }
 
 const TOKEN_SHAPE = /^[0-9A-Za-z._-]+$/;

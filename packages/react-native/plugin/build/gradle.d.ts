@@ -32,7 +32,7 @@ export declare function ensureGradlePluginDeclared(projectBuildGradle: string, v
  * debug id and uploads the composed map unless `bugseeUploadSourcemaps=false`
  * or no real token is configured.
  */
-export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string;
+export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null, log?: (message: string) => void): string;
 export declare const HERMES_COMMAND_UNREWRITABLE = "@bugsee/react-native cannot edit android/app/build.gradle: react.hermesCommand spans several lines or shares its line with another statement, so it cannot be pointed at scripts/hermesc-preserve-js.sh. Put it alone on one line, or delete it, and prebuild again";
 /**
  * `uploadSymbols: false` on Android: disables every `uploadBugsee*` task

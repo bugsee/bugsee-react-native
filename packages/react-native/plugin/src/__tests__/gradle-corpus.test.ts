@@ -53,6 +53,11 @@ const EXCLUDE_BLOCK = [
   '}',
 ].join('\n');
 
+/** Bugsee's NDK line carries its marker; the block it appends when there is none marks its opener too. */
+const NDK_MARKER = '// bugsee:ndk';
+const ndkLine = (version: string): string => `implementation "com.bugsee:bugsee-android-ndk:${version}" ${NDK_MARKER}`;
+const NDK_OPENER = `dependencies { ${NDK_MARKER}`;
+
 const SYMBOL_BLOCK = [
   "// bugsee-symbol-table: AGP defaults this to NONE, so the plugin's native upload finds",
   '// nothing and skips. SYMBOL_TABLE emits symbols for code this app',
@@ -95,7 +100,7 @@ interface Case {
   /** Case-specific checks on the first run's output. */
   readonly check?: (output: string, option: AppOption) => void;
   /** Copies of Bugsee lines the user text itself quotes, inside comments or strings. */
-  readonly quoted?: Partial<Record<'marker' | 'apply' | 'uploads' | 'exclude', number>>;
+  readonly quoted?: Partial<Record<'marker' | 'apply' | 'uploads' | 'exclude' | 'ndkOpener', number>>;
 }
 
 interface AppOption {
@@ -140,22 +145,73 @@ function input(c: Case): Input {
   return { text, userLines };
 }
 
-/** The first user line that is not in the output, in order; null when all survive. */
+const stripCr = (line: string): string => line.replace(/\r$/, '');
+
+/** Lines the plugin may add, at any indentation, as consecutive groups. */
+function bugseeGroups(): string[][] {
+  const declaration = (version: string): string[] => ['plugins {', `id 'com.bugsee.android.gradle' version '${version}' apply false`, '}'];
+  const repositories = ['repositories {', 'gradlePluginPortal()', 'google()', 'mavenCentral()', '}'];
+  return [
+    [MARKER, APPLY],
+    [PLUGIN_APPLY],
+    [NDK_OPENER, ndkLine('9.9.9'), '}'],
+    [ndkLine('9.9.9')],
+    EXCLUDE_BLOCK.split('\n'),
+    SYMBOL_BLOCK.split('\n'),
+    [SYMBOL_BLOCK.split('\n')[0] as string],
+    UPLOADS_OFF_BLOCK.split('\n'),
+    declaration('1.2.3'),
+    declaration('2.0.0'),
+    [declaration('1.2.3')[1] as string],
+    [declaration('2.0.0')[1] as string],
+    ['pluginManagement {', ...repositories, '}'],
+    repositories,
+    ['mavenCentral()'],
+  ];
+}
+
+/**
+ * The first user line that did not survive, or what the plugin added where
+ * it may not, or null. The output is read in order against the user's
+ * non-blank lines: a line that is the next user line (or its wrapper form)
+ * consumes it; otherwise it must be blank, one of Bugsee's own groups, or the
+ * wrapper line the plugin adds to a react block without one. So a user `}`
+ * the plugin deleted cannot be covered by a `}` the plugin added, and a user
+ * line that merely looks like Bugsee's is matched as the user's first.
+ */
 function lost(userLines: readonly UserLine[], output: string): string | null {
+  const expected = userLines.filter(({ line }) => stripCr(line).trim() !== '');
   const out = output.split('\n');
-  let from = 0;
-  for (const { line, tail } of userLines) {
-    let at = out.indexOf(line, from);
-    if (at < 0 && tail !== null) {
-      const indent = /^[ \t]*/.exec(line)?.[0] ?? '';
-      at = out.indexOf(`${indent}hermesCommand = ${EXPR}${tail}`, from);
+  const wrapperLine = `hermesCommand = ${EXPR}`;
+  // Where a line is both the next user line and the start of a Bugsee group,
+  // both readings are tried; the first that reads the whole output wins.
+  const walk = (i: number, j: number): string | null => {
+    if (i >= out.length) {
+      return j < expected.length ? (expected[j] as UserLine).line : null;
     }
-    if (at < 0) {
-      return line;
+    const line = out[i] as string;
+    const want = expected[j];
+    const group = bugseeGroups().find((lines) =>
+      lines.every((text, k) => {
+        const entry = out[i + k];
+        return entry !== undefined && stripCr(entry).trim() === text.trim();
+      }),
+    );
+    if (group && walk(i + group.length, j) === null) {
+      return null;
     }
-    from = at + 1;
-  }
-  return null;
+    if (want !== undefined) {
+      const indent = /^[ \t]*/.exec(want.line)?.[0] ?? '';
+      if (line === want.line || (want.tail !== null && line === `${indent}hermesCommand = ${EXPR}${want.tail}`)) {
+        return walk(i + 1, j + 1);
+      }
+    }
+    if (stripCr(line).trim() === '' || stripCr(line).trim() === wrapperLine) {
+      return walk(i + 1, j);
+    }
+    return want === undefined ? `extra line: ${line}` : `${want.line} (got ${line})`;
+  };
+  return walk(0, 0);
 }
 
 const countLines = (text: string, wanted: string): number =>
@@ -290,8 +346,8 @@ const appCases: Case[] = [
     check: (output, option) => {
       expect(countLines(output, "debugSymbolLevel 'SYMBOL_TABLE'")).toBe(option.ndk === null ? 0 : 1);
       if (option.ndk !== null) {
-        // Inside the release block, after the string, with the user's blank line kept before the brace.
-        expect(output).toMatch(/def s = "}}}"\n {12}\/\/ bugsee-symbol-table:[^]*?\n {12}}\n\n {8}}\n {4}}\n}/);
+        // Inside the release block, right before its closing brace; the user's blank line stays where it was.
+        expect(output).toMatch(/def s = "}}}"\n\n {12}\/\/ bugsee-symbol-table:[^]*?\n {12}}\n {8}}\n {4}}\n}/);
       }
     },
   },
@@ -300,7 +356,7 @@ const appCases: Case[] = [
     segments: [u(REACT_APPLY), u('// Keep dependencies { sorted } please'), u(userDeps)],
     check: (output, option) => {
       if (option.ndk !== null) {
-        expect(output).toContain(`// Keep dependencies { sorted } please\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n`);
+        expect(output).toContain(`// Keep dependencies { sorted } please\ndependencies {\n    ${ndkLine(option.ndk)}\n`);
       }
     },
   },
@@ -309,7 +365,7 @@ const appCases: Case[] = [
     segments: [u(REACT_APPLY), u('/*\ndependencies {\n    implementation("old")\n}\n*/'), u(userDeps)],
     check: (output, option) => {
       if (option.ndk !== null) {
-        expect(output).toContain(`*/\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n`);
+        expect(output).toContain(`*/\ndependencies {\n    ${ndkLine(option.ndk)}\n`);
       }
     },
   },
@@ -437,7 +493,7 @@ const appCases: Case[] = [
     name: 'a commented NDK line is not the dependency',
     segments: [u(REACT_APPLY), u('dependencies {\n    // implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n    implementation("a")\n}')],
     check: (output, option) =>
-      expect(countLines(output, `implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"`)).toBe(option.ndk === null ? 0 : 1),
+      expect(countLines(output, ndkLine(option.ndk ?? 'none'))).toBe(option.ndk === null ? 0 : 1),
   },
   {
     name: 'the react plugin apply inside an if block',
@@ -514,7 +570,7 @@ const appCases: Case[] = [
     segments: [u(REACT_APPLY), u('def ds = $/a$$/$'), u(userDeps), u('def ds2 = $/a$\nb/$')],
     check: (output, option) => {
       if (option.ndk !== null) {
-        expect(output).toContain(`dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n    implementation("com.example:kept:1.0")\n}`);
+        expect(output).toContain(`dependencies {\n    ${ndkLine(option.ndk)}\n    implementation("com.example:kept:1.0")\n}`);
       }
     },
   },
@@ -523,7 +579,7 @@ const appCases: Case[] = [
     segments: [u(REACT_APPLY), u('dependencies{\n    implementation("a")\n}')],
     check: (output, option) => {
       if (option.ndk !== null) {
-        expect(output).toContain(`dependencies{\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n    implementation("a")\n}`);
+        expect(output).toContain(`dependencies{\n    ${ndkLine(option.ndk)}\n    implementation("a")\n}`);
       }
     },
   },
@@ -536,16 +592,21 @@ const appCases: Case[] = [
     segments: [u(REACT_APPLY), b(LEGACY_MARKER), u('def bugseeHermesSourcemaps = "x"'), u(userDeps)],
   },
   {
-    name: 'a dependencies block nested on one line, and one after a closed block on the same line',
+    name: 'a dependencies block nested on one line is not top level; one after a closed block on the same line is refused',
     segments: [
       u(REACT_APPLY),
       u('if (x) { dependencies { implementation("in-if") } }'),
       u('foo { } dependencies {\n    implementation("first")\n}'),
       u(userDeps),
     ],
+    refuse: (option) => option.ndk !== null,
+  },
+  {
+    name: 'a dependencies block nested on one line is not top level',
+    segments: [u(REACT_APPLY), u('if (x) { dependencies { implementation("in-if") } }'), u(userDeps)],
     check: (output, option) => {
       if (option.ndk !== null) {
-        expect(output).toContain(`foo { } dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n    implementation("first")\n}`);
+        expect(output).toContain(`dependencies {\n    ${ndkLine(option.ndk)}\n    implementation("com.example:kept:1.0")\n}`);
       }
     },
   },
@@ -611,7 +672,7 @@ const appCases: Case[] = [
     check: (output, option) => {
       if (option.ndk !== null) {
         // The first top-level block, not the one inside buildscript.
-        expect(output).toContain(`}\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n    implementation("com.example:kept:1.0")\n}`);
+        expect(output).toContain(`}\ndependencies {\n    ${ndkLine(option.ndk)}\n    implementation("com.example:kept:1.0")\n}`);
       }
     },
   },
@@ -700,6 +761,121 @@ const appCases: Case[] = [
   },
 ];
 
+// --- Re-review 4: anything else on an anchor line, and user code shaped like Bugsee's lines ---
+const anchorCases: Case[] = [
+  {
+    name: 'A01: a trailing comment on the dependencies opener is kept on that line',
+    segments: [u(REACT_APPLY), u('dependencies { // keep sorted\n    implementation("a")\n}')],
+    check: (output, option) => {
+      if (option.ndk !== null) {
+        expect(output).toContain(`dependencies { // keep sorted\n    ${ndkLine(option.ndk)}\n    implementation("a")\n}`);
+      }
+    },
+  },
+  {
+    name: 'A02: a one-line dependencies block is refused with native crash reporting on',
+    segments: [u(REACT_APPLY), u('dependencies { implementation("a") }'), u(userAfter)],
+    refuse: (option) => option.ndk !== null,
+  },
+  {
+    name: 'A03: code after the dependencies opener is refused with native crash reporting on',
+    segments: [u(REACT_APPLY), u('dependencies { implementation("a")\n    implementation("b")\n}')],
+    refuse: (option) => option.ndk !== null,
+  },
+  {
+    name: 'A48: trailing spaces on the dependencies opener stay on that line',
+    segments: [u(REACT_APPLY), u('dependencies {   \n    implementation("a")\n}')],
+    check: (output, option) => {
+      if (option.ndk !== null) {
+        expect(output).toContain(`dependencies {   \n    ${ndkLine(option.ndk)}\n`);
+      }
+    },
+  },
+  {
+    name: 'A04: the user\'s own NDK line with a comment is never rewritten or deleted, and none is added',
+    segments: [u(REACT_APPLY), u('dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0" // pinned for a fix\n}')],
+    check: (output) => expect(output).not.toContain(NDK_MARKER),
+  },
+  {
+    name: 'A05: the user\'s own NDK line inside an if block',
+    segments: [u(REACT_APPLY), u('if (useNdk) {\n    dependencies {\n        implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n    }\n}'), u(userDeps)],
+    check: (output) => expect(output).not.toContain(NDK_MARKER),
+  },
+  {
+    name: 'A53: the user\'s own NDK line, CRLF',
+    segments: [u(REACT_APPLY), u('dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}')],
+    crlf: true,
+    check: (output) => expect(output).not.toContain(NDK_MARKER),
+  },
+  {
+    name: 'a user NDK line written with parentheses, in another block',
+    segments: [u(REACT_APPLY), u('dependencies {\n    implementation("a")\n}\ndependencies {\n    implementation("com.bugsee:bugsee-android-ndk:2.0.0")\n}')],
+    check: (output) => expect(output).not.toContain(NDK_MARKER),
+  },
+  {
+    name: 'A06: a build type whose closing brace shares its line with code is refused',
+    segments: [u(REACT_APPLY), u('android {\n    buildTypes {\n        release {\n            minifyEnabled true }\n    }\n}')],
+    refuse: (option) => option.ndk !== null,
+  },
+  {
+    name: 'A07: a build type whose closing brace follows a comment on its line is refused',
+    segments: [u(REACT_APPLY), u('android {\n    buildTypes {\n        release {\n            minifyEnabled true\n            /* end */ }\n    }\n}')],
+    refuse: (option) => option.ndk !== null,
+  },
+  {
+    name: 'a build type closer with a trailing comment is an anchor',
+    segments: [u(REACT_APPLY), u('android {\n    buildTypes {\n        release {\n            minifyEnabled true\n        } // release\n    }\n}')],
+    check: (output, option) => {
+      if (option.ndk !== null) {
+        expect(output).toContain(`${SYMBOL_BLOCK.split('\n').map((line) => `            ${line}`).join('\n')}\n        } // release\n`);
+      }
+    },
+  },
+  {
+    name: 'A08: an orphaned symbol marker before the user\'s own ndk block takes only the marker',
+    segments: [
+      u(REACT_APPLY),
+      u('android {\n    buildTypes {\n        release {'),
+      b(`            ${SYMBOL_BLOCK.split('\n')[0] as string}`),
+      u('            ndk {\n                abiFilters "arm64-v8a"\n            }\n        }\n    }\n}'),
+    ],
+  },
+  {
+    name: 'A09: a user line added inside Bugsee\'s symbol block refuses when the block would go',
+    segments: [
+      u(REACT_APPLY),
+      u('android {\n    buildTypes {\n        release {'),
+      u(SYMBOL_BLOCK.replace("    debugSymbolLevel 'SYMBOL_TABLE'", "    debugSymbolLevel 'SYMBOL_TABLE'\n    abiFilters \"arm64-v8a\"").split('\n').map((line) => `            ${line}`).join('\n')),
+      u('        }\n    }\n}'),
+    ],
+    refuse: (option) => option.ndk === null,
+  },
+  {
+    name: 'Bugsee\'s symbol block at a deeper indentation than it wrote is still exactly its block',
+    segments: [
+      u(REACT_APPLY),
+      u('android {\n    buildTypes {\n        release {'),
+      b(SYMBOL_BLOCK.split('\n').map((line) => `                ${line}`).join('\n')),
+      u('        }\n    }\n}'),
+    ],
+  },
+  {
+    name: 'A32: a block comment between the operands of a division is refused',
+    segments: [u(REACT_APPLY), u('def x = 4 /*c*/ / 2'), u(userDeps)],
+    refuse: true,
+  },
+  {
+    name: 'A36: a dollar identifier before a slash is refused with the right line',
+    segments: [u(REACT_APPLY), u('def z = a$/2'), u(userDeps)],
+    refuse: true,
+  },
+  {
+    name: 'a user dependencies block whose opener is the plugin\'s own marked opener shape is kept',
+    segments: [u(REACT_APPLY), u(`${NDK_OPENER}\n    implementation("a")\n}`)],
+    quoted: { ndkOpener: 1 },
+  },
+];
+
 const appOptions: readonly AppOption[] = [
   { ndk: '9.9.9', uploads: true },
   { ndk: '9.9.9', uploads: false },
@@ -708,7 +884,7 @@ const appOptions: readonly AppOption[] = [
 ];
 
 const prebuildApp = (text: string, option: AppOption): string =>
-  ensureSymbolUploads(ensureAppAppliesPlugin(text, option.ndk), option.uploads);
+  ensureSymbolUploads(ensureAppAppliesPlugin(text, option.ndk, () => undefined), option.uploads);
 
 function expectAppOutcome(c: Case, source: Input, option: AppOption): void {
   const label = `${c.name} [ndk=${option.ndk}, uploads=${option.uploads}]`;
@@ -751,6 +927,7 @@ function expectAppOutcome(c: Case, source: Input, option: AppOption): void {
 describe('app/build.gradle corpus: every user byte survives, or the plugin refuses', () => {
   const cases: Case[] = [
     ...appCases,
+    ...anchorCases,
     ...SDKS.map((sdk) => ({ name: `Expo ${sdk} template`, segments: template(read(`expo-templates/${sdk}/app-build.gradle`)) })),
     ...SDKS.map((sdk) => ({
       name: `Expo ${sdk} template, CRLF`,
@@ -780,8 +957,26 @@ describe('app/build.gradle corpus: every user byte survives, or the plugin refus
         text = prebuildApp(text, option);
         expect([c.name, option, lost(source.userLines, text)]).toEqual([c.name, option, null]);
       }
-      // Back at the first option set: the same as a direct run from the source.
-      expect(text).toBe(prebuildApp(source.text, appOptions[0]!));
+      // Back at the first option set: settled. (Not byte-equal to a direct run: a
+      // dependencies block the plugin appended, removed and appended again now
+      // follows the hook instead of preceding it.)
+      expect(prebuildApp(text, appOptions[0]!)).toBe(text);
+    },
+  );
+
+  // Every ordered pair of option sets: a, then b, then b again.
+  const pairs = appOptions.flatMap((a) => appOptions.filter((b) => b !== a).map((b) => [a, b] as const));
+  it.each(cases.filter((c) => c.refuse === undefined).map((c) => [c.name, c] as const))(
+    'survives every ordered pair of option sets: %s',
+    (_name, c) => {
+      const source = input(c);
+      for (const [a, b] of pairs) {
+        const label = `${c.name} [${a.ndk},${a.uploads} -> ${b.ndk},${b.uploads}]`;
+        const first = prebuildApp(source.text, a);
+        const second = prebuildApp(first, b);
+        expect([label, lost(source.userLines, second)]).toEqual([label, null]);
+        expect([label, prebuildApp(second, b)]).toEqual([label, second]);
+      }
     },
   );
 });
@@ -800,6 +995,10 @@ const rootCases: Case[] = [
   { name: 'a declaration from an earlier prebuild', segments: [u('plugins {'), b(DECLARATION), u('}'), u('allprojects { }')] },
   { name: 'a declaration in a string is left', segments: [u('def doc = "plugins { id \'com.bugsee.android.gradle\' version \'0\' }"'), u('allprojects { }')] },
   { name: 'CRLF root', segments: [u('buildscript {\n    ext { x = 1 }\n}'), u('allprojects { }')], crlf: true },
+  { name: 'R01: a trailing comment on the buildscript closer', segments: [u('buildscript {\n    ext { x = 1 }\n} // end buildscript'), u('allprojects { }')] },
+  { name: 'R03: a one-line buildscript followed by another statement is refused', segments: [u('buildscript { ext { x = 1 } }; allprojects { }')], refuse: true },
+  { name: 'a one-line buildscript is refused', segments: [u('buildscript { ext { x = 1 } }'), u('allprojects { }')], refuse: true },
+  { name: 'an indented buildscript closer keeps its indentation', segments: [u('buildscript {\n    ext { x = 1 }\n  }'), u('allprojects { }')] },
   { name: 'unterminated string in the root file is refused', segments: [u('def a = "open'), u('allprojects { }')], refuse: true },
   { name: 'unbalanced braces in the root file are refused', segments: [u('buildscript {'), u('allprojects { }')], refuse: true },
   ...SDKS.map((sdk) => ({ name: `Expo ${sdk} root template`, segments: template(read(`expo-templates/${sdk}/build.gradle`)) })),
@@ -844,6 +1043,13 @@ const settingsCases: Case[] = [
   { name: 'repositories in a string', segments: [u('pluginManagement {\n    def s = "repositories {"\n}'), u('include ":app"')] },
   { name: 'a trailing comment in repositories', segments: [u('pluginManagement {\n    repositories {\n        google() // first\n        // last\n    }\n}'), u('include ":app"')] },
   { name: 'CRLF settings', segments: [u('pluginManagement {\n    repositories {\n        google()\n    }\n}'), u('include ":app"')], crlf: true },
+  { name: 'S01: a one-line pluginManagement with repositories is refused', segments: [u('pluginManagement { repositories { google() } }'), u('include ":app"')], refuse: true },
+  { name: 'S02: a one-line repositories block is refused', segments: [u('pluginManagement {\n    repositories { google() }\n}'), u('include ":app"')], refuse: true },
+  { name: 'S03: a one-line pluginManagement without repositories is refused', segments: [u('pluginManagement { includeBuild("x") }'), u('include ":app"')], refuse: true },
+  { name: 'S04: an indented pluginManagement closer keeps its indentation', segments: [u('pluginManagement {\n    includeBuild("x")\n  }'), u('include ":app"')] },
+  { name: 'S11: a repositories closer sharing its line with an entry is refused', segments: [u('pluginManagement {\n    repositories {\n        google() }\n}'), u('include ":app"')], refuse: true },
+  { name: 'a one-line pluginManagement that already has mavenCentral is left alone', segments: [u('pluginManagement { repositories { mavenCentral() } }'), u('include ":app"')] },
+  { name: 'trailing comments on the pluginManagement and repositories closers', segments: [u('pluginManagement {\n    repositories {\n        google()\n    } // repos\n} // pm'), u('include ":app"')] },
   { name: 'unbalanced settings are refused', segments: [u('pluginManagement {\n    repositories {\n}'), u('include ":app"')], refuse: true },
   ...SDKS.map((sdk) => ({ name: `Expo ${sdk} settings template`, segments: template(read(`expo-templates/${sdk}/settings.gradle`)) })),
 ];
@@ -859,6 +1065,10 @@ describe('settings.gradle corpus', () => {
     const twice = ensureMavenCentral(once);
     expect(lost(source.userLines, once)).toBeNull();
     expect(twice).toBe(once);
+    if (c.name.includes('left alone')) {
+      expect(once).toBe(source.text);
+      return;
+    }
     expect(countLines(once, 'mavenCentral()')).toBe(1);
     if (c.crlf) {
       expect(once.split('\n').filter((line, i, all) => i < all.length - 1 && !line.endsWith('\r'))).toEqual([]);

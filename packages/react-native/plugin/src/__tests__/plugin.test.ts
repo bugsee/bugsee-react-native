@@ -447,7 +447,9 @@ describe('Android Gradle edits', () => {
 
   it('declares the Gradle plugin version from native-versions.json', () => {
     const project = [
-      'buildscript { repositories { google(); mavenCentral() } }',
+      'buildscript {',
+      '    repositories { google(); mavenCentral() }',
+      '}',
       'apply plugin: "com.facebook.react.rootproject"',
       '',
     ].join('\n');
@@ -1103,23 +1105,30 @@ describe('native pins after a wrapper bump (--no-clean)', () => {
     expect(ensureGradlePluginDeclared(classpathOnly, '4.0.9')).toBe(classpathOnly);
   });
 
-  it('rewrites the bugsee-android-ndk line in place', () => {
+  it('rewrites its own marked bugsee-android-ndk line in place, and never a user one', () => {
     const app = [
       'apply plugin: "com.facebook.react"',
       'apply plugin: "com.bugsee.android.gradle"',
       '',
       'dependencies {',
-      '    implementation "com.bugsee:bugsee-android-ndk:7.3.0"',
+      '    implementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk',
       '}',
       '',
     ].join('\n');
     const next = ensureAppAppliesPlugin(app, '7.4.0');
-    expect(next).toContain('    implementation "com.bugsee:bugsee-android-ndk:7.4.0"');
+    expect(next).toContain('    implementation "com.bugsee:bugsee-android-ndk:7.4.0" // bugsee:ndk');
     expect(next).not.toContain('7.3.0');
     expect(next.match(/bugsee-android-ndk:/g)).toHaveLength(1);
-    const single = ensureAppAppliesPlugin(app.replace(/"com\.bugsee:bugsee-android-ndk:7\.3\.0"/, "'com.bugsee:bugsee-android-ndk:7.3.0'"), '7.4.0');
-    expect(single).toContain("implementation 'com.bugsee:bugsee-android-ndk:7.4.0'");
-    expect(() => ensureAppAppliesPlugin(app, '7.4.0"; evil')).toThrow('refusing NDK artifact version');
+    // A line without the marker, in either quoting, is the user's: left as is, and no second line is added.
+    for (const user of [app.replace(' // bugsee:ndk', ''), app.replace(/"com\.bugsee:bugsee-android-ndk:7\.3\.0" \/\/ bugsee:ndk/, "'com.bugsee:bugsee-android-ndk:7.3.0'")]) {
+      const log = jest.fn();
+      const kept = ensureAppAppliesPlugin(user, '7.4.0', log);
+      expect(kept).toContain('bugsee-android-ndk:7.3.0');
+      expect(kept).not.toContain('7.4.0');
+      expect(kept.match(/bugsee-android-ndk:/g)).toHaveLength(1);
+      expect(log).toHaveBeenCalledTimes(1);
+    }
+    expect(() => ensureAppAppliesPlugin(app, '7.4.0"; evil')).toThrow(`${CANNOT_EDIT} android/app/build.gradle: the NDK artifact version`);
   });
 });
 
