@@ -305,10 +305,7 @@ function scan(source, file) {
     if (depth > 0) {
         throw unreadable(file, `line ${openBraces[0]}: a brace opened on this line never closes`);
     }
-    // A line comment on the last line is popped so that the line reads as closed.
-    if (open !== undefined) {
-        stack.pop();
-    }
+    // A line comment may still be open here; the last line's openAtEnd is never read.
     endLine(source.length);
     const text = masked.join('');
     return {
@@ -337,13 +334,13 @@ function isLineComment(line) {
 function isMarker(line, marker) {
     return isLineComment(line) && stripCr(line.raw).trim() === marker;
 }
-/** Bugsee's own code line, exactly, alone as a statement, at the top level. */
+/** Bugsee's own code line, exactly, alone as a statement, at the top level, nothing after it. */
 function isOwnStatement(line, statement) {
     return (line !== undefined &&
         !line.openAtStart &&
         line.depth === 0 &&
         line.commentAt === null &&
-        stripCr(line.raw).trim() === statement);
+        codeOf(line).trim() === statement);
 }
 /**
  * Appends a block after the content, separated by one blank line, keeping

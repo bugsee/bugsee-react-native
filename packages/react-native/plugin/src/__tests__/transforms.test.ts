@@ -1021,6 +1021,7 @@ describe('hook lines, exactly', () => {
   const marker = '// bugsee-sourcemaps: debug ids and source-map upload for release bundles (@bugsee/react-native).';
   const legacyMarker = '// After compose-source-maps.js. Release variants only; debug does not bundle.';
   const applied = 'apply plugin: "com.bugsee.android.gradle"';
+  const exclude = "configurations.configureEach {\n    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'\n}";
   let hook = '';
   let apply = '';
   beforeAll(() => {
@@ -1063,6 +1064,18 @@ describe('hook lines, exactly', () => {
     expect(ensureAppAppliesPlugin(legacy, '7.3.0')).toContain(`x()\n// one\n// two\n`);
     const symbol = `${applied}\nx()\n// bugsee-symbol-table: x\n// more`;
     expect(ensureAppAppliesPlugin(symbol, null)).toContain(`x()\n// bugsee-symbol-table: x\n// more\n`);
+    // With nothing appended before the hook step, the comments really are the last lines.
+    const ndk = '    implementation "com.bugsee:bugsee-android-ndk:7.3.0"';
+    const legacyLast = `${applied}\ndependencies {\n${ndk}\n}\n${legacyMarker}\n// one`;
+    expect(ensureAppAppliesPlugin(legacyLast, '7.3.0')).toBe(`${applied}\ndependencies {\n${ndk}\n}\n// one\n\n${hook}\n`);
+    const exclude = "configurations.configureEach {\n    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'\n}";
+    const symbolLast = `${applied}\n${exclude}\n// bugsee-symbol-table: x\n// more`;
+    expect(ensureAppAppliesPlugin(symbolLast, null)).toBe(`${applied}\n${exclude}\n// bugsee-symbol-table: x\n// more\n\n${hook}\n`);
+  });
+
+  it('keeps an apply line with a trailing comment, and the line that follows a marker with one', () => {
+    const source = `${applied}\nx()\n${marker}\n${apply} // mine\n`;
+    expect(ensureAppAppliesPlugin(source, null)).toBe(`${applied}\nx()\n${apply} // mine\n\n${exclude}\n\n${hook}\n`);
   });
 
   it('does not take a legacy marker followed by a code line with a trailing comment as a hook', () => {

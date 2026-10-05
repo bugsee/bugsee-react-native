@@ -509,8 +509,23 @@ const appCases: Case[] = [
     refuse: true,
   },
   {
+    // Read wrongly, the string would swallow the dependencies block that follows it.
     name: 'dollar-slashy escapes and a dollar before a newline',
-    segments: [u(REACT_APPLY), u('def ds = $/a$$/$\ndef ds2 = $/a$\nb/$'), u(userDeps)],
+    segments: [u(REACT_APPLY), u('def ds = $/a$$/$'), u(userDeps), u('def ds2 = $/a$\nb/$')],
+    check: (output, option) => {
+      if (option.ndk !== null) {
+        expect(output).toContain(`dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n    implementation("com.example:kept:1.0")\n}`);
+      }
+    },
+  },
+  {
+    name: 'a dependencies block written without a space before its brace',
+    segments: [u(REACT_APPLY), u('dependencies{\n    implementation("a")\n}')],
+    check: (output, option) => {
+      if (option.ndk !== null) {
+        expect(output).toContain(`dependencies{\n    implementation "com.bugsee:bugsee-android-ndk:${option.ndk}"\n    implementation("a")\n}`);
+      }
+    },
   },
   {
     name: 'a string, a dollar-slashy string or interpolation right before a division in the hermesCommand value',
