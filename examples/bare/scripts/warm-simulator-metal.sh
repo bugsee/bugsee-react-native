@@ -33,8 +33,8 @@ bundle_id=org.reactjs.native.example.BareExample
 dead_endpoint=https://127.0.0.1:9
 nonce=00000000a11e # hex, as App.tsx requires; no test waits for it
 # The walk ends with this line (App.tsx), after relaunch, so capture has been
-# started twice by the time it prints.
-done_marker='BUGSEE_E2E post-relaunch status='
+# started twice by the time it prints. Only status=2 (Launched) counts as done.
+done_marker='BUGSEE_E2E post-relaunch status=2'
 budget_s=180
 
 app_dir="$(cd "$(dirname "$0")/.." && pwd)"
@@ -82,7 +82,9 @@ started=$SECONDS
 checked=no
 while ! grep -q "$done_marker" "$work/console.log"; do
   if [[ $checked == no ]] && grep -q 'BUGSEE_E2E scenario=' "$work/console.log"; then
-    if ! grep -q "BUGSEE_E2E scenario=launch nonce=${nonce} source=args .*endpoint=${dead_endpoint}" \
+    # Anchored and escaped, as launch.test.ts does (escape(), \r?$); [[:space:]]* covers the CR.
+    dead_re="${dead_endpoint//./\\.}"
+    if ! grep -Eq "BUGSEE_E2E scenario=launch nonce=${nonce} source=args .*endpoint=${dead_re}[[:space:]]*$" \
       "$work/console.log"; then
       xcrun simctl terminate "$udid" "$bundle_id" 2>/dev/null || true
       echo "::error title=Metal warm-up::the app did not take the warm-up's launch arguments"
@@ -101,6 +103,6 @@ if grep -q "$done_marker" "$work/console.log"; then
   echo "warm-simulator-metal: the launch walk finished in $(( SECONDS - started ))s"
 else
   # Not fatal: the e2e that follows reports the real failure with its own log.
-  echo "::warning title=Metal warm-up::the warm-up launch did not finish its walk in ${budget_s}s"
+  echo "::warning title=Metal warm-up::the warm-up launch did not reach Launched after relaunch in ${budget_s}s"
   cat "$work/console.log"
 fi

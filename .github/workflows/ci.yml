@@ -150,28 +150,19 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
 
-      # Unlike every other job, this one needs a REAL app token: with the
-      # placeholder the SDK accepts launch(), fails to bring capture up, and
-      # settles into Stopped -- so "reaches Launched" can never hold. Verified
-      # by reproducing it locally with the placeholder.
+      # No secret in this job. The placeholder token reaches Launched: the
+      # app forces the dead endpoint for it (examples/bare/endpoint.ts), and
+      # the SDK launches offline against it, which is all launch.test.ts
+      # asserts. Verified on a fresh simulator: warm-up, then launch.test.ts,
+      # with the all-zero token. (The old claim that a placeholder "fails to
+      # bring capture up" held for the real endpoint, where the server
+      # rejects it and the SDK stops.) The endpoint is the literal dead one,
+      # never a secret, so no fallback path can contact a real server.
       - name: Credentials
-        id: creds
         env:
-          # iOS only: this job builds no Android app, and write-credentials
-          # accepts either token alone. Aliasing the Android variable to the
-          # iOS secret wrote the iOS token into android/bugsee.properties
-          # under the Android name -- inert here, and a trap if this job's
-          # scope ever grows.
-          BUGSEE_TOKEN_IOS: ${{ secrets.BUGSEE_TOKEN_IOS }}
-          BUGSEE_ENDPOINT: ${{ secrets.BUGSEE_ENDPOINT }}
-        run: |
-          if [ -z "${BUGSEE_TOKEN_IOS}" ]; then
-            echo "::warning title=iOS e2e skipped::BUGSEE_TOKEN_IOS is not set in repository secrets, so the only check that proves the SDK RUNS is not running. Every other job passes with launch() gutted."
-            echo "have=false" >> "$GITHUB_OUTPUT"
-          else
-            yarn workspace bugsee-example-bare credentials
-            echo "have=true" >> "$GITHUB_OUTPUT"
-          fi
+          BUGSEE_TOKEN_IOS: 00000000-0000-4000-8000-000000000000
+          BUGSEE_ENDPOINT: https://127.0.0.1:9
+        run: yarn workspace bugsee-example-bare credentials
 
       - name: Boot a simulator
         id: sim
@@ -189,13 +180,6 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
-
-      - name: Placeholder credentials for the build
-        if: steps.creds.outputs.have != 'true'
-        env:
-          BUGSEE_TOKEN_IOS: 00000000-0000-4000-8000-000000000000
-          BUGSEE_TOKEN_ANDROID: 00000000-0000-4000-8000-000000000000
-        run: yarn workspace bugsee-example-bare credentials
 
       - name: Install pods
         working-directory: examples/bare/ios
@@ -241,8 +225,12 @@ jobs:
       # first leaves the compiler warm, and the e2e times the SDK. It serves
       # that launch from a Metro of its own: the e2e's Metro must not build a
       # bundle before the e2e writes its scenario file.
+      #
+      # Follow-up, not done here: prime Metro's transform cache while
+      # xcodebuild compiles (curl the warm-up Metro's bundle in the
+      # background before "Install pods"), to recover most of the warm-up's
+      # 40 to 85 s.
       - name: Warm the simulator's Metal compiler
-        if: steps.creds.outputs.have == 'true'
         working-directory: examples/bare
         run: ./scripts/warm-simulator-metal.sh "${{ steps.sim.outputs.udid }}"
 
@@ -270,7 +258,6 @@ jobs:
       # promise, and which retain bundles -- on iOS beta3 those carry
       # credentials, and CI has no policy for keeping them.
       - name: Reach Status.Launched
-        if: steps.creds.outputs.have == 'true'
         working-directory: examples/bare
         env:
           E2E_PLATFORM: ios
@@ -281,7 +268,7 @@ jobs:
       # The e2e reads only the console pty. The app's own persisted log says
       # whether a missing marker was never logged or logged and not streamed.
       - name: App log on failure
-        if: failure() && steps.creds.outputs.have == 'true'
+        if: failure()
         run: |
           xcrun simctl spawn "${{ steps.sim.outputs.udid }}" log show --last 15m --style compact \
             --predicate 'process == "BareExample"' \
