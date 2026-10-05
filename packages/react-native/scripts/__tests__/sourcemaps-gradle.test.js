@@ -61,15 +61,20 @@ components.variants << new FakeVariant(name: 'paidRelease', outputs: [output('3.
 components.variants << new FakeVariant(name: 'brokenRelease', outputs: [output('4.0', 4)])
 components.variants << new FakeVariant(name: 'noversionRelease', outputs: [output(null, null)])
 components.variants << new FakeVariant(name: 'release', outputs: [output('1.0', 1), output('1.0', 1001)])
+// A flavor declared with a capital: AGP keeps the variant name, the task name is the same.
+components.variants << new FakeVariant(name: 'StagingRelease', outputs: [output('5.0', 5)])
+components.variants << new FakeVariant(name: 'customRelease', outputs: [output('6.0', 6)])
 extensions.add('androidComponents', components)
 
 apply from: 'scripts/bugsee-sourcemaps.gradle'
+// A second apply (a bare app that copied the example and followed the README) is a no-op.
+apply from: 'scripts/bugsee-sourcemaps.gradle'
 
-def bundle = { String variant, boolean hermes ->
+def bundle = { String variant, boolean hermes, String bundleDir = null ->
     def cap = variant.substring(0, 1).toUpperCase() + variant.substring(1)
     tasks.register("createBundle\${cap}JsAndAssets", FakeBundle) { t ->
         t.bundleAssetName.set('index.android.bundle')
-        t.jsBundleDir.set(layout.buildDirectory.dir("generated/assets/react/\${variant}"))
+        t.jsBundleDir.set(layout.buildDirectory.dir(bundleDir ?: "generated/assets/react/\${variant}"))
         t.jsSourceMapsDir.set(layout.buildDirectory.dir("generated/sourcemaps/react/\${variant}"))
         t.jsIntermediateSourceMapsDir.set(layout.buildDirectory.dir("intermediates/sourcemaps/react/\${variant}"))
         t.reactNativeDir.set(layout.projectDirectory.dir('rn'))
@@ -83,6 +88,9 @@ bundle('paidRelease', false)
 bundle('brokenRelease', true)
 bundle('noversionRelease', false)
 bundle('release', false)
+bundle('StagingRelease', false)
+// Outside generated/assets: no preserve directory to map to, and none needed with Hermes off.
+bundle('customRelease', false, 'custom/js')
 `;
 
 // Records argv, then does what finish would to the files it was given.
@@ -104,8 +112,8 @@ function argOf(argv, name) {
 
   const assets = (variant) => path.join(dir, 'build/generated/assets/react', variant);
   const preserve = (variant) => path.join(dir, 'build/intermediates/bugsee-sourcemaps/react', variant);
-  const callFor = (variant) =>
-    calls.find((argv) => argOf(argv, '--bundle').includes(`/react/${variant}/`));
+  const callFor = (where) =>
+    calls.find((argv) => argOf(argv, '--bundle').includes(where.includes('/') ? `/${where}/` : `/react/${where}/`));
 
   beforeAll(() => {
     dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-gradle-hook-')));
@@ -115,11 +123,13 @@ function argOf(argv, name) {
     fs.writeFileSync(path.join(dir, 'settings.gradle'), "rootProject.name = 'bugsee-hook-fixture'\n");
     fs.writeFileSync(path.join(dir, 'gradle.properties'), 'org.gradle.jvmargs=-Xmx512m\n');
     fs.writeFileSync(path.join(dir, 'build.gradle'), BUILD_GRADLE);
-    for (const variant of ['freeRelease', 'paidRelease', 'brokenRelease', 'noversionRelease', 'release']) {
+    for (const variant of ['freeRelease', 'paidRelease', 'brokenRelease', 'noversionRelease', 'release', 'StagingRelease']) {
       fs.mkdirSync(assets(variant), { recursive: true });
       fs.writeFileSync(path.join(assets(variant), 'index.android.bundle'), 'bundle');
       fs.writeFileSync(path.join(assets(variant), 'index.android.bundle.bugsee-recompile'), 'stale copy');
     }
+    fs.mkdirSync(path.join(dir, 'build/custom/js'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'build/custom/js/index.android.bundle'), 'bundle');
     // Hermes on, through the wrapper: preserved JS and the hermesc note.
     fs.mkdirSync(preserve('freeRelease'), { recursive: true });
     fs.writeFileSync(path.join(preserve('freeRelease'), 'index.android.bundle.bugsee-js-source'), 'js');
@@ -143,6 +153,8 @@ function argOf(argv, name) {
         'createBundleBrokenReleaseJsAndAssets',
         'createBundleNoversionReleaseJsAndAssets',
         'createBundleReleaseJsAndAssets',
+        'createBundleStagingReleaseJsAndAssets',
+        'createBundleCustomReleaseJsAndAssets',
       ],
       { encoding: 'utf8', timeout: 10 * 60 * 1000 },
     );
@@ -165,6 +177,9 @@ function argOf(argv, name) {
     // A plain `release` variant, and the first output when splits add more.
     expect(argOf(callFor('release'), '--app-version')).toBe('1.0');
     expect(argOf(callFor('release'), '--app-build')).toBe('1');
+    // A capitalised flavor keeps its version lookup.
+    expect(argOf(callFor('StagingRelease'), '--app-version')).toBe('5.0');
+    expect(argOf(callFor('StagingRelease'), '--app-build')).toBe('5');
     // No version anywhere: empty, and the upload gate says so.
     expect(argOf(callFor('noversionRelease'), '--app-version')).toBe('');
     expect(argOf(callFor('noversionRelease'), '--app-build')).toBe('');
@@ -208,7 +223,20 @@ function argOf(argv, name) {
     expect(output).toContain('hermesCommand');
     expect(output).toContain('"Android source maps"');
     expect(calls.some((argv) => argOf(argv, '--bundle').includes('/react/brokenRelease/'))).toBe(false);
-    // Only that task failed; --continue ran the other four.
-    expect(calls).toHaveLength(4);
+    // Only that task failed; --continue ran the other six, each once although
+    // the script was applied twice.
+    expect(calls).toHaveLength(6);
+    expect(output.match(/compiled the bundle with Hermes/g)).toHaveLength(1);
+  });
+
+  it('applied twice, finishes a correctly wired Hermes bundle once', () => {
+    expect(calls.filter((argv) => argOf(argv, '--bundle').includes('/react/freeRelease/'))).toHaveLength(1);
+    expect(`${result.stdout}${result.stderr}`).not.toContain('createBundleFreeReleaseJsAndAssets FAILED');
+  });
+
+  it('finishes a Hermes-off bundle outside generated/assets', () => {
+    const custom = callFor('custom/js');
+    expect(argOf(custom, '--bundle')).toBe(path.join(dir, 'build/custom/js/index.android.bundle'));
+    expect(argOf(custom, '--app-version')).toBe('6.0');
   });
 });

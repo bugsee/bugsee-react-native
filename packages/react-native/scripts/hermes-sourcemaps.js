@@ -116,10 +116,10 @@ function injectComposedSourceMap({ bundlePath, composedMapPath, cliPath }) {
  * Where hermesc-preserve-js.sh writes, for a bundle under
  * `generated/assets`. Any other directory maps to itself.
  */
-function preserveDirFor(filePath) {
-  const marker = `${path.sep}generated${path.sep}assets${path.sep}`;
-  const replacement = `${path.sep}intermediates${path.sep}bugsee-sourcemaps${path.sep}`;
-  return path.dirname(filePath).replace(marker, replacement);
+function preserveDirFor(filePath, paths = path) {
+  const marker = `${paths.sep}generated${paths.sep}assets${paths.sep}`;
+  const replacement = `${paths.sep}intermediates${paths.sep}bugsee-sourcemaps${paths.sep}`;
+  return paths.dirname(filePath).replace(marker, replacement);
 }
 
 function sidecarName(bytecodePath) {
@@ -462,6 +462,7 @@ module.exports = {
   finishAfterCompose,
   injectComposedSourceMap,
   main,
+  preserveDirFor,
   readDebugId,
   resolveUploadSettings,
   retargetSourceMappingUrl,
