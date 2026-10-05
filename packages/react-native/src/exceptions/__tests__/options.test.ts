@@ -132,5 +132,17 @@ describe('exceptionOptionsMessage', () => {
     expect(exceptionOptionsMessage(new RangeError('ExceptionOptions.domain must be non-empty'))).toBe('RangeError');
     expect(exceptionOptionsMessage('s3cret')).toBe('string');
   });
+
+  it('never throws, even for a Proxy whose getPrototypeOf trap throws', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        getPrototypeOf(): object {
+          throw new Error('trap');
+        },
+      },
+    );
+    expect(exceptionOptionsMessage(hostile)).toBe('object');
+  });
 });
 

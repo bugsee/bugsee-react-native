@@ -33,10 +33,14 @@ function refuse(error: Error): never {
  * What a log line may say about `cause`: the message of an error
  * `encodeExceptionOptions` threw -- this package's own validation text, which
  * names fields and never values (`scripts/raw-messages.ts` checks every one
- * of them) -- and only the class name of anything else.
+ * of them) -- and only the class name of anything else. Never throws.
  */
 export function exceptionOptionsMessage(cause: unknown): string {
-  return cause instanceof Error && thrownHere.has(cause) ? cause.message : errorName(cause);
+  // WeakSet.has, not instanceof: it never runs app code (a Proxy trap), never
+  // throws, and is false for a primitive, so this is safe inside the catch
+  // that calls it. A member is one of this file's own TypeError/RangeError
+  // instances, whose `message` is a plain data property.
+  return thrownHere.has(cause as Error) ? (cause as Error).message : errorName(cause);
 }
 
 /**
