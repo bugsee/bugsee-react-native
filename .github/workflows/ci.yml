@@ -241,6 +241,18 @@ jobs:
             sleep 1
           done
 
+      # Bugsee.launch() compiles the SDK's Metal capture shaders on the main
+      # thread. On this freshly erased simulator the compiler is cold: about
+      # 2 s, and now and then more than the 10 s the e2e gives Status.Launched
+      # (a sample of one such run: main inside InitMetalDevice ->
+      # newLibraryWithSource:, waiting on MTLCompilerService). The status poll
+      # reads on main, so the console goes quiet after `status=1`. One launch
+      # first leaves the compiler warm, and the e2e times the SDK.
+      - name: Warm the simulator's Metal compiler
+        if: steps.creds.outputs.have == 'true'
+        working-directory: examples/bare
+        run: ./scripts/warm-simulator-metal.sh "${{ steps.sim.outputs.udid }}"
+
       # The only job that proves the SDK RUNS. Every other job passes with
       # `launch` gutted to `resolve(@YES)`: the build succeeds and the
       # framework is still embedded and linked. Verified by doing exactly
