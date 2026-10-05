@@ -79,6 +79,11 @@ describe('bugsee-xcode.sh', () => {
     env = {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
+      // The hook's children get only this env: the dead loopback is the
+      // default, and the upload test swaps in its stub.
+      BUGSEE_ENDPOINT: process.env.BUGSEE_ENDPOINT,
+      HTTPS_PROXY: process.env.HTTPS_PROXY,
+      NO_PROXY: process.env.NO_PROXY,
       NODE_BINARY: process.execPath,
       REACT_NATIVE_PATH: rn,
       SRCROOT: ios,

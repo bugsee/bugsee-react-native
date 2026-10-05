@@ -15,6 +15,10 @@ env:
   # needed to prove the native plumbing compiles and links.
   BUGSEE_TOKEN_IOS: 00000000-0000-4000-8000-000000000000
   BUGSEE_TOKEN_ANDROID: 00000000-0000-4000-8000-000000000000
+  # A dead loopback port, so nothing a job runs (tests, mutants, the build
+  # hooks' source-map upload) can reach the Bugsee API, whatever the token.
+  # ios-e2e sets its own endpoint in the one step that needs it.
+  BUGSEE_ENDPOINT: http://127.0.0.1:9
 
 jobs:
   js:

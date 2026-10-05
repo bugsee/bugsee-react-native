@@ -1241,7 +1241,7 @@ describe('baked iOS token in the Archive post-action', () => {
       const run = (script: string, extra: Record<string, string> = {}) =>
         spawnSync('/bin/sh', ['-c', script], {
           encoding: 'utf8',
-          env: { PATH: '/usr/bin:/bin', PROJECT_DIR: join(dir, 'ios'), NODE_BINARY: process.execPath, ...extra },
+          env: { PATH: '/usr/bin:/bin', BUGSEE_ENDPOINT: 'http://127.0.0.1:9', PROJECT_DIR: join(dir, 'ios'), NODE_BINARY: process.execPath, ...extra },
         });
       expect(run(dsymPostActionScript('tok-baked'), { BUGSEE_APP_TOKEN: 'from-env' }).status).toBe(0);
       expect(readFileSync(seen, 'utf8')).toBe('tok-baked xcode post-action');
