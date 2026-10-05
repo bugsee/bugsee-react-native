@@ -118,7 +118,7 @@ describe('ensureMavenCentral, exactly', () => {
       lines('pluginManagement {', '  includeBuild("x")', '', '  repositories {', '      gradlePluginPortal()', '      google()', '      mavenCentral()', '  }', '  }', ''),
     );
     expect(() => ensureMavenCentral('pluginManagement { includeBuild("x") }\n')).toThrow(
-      `${CANNOT_EDIT} android/settings.gradle: line 1: \`pluginManagement { includeBuild("x") }\` shares its line with other code, so a repositories block with mavenCentral() cannot be added`,
+      `${CANNOT_EDIT} android/settings.gradle: line 1: \`pluginManagement { includeBuild("x") }\` shares its line with other code, so a repositories block with mavenCentral() cannot be added without rewriting that line. Put the brace alone on its line, or add repositories { mavenCentral() } to pluginManagement yourself, then run expo prebuild again`,
     );
     expect(() => ensureMavenCentral('pluginManagement {\n    includeBuild("x") }\n')).toThrow(
       `${CANNOT_EDIT} android/settings.gradle: line 2: \`includeBuild("x") }\` shares its line with other code`,
@@ -310,6 +310,10 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     expect(beforeHook(ensureAppAppliesPlugin(own, '7.3.0'))).toBe(
       'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n  implementation "com.bugsee:bugsee-android-ndk:7.3.0"   // bugsee:ndk\n    implementation("a")\n}\n\n',
     );
+    const quiet = jest.fn();
+    ensureAppAppliesPlugin(own, '7.3.0', quiet);
+    ensureAppAppliesPlugin(own, null, quiet);
+    expect(quiet).not.toHaveBeenCalled();
     const pinned = 'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0" // pinned\n    implementation("a")\n}\n';
     const log = jest.fn();
     expect(beforeHook(ensureAppAppliesPlugin(pinned, '7.3.0', log))).toBe(`${pinned}\n`);
@@ -1084,6 +1088,39 @@ describe('lexer and react block, exactly', () => {
   });
 });
 
+describe('every internal error is a refusal', () => {
+  const file = 'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n';
+
+  it('turns an error thrown inside a transform into the standard refusal, and lets a refusal through', () => {
+    expect(() =>
+      ensureAppAppliesPlugin(file, '7.3.0', () => {
+        throw new TypeError('boom');
+      }),
+    ).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: the plugin hit an internal error while reading it (boom). Report this with the file attached, or make the Bugsee edits by hand (package README, "Android source maps"), then run expo prebuild again`,
+    );
+    expect(() =>
+      ensureAppAppliesPlugin(file, '7.3.0', () => {
+        throw new Error(`${CANNOT_EDIT} android/app/build.gradle: passed through`);
+      }),
+    ).toThrow(`${CANNOT_EDIT} android/app/build.gradle: passed through`);
+    expect(() =>
+      ensureAppAppliesPlugin(file, '7.3.0', () => {
+        throw 'not an error';
+      }),
+    ).toThrow('internal error while reading it (not an error)');
+  });
+
+  it('reads a comment between the operands of a division as ambiguous', () => {
+    expect(() => ensureAppAppliesPlugin('def x = 4 /*c*/ / 2\n', null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 1: cannot tell whether the / starts a slashy string or divides. Fix that line`,
+    );
+    expect(() => ensureAppAppliesPlugin('def z = a$/2\n', null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 1: cannot tell whether the / starts a slashy string or divides`,
+    );
+  });
+});
+
 describe('refusals name the construct left open', () => {
   const at = (reason: string): string =>
     `${CANNOT_EDIT} android/app/build.gradle: ${reason}. Fix that line, or make the Bugsee edits by hand (package README, "Android source maps"), then run expo prebuild again`;
@@ -1156,6 +1193,20 @@ describe('hook lines, exactly', () => {
     const exclude = "configurations.configureEach {\n    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'\n}";
     const symbolLast = `${applied}\n${exclude}\n// bugsee-symbol-table: x\n// more`;
     expect(ensureAppAppliesPlugin(symbolLast, null)).toBe(`${applied}\n${exclude}\n// bugsee-symbol-table: x\n// more\n\n${hook}\n`);
+  });
+
+  it('reads a legacy marker and a symbol marker whose lines end the file', () => {
+    const own = `${applied}\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk\n}\n`;
+    expect(ensureAppAppliesPlugin(`${own}${legacyMarker}\ndef bugseeHermesSourcemaps = "x"`, '7.3.0')).toBe(
+      `${own}def bugseeHermesSourcemaps = "x"\n\n${hook}\n`,
+    );
+    // Replaced in place, the hook keeps the file's missing final newline.
+    expect(ensureAppAppliesPlugin(`${own}${legacyMarker}\ndef bugseeHermesSourcemaps = "x"\nafterEvaluate {\n}`, '7.3.0')).toBe(
+      `${own}${hook}`,
+    );
+    const exclude = "configurations.configureEach {\n    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'\n}";
+    const symbolMarker = "// bugsee-symbol-table: AGP defaults this to NONE, so the plugin's native upload finds";
+    expect(ensureAppAppliesPlugin(`${applied}\n${exclude}\n${symbolMarker}`, null)).toBe(`${applied}\n${exclude}\n\n${hook}\n`);
   });
 
   it('keeps an apply line with a trailing comment, and the line that follows a marker with one', () => {

@@ -371,7 +371,12 @@ const appCases: Case[] = [
   },
 
   // --- The reviewer's safe inputs, kept safe ---
-  { name: 'an empty file', segments: [u('')], noEol: true },
+  {
+    name: 'an empty file',
+    segments: [u('')],
+    noEol: true,
+    check: (output) => expect(output.startsWith(PLUGIN_APPLY)).toBe(true),
+  },
   {
     name: 'braces in strings and comments around the hook',
     segments: [u(REACT_APPLY), u('def a = "{"\n// }\n/* { */'), b(`${MARKER}\n${APPLY}`), u('def z = "}"')],
@@ -870,6 +875,61 @@ const anchorCases: Case[] = [
     refuse: true,
   },
   {
+    name: 'every string escape before the dependencies anchor keeps the mask aligned',
+    segments: [
+      u(REACT_APPLY),
+      u('def a = "x\\"y"\ndef b = /a\\/b/\ndef c = $/a$$b$/c/$\ndef d = "${x}" + \'\\\'\'\ndef e = /* c */ 1'),
+      u(userDeps),
+    ],
+    check: (output, option) => {
+      if (option.ndk !== null) {
+        expect(output).toContain(`dependencies {\n    ${ndkLine(option.ndk)}\n    implementation("com.example:kept:1.0")\n}`);
+      }
+    },
+  },
+  {
+    name: 'a dollar identifier after an operator, and interpolation inside a dollar-slashy string',
+    segments: [u(REACT_APPLY), u('def q = $money + 1\ndef r = $/a${"/$"}b/$'), u(userDeps)],
+  },
+  {
+    name: 'a code line with a trailing comment between a legacy marker and its fingerprint is user code',
+    segments: [u(REACT_APPLY), b(LEGACY_MARKER), u('def x = 1 // note\ndef bugseeHermesSourcemaps = "x"'), u(userAfter)],
+  },
+  {
+    name: 'a whitespace-only first line in the dependencies block does not set the indentation',
+    segments: [u(REACT_APPLY), u('dependencies {\n   \n    implementation("a")\n}')],
+    check: (output, option) => {
+      if (option.ndk !== null) {
+        expect(output).toContain(`dependencies {\n    ${ndkLine(option.ndk)}\n   \n    implementation("a")\n}`);
+      }
+    },
+  },
+  {
+    name: 'Bugsee\'s own NDK line with trailing spaces after its marker is still its own',
+    segments: [u(REACT_APPLY), u('dependencies {'), b('    implementation "com.bugsee:bugsee-android-ndk:1.0.0" // bugsee:ndk  '), u('}')],
+    check: (output, option) => {
+      expect(output).not.toContain('1.0.0');
+      if (option.ndk !== null) {
+        expect(output).toContain(`    ${ndkLine(option.ndk)}  \n`);
+      }
+    },
+  },
+  {
+    name: 'an own-looking NDK line inside a string is the user\'s',
+    segments: [u(REACT_APPLY), u(`def doc = """\n    ${ndkLine('1.0.0')}\n"""`), u(userDeps)],
+    check: (output) => expect(output).not.toContain('9.9.9'),
+  },
+  {
+    name: 'exactly the four marker comments of the symbol block before a user ndk block refuses when the block would go',
+    segments: [
+      u(REACT_APPLY),
+      u('android {\n    buildTypes {\n        release {'),
+      u(SYMBOL_BLOCK.split('\n').slice(0, 4).map((line) => `            ${line}`).join('\n')),
+      u('            ndk {\n                abiFilters "arm64-v8a"\n            }\n        }\n    }\n}'),
+    ],
+    refuse: (option) => option.ndk === null,
+  },
+  {
     name: 'a user dependencies block whose opener is the plugin\'s own marked opener shape is kept',
     segments: [u(REACT_APPLY), u(`${NDK_OPENER}\n    implementation("a")\n}`)],
     quoted: { ndkOpener: 1 },
@@ -964,7 +1024,7 @@ describe('app/build.gradle corpus: every user byte survives, or the plugin refus
     },
   );
 
-  // Every ordered pair of option sets: a, then b, then b again.
+  // Every ordered pair of option sets: a, then b; a second b must change nothing.
   const pairs = appOptions.flatMap((a) => appOptions.filter((b) => b !== a).map((b) => [a, b] as const));
   it.each(cases.filter((c) => c.refuse === undefined).map((c) => [c.name, c] as const))(
     'survives every ordered pair of option sets: %s',
@@ -1048,6 +1108,11 @@ const settingsCases: Case[] = [
   { name: 'S03: a one-line pluginManagement without repositories is refused', segments: [u('pluginManagement { includeBuild("x") }'), u('include ":app"')], refuse: true },
   { name: 'S04: an indented pluginManagement closer keeps its indentation', segments: [u('pluginManagement {\n    includeBuild("x")\n  }'), u('include ":app"')] },
   { name: 'S11: a repositories closer sharing its line with an entry is refused', segments: [u('pluginManagement {\n    repositories {\n        google() }\n}'), u('include ":app"')], refuse: true },
+  { name: 'code before the repositories opener on its line is refused', segments: [u('pluginManagement {\n    x(); repositories {\n        google()\n    }\n}'), u('include ":app"')], refuse: true },
+  { name: 'code before the pluginManagement opener on its line is refused', segments: [u('x(); pluginManagement {\n    includeBuild("x")\n}'), u('include ":app"')], refuse: true },
+  { name: 'an entry after the repositories opener on its line is refused', segments: [u('pluginManagement {\n    repositories { google()\n    }\n}'), u('include ":app"')], refuse: true },
+  { name: 'an entry after the pluginManagement opener on its line is refused', segments: [u('pluginManagement { includeBuild("x")\n}'), u('include ":app"')], refuse: true },
+  { name: 'openers written without a space before the brace', segments: [u('pluginManagement{\n    repositories{\n        google()\n    }\n}'), u('include ":app"')] },
   { name: 'a one-line pluginManagement that already has mavenCentral is left alone', segments: [u('pluginManagement { repositories { mavenCentral() } }'), u('include ":app"')] },
   { name: 'trailing comments on the pluginManagement and repositories closers', segments: [u('pluginManagement {\n    repositories {\n        google()\n    } // repos\n} // pm'), u('include ":app"')] },
   { name: 'unbalanced settings are refused', segments: [u('pluginManagement {\n    repositories {\n}'), u('include ":app"')], refuse: true },
