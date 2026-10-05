@@ -37,11 +37,13 @@ def bugseeBuildDir = project.layout.buildDirectory.get().asFile
 def bugseeVariantVersions = [:]
 
 // Keyed the way React Native names the task: createBundle + the variant name
-// with its first letter upper-cased + JsAndAssets. A flavor declared with a
-// capital keeps its name. Only the two version providers are kept.
+// with its first letter title-cased + JsAndAssets. A flavor declared with a
+// capital keeps its name. Character.toTitleCase is what RN 0.87 uses and is
+// locale-insensitive; String.toUpperCase() is not (under tr_TR an "i" becomes
+// "İ", and the lookup would miss). Only the two version providers are kept.
 androidComponents.onVariants(androidComponents.selector().all()) { variant ->
     def output = variant.outputs.first()
-    def key = variant.name.substring(0, 1).toUpperCase() + variant.name.substring(1)
+    def key = String.valueOf(Character.toTitleCase(variant.name.charAt(0))) + variant.name.substring(1)
     bugseeVariantVersions[key] = [output.versionName, output.versionCode]
 }
 
