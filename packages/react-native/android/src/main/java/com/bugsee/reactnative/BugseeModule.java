@@ -719,9 +719,18 @@ public class BugseeModule extends NativeBugseeSpec
         emitOnBreadcrumbFilterRequest(payload);
     }
 
+    /**
+     * Returns true. The return is what keeps the call on the JS thread:
+     * codegen queues a {@code void} TurboModule method onto the native
+     * modules thread, while {@link #addBreadcrumb} (which returns a value)
+     * runs inline. A queued clear could then run between a same-turn
+     * re-enable and the add after it, and that add recorded with no filter,
+     * its original value kept.
+     */
     @Override
-    public void setBreadcrumbFilterEnabled(final boolean enabled) {
+    public boolean setBreadcrumbFilterEnabled(final boolean enabled) {
         BreadcrumbFilterBridge.shared().setEnabled(enabled);
+        return true;
     }
 
     @Override

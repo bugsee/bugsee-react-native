@@ -1476,6 +1476,12 @@ RCT_EXPORT_MODULE(Bugsee)
 /// `setBreadcrumbFilter:`. `enabled` registers the bridge; `NO` passes nil,
 /// which removes it. The block returns without waiting on JS.
 ///
+/// Returns `@YES`. The return is what keeps the call on the JS thread:
+/// codegen queues a `void` TurboModule method onto the shared module queue,
+/// and `addBreadcrumb` (which returns a value) runs inline. A queued clear
+/// could then uninstall on main between a same-turn re-enable and the add
+/// after it, and that add recorded with no filter, its original value kept.
+///
 /// Enable stays on the calling queue, before this method returns. Not wrapped
 /// in `BGSRNRunOnMain`: an async install would let a crumb recorded on the
 /// next line pass before the filter existed. Disable hops to the main queue,
@@ -1485,12 +1491,12 @@ RCT_EXPORT_MODULE(Bugsee)
 /// callback, before main runs, must not have the queued nil remove the newer
 /// filter. There is no timer that calls `decision(nil)`. A late decision
 /// still records.
-- (void)setBreadcrumbFilterEnabled:(BOOL)enabled {
+- (NSNumber *)setBreadcrumbFilterEnabled:(BOOL)enabled {
   if (enabled) {
     @synchronized (BGSRNBreadcrumbFilterLock()) {
       BGSRNBreadcrumbFilterGeneration += 1;
       if (BGSRNBreadcrumbFilterInstalled) {
-        return;
+        return @YES;
       }
       BGSRNBreadcrumbFilterInstalled = YES;
     }
@@ -1548,7 +1554,7 @@ RCT_EXPORT_MODULE(Bugsee)
           }
         }
       }];
-    return;
+    return @YES;
   }
   int64_t generation = 0;
   @synchronized (BGSRNBreadcrumbFilterLock()) {
@@ -1564,6 +1570,7 @@ RCT_EXPORT_MODULE(Bugsee)
       [Bugsee setBreadcrumbFilter:nil];
     }
   });
+  return @YES;
 }
 
 - (BOOL)emitBreadcrumbFilterRequest:(NSString *)requestId
