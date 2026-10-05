@@ -1,13 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
 import { compileModsAsync } from '@expo/config-plugins';
 import type { ExpoConfig } from '@expo/config-types';
 
-import withBugsee, { APP_GRADLE_NOT_GROOVY, platformToken } from '../index';
+import withBugsee, { APP_GRADLE_NOT_GROOVY, gradleNotGroovy, platformToken } from '../index';
 import type { BugseePluginProps } from '../index';
+import { CANNOT_EDIT } from '../gradle';
 import type * as NativeVersions from '../native-versions';
 import type * as NodePath from 'node:path';
 
@@ -254,6 +255,30 @@ describe('withBugsee through the Expo mod compiler', () => {
     renameSync(join(app, 'build.gradle'), join(app, 'build.gradle.kts'));
     await expect(prebuild({}, ['android'])).rejects.toThrow(APP_GRADLE_NOT_GROOVY);
     expect(APP_GRADLE_NOT_GROOVY).toContain('bugsee-sourcemaps.gradle');
+    expect(APP_GRADLE_NOT_GROOVY.startsWith(`${CANNOT_EDIT} android/app/build.gradle:`)).toBe(true);
+  });
+
+  it('refuses a Kotlin settings or root file at prebuild', async () => {
+    const android = join(projectRoot, 'android');
+    renameSync(join(android, 'settings.gradle'), join(android, 'settings.gradle.kts'));
+    await expect(prebuild({}, ['android'])).rejects.toThrow(gradleNotGroovy('android/settings.gradle'));
+    renameSync(join(android, 'settings.gradle.kts'), join(android, 'settings.gradle'));
+    renameSync(join(android, 'build.gradle'), join(android, 'build.gradle.kts'));
+    await expect(prebuild({}, ['android'])).rejects.toThrow(gradleNotGroovy('android/build.gradle'));
+    expect(gradleNotGroovy('android/build.gradle').startsWith(`${CANNOT_EDIT} android/build.gradle:`)).toBe(true);
+  });
+
+  it('refuses a Gradle file it cannot read before it writes anything', async () => {
+    const before = snapshot(projectRoot);
+    appendFileSync(join(projectRoot, FILES.app), 'def open = "never closed\n');
+    const broken = snapshot(projectRoot);
+    expect(broken).not.toEqual(before);
+    await expect(prebuild({ appToken: ANDROID_TOKEN }, ['android'])).rejects.toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line `,
+    );
+    // No settings, root, properties or manifest edit happened.
+    expect(snapshot(projectRoot)).toEqual(broken);
+    expect(readdirSync(join(projectRoot, 'android'))).not.toContain('bugsee.properties');
   });
 
   it('fails loudly without an iOS project or a shared scheme', async () => {
