@@ -9,11 +9,21 @@
  * error stage. This scenario does not add a timeout that would pass the
  * event through, and it does not make a request of its own.
  *
+ * Android records neither of those: its SDK does not capture its own session
+ * traffic (a run with and without airplane mode saw no candidate), and RN has
+ * no websocket here. So on Android only, the scenario makes one `fetch` to the
+ * dead endpoint, which `bugsee-android-okhttp` records as a `before` and an
+ * `error` event. The filter rewrites the `before` stage's url and never settles
+ * the `error` stage. iOS makes no request of its own.
+ *
  * The upload waits long enough for the rewrite's round trip to be recorded,
  * and not long enough for a second, local timeout to matter: the recording
  * `duration` stays the app's 90.
  */
 import Bugsee, { type NetworkFilterEvent } from '@bugsee/react-native';
+import { Platform } from 'react-native';
+
+import { DEAD_ENDPOINT } from '../endpoint';
 
 export const NETWORK_FILTER_SCENARIOS = ['network-filter'] as const;
 
@@ -55,6 +65,13 @@ function urlOf(event: NetworkFilterEvent): string {
   return typeof event.url === 'string' ? event.url : '';
 }
 
+const ON_ANDROID = Platform.OS === 'android';
+
+/** The path the Android probe fetches; the nonce keeps it this run's own. */
+function probePath(nonce: string): string {
+  return `bugsee-e2e-nf/${nonce}`;
+}
+
 /**
  * Called before `launch()`. Registration finishes before this returns, so a
  * later Bugsee call on the same turn already sees the filter.
@@ -64,8 +81,10 @@ export function installNetworkFilter(nonce: string): void {
   Bugsee.setNetworkFilter((event) => {
     const id = idOf(event);
     const url = urlOf(event);
-    const sessions = url.includes('/v2/sessions');
-    if (id !== undefined && event.type === 'websocket' && !slots.rewrote) {
+    const probe = ON_ANDROID && url.includes(probePath(nonce));
+    const sessions = probe || url.includes('/v2/sessions');
+    const rewritable = probe ? event.type === 'before' : event.type === 'websocket';
+    if (id !== undefined && rewritable && !slots.rewrote) {
       slots.rewrote = true;
       const joiner = url.includes('?') ? '&' : '?';
       const next = `${url}${joiner}bugsee-e2e-redacted=${nonce}`;
@@ -91,6 +110,12 @@ export function installNetworkFilter(nonce: string): void {
  * not treat that as a rewritten event.
  */
 export function runNetworkFilterScenario(nonce: string): void {
+  if (ON_ANDROID) {
+    fetch(`${DEAD_ENDPOINT}/${probePath(nonce)}`).then(
+      () => mark(`probe fetched nonce=${nonce}`),
+      () => mark(`probe failed nonce=${nonce}`),
+    );
+  }
   let uploaded = false;
   const upload = (): void => {
     if (uploaded) {
