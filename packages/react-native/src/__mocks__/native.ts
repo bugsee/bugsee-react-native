@@ -240,7 +240,7 @@ export const native = {
     return breadcrumbFilterRequestSubscribeCalls;
   },
 
-  setBreadcrumbFilterEnabled: jest.fn<void, [boolean]>(),
+  setBreadcrumbFilterEnabled: jest.fn<boolean, [boolean]>(() => true),
   replyBreadcrumbFilter: jest.fn<void, [string, string | null]>(),
 
   /**

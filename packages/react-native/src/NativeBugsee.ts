@@ -335,8 +335,14 @@ export interface Spec extends TurboModule {
    * bridge on the calling queue, before this method returns. `false` removes
    * it on the main queue, behind any `addBreadcrumb` already queued there.
    * Passing `null` is how both SDKs clear a filter.
+   *
+   * Returns `true`. The return is what keeps the call on the JS thread, in
+   * order with {@link addBreadcrumb}: codegen queues a `void` TurboModule
+   * method onto the module queue. A queued clear then ran between a
+   * same-turn re-enable and the add after it, and that add recorded with no
+   * filter, its original value kept.
    */
-  setBreadcrumbFilterEnabled(enabled: boolean): void;
+  setBreadcrumbFilterEnabled(enabled: boolean): boolean;
   /**
    * Answers one {@link onBreadcrumbFilterRequest}. `crumbJson` is the keep,
    * with every writable key the snapshot sent and `level` as its name;

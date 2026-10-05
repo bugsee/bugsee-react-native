@@ -137,10 +137,12 @@ final class BreadcrumbFilterBridge {
     }
 
     /**
-     * Serializes {@link #setEnabled} with {@code Bugsee.addBreadcrumb}.
-     * Those two TurboModule calls run on different threads, so an add can
-     * otherwise record before a filter installed on the previous line is
-     * visible. The lock is reentrant: the filter runs inside the add.
+     * Serializes {@link #setEnabled} with {@code Bugsee.addBreadcrumb}. Both
+     * TurboModule calls return a value, so both run on the JS thread, in the
+     * order JS made them. The lock covers the install becoming visible to an
+     * add. It does not order them: a queued {@code void} enable could still
+     * run after an add made on a later line. The lock is reentrant: the
+     * filter runs inside the add.
      */
     void withSdkLock(@NonNull final Runnable body) {
         synchronized (sdkLock) {
