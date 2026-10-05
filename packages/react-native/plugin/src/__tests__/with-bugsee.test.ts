@@ -268,15 +268,17 @@ describe('withBugsee through the Expo mod compiler', () => {
     expect(gradleNotGroovy('android/build.gradle').startsWith(`${CANNOT_EDIT} android/build.gradle:`)).toBe(true);
   });
 
-  it('refuses a Gradle file it cannot read before it writes anything', async () => {
+  it.each([
+    ['app', 'android/app/build.gradle'],
+    ['settings', 'android/settings.gradle'],
+    ['root', 'android/build.gradle'],
+  ] as const)('refuses a %s Gradle file it cannot read before it writes anything', async (file, name) => {
     const before = snapshot(projectRoot);
-    appendFileSync(join(projectRoot, FILES.app), 'def open = "never closed\n');
+    appendFileSync(join(projectRoot, FILES[file]), 'def open = "never closed\n');
     const broken = snapshot(projectRoot);
     expect(broken).not.toEqual(before);
-    await expect(prebuild({ appToken: ANDROID_TOKEN }, ['android'])).rejects.toThrow(
-      `${CANNOT_EDIT} android/app/build.gradle: line `,
-    );
-    // No settings, root, properties or manifest edit happened.
+    await expect(prebuild({ appToken: ANDROID_TOKEN }, ['android'])).rejects.toThrow(`${CANNOT_EDIT} ${name}: line `);
+    // No settings, root, app, properties or manifest edit happened.
     expect(snapshot(projectRoot)).toEqual(broken);
     expect(readdirSync(join(projectRoot, 'android'))).not.toContain('bugsee.properties');
   });
