@@ -35,9 +35,11 @@ jobs:
     # Fails the build under each config's break threshold. The point is not
     # the number: tests that assert nothing still pass, and this is what
     # notices. One job per gate, so the slowest gate sets the wall time
-    # rather than their sum. Each config sets ignoreStatic: a static mutant
-    # (a module-level constant) reruns the whole suite, and in scripts/ those
-    # were 64% of the mutants and 99% of the run time.
+    # rather than their sum. The scripts config sets ignoreStatic: a static
+    # mutant (a module-level constant) reruns the whole suite, and in scripts/
+    # those were 64% of the mutants and 99% of the run time. src keeps its
+    # static mutants: they are mostly killed, and without them it scores 92.
+    # The configs cap concurrency at 3 for laptops; a runner has 4 vCPUs.
     name: mutation (${{ matrix.gate }})
     runs-on: ubuntu-latest
     strategy:
@@ -51,7 +53,7 @@ jobs:
           node-version: '22.18'
       - run: corepack enable
       - run: yarn install --immutable
-      - run: yarn stryker run stryker.${{ matrix.gate }}.json
+      - run: yarn stryker run stryker.${{ matrix.gate }}.json --concurrency 4
 
   compat:
     name: rn compat (${{ matrix.react-native }})

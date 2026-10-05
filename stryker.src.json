@@ -12,7 +12,6 @@
     "progress"
   ],
   "coverageAnalysis": "perTest",
-  "ignoreStatic": true,
   "mutate": [
     "packages/react-native/src/**/*.ts",
     "packages/react-native/src/**/*.tsx",
