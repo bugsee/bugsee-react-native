@@ -14,8 +14,10 @@ FOUNDATION_EXPORT const int32_t BGSRNSecureFallbackDisplaySize;
 /// The regions the app has asked Bugsee not to record, in the form the SDK
 /// pulls them.
 ///
-/// The SDK does not subscribe to changes. It asks, 2-3 times a second and on
-/// the MAIN thread, for a packed buffer of little-endian `int32`
+/// The SDK does not subscribe to changes. It asks on the MAIN thread, once per
+/// captured frame and per report screenshot (and from the touch filter, at
+/// most every 100 ms, while nothing captures), for a packed buffer of
+/// little-endian `int32`
 /// `[version, count, left, top, right, bottom, ...]`, and re-reads the
 /// rectangles only when the version differs from the one it saw last. Two
 /// properties follow, and both are load-bearing rather than cosmetic:

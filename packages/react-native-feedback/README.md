@@ -16,7 +16,7 @@ yarn add @bugsee/react-native @bugsee/react-native-feedback
 
 No Expo config plugin. Autolinking adds `bugsee-android-feedback` on Android.
 On iOS the podspec vendors the `bugsee/feedback-spm` sources for the same
-`7.0.0-beta3` pin as the core SDK, and React Native 0.87 resolves that
+`7.0.0-beta4` pin as the core SDK, and React Native 0.87 resolves that
 package through Swift Package Manager. There is no `spm_dependency`: that
 helper does not embed the framework.
 
