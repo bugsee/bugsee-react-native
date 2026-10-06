@@ -210,6 +210,12 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     );
   });
 
+  it('removes an exclude block with a whitespace-only line before it as its blank line', () => {
+    expect(beforeHook(ensureAppAppliesPlugin(`apply plugin: "com.bugsee.android.gradle"\na()\n   \n${exclude}\n`, '7.3.0'))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\na()\n\n${ndkBlock}\n\n`,
+    );
+  });
+
   it('removes an exclude block wherever it sits, with the one blank line it brought', () => {
     const expected = `apply plugin: "com.facebook.react"\napply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n}\n\n`;
     const body = 'apply plugin: "com.facebook.react"\ndependencies {\n}\n';
@@ -1103,7 +1109,7 @@ describe('every internal error is a refusal', () => {
       ensureAppAppliesPlugin(file, '7.3.0', () => {
         throw new Error(`${CANNOT_EDIT} android/app/build.gradle: passed through`);
       }),
-    ).toThrow(`${CANNOT_EDIT} android/app/build.gradle: passed through`);
+    ).toThrow(new Error(`${CANNOT_EDIT} android/app/build.gradle: passed through`));
     expect(() =>
       ensureAppAppliesPlugin(file, '7.3.0', () => {
         throw 'not an error';
@@ -1134,8 +1140,9 @@ describe('refusals name the construct left open', () => {
     expect(() => ensureAppAppliesPlugin('a()\n}\n', null)).toThrow(at('line 2: a closing brace has no opening brace'));
     expect(() => ensureAppAppliesPlugin('android {\n    x {\n}\n', null)).toThrow(at('line 1: a brace opened on this line never closes'));
     expect(() => ensureAppAppliesPlugin('def a = { 1 } / 2\n', null)).toThrow(at('line 1: cannot tell whether the / starts a slashy string or divides'));
-    // A string open at the end of the file without a newline.
+    // A string open at the end of the file without a newline, with or without a trailing backslash.
     expect(() => ensureAppAppliesPlugin('def a = "x', null)).toThrow(at('line 1: a string opened on this line does not close on it'));
+    expect(() => ensureAppAppliesPlugin('def a = "x\\', null)).toThrow(at('line 1: a string opened on this line does not close on it'));
   });
 });
 

@@ -375,7 +375,12 @@ const appCases: Case[] = [
     name: 'an empty file',
     segments: [u('')],
     noEol: true,
-    check: (output) => expect(output.startsWith(PLUGIN_APPLY)).toBe(true),
+    check: (output, option) =>
+      expect(output).toBe(
+        option.ndk === null
+          ? `${PLUGIN_APPLY}\n${EXCLUDE_BLOCK}\n\n${MARKER}\n${APPLY}\n${option.uploads ? '' : `\n${UPLOADS_OFF_BLOCK}\n`}`
+          : `${PLUGIN_APPLY}\n${NDK_OPENER}\n    ${ndkLine(option.ndk)}\n}\n\n${MARKER}\n${APPLY}\n${option.uploads ? '' : `\n${UPLOADS_OFF_BLOCK}\n`}`,
+      ),
   },
   {
     name: 'braces in strings and comments around the hook',
@@ -888,8 +893,31 @@ const anchorCases: Case[] = [
     },
   },
   {
-    name: 'a dollar identifier after an operator, and interpolation inside a dollar-slashy string',
-    segments: [u(REACT_APPLY), u('def q = $money + 1\ndef r = $/a${"/$"}b/$'), u(userDeps)],
+    name: 'a dollar identifier after an operator',
+    segments: [u(REACT_APPLY), u('def q = $money + 1'), u(userDeps)],
+  },
+  {
+    name: 'interpolation inside a dollar-slashy string',
+    segments: [u(REACT_APPLY), u('def r = $/a${"/$"}b/$'), u(userDeps)],
+  },
+  {
+    name: 'a block comment line between a legacy marker and its fingerprint is user code',
+    segments: [u(REACT_APPLY), b(LEGACY_MARKER), u('/* note */\ndef bugseeHermesSourcemaps = "x"'), u(userAfter)],
+  },
+  {
+    name: 'a multi-line build type whose opener holds code is refused',
+    segments: [u(REACT_APPLY), u('android {\n    buildTypes {\n        release { minifyEnabled true\n        }\n    }\n}')],
+    refuse: (option) => option.ndk !== null,
+  },
+  {
+    name: 'exactly the four marker comments then a user level line refuses when the block would go',
+    segments: [
+      u(REACT_APPLY),
+      u('android {\n    buildTypes {\n        release {'),
+      u(SYMBOL_BLOCK.split('\n').slice(0, 4).map((line) => `            ${line}`).join('\n')),
+      u("            ndk.debugSymbolLevel 'SYMBOL_TABLE'\n        }\n    }\n}"),
+    ],
+    refuse: (option) => option.ndk === null,
   },
   {
     name: 'a code line with a trailing comment between a legacy marker and its fingerprint is user code',
@@ -1024,7 +1052,7 @@ describe('app/build.gradle corpus: every user byte survives, or the plugin refus
     },
   );
 
-  // Every ordered pair of option sets: a, then b; a second b must change nothing.
+  // Every ordered pair of option sets: a, then b (the direct runs above pin that a second run changes nothing).
   const pairs = appOptions.flatMap((a) => appOptions.filter((b) => b !== a).map((b) => [a, b] as const));
   it.each(cases.filter((c) => c.refuse === undefined).map((c) => [c.name, c] as const))(
     'survives every ordered pair of option sets: %s',
@@ -1032,10 +1060,8 @@ describe('app/build.gradle corpus: every user byte survives, or the plugin refus
       const source = input(c);
       for (const [a, b] of pairs) {
         const label = `${c.name} [${a.ndk},${a.uploads} -> ${b.ndk},${b.uploads}]`;
-        const first = prebuildApp(source.text, a);
-        const second = prebuildApp(first, b);
+        const second = prebuildApp(prebuildApp(source.text, a), b);
         expect([label, lost(source.userLines, second)]).toEqual([label, null]);
-        expect([label, prebuildApp(second, b)]).toEqual([label, second]);
       }
     },
   );
@@ -1113,6 +1139,7 @@ const settingsCases: Case[] = [
   { name: 'an entry after the repositories opener on its line is refused', segments: [u('pluginManagement {\n    repositories { google()\n    }\n}'), u('include ":app"')], refuse: true },
   { name: 'an entry after the pluginManagement opener on its line is refused', segments: [u('pluginManagement { includeBuild("x")\n}'), u('include ":app"')], refuse: true },
   { name: 'openers written without a space before the brace', segments: [u('pluginManagement{\n    repositories{\n        google()\n    }\n}'), u('include ":app"')] },
+  { name: 'a pluginManagement opener without a space and no repositories', segments: [u('pluginManagement{\n    includeBuild("x")\n}'), u('include ":app"')] },
   { name: 'a one-line pluginManagement that already has mavenCentral is left alone', segments: [u('pluginManagement { repositories { mavenCentral() } }'), u('include ":app"')] },
   { name: 'trailing comments on the pluginManagement and repositories closers', segments: [u('pluginManagement {\n    repositories {\n        google()\n    } // repos\n} // pm'), u('include ":app"')] },
   { name: 'unbalanced settings are refused', segments: [u('pluginManagement {\n    repositories {\n}'), u('include ":app"')], refuse: true },

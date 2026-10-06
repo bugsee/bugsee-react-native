@@ -123,12 +123,16 @@ const isBlank = (ch: string): boolean => ch === ' ' || ch === '\t' || ch === '\r
  * whitespace separates it from the slash, and `tight` whether the slash is
  * followed by a non-space character.
  */
-function slashyAllowed(last: string, word: string, spaced: boolean, tight: boolean): boolean | null {
+function slashyAllowed(last: string, word: () => string | null, spaced: boolean, tight: boolean): boolean | null {
   if (last === ')' || last === ']' || last === STRING_END) {
     return false;
   }
   if (isWordChar(last)) {
-    if (BEFORE_EXPRESSION.has(word)) {
+    const identifier = word();
+    if (identifier === null) {
+      return null;
+    }
+    if (BEFORE_EXPRESSION.has(identifier)) {
       return true;
     }
     // `a /b/` reads like a regex argument, `a / b` and `a/b` like division.
@@ -247,7 +251,7 @@ function scan(source: string, file: string): Scan {
     }
     if (frame?.kind === 'string') {
       const next = source[i + 1];
-      if (frame.escape === 'quoted' && ch === '\\' && next !== undefined && next !== '\n') {
+      if (frame.escape === 'quoted' && ch === '\\' && (next ?? '\n') !== '\n') {
         emitN(i, 2);
         i += 2;
         continue;
@@ -297,8 +301,7 @@ function scan(source: string, file: string): Scan {
       const spaced = isBlank(source[i - 1] ?? '');
       const after = next ?? '\n';
       const tight = !isBlank(after) && after !== '\n';
-      const word = isWordChar(last) ? wordBefore(i) : '';
-      const slashy = word === null ? null : slashyAllowed(last, word, spaced, tight);
+      const slashy = slashyAllowed(last, () => wordBefore(i), spaced, tight);
       if (slashy === null) {
         throw unreadable(file, `line ${lineNo}: cannot tell whether the / starts a slashy string or divides`);
       }
@@ -388,6 +391,9 @@ function scan(source: string, file: string): Scan {
   // A line comment may still be open here; the last line's openAtEnd is never read.
   endLine(source.length);
   const text = masked.join('');
+  if (text.length !== source.length) {
+    throw new Error(`the mask drifted from the source (${text.length} vs ${source.length})`);
+  }
   return {
     file,
     source,
@@ -434,8 +440,7 @@ function isCloserLine(line: Line): boolean {
 
 /** The indentation of the block's first direct entry, or one level under the opener when it has none. */
 function innerIndent(s: Scan, opener: number, closer: number): string {
-  const depth = (s.lines[opener] as Line).depthAfter;
-  const inner = s.lines.slice(opener + 1, closer).find((line) => line.depth === depth && stripCr(line.raw).trim() !== '');
+  const inner = s.lines.slice(opener + 1, closer).find((line) => stripCr(line.raw).trim() !== '');
   return inner !== undefined ? indentOf(inner.raw) : `${indentOf((s.lines[opener] as Line).raw)}    `;
 }
 
