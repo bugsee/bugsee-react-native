@@ -256,3 +256,53 @@ function argOf(argv, name) {
     expect(argOf(custom, '--app-version')).toBe('6.0');
   });
 });
+
+// The root build.gradle the Expo plugin writes must be a script Gradle
+// accepts: in particular one plugins {} block per file. Configure-only, with a
+// stub settings file; the plugin ids resolve from the portal, Google and
+// Maven Central (no Bugsee endpoint is involved).
+(ENABLED ? describe : describe.skip)('root build.gradle outputs configure in Gradle', () => {
+  const { ensureGradlePluginDeclared } = require('../../plugin/build/gradle');
+  const { gradlePlugin } = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', '..', 'plugin', 'build', 'native-versions.baked.json'), 'utf8'),
+  );
+  const google = 'plugins {\n    id("com.google.gms.google-services") version "4.4.2" apply false\n}\n';
+  const buildscript = 'buildscript {\n    ext { x = 1 }\n}\n';
+
+  function configure(buildGradle) {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-root-gradle-')));
+    try {
+      fs.writeFileSync(
+        path.join(dir, 'settings.gradle'),
+        "pluginManagement {\n    repositories {\n        gradlePluginPortal()\n        google()\n        mavenCentral()\n    }\n}\nrootProject.name = 'bugsee-root-fixture'\n",
+      );
+      fs.writeFileSync(path.join(dir, 'gradle.properties'), 'org.gradle.jvmargs=-Xmx512m\n');
+      fs.writeFileSync(path.join(dir, 'build.gradle'), buildGradle);
+      return cp.spawnSync(GRADLEW, ['-p', dir, '--no-daemon', '--console=plain', '-q', 'help'], { encoding: 'utf8' });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it.each([
+    ['an existing plugins block', google],
+    ['buildscript then an existing plugins block', `${buildscript}${google}`],
+    ['buildscript and no plugins block', `${buildscript}allprojects { }\n`],
+  ])('%s', (_name, input) => {
+    const output = ensureGradlePluginDeclared(input, gradlePlugin);
+    expect(output.split('\n').filter((line) => /^plugins\s*\{/.test(line))).toHaveLength(1);
+    const result = configure(output);
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(/plugins \{\} block|FAILURE/);
+    expect(result.status).toBe(0);
+  });
+
+  // Gradle 9.4 accepts several plugins {} blocks while they lead the script; a
+  // plugins {} after any other statement is what it rejects. The check above
+  // would see that.
+  it('rejects a plugins block that follows another statement (control)', () => {
+    const late = `allprojects { }\nplugins {\n    id 'com.bugsee.android.gradle' version '${gradlePlugin}' apply false\n}\n`;
+    const result = configure(late);
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/plugins \{\}/);
+  });
+});

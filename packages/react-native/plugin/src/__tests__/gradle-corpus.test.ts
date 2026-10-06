@@ -1081,6 +1081,20 @@ const rootCases: Case[] = [
   { name: 'a declaration from an earlier prebuild', segments: [u('plugins {'), b(DECLARATION), u('}'), u('allprojects { }')] },
   { name: 'a declaration in a string is left', segments: [u('def doc = "plugins { id \'com.bugsee.android.gradle\' version \'0\' }"'), u('allprojects { }')] },
   { name: 'CRLF root', segments: [u('buildscript {\n    ext { x = 1 }\n}'), u('allprojects { }')], crlf: true },
+  {
+    // The bot's reproductions: a second plugins {} block makes Gradle reject the script.
+    name: 'an existing plugins block takes the pin (prepend path)',
+    segments: [u('plugins {\n    id("com.google.gms.google-services") version "4.4.2" apply false\n}'), u('allprojects { }')],
+  },
+  {
+    name: 'an existing plugins block after buildscript takes the pin',
+    segments: [u('buildscript {\n    ext { x = 1 }\n}'), u('plugins {\n    id("com.google.gms.google-services") version "4.4.2" apply false\n}'), u('allprojects { }')],
+  },
+  { name: 'an existing plugins block with tab indentation', segments: [u('plugins {\n\tid("x") version "1"\n}'), u('allprojects { }')] },
+  { name: 'a one-line plugins block is refused', segments: [u('plugins { id("x") version "1" }'), u('allprojects { }')], refuse: true },
+  { name: 'a plugins closer sharing its line is refused', segments: [u('plugins {\n    id("x") version "1" }'), u('allprojects { }')], refuse: true },
+  { name: 'a plugins block only in a comment or a string does not count', segments: [u('// plugins { id("x") }\ndef doc = "plugins {"'), u('allprojects { }')] },
+  { name: 'a nested plugins block is not the root one', segments: [u('buildscript {\n    plugins { }\n}'), u('allprojects { }')] },
   { name: 'R01: a trailing comment on the buildscript closer', segments: [u('buildscript {\n    ext { x = 1 }\n} // end buildscript'), u('allprojects { }')] },
   { name: 'R03: a one-line buildscript followed by another statement is refused', segments: [u('buildscript { ext { x = 1 } }; allprojects { }')], refuse: true },
   { name: 'a one-line buildscript is refused', segments: [u('buildscript { ext { x = 1 } }'), u('allprojects { }')], refuse: true },
@@ -1109,6 +1123,13 @@ describe('build.gradle corpus', () => {
       return;
     }
     expect(declared).toBe(1);
+    // Gradle allows one plugins {} block per script.
+    const topLevelPluginsBlocks = (text: string): number => text.split('\n').filter((line) => /^plugins\s*\{/.test(stripCr(line))).length;
+    expect(topLevelPluginsBlocks(once)).toBeLessThanOrEqual(1);
+    if (c.name.includes('existing plugins block')) {
+      expect(topLevelPluginsBlocks(once)).toBe(1);
+      expect(once).toMatch(/\n[ \t]+id '[^']+' version '1\.2\.3' apply false\n}/);
+    }
     const bumped = ensureGradlePluginDeclared(once, '2.0.0');
     expect(lost(source.userLines, bumped)).toBeNull();
     expect(countLines(bumped, "id 'com.bugsee.android.gradle' version '2.0.0' apply false")).toBe(1);

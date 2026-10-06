@@ -154,6 +154,21 @@ describe('ensureGradlePluginDeclared, exactly', () => {
     );
   });
 
+  it('adds the pin to an existing top-level plugins block, before a closer that stands alone', () => {
+    expect(ensureGradlePluginDeclared('plugins {\n  id("x") version "1"\n}\nallprojects { }\n', '1.0')).toBe(
+      "plugins {\n  id(\"x\") version \"1\"\n  id 'com.bugsee.android.gradle' version '1.0' apply false\n}\nallprojects { }\n",
+    );
+    expect(ensureGradlePluginDeclared('buildscript {\n}\nplugins {\n}\n', '1.0')).toBe(
+      "buildscript {\n}\nplugins {\n    id 'com.bugsee.android.gradle' version '1.0' apply false\n}\n",
+    );
+    expect(() => ensureGradlePluginDeclared('plugins { id("x") version "1" }\n', '1.0')).toThrow(
+      `${CANNOT_EDIT} android/build.gradle: line 1: \`plugins { id("x") version "1" }\` shares its line with other code, so the Bugsee Gradle plugin declaration cannot be added without rewriting that line. Put the brace alone on its line, or add \`id 'com.bugsee.android.gradle' version '1.0' apply false\` to that plugins block yourself, then run expo prebuild again`,
+    );
+    expect(() => ensureGradlePluginDeclared('plugins {\n    id("x") version "1" }\n', '1.0')).toThrow(
+      `${CANNOT_EDIT} android/build.gradle: line 2: \`id("x") version "1" }\` shares its line with other code`,
+    );
+  });
+
   it('declares the plugin only after a buildscript closer that stands alone, at its indentation', () => {
     expect(ensureGradlePluginDeclared('buildscript {\n  ext { x = 1 }\n  } // end\nallprojects { }\n', '1.0')).toBe(
       "buildscript {\n  ext { x = 1 }\n  } // end\n  plugins {\n      id 'com.bugsee.android.gradle' version '1.0' apply false\n  }\n\nallprojects { }\n",
