@@ -64,11 +64,10 @@ interface MetricsModule {
 }
 
 const repoRoot = join(import.meta.dirname, '..');
-const coreRequire = createRequire(
-  createRequire(import.meta.url).resolve('@stryker-mutator/core/package.json'),
-);
+// Resolved on first use: `scope` runs before any install, on Node alone.
+const core = () => createRequire(createRequire(import.meta.url).resolve('@stryker-mutator/core/package.json'));
 const fromCore = async <T>(name: string): Promise<T> =>
-  (await import(pathToFileURL(coreRequire.resolve(name)).href)) as T;
+  (await import(pathToFileURL(core().resolve(name)).href)) as T;
 
 const readJson = <T>(file: string): T => JSON.parse(readFileSync(file, 'utf8')) as T;
 const configFile = (gate: string) => `stryker.${gate}.json`;
@@ -88,7 +87,7 @@ function positiveInt(value: string | undefined, what: string): number {
 
 /** The files the gate's `mutate` selects, matched the way Stryker's ProjectReader does. */
 function mutateFiles(config: StrykerConfig): string[] {
-  const { minimatch } = coreRequire('minimatch') as {
+  const { minimatch } = core()('minimatch') as {
     minimatch: (path: string, pattern: string, options: { dot: boolean }) => boolean;
   };
   const tracked = execFileSync('git', ['ls-files', '-co', '--exclude-standard'], {
