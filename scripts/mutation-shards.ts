@@ -73,31 +73,6 @@ interface Unit extends MutantGroup {
 }
 
 /**
- * The smallest achievable "largest shard" when `weights` are cut, in order,
- * into at most `n` contiguous runs: a binary search over the answer, checked
- * by filling greedily.
- */
-function minimalLargestShard(weights: readonly number[], n: number): number {
-  let low = Math.max(...weights);
-  let high = weights.reduce((sum, w) => sum + w, 0);
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-    let runs = 1;
-    let load = 0;
-    for (const w of weights) {
-      if (load + w > mid) {
-        runs += 1;
-        load = 0;
-      }
-      load += w;
-    }
-    if (runs <= n) high = mid;
-    else low = mid + 1;
-  }
-  return low;
-}
-
-/**
  * Cuts the gate's mutants into `n` shards of as even a mutant count as the
  * safe cut points allow. Files keep their order, so a shard is a contiguous
  * stretch of the sorted file list, whole files in the middle and at most a
@@ -115,17 +90,19 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
     throw new Error(`cannot cut ${units.length} indivisible mutant group(s) into ${n} shards; use fewer shards`);
   }
 
-  const weights = units.map((unit) => unit.mutants);
-  const cap = minimalLargestShard(weights, n);
-  // Greedy fill under the cap, but never leave fewer units than shards still
-  // to fill, so no shard comes out empty.
+  // Each shard aims at an equal part of what the shards before it left over,
+  // and takes a group only while that brings it closer to the aim. Never
+  // fewer groups left than shards still to open, so no shard comes out empty.
   const runs: Unit[][] = [[]];
+  let rest = units.reduce((sum, unit) => sum + unit.mutants, 0);
   let load = 0;
   units.forEach((unit, i) => {
     const current = runs[runs.length - 1]!;
     const shardsLeft = n - runs.length;
-    const unitsLeft = units.length - i;
-    if (current.length > 0 && (load + unit.mutants > cap || unitsLeft === shardsLeft)) {
+    const aim = rest / (shardsLeft + 1);
+    const overshoots = load + unit.mutants / 2 > aim;
+    if (current.length > 0 && shardsLeft > 0 && (overshoots || units.length - i === shardsLeft)) {
+      rest -= load;
       runs.push([unit]);
       load = unit.mutants;
     } else {

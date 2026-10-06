@@ -77,12 +77,11 @@ describe('planShards', () => {
   });
 
   it('splits a big file on safe lines, with ranges that meet end to end', () => {
-    // Groups weigh 1,1,2,1,1,1,1,1: no 3-way cut keeps every shard under 4.
     const shards = planShards([big], 3);
     expect(shards).toEqual([
       { mutate: ['src/big.ts:1-30'], mutants: 4 },
-      { mutate: ['src/big.ts:31-61'], mutants: 4 },
-      { mutate: ['src/big.ts:62-100'], mutants: 1 },
+      { mutate: ['src/big.ts:31-60'], mutants: 3 },
+      { mutate: ['src/big.ts:61-100'], mutants: 2 },
     ]);
   });
 
