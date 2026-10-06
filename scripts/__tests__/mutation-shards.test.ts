@@ -1,5 +1,6 @@
 import {
   ALL_GATES_TRIGGERS,
+  GATE_INPUTS,
   countMutants,
   gatesForChanges,
   globPrefix,
@@ -263,7 +264,10 @@ describe('gatesForChanges', () => {
   const gates = [src, scripts];
 
   it('selects the gate whose mutated files changed', () => {
-    expect(gatesForChanges(gates, ['packages/react-native/src/index.ts'])).toEqual(['src']);
+    expect(gatesForChanges([src], ['packages/react-native/src/index.ts'])).toEqual(['src']);
+    expect(gatesForChanges(gates, ['scripts/sdk-banner.ts'])).toEqual(['scripts']);
+    // raw-messages-tree walks packages/, so src changes select scripts as well.
+    expect(gatesForChanges(gates, ['packages/react-native/src/index.ts'])).toEqual(['src', 'scripts']);
   });
 
   it('selects a gate whose covering test changed, outside its mutated tree', () => {
@@ -276,12 +280,52 @@ describe('gatesForChanges', () => {
   });
 
   it('selects nothing for changes no gate reads', () => {
-    expect(gatesForChanges(gates, ['docs/README.md', 'packages/react-native/android/x.java'])).toEqual([]);
+    expect(gatesForChanges(gates, ['LICENSE', '.github/workflows/claude.yml', 'gradlew'])).toEqual([]);
     expect(gatesForChanges(gates, [])).toEqual([]);
   });
 
+  // The corpus the scripts parsers are scored against: a reformatted manifest
+  // can let a mutant survive with every test green.
+  it.each([
+    'packages/react-native/android/build.gradle',
+    'packages/react-native/ios/Support/Package.swift',
+    'packages/react-native/ios/Support/Package.resolved',
+    'packages/react-native-feedback/BugseeReactNativeFeedback.podspec',
+    'packages/react-native/react-native.config.js',
+    'docs/design/2026-09-15-sdk-design.md',
+    'examples/bare/android/app/build.gradle',
+    'gradle/libs.versions.toml',
+    'settings.gradle',
+    'gradle.properties',
+  ])('selects scripts alone when its test corpus file %s changes', (file) => {
+    expect(gatesForChanges(gates, [file])).toEqual(['scripts']);
+  });
+
+  it.each(['native-versions.json'])('selects both gates when %s, read by tests of both, changes', (file) => {
+    expect(gatesForChanges(gates, [file])).toEqual(['src', 'scripts']);
+  });
+
+  it.each(['scripts/native-versions.ts', 'scripts/option-keys.ts'])(
+    'selects src too when %s, imported by its parity test, changes',
+    (file) => {
+      expect(gatesForChanges(gates, [file])).toEqual(['src', 'scripts']);
+    },
+  );
+
+  it('pins the extra inputs of each gate', () => {
+    expect(GATE_INPUTS).toEqual({
+      scripts: ['packages/', 'docs/', 'examples/', 'gradle/', 'native-versions.json', 'settings.gradle', 'gradle.properties'],
+      src: ['native-versions.json', 'scripts/native-versions.ts', 'scripts/option-keys.ts'],
+    });
+  });
+
+  it('does not take an inherited property for a gate named like one', () => {
+    const odd: GateScope = { name: 'constructor', configFile: 'stryker.constructor.json', mutate: ['x/a.ts'], testMatch: [] };
+    expect(gatesForChanges([odd], ['packages/a.ts'])).toEqual([]);
+  });
+
   it('does not take a sibling directory for the mutated one', () => {
-    expect(gatesForChanges(gates, ['packages/react-native/srcx/a.ts', 'scriptsy/a.ts'])).toEqual([]);
+    expect(gatesForChanges([src], ['packages/react-native/srcx/a.ts', 'scriptsy/a.ts'])).toEqual([]);
   });
 
   it.each(ALL_GATES_TRIGGERS.map((t) => (t.endsWith('/') ? `${t}releases/yarn.cjs` : t)))(

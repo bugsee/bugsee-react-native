@@ -258,6 +258,31 @@ export function globPrefix(glob: string): string {
   return pattern.slice(0, pattern.lastIndexOf('/', firstMagic) + 1);
 }
 
+/**
+ * Files a gate's tests read at runtime, beyond what they import: the corpus a
+ * mutated parser is scored against. A change there can turn a killed mutant
+ * into a survivor with every test still green, so it selects the gate. Kept
+ * wide on purpose; when in doubt, a gate runs.
+ *
+ * scripts: single-source and platform-floors read the Gradle, Swift and SPM
+ * manifests and native-versions.json; raw-messages-tree walks packages/;
+ * docs-versions reads docs/. src: option-manifest-parity reads
+ * native-versions.json through scripts/native-versions.ts, and types its
+ * manifest with scripts/option-keys.ts.
+ */
+export const GATE_INPUTS: Readonly<Record<string, readonly string[]>> = {
+  scripts: [
+    'packages/',
+    'docs/',
+    'examples/',
+    'gradle/',
+    'native-versions.json',
+    'settings.gradle',
+    'gradle.properties',
+  ],
+  src: ['native-versions.json', 'scripts/native-versions.ts', 'scripts/option-keys.ts'],
+};
+
 /** What a gate's path filter is made of: its Stryker config and what it reads. */
 export interface GateScope {
   name: string;
@@ -284,6 +309,7 @@ export function gatesForChanges(gates: readonly GateScope[], changed: readonly s
       if (gate.testMatch === undefined) return changed.length > 0;
       const prefixes = [
         gate.configFile,
+        ...(Object.hasOwn(GATE_INPUTS, gate.name) ? GATE_INPUTS[gate.name]! : []),
         ...[...gate.mutate, ...gate.testMatch].filter((p) => !p.startsWith('!')).map(globPrefix),
       ];
       return changed.some(under(prefixes));
