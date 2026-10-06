@@ -554,7 +554,24 @@ function gradlePluginDeclared(projectBuildGradle, version) {
     // apply false: the plugin has to be applied on the application module.
     // Applied to the root project it fails configuration, because it hangs
     // its tasks off an Android variant.
-    const declaration = ['plugins {', `    id '${PLUGIN_ID}' version '${version}' apply false`, '}'];
+    const pin = `id '${PLUGIN_ID}' version '${version}' apply false`;
+    // Gradle allows one plugins {} block per script, so an existing top-level
+    // one takes the pin, before its closing brace; both braces must stand alone.
+    const re = /(?<![A-Za-z0-9_.])plugins\s*\{/g;
+    for (let m = re.exec(s.masked); m !== null; m = re.exec(s.masked)) {
+        const open = m.index + m[0].length - 1;
+        if (depthAt(s, open) !== 0) {
+            continue;
+        }
+        const opener = lineIndexAt(s, open);
+        const closer = lineIndexAt(s, matchingBrace(s.masked, open));
+        if (!isOpenerLine(s.lines[opener], /^plugins\s*\{$/) || !isCloserLine(s.lines[closer])) {
+            const at = isCloserLine(s.lines[closer]) ? opener : closer;
+            throw anchorRefusal(ROOT_GRADLE, s.lines[at], at + 1, 'the Bugsee Gradle plugin declaration', `add \`${pin}\` to that plugins block yourself`);
+        }
+        return insertLines(projectBuildGradle, closer, [`${innerIndent(s, opener, closer)}${pin}`]);
+    }
+    const declaration = ['plugins {', `    ${pin}`, '}'];
     // plugins {} has to stay with the buildscript block. A later allprojects
     // or apply statement makes Gradle reject the block.
     const buildscript = blockExtent(s, 'buildscript');

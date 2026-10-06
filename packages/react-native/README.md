@@ -103,7 +103,10 @@ the reason and the fix, and writes nothing. It refuses:
 
 A declaration of `com.bugsee.android.gradle` in `android/build.gradle` is
 taken as the plugin's own pin, whoever wrote it: its version follows the
-wrapper's on each prebuild.
+wrapper's on each prebuild. Gradle allows one `plugins {}` block per script,
+so when the root file already has one the pin goes into it (its braces must
+stand alone on their lines, or the prebuild refuses); a new block is written
+only when there is none.
 
 ## Android source maps
 
