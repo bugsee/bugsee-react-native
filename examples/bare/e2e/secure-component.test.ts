@@ -37,9 +37,9 @@
  * rectangles, in points (the component's twin, and the witness), mapped onto
  * a screenshot at `screenshot.width / Dimensions.screen.width` -- the
  * simulator's window is full-screen, so window points are screen points. The
- * video maps the same way (media.ts `widthFitRegion`: no letterbox, and no
- * `video.aux`). iOS logs no served buffer, so the served-rectangle check is
- * Android-only, and `E2E_EDGE_TO_EDGE` is not read.
+ * video maps the same way (media.ts `widthFitRegion`: no letterbox, which the
+ * SDK's `video.aux` version 2 confirms). iOS logs no served buffer, so the
+ * served-rectangle check is Android-only, and `E2E_EDGE_TO_EDGE` is not read.
  */
 import { type PulledBundle, airplane, captureEvents, removePulledBundles } from './bundles';
 import {
@@ -246,12 +246,22 @@ describeDevice(`<BugseeSecure> on ${TARGET_NAME}`, () => {
     const size = await imageSize(video);
     let region: (rect: Rect) => { x: number; y: number; w: number; h: number };
     if (ON_IOS) {
-      // iOS does not letterbox and writes no video.aux to check a mapping
-      // against: it scales by width from the top-left, as its screenshot
-      // does (media.ts widthFitRegion). The witness and control regions
-      // below are what prove the crops land where they should.
+      // iOS does not letterbox: it scales by width from the top-left, as its
+      // screenshot does (media.ts widthFitRegion). Since 7.0.0-beta4 it
+      // writes video.aux version 2 (the frame in points, padding only where
+      // the frame does not fill the video), and a full-screen app's frame is
+      // the screen, unpadded. The witness and control regions below are what
+      // prove the crops land where they should.
       report(`${String(bundle.request.summary)}: video size`, { size, screen: display, scale: size.width / display.width });
-      expect(captureEvents(bundle, 'video.aux')).toEqual([]);
+      const aux = captureEvents(bundle, 'video.aux')[0] as
+        | { frameW?: number; frameH?: number; paddingH?: number; paddingV?: number }
+        | undefined;
+      report(`${String(bundle.request.summary)}: video frame`, { size, screen: display, aux });
+      expect(aux).toBeDefined();
+      expect(Math.abs(aux!.frameW! - display.width)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(aux!.frameH! - display.height)).toBeLessThanOrEqual(0.5);
+      expect(aux!.paddingH ?? 0).toBeLessThanOrEqual(1);
+      expect(aux!.paddingV ?? 0).toBeLessThanOrEqual(1);
       region = rect => widthFitRegion(rect, display, size, VIDEO_INSET);
     } else {
       const box = letterbox(display, size);

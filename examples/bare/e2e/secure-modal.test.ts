@@ -340,7 +340,19 @@ for (const scenario of SCENARIOS) {
       let region: (rect: Rect) => { x: number; y: number; w: number; h: number };
       if (ON_IOS) {
         // The iOS SDK scales by width from the top-left, as its screenshot.
-        expect(captureEvents(bundle, 'video.aux')).toEqual([]);
+        // Since 7.0.0-beta4 it writes video.aux version 2: the frame in
+        // points, padding only where the frame does not fill the video. A
+        // full-screen app's frame is the screen and fills it, so the width
+        // fit holds, and the sidecar must say so.
+        const aux = captureEvents(bundle, 'video.aux')[0] as
+          | { frameW?: number; frameH?: number; paddingH?: number; paddingV?: number }
+          | undefined;
+        report('video frame', { size, screen: display, aux });
+        expect(aux).toBeDefined();
+        expect(Math.abs(aux!.frameW! - display.width)).toBeLessThanOrEqual(0.5);
+        expect(Math.abs(aux!.frameH! - display.height)).toBeLessThanOrEqual(0.5);
+        expect(aux!.paddingH ?? 0).toBeLessThanOrEqual(1);
+        expect(aux!.paddingV ?? 0).toBeLessThanOrEqual(1);
         region = rect => widthFitRegion(rect, display, size, VIDEO_INSET);
       } else {
         const box = letterbox(display, size);
