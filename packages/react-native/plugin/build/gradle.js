@@ -45,7 +45,15 @@ function guarded(file, transform) {
 }
 /** A brace that shares its line with other code is not an anchor: refuse rather than split the line. */
 function anchorRefusal(file, line, lineNo, what, alternative) {
-    return refusal(file, `line ${lineNo}: \`${codeOf(line).trim()}\` shares its line with other code, so ${what} cannot be added without rewriting that line`, `Put the brace alone on its line, or ${alternative}, then run expo prebuild again`);
+    const code = codeOf(line).trim();
+    if (line.openAtEnd) {
+        // A line added after this one would land inside the comment or string.
+        return refusal(file, `line ${lineNo}: \`${code}\` ends inside a block comment or string that is still open, so ${what} cannot be added after it`, `Close the comment on that line, or ${alternative}, then run expo prebuild again`);
+    }
+    if (code === '{') {
+        return refusal(file, `line ${lineNo}: the \`{\` is on a line of its own, so ${what} cannot be added without rewriting the line that names the block`, `Move the \`{\` up to the end of the line that names the block, or ${alternative}, then run expo prebuild again`);
+    }
+    return refusal(file, `line ${lineNo}: \`${code}\` shares its line with other code, so ${what} cannot be added without rewriting that line`, `Put the brace alone on its line, or ${alternative}, then run expo prebuild again`);
 }
 const KIND_CODE = 0;
 const KIND_STRING = 1;
@@ -437,17 +445,19 @@ function matchingBrace(masked, open) {
         }
     }
 }
-/** The first `keyword {` block in code, searched within [from, to). */
-function blockExtent(s, keyword, from = 0, to = s.masked.length) {
+/** The first `keyword {` block in code, searched within [from, to); with `topLevel`, only one at brace depth 0. */
+function blockExtent(s, keyword, from = 0, to = s.masked.length, topLevel = false) {
     // The mask has no keyword in a string or comment, so any match is code.
     const re = new RegExp(`(?<![A-Za-z0-9_])${keyword}\\s*\\{`, 'g');
     re.lastIndex = from;
-    const m = re.exec(s.masked.slice(0, to));
-    if (m === null) {
-        return null;
+    const region = s.masked.slice(0, to);
+    for (let m = re.exec(region); m !== null; m = re.exec(region)) {
+        const open = m.index + m[0].length - 1;
+        if (!topLevel || depthAt(s, open) === 0) {
+            return { open, bodyStart: open + 1, bodyEnd: matchingBrace(s.masked, open) };
+        }
     }
-    const open = m.index + m[0].length - 1;
-    return { open, bodyStart: open + 1, bodyEnd: matchingBrace(s.masked, open) };
+    return null;
 }
 /** Index of the line holding the character at `index`. */
 const lineIndexAt = (s, index) => s.source.slice(0, index).split('\n').length - 1;
@@ -574,12 +584,12 @@ function gradlePluginDeclared(projectBuildGradle, version) {
     const declaration = ['plugins {', `    ${pin}`, '}'];
     // plugins {} has to stay with the buildscript block. A later allprojects
     // or apply statement makes Gradle reject the block.
-    const buildscript = blockExtent(s, 'buildscript');
+    const buildscript = blockExtent(s, 'buildscript', 0, s.masked.length, true);
     if (buildscript) {
         // After the closing brace's line, which must hold nothing else.
         const closer = lineIndexAt(s, buildscript.bodyEnd);
         const line = s.lines[closer];
-        if (!isCloserLine(line)) {
+        if (!isCloserLine(line) || line.openAtEnd) {
             throw anchorRefusal(ROOT_GRADLE, line, closer + 1, 'the plugins block that declares the Bugsee Gradle plugin', `declare \`id '${PLUGIN_ID}' version '${version}' apply false\` in a plugins block yourself`);
         }
         const indent = indentOf(line.raw);
@@ -640,7 +650,11 @@ function ensurePluginApplied(source) {
     const lines = source.split('\n');
     const react = s.lines.findIndex((line) => !line.openAtStart && line.depth === 0 && REACT_PLUGIN_LINE.test(codeOf(line)));
     if (react >= 0) {
-        const raw = s.lines[react].raw;
+        const reactLine = s.lines[react];
+        if (reactLine.openAtEnd) {
+            throw anchorRefusal(APP_GRADLE, reactLine, react + 1, `\`apply plugin: "${PLUGIN_ID}"\``, `add \`apply plugin: "${PLUGIN_ID}"\` yourself`);
+        }
+        const raw = reactLine.raw;
         const indent = raw.slice(0, raw.length - raw.trimStart().length);
         lines.splice(react + 1, 0, `${indent}${statement}`);
     }
@@ -705,7 +719,7 @@ function ensureNdkImplementation(source, ndkVersion, log) {
         return appendBlock(source, `${NDK_OPENER}\n    ${dep}\n}`, eolOf(source));
     }
     const line = s.lines[opener];
-    if (!isOpenerLine(line, DEPENDENCIES_OPENER)) {
+    if (!isOpenerLine(line, DEPENDENCIES_OPENER) || line.openAtEnd) {
         throw anchorRefusal(APP_GRADLE, line, opener + 1, 'the Bugsee NDK dependency', `declare \`implementation "${NDK_ARTIFACT}:${ndkVersion}"\` yourself`);
     }
     const closer = s.lines.findIndex((entry, i) => i > opener && entry.depthAfter === line.depth);
@@ -941,7 +955,11 @@ function rewriteHermesCommand(source) {
         lines[i] = `${match[1]}hermesCommand = ${HERMES_COMMAND_EXPR}${line.raw.slice(valueEnd)}`;
     }
     if (!found) {
-        const opener = s.lines[react].raw;
+        const reactLine = s.lines[react];
+        if (reactLine.openAtEnd) {
+            throw anchorRefusal(APP_GRADLE, reactLine, react + 1, 'react.hermesCommand', 'set react.hermesCommand yourself');
+        }
+        const opener = reactLine.raw;
         const indent = opener.slice(0, opener.length - opener.trimStart().length);
         lines.splice(react + 1, 0, `${indent}    hermesCommand = ${HERMES_COMMAND_EXPR}${crOf(eol)}`);
     }

@@ -962,6 +962,41 @@ const anchorCases: Case[] = [
     segments: [u(REACT_APPLY), u(`${NDK_OPENER}\n    implementation("a")\n}`)],
     quoted: { ndkOpener: 1 },
   },
+  {
+    name: 'H01: an open block comment on the dependencies opener is refused with native crash reporting on',
+    segments: [u(REACT_APPLY), u('dependencies { /*\n*/\n    implementation("a:b:1")\n}')],
+    refuse: (option) => option.ndk !== null,
+  },
+  {
+    name: 'M01: a closed then an open block comment on the dependencies opener is refused with native crash reporting on',
+    segments: [u(REACT_APPLY), u('dependencies { /* a */ /*\n  b */\n    implementation("a:b:1")\n}')],
+    refuse: (option) => option.ndk !== null,
+  },
+  {
+    name: 'M02: an open block comment on the dependencies opener, CRLF',
+    segments: [u(REACT_APPLY), u('dependencies { /*\n*/\n    implementation("a:b:1")\n}')],
+    crlf: true,
+    refuse: (option) => option.ndk !== null,
+  },
+  {
+    name: 'H02: an open block comment on the react apply line is refused',
+    segments: [u(`${REACT_APPLY} /*\n*/`), u(userDeps)],
+    refuse: true,
+  },
+  {
+    name: 'H03: an open block comment on the react opener is refused',
+    segments: [u(REACT_APPLY), u('react { /*\n*/\n}'), u(userDeps)],
+    refuse: true,
+  },
+  {
+    name: 'H03b: a closed block comment on the react opener is kept',
+    segments: [u(REACT_APPLY), u('react { /* c */\n}'), u(userDeps)],
+  },
+  {
+    name: 'H08: a dependencies brace on its own line is refused with native crash reporting on',
+    segments: [u(REACT_APPLY), u('dependencies\n{\n    implementation("a:b:1")\n}')],
+    refuse: (option) => option.ndk !== null,
+  },
 ];
 
 const appOptions: readonly AppOption[] = [
@@ -1101,6 +1136,21 @@ const rootCases: Case[] = [
   { name: 'an indented buildscript closer keeps its indentation', segments: [u('buildscript {\n    ext { x = 1 }\n  }'), u('allprojects { }')] },
   { name: 'unterminated string in the root file is refused', segments: [u('def a = "open'), u('allprojects { }')], refuse: true },
   { name: 'unbalanced braces in the root file are refused', segments: [u('buildscript {'), u('allprojects { }')], refuse: true },
+  {
+    name: 'R10: an open block comment on the buildscript closer is refused',
+    segments: [u('buildscript {\n    ext { x = 1 }\n} /*\n*/'), u('allprojects { }')],
+    refuse: true,
+  },
+  {
+    name: 'R30: a closed then an open block comment on the buildscript closer is refused',
+    segments: [u('buildscript {\n    ext { x = 1 }\n} /* a */ /*\n b */'), u('allprojects { }')],
+    refuse: true,
+  },
+  {
+    name: 'R11: only a nested buildscript gets a plugins block at the top, ahead of it',
+    segments: [u('subprojects {\n    buildscript {\n        ext { x = 1 }\n    }\n}'), u('allprojects { }')],
+    check: (once) => expect(once.startsWith("plugins {\n    id 'com.bugsee.android.gradle'")).toBe(true),
+  },
   ...SDKS.map((sdk) => ({ name: `Expo ${sdk} root template`, segments: template(read(`expo-templates/${sdk}/build.gradle`)) })),
 ];
 
@@ -1115,6 +1165,7 @@ describe('build.gradle corpus', () => {
     const twice = ensureGradlePluginDeclared(once, '1.2.3');
     expect(lost(source.userLines, once)).toBeNull();
     expect(twice).toBe(once);
+    c.check?.(once, appOptions[0] as AppOption);
     const declared = countLines(once, "id 'com.bugsee.android.gradle' version '1.2.3' apply false");
     if (c.name.includes('in a string')) {
       // Another declaration form: left alone rather than declared twice.
@@ -1186,5 +1237,28 @@ describe('settings.gradle corpus', () => {
     if (c.crlf) {
       expect(once.split('\n').filter((line, i, all) => i < all.length - 1 && !line.endsWith('\r'))).toEqual([]);
     }
+  });
+});
+
+describe('anchor refusal messages', () => {
+  const messageOf = (run: () => unknown): string => {
+    try {
+      run();
+    } catch (error) {
+      return (error as Error).message;
+    }
+    return '';
+  };
+
+  it('names a brace on its own line as that, not as sharing its line', () => {
+    const message = messageOf(() => ensureAppAppliesPlugin(`${REACT_APPLY}\ndependencies\n{\n    implementation("a")\n}\n`, '9.9.9', () => undefined));
+    expect(message).toContain('line 3: the `{` is on a line of its own');
+    expect(message).not.toContain('shares its line');
+  });
+
+  it('names an open block comment on the anchor line', () => {
+    const open = messageOf(() => ensureGradlePluginDeclared('buildscript {\n} /*\n*/\n', '1.2.3'));
+    expect(open).toContain('line 2: `}` ends inside a block comment or string that is still open');
+    expect(open).not.toContain('shares its line');
   });
 });
