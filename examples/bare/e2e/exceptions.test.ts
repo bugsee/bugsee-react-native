@@ -37,12 +37,13 @@
  * still shows RN's JavascriptException, but exactly one Bugsee bundle is filed.
  * On iOS cases 9 and 12 the unhandled report is stored, not sent: a plain
  * `it` asserts the bundle list is empty, then `terminateIosApp()` and
- * `exc-observe`. Exactly one recovered crash is `it.failing` on beta3
- * `0d9c9d0a-9`, which does not claim `override_report.plcrash` on the next
- * launch. The harness must not copy that file onto `live_report.plcrash`.
- * The Release gate is the same split: the console ended and no
- * `RCTFatalException` bundle on a plain `it`; exactly one
- * `ReactNativeWebException` crash is `it.failing`.
+ * `exc-observe`, which must recover exactly one crash. beta3 `0d9c9d0a-9`
+ * did not claim `override_report.plcrash` on the next launch, so those
+ * assertions were `it.failing` there; 7.0.0-beta4 claims it (bugsee-cocoa
+ * #177) and they are plain `it`. The harness must not copy that file onto
+ * `live_report.plcrash`. The Release gate is the same: the console ended,
+ * no `RCTFatalException` bundle, and exactly one `ReactNativeWebException`
+ * crash.
  */
 import { writeFileSync } from 'node:fs';
 
@@ -1070,11 +1071,12 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       expect(completed.index).toBeLessThan(appHandler.index);
     });
 
-    // beta3 0d9c9d0a-9 does not claim override_report.plcrash on the next
-    // launch, so this list is empty. The harness must not copy that file
-    // onto live_report.plcrash. The body asserts the correct outcome;
-    // remove .failing when a beta recovers the stored report.
-    itIosDevice.failing(
+    // beta3 0d9c9d0a-9 did not claim override_report.plcrash on the next
+    // launch, so this was `.failing` there. 7.0.0-beta4 claims it ahead of
+    // the live crash (bugsee-cocoa #177) and the stored report is recovered
+    // (KRSFT, 2026-10-06). The harness still must not copy that file onto
+    // live_report.plcrash.
+    itIosDevice(
       'a fatal JS error is reported as a crash, then RN\'s handler runs',
       () => {
         const crashes = bundlesWithReason(bundles, `E2E fatal ${nonce}`).filter(
@@ -1204,11 +1206,12 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       expect(stored).toEqual([]);
     });
 
-    // beta3 0d9c9d0a-9 does not claim override_report.plcrash on the next
-    // launch, so this list is empty. The harness must not copy that file
-    // onto live_report.plcrash. The body asserts the correct outcome;
-    // remove .failing when a beta recovers the stored report.
-    itIosDevice.failing(
+    // beta3 0d9c9d0a-9 did not claim override_report.plcrash on the next
+    // launch, so this was `.failing` there. 7.0.0-beta4 claims it ahead of
+    // the live crash (bugsee-cocoa #177) and the stored report is recovered
+    // (KRSFT, 2026-10-06). The harness still must not copy that file onto
+    // live_report.plcrash.
+    itIosDevice(
       'a render error with no boundary is reported once, as a crash, by the root reporter',
       () => {
         const crashes = bundlesWithReason(bundles, `E2E boundary ${nonce}`).filter(
@@ -1330,11 +1333,12 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       }
     });
 
-    // beta3 0d9c9d0a-9 does not claim override_report.plcrash on the next
-    // launch, so this list is empty. The harness must not copy that file
-    // onto live_report.plcrash. The body asserts the correct outcome;
-    // remove .failing when a beta recovers the stored report.
-    itIosDevice.failing('exactly one ReactNativeWebException crash for the fatal', () => {
+    // beta3 0d9c9d0a-9 did not claim override_report.plcrash on the next
+    // launch, so this was `.failing` there. 7.0.0-beta4 claims it ahead of
+    // the live crash (bugsee-cocoa #177) and the stored report is recovered
+    // (KRSFT, 2026-10-06). The harness still must not copy that file onto
+    // live_report.plcrash.
+    itIosDevice('exactly one ReactNativeWebException crash for the fatal', () => {
       const ours = bundles.filter(b => {
         if (b.request.type !== 'crash') {
           return false;
