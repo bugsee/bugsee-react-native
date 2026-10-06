@@ -50,7 +50,7 @@ static NSSet<NSString *> *FeedbackThemeKeys(void) {
   static NSSet<NSString *> *keys;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
-    // BugseeTheme.h in Bugsee 7.0.0-beta3. The SwiftUI chat in this beta
+    // BugseeTheme.h in Bugsee 7.0.0-beta4 (unchanged from beta3). The SwiftUI chat in this beta
     // does not read them; they are still the appearance API the header
     // publishes, and the only one the feedback package can set.
     keys = [NSSet setWithArray:@[

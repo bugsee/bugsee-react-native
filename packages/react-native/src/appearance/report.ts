@@ -7,7 +7,7 @@ import NativeBugsee from '../NativeBugsee';
  *
  * Android values are the `ReportAppearance` constants in bugsee-android 7.3.0
  * (`setColor(ReportAppearance.X, int)`). iOS values are writable report color
- * properties on `BugseeTheme` in the vendored 7.0.0-beta3 header. A name that
+ * properties on `BugseeTheme` in the vendored 7.0.0-beta4 header. A name that
  * exists on only one platform has only that side. Setting it on the other
  * throws, so a color that will not be applied is not stored as if it had been.
  * Reading it returns `undefined` and does not call native.

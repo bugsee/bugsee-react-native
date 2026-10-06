@@ -17,12 +17,11 @@ import PackageDescription
 /// did, and CI ran these tests nowhere at all.
 let package = Package(
   name: "BugseeRNSupport",
-  // 15.0, matching the rest of the wrapper rather than the SDK's own 13.0.
-  // Nothing here links React, so this target *could* sit at 13.0 -- but no
-  // React Native app can: RN has floored at 15.1 since 0.76, and every
-  // version with SPM support is above that. A lower number here would only
-  // advertise reach that no consumer can use, and the native SDK is moving
-  // to 15+ as well.
+  // 15.0: the SDK's own floor (7.0.0-beta2 raised it from 13.0, and the
+  // bugsee/spm manifest declares .iOS(.v15)), and the rest of the wrapper's.
+  // SwiftPM refuses a package that sits below a product it consumes, so this
+  // cannot go lower; React Native, at 15.1 since 0.76, could not use it if it
+  // did.
   platforms: [.iOS(.v15)],
   products: [
     .library(name: "BugseeRNSupport", targets: ["BugseeRNSupport"])

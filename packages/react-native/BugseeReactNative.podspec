@@ -18,8 +18,9 @@ Pod::Spec.new do |s|
   # helper in scripts/react_native_pods.rb, which every RN Podfile requires,
   # so it is in scope by the time CocoaPods evaluates this podspec; the
   # literal is the fallback for evaluation outside an app (`pod spec lint`).
-  # Bugsee itself supports 15.0 and below -- down to 13.0 -- but React-Core
-  # does not, so an app can never actually sit lower than this.
+  # Bugsee itself floors at 15.0 (since 7.0.0-beta2; the bugsee/spm manifest
+  # declares .iOS(.v15)), just below React Native's 15.1, so React Native's is
+  # the floor that binds and an app can never sit lower than this.
   s.platforms    = {
     :ios => defined?(min_ios_version_supported) ? min_ios_version_supported : '15.1'
   }

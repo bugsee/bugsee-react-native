@@ -45,6 +45,29 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - BugseeReactNativeFeedback (0.0.0):
+    - BugseeReactNative
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-bridging
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - DoubleConversion (1.1.6):
     - ReactNativeDependencies
   - fast_float (8.0.0):
@@ -1657,6 +1680,7 @@ DEPENDENCIES:
   - boost (from `build/rndeps-facades/boost`)
   - BugseeE2ENative (from `../node_modules/bugsee-e2e-native`)
   - "BugseeReactNative (from `../node_modules/@bugsee/react-native`)"
+  - "BugseeReactNativeFeedback (from `../node_modules/@bugsee/react-native-feedback`)"
   - DoubleConversion (from `build/rndeps-facades/DoubleConversion`)
   - fast_float (from `build/rndeps-facades/fast_float`)
   - FBLazyVector (from `build/rncore-facades/FBLazyVector`)
@@ -1750,6 +1774,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/bugsee-e2e-native"
   BugseeReactNative:
     :path: "../node_modules/@bugsee/react-native"
+  BugseeReactNativeFeedback:
+    :path: "../node_modules/@bugsee/react-native-feedback"
   DoubleConversion:
     :path: build/rndeps-facades/DoubleConversion
   fast_float:
@@ -1923,7 +1949,8 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   boost: 8502bfdc46e2804408af2e163049ece181009af4
   BugseeE2ENative: b4cd280a78bae9185d1a391769ececb30b0eb846
-  BugseeReactNative: 684066f42a96c3dcd61e50cc6bf38397738f679f
+  BugseeReactNative: ac04523adf1a6e3a445d84f3a7656d980e4d28ab
+  BugseeReactNativeFeedback: f55b2673ed02f3299b6801e154a3256ed5aa19f0
   DoubleConversion: 501a575c40c0b50c89685762dd3e415e6bb26fb0
   fast_float: 7c925d1cebf8328d4018d061f49377e9f887e3b4
   FBLazyVector: e08a27053b503eeb756ea4bd75d570d2f2522a1b
@@ -2011,4 +2038,4 @@ SPEC CHECKSUMS:
 
 PODFILE CHECKSUM: 8b6aa5135b91f56aaf82cda5788ba89799309b83
 
-COCOAPODS: 1.16.2
+COCOAPODS: 1.17.0

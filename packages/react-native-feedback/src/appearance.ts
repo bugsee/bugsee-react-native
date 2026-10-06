@@ -7,7 +7,7 @@ import NativeBugseeFeedback from './NativeBugseeFeedback';
  *
  * Android keys are the `FeedbackAppearance` constant values in
  * `bugsee-android-feedback` 7.3.0 (`Feedback::ActionBarColor`, …). iOS keys
- * are `BugseeTheme` properties in the 7.0.0-beta3 `Bugsee.xcframework`
+ * are `BugseeTheme` properties in the 7.0.0-beta4 `Bugsee.xcframework`
  * header. A name that exists on only one platform has only that side; setting
  * it on the other throws, so a color that will not be applied is not stored
  * as if it had been.

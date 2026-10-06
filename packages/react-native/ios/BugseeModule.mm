@@ -2482,7 +2482,7 @@ RCT_EXPORT_MODULE(Bugsee)
   return released;
 }
 
-/// Writable report colors on BugseeTheme (7.0.0-beta3). Feedback properties
+/// Writable report colors on BugseeTheme (7.0.0-beta4; unchanged from beta3). Feedback properties
 /// and the readonly palette are not report appearance. KVC with any other
 /// name throws NSUnknownKeyException.
 static NSSet<NSString *> *BGSRNReportColorKeys(void) {
@@ -2562,7 +2562,7 @@ static NSString *BGSRNHexFromColor(UIColor *color) {
   return hex;
 }
 
-/// iOS 7.0.0-beta3 returns without invoking `completion` when the SDK is
+/// iOS 7.0.0-beta3 and beta4 return without invoking `completion` when the SDK is
 /// not stopped, so a launched call resolves `false` immediately. That is the
 /// missing completion, not a wait. Stopped, including a nil instance, still
 /// calls the SDK method and settles through `BGSRNSettleOnce`: the

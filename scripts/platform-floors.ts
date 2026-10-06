@@ -24,7 +24,9 @@ export const SDK_FLOORS = {
    *
    *  7.0.0-beta1 shipped 13.0 and the wrapper sat above it deliberately,
    *  because no React Native app could reach 13.0 anyway. beta2 raised the
-   *  SDK itself to 15.0, so the two now agree and the exception is gone. */
+   *  SDK itself to 15.0, so the two now agree and the exception is gone.
+   *  Re-checked on 7.0.0-beta4: `minos 15.0` in every iOS slice, and the
+   *  bugsee/spm manifest declares iOS 15 / tvOS 15 / visionOS 1. */
   iosDeploymentTarget: '15.0',
 } as const;
 

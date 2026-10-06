@@ -27,7 +27,7 @@ const ANDROID_ENUM: Record<string, string> = {
 
 /**
  * Writable report color properties on `BugseeTheme` in the vendored
- * 7.0.0-beta3 header. Feedback properties and the readonly palette are not
+ * 7.0.0-beta4 header. Feedback properties and the readonly palette are not
  * report appearance.
  */
 const IOS_PROPERTY: Record<string, string> = {
