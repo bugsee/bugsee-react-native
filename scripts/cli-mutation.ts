@@ -28,6 +28,7 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import {
   countMutants,
+  mutantKey,
   gatesForChanges,
   mergeReports,
   planShards,
@@ -47,7 +48,9 @@ interface StrykerConfig {
 }
 
 interface Located {
-  location: { start: { line: number }; end: { line: number } };
+  mutatorName: string;
+  replacement: string;
+  location: { start: { line: number; column: number }; end: { line: number; column: number } };
 }
 interface InstrumenterModule {
   Instrumenter: new (log: unknown) => {
@@ -111,7 +114,9 @@ function mutateFiles(config: StrykerConfig): string[] {
 }
 
 /** Every mutant the gate has, by file, as Stryker's own instrumenter places them. */
-async function gateMutants(config: StrykerConfig): Promise<FileMutants[]> {
+async function gateMutants(
+  config: StrykerConfig,
+): Promise<{ files: FileMutants[]; keys: { mutator: string; key: string }[] }> {
   const { Instrumenter } = await fromCore<InstrumenterModule>('@stryker-mutator/instrumenter');
   const quiet = (): undefined => undefined;
   const log = Object.fromEntries(
@@ -130,18 +135,35 @@ async function gateMutants(config: StrykerConfig): Promise<FileMutants[]> {
     excludedMutations: config.mutator?.excludedMutations ?? [],
     ignorers: [],
   });
-  return files.map((file) => ({
+  // The report's lines and columns are 1-based, the instrumenter's 0-based.
+  const keys = mutants.map((m) => ({
+    mutator: m.mutatorName,
+    key: mutantKey(m.fileName, {
+      mutatorName: m.mutatorName,
+      replacement: m.replacement,
+      location: {
+        start: { line: m.location.start.line + 1, column: m.location.start.column + 1 },
+        end: { line: m.location.end.line + 1, column: m.location.end.column + 1 },
+      },
+    }),
+  }));
+  const perFile = files.map((file) => ({
     name: file.name,
     lineCount: file.content.split('\n').length,
     // The instrumenter's lines are 0-based; `mutate` ranges are 1-based.
     spans: mutants
       .filter((m) => m.fileName === file.name)
-      .map((m) => ({ startLine: m.location.start.line + 1, endLine: m.location.end.line + 1 })),
+      .map((m) => ({
+        startLine: m.location.start.line + 1,
+        endLine: m.location.end.line + 1,
+        mutator: m.mutatorName,
+      })),
   }));
+  return { files: perFile, keys };
 }
 
 async function plan(gate: string, shards: number): Promise<Shard[]> {
-  return planShards(await gateMutants(readConfig(gate)), shards);
+  return planShards((await gateMutants(readConfig(gate))).files, shards);
 }
 
 function scope(all: boolean): void {
@@ -164,17 +186,26 @@ async function shard(gate: string, index: number, shards: number): Promise<void>
   const slice = (await plan(gate, shards))[index - 1]!;
   const dir = shardDir(gate);
   mkdirSync(dir, { recursive: true });
-  const shardConfig = {
+  const shardConfig: StrykerConfig = {
     ...config,
     mutate: slice.mutate,
     thresholds: { ...config.thresholds, break: null },
     reporters: [...new Set([...(config.reporters ?? []), 'json'])],
     jsonReporter: { fileName: `reports/mutation/${gate}/shard-${index}.json` },
   };
+  if (slice.excludedMutations !== undefined) {
+    shardConfig.mutator = {
+      ...config.mutator,
+      excludedMutations: [...(config.mutator?.excludedMutations ?? []), ...slice.excludedMutations],
+    };
+  }
   const out = join(dir, `shard-${index}.stryker.json`);
   writeFileSync(out, `${JSON.stringify(shardConfig, null, 2)}\n`);
   console.log(`shard ${index} of ${shards}: ${slice.mutants} mutant(s) in`);
   for (const entry of slice.mutate) console.log(`    ${entry}`);
+  if (slice.excludedMutations !== undefined) {
+    console.log(`    leaving to other shards: ${slice.excludedMutations.join(', ')}`);
+  }
 }
 
 async function merge(gate: string, shards: number): Promise<void> {
@@ -187,10 +218,22 @@ async function merge(gate: string, shards: number): Promise<void> {
       return fail(`missing the report of shard ${i + 1} of ${shards} (${file})`);
     }
   });
-  const merged = mergeReports(reports);
-  const expected = (await plan(gate, shards)).reduce((sum, s) => sum + s.mutants, 0);
+  const { files, keys } = await gateMutants(config);
+  const planned = planShards(files, shards);
+  // A split group's shard: only the gate's own mutants, of the mutators it kept.
+  const merged = mergeReports(
+    reports,
+    planned.map((s) => {
+      const left = s.excludedMutations;
+      if (left === undefined) return undefined;
+      return new Set(keys.filter((k) => !left.includes(k.mutator)).map((k) => k.key));
+    }),
+  );
+  const expected = planned.reduce((sum, s) => sum + s.mutants, 0);
   const actual = countMutants(merged);
-  reports.forEach((report, i) => console.log(`    shard ${i + 1}: ${countMutants(report)} mutant(s)`));
+  reports.forEach((report, i) =>
+    console.log(`    shard ${i + 1}: ${countMutants(report)} mutant(s) reported, ${planned[i]!.mutants} its own`),
+  );
   if (actual !== expected) fail(`the shards reported ${actual} mutant(s), the plan has ${expected}`);
   writeFileSync(join(shardDir(gate), 'merged.json'), JSON.stringify(merged));
 
@@ -215,7 +258,8 @@ switch (command) {
     break;
   case 'plan':
     for (const [i, s] of (await plan(args[0]!, positiveInt(args[1], 'shards'))).entries()) {
-      console.log(`shard ${i + 1}: ${s.mutants} mutant(s): ${s.mutate.join(' ')}`);
+      const without = s.excludedMutations ? ` without ${s.excludedMutations.join(',')}` : '';
+      console.log(`shard ${i + 1}: ${s.mutants} mutant(s): ${s.mutate.join(' ')}${without}`);
     }
     break;
   case 'shard':

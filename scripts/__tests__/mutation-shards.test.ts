@@ -2,6 +2,7 @@ import {
   ALL_GATES_TRIGGERS,
   GATE_INPUTS,
   countMutants,
+  mutantKey,
   gatesForChanges,
   globPrefix,
   mergeReports,
@@ -10,7 +11,13 @@ import {
 } from '../mutation-shards';
 import type { FileMutants, GateScope, MutationReport } from '../mutation-shards';
 
-const span = (startLine: number, endLine = startLine) => ({ startLine, endLine });
+const span = (startLine: number, endLine = startLine, mutator = 'M') => ({ startLine, endLine, mutator });
+const group = (startLine: number, endLine: number, mutants: number) => ({
+  startLine,
+  endLine,
+  mutants,
+  byMutator: new Map([['M', mutants]]),
+});
 
 /** Mirrors Stryker's rule: a mutant is placed only when a range holds all of it. */
 function placedBy(shardMutate: readonly string[], file: FileMutants): number {
@@ -26,13 +33,13 @@ function placedBy(shardMutate: readonly string[], file: FileMutants): number {
 describe('mutantGroups', () => {
   it('keeps mutants apart when a line between them is free to cut on', () => {
     expect(mutantGroups([span(3), span(5, 6)])).toEqual([
-      { startLine: 3, endLine: 3, mutants: 1 },
-      { startLine: 5, endLine: 6, mutants: 1 },
+      group(3, 3, 1),
+      group(5, 6, 1),
     ]);
   });
 
   it('joins a mutant that starts on the line another ends on', () => {
-    expect(mutantGroups([span(3, 5), span(5, 7)])).toEqual([{ startLine: 3, endLine: 7, mutants: 2 }]);
+    expect(mutantGroups([span(3, 5), span(5, 7)])).toEqual([group(3, 7, 2)]);
   });
 
   it('keeps adjacent lines apart, since a cut between them splits nothing', () => {
@@ -41,21 +48,27 @@ describe('mutantGroups', () => {
 
   it('swallows everything inside a block mutant, whatever order they come in', () => {
     expect(mutantGroups([span(12), span(10, 20), span(15, 16), span(22)])).toEqual([
-      { startLine: 10, endLine: 20, mutants: 3 },
-      { startLine: 22, endLine: 22, mutants: 1 },
+      group(10, 20, 3),
+      group(22, 22, 1),
     ]);
   });
 
   it('keeps the furthest end when a later mutant ends earlier', () => {
     expect(mutantGroups([span(1, 10), span(2, 3), span(10, 11)])).toEqual([
-      { startLine: 1, endLine: 11, mutants: 3 },
+      group(1, 11, 3),
     ]);
   });
 
   it('orders by end when two mutants start on the same line', () => {
     expect(mutantGroups([span(4, 9), span(4, 4), span(11)])).toEqual([
-      { startLine: 4, endLine: 9, mutants: 2 },
-      { startLine: 11, endLine: 11, mutants: 1 },
+      group(4, 9, 2),
+      group(11, 11, 1),
+    ]);
+  });
+
+  it('counts each mutator in a group', () => {
+    expect(mutantGroups([span(1, 9, 'BlockStatement'), span(2, 2, 'StringLiteral'), span(3, 3, 'StringLiteral')])).toEqual([
+      { startLine: 1, endLine: 9, mutants: 3, byMutator: new Map([['BlockStatement', 1], ['StringLiteral', 2]]) },
     ]);
   });
 
@@ -136,6 +149,82 @@ describe('planShards', () => {
     expect(() => planShards([{ name: 'one.ts', lineCount: 9, spans: [span(1, 9), span(2)] }], 2)).toThrow(
       'cannot cut 1 indivisible mutant group(s) into 2 shards; use fewer shards',
     );
+  });
+
+  // A long function: its BlockStatement spans everything inside it.
+  const fn: FileMutants = {
+    name: 'fn.ts',
+    lineCount: 60,
+    spans: [
+      span(10, 50, 'BlockStatement'),
+      ...Array.from({ length: 6 }, (_, i) => span(11 + i, 11 + i, 'StringLiteral')),
+      ...Array.from({ length: 4 }, (_, i) => span(20 + i, 20 + i, 'ConditionalExpression')),
+      ...Array.from({ length: 3 }, (_, i) => span(30 + i, 30 + i, 'EqualityOperator')),
+    ],
+  };
+  const small4: FileMutants = { name: 'a.ts', lineCount: 9, spans: [span(1), span(2), span(3), span(4)] };
+
+  it('splits a group bigger than an even share by mutator, into shards of its own', () => {
+    // 18 mutants, 3 shards: a share is 6, the function holds 14.
+    expect(planShards([fn, small4], 3)).toEqual([
+      { mutate: ['a.ts'], mutants: 4 },
+      // StringLiteral 6 + BlockStatement 1; ConditionalExpression 4 + EqualityOperator 3.
+      { mutate: ['fn.ts'], mutants: 7, excludedMutations: ['ConditionalExpression', 'EqualityOperator'] },
+      { mutate: ['fn.ts'], mutants: 7, excludedMutations: ['BlockStatement', 'StringLiteral'] },
+    ]);
+  });
+
+  it('gives every mutator of a split group to exactly one of its shards', () => {
+    for (let n = 2; n <= 6; n += 1) {
+      const shards = planShards([fn, small4], n);
+      expect(shards).toHaveLength(n);
+      expect(shards.reduce((sum, s) => sum + s.mutants, 0)).toBe(18);
+      const split = shards.filter((s) => s.excludedMutations !== undefined);
+      const kept = split.flatMap((s) =>
+        ['BlockStatement', 'StringLiteral', 'ConditionalExpression', 'EqualityOperator'].filter(
+          (m) => !s.excludedMutations!.includes(m),
+        ),
+      );
+      expect(kept.sort()).toEqual(split.length > 0 ? ['BlockStatement', 'ConditionalExpression', 'EqualityOperator', 'StringLiteral'] : []);
+    }
+  });
+
+  it('leaves a split group out of the ranges around it', () => {
+    const middle: FileMutants = {
+      name: 'mid.ts',
+      lineCount: 80,
+      spans: [span(2), span(3), ...fn.spans, span(60), span(70)],
+    };
+    const shards = planShards([middle], 3);
+    expect(shards).toEqual([
+      { mutate: ['mid.ts:1-3', 'mid.ts:51-80'], mutants: 4 },
+      { mutate: ['mid.ts:4-50'], mutants: 7, excludedMutations: ['ConditionalExpression', 'EqualityOperator'] },
+      { mutate: ['mid.ts:4-50'], mutants: 7, excludedMutations: ['BlockStatement', 'StringLiteral'] },
+    ]);
+  });
+
+  it('splits a group no further than it has mutators', () => {
+    const one: FileMutants = { name: 'one.ts', lineCount: 9, spans: [span(1, 9, 'BlockStatement'), span(2, 2, 'BlockStatement'), span(3, 3, 'BlockStatement')] };
+    expect(() => planShards([one], 2)).toThrow('cannot cut 1 indivisible mutant group(s) into 2 shards');
+    expect(planShards([one, small4], 2)).toEqual([
+      { mutate: ['a.ts'], mutants: 4 },
+      { mutate: ['one.ts'], mutants: 3 },
+    ]);
+  });
+
+  it('keeps one shard for the rest, splitting the biggest group less', () => {
+    // A share is 9; the function would take two shards and leave none.
+    expect(planShards([fn, small4], 2)).toEqual([
+      { mutate: ['a.ts'], mutants: 4 },
+      { mutate: ['fn.ts'], mutants: 14 },
+    ]);
+  });
+
+  it('splits a group that is a whole file, mutating the whole file in each of its shards', () => {
+    expect(planShards([fn], 2)).toEqual([
+      { mutate: ['fn.ts'], mutants: 7, excludedMutations: ['ConditionalExpression', 'EqualityOperator'] },
+      { mutate: ['fn.ts'], mutants: 7, excludedMutations: ['BlockStatement', 'StringLiteral'] },
+    ]);
   });
 
   it.each([0, -1, 1.5, Number.NaN])('refuses a shard count of %p', (n) => {
@@ -220,6 +309,32 @@ describe('mergeReports', () => {
     const before = JSON.stringify(shard0);
     mergeReports([shard0, shard1]);
     expect(JSON.stringify(shard0)).toBe(before);
+  });
+
+  it('takes from a shard only the mutants it is given to keep', () => {
+    const loc = (line: number) => ({ start: { line, column: 1 }, end: { line, column: 9 } });
+    const str = { mutatorName: 'StringLiteral', replacement: '""', location: loc(2) };
+    const blk = { mutatorName: 'BlockStatement', replacement: '{}', location: loc(1) };
+    const call = { mutatorName: 'CallExpression', replacement: ';', location: loc(3) };
+    const a: MutationReport = {
+      files: { 'f.ts': { mutants: [{ id: '0', ...str, status: 'Killed' }, { id: '1', ...blk, status: 'Ignored' }, { id: '2', ...call, status: 'Killed' }] } },
+    };
+    const b: MutationReport = {
+      files: { 'f.ts': { mutants: [{ id: '0', ...str, status: 'Ignored' }, { id: '1', ...blk, status: 'Survived' }] } },
+    };
+    // The whole gate has no CallExpression mutant here: a's is an artefact of its exclusions.
+    const merged = mergeReports([a, b], [new Set([mutantKey('f.ts', str)]), new Set([mutantKey('f.ts', blk)])]);
+    expect(merged.files['f.ts']!.mutants).toEqual([
+      { id: '0-0', ...str, status: 'Killed' },
+      { id: '1-1', ...blk, status: 'Survived' },
+    ]);
+    expect(countMutants(mergeReports([a, b], [undefined, new Set()]))).toBe(3);
+  });
+
+  it('keys a mutant by file, mutator, replacement and location', () => {
+    const m = { mutatorName: 'StringLiteral', replacement: '""', location: { start: { line: 2, column: 3 }, end: { line: 4, column: 5 } } };
+    expect(mutantKey('f.ts', m)).toBe('f.ts\u0000StringLiteral\u0000""\u00002:3-4:5');
+    expect(mutantKey('f.ts', { mutatorName: 'X' })).toBe('f.ts\u0000X\u0000undefined\u0000?');
   });
 
   it('refuses to merge nothing', () => {

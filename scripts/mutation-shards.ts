@@ -10,6 +10,18 @@
  * only ever cuts between lines no mutant spans, and the ranges of one file
  * meet end to end, so every line and every mutant lands in exactly one shard.
  *
+ * One group can still be bigger than a shard should be: a long function whose
+ * BlockStatement mutant spans every other mutant in it. Such a group is split
+ * by mutator instead, into shards of their own that each mutate the group's
+ * lines with the other mutators excluded (`mutator.excludedMutations`).
+ * That is not quite a partition: Stryker reports an excluded mutant as
+ * Ignored, and the CallExpression mutator drops a statement's mutant only
+ * when another live mutant sits inside the statement, so with those
+ * excluded it places a few mutants the whole run never has. The merge keeps
+ * from such a shard exactly the mutants the whole gate has (by `mutantKey`)
+ * of the mutators the shard kept, so each mutant comes from the one shard
+ * that ran it.
+ *
  * Everything here is pure; scripts/cli-mutation.ts does the I/O and asks
  * Stryker's own instrumenter where the mutants are.
  */
@@ -18,6 +30,8 @@
 export interface MutantSpan {
   startLine: number;
   endLine: number;
+  /** Stryker's mutator name, e.g. `ConditionalExpression`. */
+  mutator: string;
 }
 
 export interface FileMutants {
@@ -37,12 +51,16 @@ export interface MutantGroup {
   startLine: number;
   endLine: number;
   mutants: number;
+  /** How many of them each mutator makes. */
+  byMutator: Map<string, number>;
 }
 
 export interface Shard {
   /** `mutate` entries: a bare path for a whole file, `path:a-b` for a slice. */
   mutate: string[];
   mutants: number;
+  /** Mutators this shard leaves to others: set only on a split group's shards. */
+  excludedMutations?: string[];
 }
 
 /**
@@ -58,8 +76,14 @@ export function mutantGroups(spans: readonly MutantSpan[]): MutantGroup[] {
     if (last !== undefined && span.startLine <= last.endLine) {
       last.endLine = Math.max(last.endLine, span.endLine);
       last.mutants += 1;
+      last.byMutator.set(span.mutator, (last.byMutator.get(span.mutator) ?? 0) + 1);
     } else {
-      groups.push({ startLine: span.startLine, endLine: span.endLine, mutants: 1 });
+      groups.push({
+        startLine: span.startLine,
+        endLine: span.endLine,
+        mutants: 1,
+        byMutator: new Map([[span.mutator, 1]]),
+      });
     }
   }
   return groups;
@@ -76,8 +100,9 @@ interface Unit extends MutantGroup {
  * Cuts the gate's mutants into `n` shards of as even a mutant count as the
  * safe cut points allow. Files keep their order, so a shard is a contiguous
  * stretch of the sorted file list, whole files in the middle and at most a
- * slice at either end. Files without a single mutant are left out: they add
- * nothing to any score.
+ * slice at either end. A group bigger than an even share gets shards of its
+ * own, split by mutator (see the top of this file). Files without a single
+ * mutant are left out: they add nothing to any score.
  */
 export function planShards(files: readonly FileMutants[], n: number): Shard[] {
   if (!Number.isInteger(n) || n < 1) throw new Error(`shard count must be a positive integer, got ${n}`);
@@ -86,13 +111,48 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
     const groups = mutantGroups(file.spans);
     groups.forEach((group, index) => units.push({ ...group, file, index, of: groups.length }));
   }
-  if (units.length < n) {
+  const total = units.reduce((sum, unit) => sum + unit.mutants, 0);
+  const share = total / n;
+
+  // How many shards each oversized group takes: enough for an even share
+  // each, but no more than it has mutators, and leaving at least one shard
+  // for everything else.
+  const heavy = new Map<Unit, number>();
+  for (const unit of units) {
+    if (n > 1 && unit.mutants > share) {
+      heavy.set(unit, Math.min(Math.ceil(unit.mutants / share), unit.byMutator.size));
+    }
+  }
+  const light = units.filter((unit) => !heavy.has(unit));
+  const heavyShards = () => [...heavy.values()].reduce((sum, k) => sum + k, 0);
+  const reserved = light.length > 0 ? 1 : 0;
+  while (heavyShards() + reserved > n) {
+    const [unit, k] = [...heavy].sort((a, b) => b[1] - a[1])[0]!;
+    if (k > 1) heavy.set(unit, k - 1);
+    else heavy.delete(unit);
+  }
+  for (const [unit, k] of heavy) if (k < 2) heavy.delete(unit);
+  const rest = units.filter((unit) => !heavy.has(unit));
+  const restShards = n - heavyShards();
+  if (rest.length < restShards) {
     throw new Error(`cannot cut ${units.length} indivisible mutant group(s) into ${n} shards; use fewer shards`);
   }
 
-  // Each shard aims at an equal part of what the shards before it left over,
-  // and takes a group only while that brings it closer to the aim. Never
-  // fewer groups left than shards still to open, so no shard comes out empty.
+  const shards: Shard[] = cutInOrder(rest, restShards).map((run) => ({
+    mutate: toMutateEntries(run),
+    mutants: run.reduce((sum, unit) => sum + unit.mutants, 0),
+  }));
+  for (const [unit, k] of heavy) shards.push(...splitByMutator(unit, k));
+  return shards;
+}
+
+/**
+ * Each shard aims at an equal part of what the shards before it left over,
+ * and takes a group only while that brings it closer to the aim. Never fewer
+ * groups left than shards still to open, so no shard comes out empty.
+ */
+function cutInOrder(units: readonly Unit[], n: number): Unit[][] {
+  if (n === 0) return [];
   const runs: Unit[][] = [[]];
   let rest = units.reduce((sum, unit) => sum + unit.mutants, 0);
   let load = 0;
@@ -110,10 +170,24 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
       load += unit.mutants;
     }
   });
+  return runs;
+}
 
-  return runs.map((run) => ({
-    mutate: toMutateEntries(run),
-    mutants: run.reduce((sum, unit) => sum + unit.mutants, 0),
+/** Deals a group's mutators, biggest first, onto the least loaded of `k` shards. */
+function splitByMutator(unit: Unit, k: number): Shard[] {
+  const bins = Array.from({ length: k }, () => ({ mutators: [] as string[], mutants: 0 }));
+  const byCount = [...unit.byMutator].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  for (const [mutator, count] of byCount) {
+    const bin = bins.reduce((min, b) => (b.mutants < min.mutants ? b : min));
+    bin.mutators.push(mutator);
+    bin.mutants += count;
+  }
+  const all = [...unit.byMutator.keys()].sort();
+  const mutate = toMutateEntries([unit]);
+  return bins.map((bin) => ({
+    mutate,
+    mutants: bin.mutants,
+    excludedMutations: all.filter((mutator) => !bin.mutators.includes(mutator)),
   }));
 }
 
@@ -123,7 +197,9 @@ function toMutateEntries(run: readonly Unit[]): string[] {
   while (i < run.length) {
     const first = run[i]!;
     let j = i;
-    while (j + 1 < run.length && run[j + 1]!.file === first.file) j += 1;
+    // One entry per stretch of consecutive groups: a split group taken out of
+    // the middle of a file leaves this run two stretches of it.
+    while (j + 1 < run.length && run[j + 1]!.file === first.file && run[j + 1]!.index === run[j]!.index + 1) j += 1;
     const last = run[j]!;
     const { file } = first;
     if (first.index === 0 && last.index === last.of - 1) {
@@ -148,6 +224,9 @@ function toMutateEntries(run: readonly Unit[]): string[] {
 /** The parts of Stryker's JSON report (mutation-testing-report-schema) used here. */
 export interface ReportMutant {
   id: string;
+  mutatorName?: string;
+  replacement?: string;
+  location?: { start: { line: number; column: number }; end: { line: number; column: number } };
   killedBy?: string[];
   coveredBy?: string[];
   [key: string]: unknown;
@@ -170,14 +249,32 @@ export interface MutationReport {
   [key: string]: unknown;
 }
 
+/** Identifies a mutant across runs: file, mutator, replacement and 1-based location. */
+export function mutantKey(
+  fileName: string,
+  mutant: {
+    mutatorName?: unknown;
+    replacement?: unknown;
+    location?: { start: { line: number; column: number }; end: { line: number; column: number } };
+  },
+): string {
+  const loc = mutant.location;
+  const where = loc ? `${loc.start.line}:${loc.start.column}-${loc.end.line}:${loc.end.column}` : '?';
+  return [fileName, String(mutant.mutatorName), String(mutant.replacement), where].join('\u0000');
+}
+
 /**
  * Merges shard reports into one report of the whole gate. Mutant ids are only
  * unique within a run, so each shard's are prefixed with its position. Test
  * ids are numbers Stryker hands out per run as well; a test is the same test
  * in every shard when its file and name match, so those get one merged id and
- * every killedBy/coveredBy is rewritten to it.
+ * every killedBy/coveredBy is rewritten to it. When `keep[i]` is given, only
+ * the mutants of shard i whose `mutantKey` it holds are taken.
  */
-export function mergeReports(reports: readonly MutationReport[]): MutationReport {
+export function mergeReports(
+  reports: readonly MutationReport[],
+  keep: readonly (ReadonlySet<string> | undefined)[] = [],
+): MutationReport {
   if (reports.length === 0) throw new Error('no shard reports to merge');
   const files: Record<string, ReportFile> = {};
   const testFiles: Record<string, { tests: ReportTest[]; [key: string]: unknown }> = {};
@@ -201,8 +298,10 @@ export function mergeReports(reports: readonly MutationReport[]): MutationReport
     const remap = (ids: string[] | undefined): string[] | undefined =>
       ids?.map((id) => testIds.get(id) ?? `${shard}-${id}`);
 
+    const own = keep[shard];
     for (const [fileName, file] of Object.entries(report.files)) {
-      const mutants = file.mutants.map((mutant) => {
+      const ran = own === undefined ? file.mutants : file.mutants.filter((m) => own.has(mutantKey(fileName, m)));
+      const mutants = ran.map((mutant) => {
         const next: ReportMutant = { ...mutant, id: `${shard}-${mutant.id}` };
         if (mutant.killedBy !== undefined) next.killedBy = remap(mutant.killedBy);
         if (mutant.coveredBy !== undefined) next.coveredBy = remap(mutant.coveredBy);
