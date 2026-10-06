@@ -24,7 +24,7 @@
 import { type PulledBundle, crashOf } from './bundles';
 import { iosTarget } from './device';
 import { ON_IOS, type Run, TARGET_NAME, awaitBundles, clearBundles, describeDevice, must, report, startRun } from './harness';
-import { beginRetainingSuite, endRetainingSuite } from './observe';
+import { beginRetainingSuite, endRetainingSuite, iosCrashQueueFiles } from './observe';
 import { type DeviceLog, devicePidsOfApp, deviceTerminationSignal } from './scenario';
 
 jest.setTimeout(10 * 60_000);
@@ -72,6 +72,8 @@ describeIphone(`a native signal crash recovered on ${TARGET_NAME}`, () => {
     expect(ended).toBe(true);
     const signal = deviceTerminationSignal(crash.launch!.output);
     const stillRunning = (await devicePidsOfApp()).includes(pid);
+    // What the crash left for the next launch to claim.
+    report(`${kind} crash queue before the relaunch`, await iosCrashQueueFiles());
     report(`${kind} died`, { pid, signal, consoleEnd: crash.launch!.output.slice(-3).map(line => line.text.trim()) });
 
     const recover = await startRun('native-crash-recover');
@@ -92,35 +94,53 @@ describeIphone(`a native signal crash recovered on ${TARGET_NAME}`, () => {
 
   const SIGNALS = { segv: { number: 11, name: 'SIGSEGV' }, abort: { number: 6, name: 'SIGABRT' } } as const;
 
-  // Order matters, and is recorded rather than hidden: on the XS with
-  // 7.0.0-beta4, a SIGABRT crashed after a SIGSEGV had been crashed and
-  // recovered in the same suite was not recovered in 2 of 3 runs (no crash
-  // file at the next launch, the handler never called), while abort alone
-  // passed 4/4, segv alone 7/7, and abort-then-segv 2/2. Open in the
-  // beta-coverage report; this order keeps each kind's own proof stable.
-  for (const kind of ['abort', 'segv'] as const) {
-    const expected = SIGNALS[kind];
-
-    it(`crashNative('${kind}') kills the app with ${expected.name}`, async () => {
-      const outcome = await crashAndRecover(kind);
-      expect(outcome.signal).toBe(expected.number);
-      expect(outcome.stillRunning).toBe(false);
-    });
-
-    it(`the next launch recovers one crash report naming ${expected.name}`, async () => {
-      const outcome = await crashAndRecover(kind);
-      expect(outcome.crashes).toHaveLength(1);
-      const text = JSON.stringify(crashOf(outcome.crashes[0]!));
-      expect(text).toContain(expected.name);
-      // A signal, not an Objective-C exception: no NSException behind it.
-      expect(text).not.toContain('NSGenericException');
-    });
-
-    it(`the recovery handler's labels reach the ${kind} crash report`, async () => {
-      const outcome = await crashAndRecover(kind);
-      expect(outcome.handlerLines.some(line => / labels-set /.test(line))).toBe(true);
-      expect(outcome.crashes).toHaveLength(1);
-      expect(outcome.crashes[0]!.request.labels).toEqual(expect.arrayContaining(['e2e-recovered', outcome.recover.scenario.nonce]));
-    });
+  function assertRecovered(outcome: KindOutcome, name: string): void {
+    expect(outcome.crashes).toHaveLength(1);
+    const text = JSON.stringify(crashOf(outcome.crashes[0]!));
+    expect(text).toContain(name);
+    // A signal, not an Objective-C exception: no NSException behind it.
+    expect(text).not.toContain('NSGenericException');
   }
+
+  function assertLabelled(outcome: KindOutcome): void {
+    expect(outcome.handlerLines.some(line => / labels-set /.test(line))).toBe(true);
+    expect(outcome.crashes).toHaveLength(1);
+    expect(outcome.crashes[0]!.request.labels).toEqual(expect.arrayContaining(['e2e-recovered', outcome.recover.scenario.nonce]));
+  }
+
+  it("crashNative('segv') kills the app with SIGSEGV", async () => {
+    const outcome = await crashAndRecover('segv');
+    expect(outcome.signal).toBe(SIGNALS.segv.number);
+    expect(outcome.stillRunning).toBe(false);
+  });
+
+  it('the next launch recovers one crash report naming SIGSEGV', async () => {
+    assertRecovered(await crashAndRecover('segv'), SIGNALS.segv.name);
+  });
+
+  it("the recovery handler's labels reach the segv crash report", async () => {
+    assertLabelled(await crashAndRecover('segv'));
+  });
+
+  it("crashNative('abort') kills the app with SIGABRT", async () => {
+    const outcome = await crashAndRecover('abort');
+    expect(outcome.signal).toBe(SIGNALS.abort.number);
+    expect(outcome.stillRunning).toBe(false);
+  });
+
+  // iOS 7.0.0-beta4 on the XS loses a SIGABRT now and then: in 3 of 16
+  // abort runs on 2026-10-06 the next launch claimed nothing and the handler
+  // was never called (SIGSEGV: 0 of 11). It is not the order of the kinds
+  // (seen abort-first and segv-first) and not a stale queue (the container,
+  // crash queue included, is wiped and asserted gone before each kind). An
+  // intermittent loss cannot be pinned with it.failing without making the
+  // pin flaky, so these two cases state the expected behaviour and go red
+  // when the SDK drops the crash. Open in the beta-coverage report.
+  it('the next launch recovers one crash report naming SIGABRT', async () => {
+    assertRecovered(await crashAndRecover('abort'), SIGNALS.abort.name);
+  });
+
+  it("the recovery handler's labels reach the abort crash report", async () => {
+    assertLabelled(await crashAndRecover('abort'));
+  });
 });

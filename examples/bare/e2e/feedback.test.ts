@@ -56,7 +56,21 @@ describeDevice(`the feedback chat on ${TARGET_NAME}`, () => {
     log = await beginRetainingSuite('beta-feedback');
   });
 
-  afterAll(() => endRetainingSuite(log));
+  afterAll(async () => {
+    try {
+      // feedback-chat set an e-mail user identifier, which outlives the
+      // container wipe (the iOS Keychain; Android's SDK store): clear it
+      // the way attributes.test.ts does, with its `attributes-persist`.
+      const clearer = await startRun('attributes-persist');
+      must(
+        await log!.waitFor(/BUGSEE_E2E attr cleared-id \{"type":"undefined"\}/, 30_000, clearer.start),
+        'the user identifier cleared after the feedback-chat runs',
+        clearer.start,
+      );
+    } finally {
+      await endRetainingSuite(log);
+    }
+  });
 
   /** Starts `scenario`, waits for its `shown` marker, lets the UI settle. */
   async function show(scenario: 'feedback' | 'feedback-chat'): Promise<Run> {

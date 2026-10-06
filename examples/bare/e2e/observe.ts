@@ -114,6 +114,33 @@ export async function androidTopActivity(): Promise<string | undefined> {
   return line?.[1];
 }
 
+/**
+ * The iOS crash reporter's queue on the iPhone (PLCrashReporter's
+ * `Library/Caches/com.bugsee.crashreporter`): what a crash wrote before the
+ * next launch claims it. Every file, relative to the queue.
+ */
+export async function iosCrashQueueFiles(): Promise<string[]> {
+  try {
+    const result = await devicectl(
+      'info',
+      'files',
+      '--domain-type',
+      'appDataContainer',
+      '--domain-identifier',
+      IOS_BUNDLE_ID,
+      '--subdirectory',
+      'Library/Caches/com.bugsee.crashreporter',
+    );
+    const files = (result.files ?? []) as Array<{ relativePath?: string; name?: string; isDirectory?: boolean }>;
+    return files.filter(file => file.isDirectory !== true).map(file => file.relativePath ?? file.name ?? '');
+  } catch (error) {
+    if (/failed to get a list of files/.test(String(error))) {
+      return [];
+    }
+    throw error;
+  }
+}
+
 /** The capture parts the SDK keeps between reports, relative to its data root. */
 const ANDROID_GENERATIONS = 'files/bugsee_data/capture/generations';
 const IOS_GENERATIONS = 'Library/Caches/com.bugsee.data/capture/generations';
