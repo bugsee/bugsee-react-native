@@ -20,10 +20,10 @@
 @implementation BGSRNFakeModalHost
 @end
 
-/// The `vh` origin must be the offset the SDK itself adds to every native
-/// node -- the hosting window's `frame.origin`
-/// (`BGSCaptureViewHierarchyEngine.m:334-336`) -- so the React tree and the
-/// native tree share one space by construction.
+/// The `vh` origin must put the React tree where the SDK places its native
+/// nodes -- on iOS on the screen, through the screen's fixed space
+/// (`+[BGSTrackerApplication screenRectForRect:inView:]`) -- so the two trees
+/// share one space by construction.
 @interface BGSRNReactWindowTests : XCTestCase
 @end
 
@@ -54,19 +54,39 @@
   return window;
 }
 
-- (void)testTheOriginIsTheHostingWindowsFrameOrigin {
+/// The SDK's placement of `rect` in `view` on iOS, as
+/// `+[BGSTrackerApplication screenRectForRect:inView:]` computes it.
+- (CGRect)sdkScreenRectForRect:(CGRect)rect inView:(UIView *)view {
+  UIWindow *window = [view isKindOfClass:UIWindow.class] ? (UIWindow *)view : view.window;
+  UIScreen *screen = window.windowScene.screen;
+  id<UICoordinateSpace> fixedSpace = screen.fixedCoordinateSpace;
+  return [fixedSpace convertRect:[view convertRect:rect toCoordinateSpace:fixedSpace]
+               toCoordinateSpace:screen.coordinateSpace];
+}
+
+- (void)skipWithoutAScreenFor:(UIWindow *)window {
+  if (window.windowScene.screen == nil) {
+    XCTSkip(@"The test runner put the window on no screen");
+  }
+}
+
+- (void)testTheOriginIsWhereTheHostingWindowStartsOnTheScreen {
   UIWindow *key = [self windowAt:CGRectMake(0, 0, 390, 844) hostingAtDepth:NSNotFound];
   UIWindow *hosting = [self windowAt:CGRectMake(120.5, 64, 300, 400) hostingAtDepth:3];
+  [self skipWithoutAScreenFor:hosting];
 
   NSValue *origin = BGSRNReactRootOrigin(key, @[ key, hosting ], _isReactRoot);
 
-  XCTAssertEqualObjects(origin, [NSValue valueWithCGPoint:CGPointMake(120.5, 64)]);
+  XCTAssertEqualObjects(origin, BGSRNWindowRecordedOrigin(hosting));
+  XCTAssertTrue(CGPointEqualToPoint(origin.CGPointValue,
+                                    [self sdkScreenRectForRect:hosting.bounds inView:hosting].origin));
 }
 
 /// What JS computes (`measureInWindow` + origin) is what the SDK computes for
-/// the same view (window-relative rect + `window.frame.origin`).
+/// the same view (its rect on the screen).
 - (void)testANodePlusTheOriginLandsWhereTheSdkPutsIt {
   UIWindow *window = [self windowAt:CGRectMake(40, 30, 300, 400) hostingAtDepth:0];
+  [self skipWithoutAScreenFor:window];
   UIView *container = [[UIView alloc] initWithFrame:CGRectMake(10, 20, 200, 200)];
   UIView *view = [[UIView alloc] initWithFrame:CGRectMake(5, 7, 50, 60)];
   [container addSubview:view];
@@ -74,28 +94,17 @@
 
   const CGPoint origin = BGSRNReactRootOrigin(window, @[ window ], _isReactRoot).CGPointValue;
   const CGRect inWindow = [view convertRect:view.bounds toView:nil];
-  CGRect sdk = [view.window convertRect:view.frame fromView:view.superview];
-  sdk.origin.x += view.window.frame.origin.x;
-  sdk.origin.y += view.window.frame.origin.y;
+  const CGRect sdk = [self sdkScreenRectForRect:view.frame inView:view.superview];
 
-  XCTAssertEqual(inWindow.origin.x + origin.x, sdk.origin.x);
-  XCTAssertEqual(inWindow.origin.y + origin.y, sdk.origin.y);
-  XCTAssertEqual(sdk.origin.x, 55);
-  XCTAssertEqual(sdk.origin.y, 57);
+  XCTAssertEqualWithAccuracy(inWindow.origin.x + origin.x, sdk.origin.x, 0.001);
+  XCTAssertEqualWithAccuracy(inWindow.origin.y + origin.y, sdk.origin.y, 0.001);
 }
 
-/// Not the window's position in the screen's coordinate space, which can
-/// differ from `frame.origin` (iPad multitasking; here, a transformed window,
-/// the one case a unit test can construct): the SDK adds `frame.origin`.
-- (void)testTheOriginIsTheFrameOriginNotTheScreenSpacePosition {
-  UIWindow *window = [self windowAt:CGRectMake(10, 20, 100, 200) hostingAtDepth:0];
-  window.transform = CGAffineTransformMakeRotation(M_PI);
-  const CGPoint screenSpace = [window convertPoint:CGPointZero toCoordinateSpace:window.screen.coordinateSpace];
-  XCTAssertFalse(CGPointEqualToPoint(screenSpace, window.frame.origin), @"the fixture must tell the two apart");
+- (void)testAHostingWindowOnNoScreenIsNoOrigin {
+  UIWindow *window = [self windowAt:CGRectMake(40, 30, 300, 400) hostingAtDepth:0];
+  window.windowScene = nil;
 
-  NSValue *origin = BGSRNReactRootOrigin(window, @[ window ], _isReactRoot);
-
-  XCTAssertEqualObjects(origin, [NSValue valueWithCGPoint:window.frame.origin]);
+  XCTAssertNil(BGSRNReactRootOrigin(window, @[ window ], _isReactRoot));
 }
 
 - (void)testTheKeyWindowIsPreferredWhenSeveralHost {
@@ -132,6 +141,17 @@
 }
 
 #pragma mark - The <Modal> host by React tag (PR 48)
+
+/// The window placement the Modal origins take, as the module passes
+/// `BGSRNWindowRecordedOrigin`. The test runner's windows are on no screen,
+/// where that has no place, so these tests place a window at its
+/// `frame.origin`; `testAModalOriginAddsTheWindowsPlacement` checks the term.
+- (NSValue *_Nullable (^)(UIWindow *))frameOrigin {
+  return ^NSValue *_Nullable(UIWindow *window) {
+    return [NSValue valueWithCGPoint:window.frame.origin];
+  };
+}
+
 
 - (BOOL (^)(UIView *))isModalHost {
   return ^BOOL(UIView *view) {
@@ -251,15 +271,40 @@
   UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(10, 20, 390, 844)];
   BGSRNFakeModalHost *host = [self hostTagged:42 inWindow:window presentedIn:window contentFrame:CGRectMake(0, 60, 390, 784)];
 
-  XCTAssertEqualObjects(BGSRNModalHostOrigin(host), [NSValue valueWithCGPoint:CGPointMake(10, 80)]);
+  XCTAssertEqualObjects(BGSRNModalHostOrigin(host, [self frameOrigin]), [NSValue valueWithCGPoint:CGPointMake(10, 80)]);
+}
+
+/// The window's term is the placement the module passes: the window's place
+/// on its screen (`BGSRNWindowRecordedOrigin`), the main surface's convention,
+/// not `frame.origin`, which is {0, 0} for a Stage Manager window or the
+/// right-hand one side by side.
+- (void)testAModalOriginAddsTheWindowsPlacement {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(10, 20, 390, 844)];
+  BGSRNFakeModalHost *host = [self hostTagged:42 inWindow:window presentedIn:window contentFrame:CGRectMake(0, 60, 390, 784)];
+  NSValue *_Nullable (^onTheScreen)(UIWindow *) = ^NSValue *_Nullable(UIWindow *placed) {
+    return placed == window ? [NSValue valueWithCGPoint:CGPointMake(300, 40)] : nil;
+  };
+
+  XCTAssertEqualObjects(BGSRNModalHostOrigin(host, onTheScreen), [NSValue valueWithCGPoint:CGPointMake(300, 100)]);
+}
+
+/// A window with no place (on no screen) gives the Modal no origin: its lane
+/// keeps the origin it had, unknown for a new one, rather than a guess.
+- (void)testAModalInAWindowWithNoPlacementHasNoOrigin {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(10, 20, 390, 844)];
+  BGSRNFakeModalHost *host = [self hostTagged:42 inWindow:window presentedIn:window contentFrame:CGRectMake(0, 60, 390, 784)];
+
+  XCTAssertNil(BGSRNModalHostOrigin(host, ^NSValue *_Nullable(UIWindow *placed) {
+    return nil;
+  }));
 }
 
 - (void)testAHostWhoseContentHasNoWindowHasNoOrigin {
   UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 390, 844)];
   BGSRNFakeModalHost *host = [self hostTagged:42 inWindow:window presentedIn:nil contentFrame:CGRectMake(0, 60, 390, 784)];
 
-  XCTAssertNil(BGSRNModalHostOrigin(host));
-  XCTAssertNil(BGSRNModalHostOrigin([UIView new]));
+  XCTAssertNil(BGSRNModalHostOrigin(host, [self frameOrigin]));
+  XCTAssertNil(BGSRNModalHostOrigin([UIView new], [self frameOrigin]));
 }
 
 /// What a module's view registry answers: `host` for `tag`, nothing else.
@@ -284,7 +329,7 @@
   BGSRNSecureRectangles *store = [self storeWithLaneOn:42 claim:&claim];
   XCTAssertTrue([store setHostResolver:[self registryWith:current calls:NULL] forSurface:42 runtime:claim]);
 
-  NSValue *origin = BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]);
+  NSValue *origin = BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]);
 
   XCTAssertEqualObjects(origin, [NSValue valueWithCGPoint:CGPointMake(0, 60)]);
 }
@@ -305,13 +350,13 @@
               forSurface:42
                  runtime:claim];
 
-  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]));
+  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]));
   XCTAssertEqual(calls, 1u);
 
   mounted = [self hostTagged:42 inWindow:window presentedIn:window contentFrame:CGRectMake(0, 60, 390, 784)];
-  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]),
+  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]),
                         [NSValue valueWithCGPoint:CGPointMake(0, 60)]);
-  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]),
+  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]),
                         [NSValue valueWithCGPoint:CGPointMake(0, 60)]);
   XCTAssertEqual(calls, 2u);
 }
@@ -330,7 +375,7 @@
               forSurface:42
                  runtime:claim];
 
-  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]));
+  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]));
   XCTAssertNil([store hostForSurface:42 accepting:^BOOL(id candidate) { return NO; }]);
 }
 
@@ -342,7 +387,7 @@
   NSInteger oldClaim = 0;
   BGSRNSecureRectangles *store = [self storeWithLaneOn:42 claim:&oldClaim];
   XCTAssertTrue([store setHostResolver:[self registryWith:old calls:NULL] forSurface:42 runtime:oldClaim]);
-  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]),
+  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]),
                         [NSValue valueWithCGPoint:CGPointMake(0, 300)]);
 
   const NSInteger current = [store claimRuntime];
@@ -353,14 +398,14 @@
   BGSRNFakeModalHost *fresh = [self hostTagged:42 inWindow:window presentedIn:window contentFrame:CGRectMake(0, 0, 390, 844)];
 
   // Before the new module names its host: two matches, so no origin.
-  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]));
+  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]));
   // The old module's late naming is stale.
   XCTAssertFalse([store setHostResolver:[self registryWith:old calls:NULL] forSurface:42 runtime:oldClaim]);
   XCTAssertFalse([store setHost:old forSurface:42 runtime:oldClaim]);
-  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]));
+  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]));
   // The new module's lookup places the lane by its own host.
   XCTAssertTrue([store setHostResolver:[self registryWith:fresh calls:NULL] forSurface:42 runtime:current]);
-  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]),
+  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]),
                         [NSValue valueWithCGPoint:CGPointZero]);
 }
 
@@ -374,8 +419,8 @@
   BGSRNSecureRectangles *store = [self storeWithLaneOn:42 claim:NULL];
 
   XCTAssertNil(BGSRNUniqueTaggedView(@[ window, other ], 42, [self isModalHost], BGSRNModalHostSearchBudget));
-  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window, other ], [self isModalHost]));
-  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]),
+  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window, other ], [self isModalHost], [self frameOrigin]));
+  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]),
                         [NSValue valueWithCGPoint:CGPointMake(0, 300)]);
 }
 
@@ -385,7 +430,7 @@
   [self hostTagged:42 inWindow:window presentedIn:nil contentFrame:CGRectMake(0, 60, 390, 784)];
   BGSRNSecureRectangles *store = [self storeWithLaneOn:42 claim:NULL];
 
-  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]));
+  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]));
 }
 
 /// A held host that has gone is looked up again; the lookup not finding it
@@ -408,7 +453,7 @@
                    runtime:claim];
   }
 
-  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]));
+  XCTAssertNil(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]));
   XCTAssertEqual(calls, 1u);
 }
 
@@ -435,7 +480,7 @@
   XCTAssertNotNil(BGSRNUniqueTaggedView(@[ window ], 42, [self isModalHost], BGSRNModalHostSearchBudget),
                   @"the fixture's old host is the walk's one match");
 
-  NSValue *origin = BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]);
+  NSValue *origin = BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]);
 
   XCTAssertNil(origin);
   // What the pull then serves: the lane's origin is still unknown.
@@ -457,8 +502,47 @@
   BGSRNSecureRectangles *store = [self storeWithLaneOn:42 claim:NULL];
 
   XCTAssertFalse([store isHostNamedForSurface:42]);
-  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost]),
+  XCTAssertEqualObjects(BGSRNSecureSurfaceOrigin(store, 42, @[ window ], [self isModalHost], [self frameOrigin]),
                         [NSValue valueWithCGPoint:CGPointMake(0, 300)]);
+}
+
+/// The tracker keeps the root view itself, so the search hands it back.
+- (void)testTheSearchReturnsTheRootView {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 10, 10)];
+  UIView *container = [UIView new];
+  BGSRNFakeReactRoot *root = [BGSRNFakeReactRoot new];
+  [container addSubview:root];
+  [window addSubview:container];
+
+  XCTAssertEqual(BGSRNReactRootView(window, @[], _isReactRoot, BGSRNReactRootSearchBudget), root);
+  XCTAssertNil(BGSRNReactRootView(nil, @[], _isReactRoot, BGSRNReactRootSearchBudget));
+}
+
+/// A window that is not on a screen has no place on one; the tracker then
+/// keeps the last origin rather than serve the rectangles at {0, 0}.
+- (void)testAWindowOnNoScreenHasNoScreenOrigin {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(37, 53, 100, 100)];
+  window.windowScene = nil;
+
+  XCTAssertNil(BGSRNWindowRecordedOrigin(window));
+}
+
+/// The test runner's scene fills its iPhone screen, so a window placed at
+/// {37, 53} in it starts at {37, 53} on the screen. A window side by side or
+/// in Stage Manager adds its scene's place, which only a device shows.
+- (void)testAWindowStartsOnTheScreenWhereItSitsInAFullScreenScene {
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(37, 53, 100, 100)];
+  UIWindowScene *scene = window.windowScene;
+  if (scene == nil
+      || !CGRectEqualToRect(scene.coordinateSpace.bounds, scene.screen.bounds)) {
+    XCTSkip(@"The test runner has no scene filling its screen");
+  }
+
+  NSValue *origin = BGSRNWindowRecordedOrigin(window);
+
+  XCTAssertNotNil(origin);
+  XCTAssertEqualWithAccuracy(origin.CGPointValue.x, 37, 0.5);
+  XCTAssertEqualWithAccuracy(origin.CGPointValue.y, 53, 0.5);
 }
 
 @end

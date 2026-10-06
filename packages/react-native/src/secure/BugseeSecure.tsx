@@ -31,7 +31,8 @@ export interface BugseeSecureProps extends ViewProps {
  * it is in. The rectangle is published under that surface's key (the Modal
  * host's tag, read off the fiber tree once per mount), so native translates
  * it by that surface's origin at pull time. No native call is made to find
- * the surface.
+ * the surface. On iOS that origin includes the window's place on its screen
+ * (Stage Manager, Split View, iPhone Duo side by side), where the SDK draws.
  *
  * A plain function component on purpose (no `memo`, no `forwardRef`): the view
  * tree walk recognises it by identity.

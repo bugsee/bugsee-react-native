@@ -19,6 +19,7 @@
 #import <BugseeRNSupport/BGSRNWrapperChannelHolder.h>
 #import <BugseeRNSupport/BGSRNStatusMapper.h>
 #import <BugseeRNSupport/BGSRNSecureRectangles.h>
+#import <BugseeRNSupport/BGSRNReactRootOriginTracker.h>
 #import <BugseeRNSupport/BGSRNEventBus.h>
 #import <BugseeRNSupport/BGSRNTokens.h>
 #import <BugseeRNSupport/BGSRNReportHandlerBridge.h>
@@ -44,6 +45,7 @@
 #import "BGSRNWrapperChannelHolder.h"
 #import "BGSRNStatusMapper.h"
 #import "BGSRNSecureRectangles.h"
+#import "BGSRNReactRootOriginTracker.h"
 #import "BGSRNEventBus.h"
 #import "BGSRNTokens.h"
 #import "BGSRNReportHandlerBridge.h"
@@ -70,6 +72,7 @@
 static NSValue *_Nullable BGSRNReactOrigin(void);
 static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface);
 static Class _Nullable BGSRNModalHostClass(void);
+static BGSRNReactRootOriginTracker *BGSRNSecureOriginTracker(void);
 
 /// The conformance lives here rather than in the Support package so that the
 /// package stays buildable and testable without the SDK's headers. BGSRNWrapper
@@ -103,10 +106,11 @@ static Class _Nullable BGSRNModalHostClass(void);
 }
 
 /// The packed buffer the SDK expects: `[version, count, l,t,r,b, ...]` as
-/// little-endian int32.
+/// little-endian int32, every rectangle moved from the React root's window to
+/// the screen.
 ///
 /// Read from the process-wide store rather than from this instance. The SDK
-/// pulls 2-3 times a second on the MAIN thread, and the wrapper it pulls
+/// pulls on the MAIN thread once per captured frame, and the wrapper it pulls
 /// through is replaced when `setWrapperInfo` runs — regions the app marked
 /// secret must survive that swap. See `BGSRNSecureRectangles` for the version
 /// contract, which is what makes the SDK notice a change at all.
@@ -234,20 +238,18 @@ static void BGSRNSetWrapper(id<BugseeWrapper> _Nullable wrapper, BOOL onlyIfAbse
   }
 }
 
-/// The `vh` origin: the `frame.origin` (points) of the window hosting the
-/// React root, among the windows the SDK's own view-hierarchy walk visits --
-/// the offset the SDK adds to every native node, so the two trees share one
-/// space by construction (see `BGSRNReactWindow.h`). nil without one, or off
-/// main: the SDK asks on main, and UIKit must not be read anywhere else.
+/// The `vh` origin: where the window hosting the React root starts in the
+/// frame the SDK records (points), among the windows the SDK's own
+/// view-hierarchy walk visits -- the space the SDK places every native node
+/// in, so the two trees share one space by construction (see
+/// `BGSRNReactWindow.h`). nil without one, or off main: the SDK asks on main,
+/// and UIKit must not be read anywhere else.
 ///
 /// The root is recognised by class name, not by import: `RCTSurfaceHostingView`
 /// is the new architecture's root (the template's `RCTRootView` is its
 /// `RCTSurfaceHostingProxyRootView` subclass); the legacy `RCTRootView` class
 /// is matched too for interop hosts.
-static NSValue *_Nullable BGSRNReactOrigin(void) {
-  if (!NSThread.isMainThread) {
-    return nil;
-  }
+static BOOL BGSRNIsReactRoot(UIView *view) {
   static Class surfaceHostingView;
   static Class legacyRootView;
   static dispatch_once_t once;
@@ -255,11 +257,24 @@ static NSValue *_Nullable BGSRNReactOrigin(void) {
     surfaceHostingView = NSClassFromString(@"RCTSurfaceHostingView");
     legacyRootView = NSClassFromString(@"RCTRootView");
   });
-  UIWindow *keyWindow = BGSRNSdkKeyWindow();
-  return BGSRNReactRootOrigin(keyWindow, BGSRNSdkWalkedWindows(keyWindow), ^BOOL(UIView *view) {
-    return (surfaceHostingView != Nil && [view isKindOfClass:surfaceHostingView]) ||
-           (legacyRootView != Nil && [view isKindOfClass:legacyRootView]);
-  });
+  return (surfaceHostingView != Nil && [view isKindOfClass:surfaceHostingView]) ||
+         (legacyRootView != Nil && [view isKindOfClass:legacyRootView]);
+}
+
+static NSValue *_Nullable BGSRNReactOrigin(void) {
+  if (!NSThread.isMainThread) {
+    return nil;
+  }
+  return [BGSRNSecureOriginTracker() origin];
+}
+
+/// `BGSRNReactOrigin`, searching for the root at once when the one found last
+/// is in no window: for a `vh` request, which comes once per walk.
+static NSValue *_Nullable BGSRNReactOriginFindingTheRoot(void) {
+  if (!NSThread.isMainThread) {
+    return nil;
+  }
+  return [BGSRNSecureOriginTracker() originFindingTheRoot];
 }
 
 /// `RCTModalHostViewComponentView`, resolved by name rather than imported;
@@ -291,10 +306,42 @@ static NSValue *_Nullable BGSRNModalSurfaceOrigin(NSInteger surface) {
   if (modalHostClass == Nil || surface <= 0) {
     return nil;
   }
-  return BGSRNSecureSurfaceOrigin(BGSRNSecureRectangles.shared, surface,
-                                  BGSRNSdkWalkedWindows(BGSRNSdkKeyWindow()), ^BOOL(UIView *view) {
-                                    return [view isKindOfClass:modalHostClass];
-                                  });
+  return BGSRNSecureSurfaceOrigin(
+      BGSRNSecureRectangles.shared, surface, BGSRNSdkWalkedWindows(BGSRNSdkKeyWindow()),
+      ^BOOL(UIView *view) {
+        return [view isKindOfClass:modalHostClass];
+      },
+      ^NSValue *_Nullable(UIWindow *window) {
+        return BGSRNWindowRecordedOrigin(window);
+      });
+}
+
+/// Keeps the main surface's origin on the window JS measures in: the iOS
+/// peer of Android's `ReactRootOriginTracker` (see
+/// `BGSRNReactRootOriginTracker`). Process-wide, like the store it feeds: the
+/// window lookup reads only UIKit, nothing of one module.
+static BGSRNReactRootOriginTracker *BGSRNSecureOriginTracker(void) {
+  static BGSRNReactRootOriginTracker *tracker = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    tracker = [[BGSRNReactRootOriginTracker alloc]
+        initWithFindRoot:^UIView *_Nullable {
+          UIWindow *keyWindow = BGSRNSdkKeyWindow();
+          return BGSRNReactRootView(keyWindow,
+                                    BGSRNSdkWalkedWindows(keyWindow),
+                                    ^BOOL(UIView *view) {
+                                      return BGSRNIsReactRoot(view);
+                                    },
+                                    BGSRNReactRootSearchBudget);
+        }
+        readOrigin:^NSValue *_Nullable(UIWindow *window) {
+          return BGSRNWindowRecordedOrigin(window);
+        }
+        clock:^NSTimeInterval {
+          return NSProcessInfo.processInfo.systemUptime;
+        }];
+  });
+  return tracker;
 }
 
 static NSString *const kHandleDeadCode = @"E_REPORT_HANDLE_DEAD";
@@ -959,7 +1006,7 @@ RCT_EXPORT_MODULE(Bugsee)
         }, @"onDataRequest");
       }
       origin:^NSValue *_Nullable {
-        return BGSRNReactOrigin();
+        return BGSRNReactOriginFindingTheRoot();
       }];
   // After the emitter exists. A network filter installed earlier reads this
   // pointer when an event arrives; it is nil until then, and a nil module
@@ -1064,6 +1111,18 @@ RCT_EXPORT_MODULE(Bugsee)
                                                               surface:key
                                                               runtime:_secureRuntime];
   free(flat);
+  // The main surface's rectangles: find the React root now, on main, and
+  // record its window's place, rather than leave the lane failing closed
+  // until a pull's search (`BGSRNReactRootOriginTracker`) gets to it.
+  if (published && count > 0 && key == BGSRNSecureMainSurface) {
+    const NSInteger target = (NSInteger)display;
+    BGSRNRunOnMain(^{
+      NSValue *origin = [BGSRNSecureOriginTracker() originFindingTheRoot];
+      if (origin != nil) {
+        [BGSRNSecureRectangles.shared setOrigin:origin.CGPointValue forDisplay:target];
+      }
+    });
+  }
   // A <Modal>'s rectangles: name this runtime's lookup of its host, so the
   // pull places them by this runtime's Modal. An empty publish (the Modal
   // clearing on unmount) names nothing.

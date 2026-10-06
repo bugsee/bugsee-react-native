@@ -1,9 +1,9 @@
 @import XCTest;
 @import BugseeRNSupport;
 
-/// The SDK PULLS this buffer 2-3 times a second — on iOS from the MAIN thread —
-/// and re-reads the rectangles only when the version differs from the one it
-/// saw last. Two properties follow, and both are load-bearing:
+/// The SDK PULLS this buffer once per captured frame — on iOS from the MAIN
+/// thread — and re-reads the rectangles only when the version differs from the
+/// one it saw last. Two properties follow, and both are load-bearing:
 ///
 ///  * a change MUST move the version, or the SDK goes on redacting the region
 ///    the app has stopped considering secret and, worse, records a newly
