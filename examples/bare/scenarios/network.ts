@@ -8,7 +8,7 @@
  */
 import Bugsee from '@bugsee/react-native';
 
-import { DEAD_ENDPOINT } from '../endpoint';
+import { deadEndpointUrl } from '../endpoint';
 
 export const NETWORK_SCENARIOS = ['network'] as const;
 
@@ -26,9 +26,10 @@ function mark(message: string): void {
  * The URL this scenario fetches. The host is the closed loopback the e2e
  * already uses (`DEAD_ENDPOINT`); the path carries the nonce so the bundle
  * assertion can tell this request from the SDK's own traffic to that host.
+ * No "bugsee" in it: the iOS SDK drops such a url (`deadEndpointUrl`).
  */
 export function fetchUrl(nonce: string): string {
-  return `${DEAD_ENDPOINT}/bugsee-e2e-fetch/${nonce}`;
+  return deadEndpointUrl(`rn-e2e-fetch/${nonce}`);
 }
 
 /** Called once the SDK reaches `Launched`. */

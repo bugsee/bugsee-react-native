@@ -50,10 +50,12 @@ jest.setTimeout(5 * 60_000);
 /**
  * The path scenarios/network.ts fetches, written here rather than imported:
  * the scenario is app code, and an e2e that compared the app against itself
- * could not fail.
+ * could not fail. It must not contain "bugsee": the iOS SDK's release build
+ * drops any such url as its own traffic, which is what kept this test red on
+ * iOS while Android passed.
  */
 function fetchPath(nonce: string): string {
-  return `bugsee-e2e-fetch/${nonce}`;
+  return `rn-e2e-fetch/${nonce}`;
 }
 
 function urlOf(event: Record<string, unknown>): string {

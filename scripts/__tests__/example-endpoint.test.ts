@@ -1,4 +1,4 @@
-import { DEAD_ENDPOINT, isPlaceholderToken, launchEndpoint } from '../../examples/bare/endpoint';
+import { DEAD_ENDPOINT, deadEndpointUrl, isPlaceholderToken, launchEndpoint } from '../../examples/bare/endpoint';
 
 /**
  * The example app never reaches the real Bugsee server with the committed
@@ -54,5 +54,26 @@ describe('launchEndpoint', () => {
 
   it('uses the closed loopback port the e2e retains reports with', () => {
     expect(DEAD_ENDPOINT).toBe('https://127.0.0.1:9');
+  });
+});
+
+/**
+ * A request the example expects native network capture to record. The iOS
+ * SDK's release build treats any url containing "bugsee" as its own traffic
+ * and never records it (BGSNetworkInterceptionIsBugseeURL, 7.0.0-beta3 and
+ * beta4). network.test.ts failed on iOS for exactly that: its path was
+ * `bugsee-e2e-fetch/<nonce>`.
+ */
+describe('deadEndpointUrl', () => {
+  it('puts the path on the dead loopback endpoint', () => {
+    expect(deadEndpointUrl('e2e-fetch/abc123')).toBe('https://127.0.0.1:9/e2e-fetch/abc123');
+  });
+
+  it('refuses a path the iOS SDK would take for its own traffic', () => {
+    expect(() => deadEndpointUrl('bugsee-e2e-fetch/abc123')).toThrow(/bugsee/);
+    expect(() => deadEndpointUrl('e2e/abc123?from=bugsee')).toThrow(/bugsee/);
+    // Case-insensitive on purpose: the SDK's check is case-sensitive today,
+    // and a looser guard does not depend on that.
+    expect(() => deadEndpointUrl('e2e/BugSee/abc123')).toThrow(/bugsee/);
   });
 });
