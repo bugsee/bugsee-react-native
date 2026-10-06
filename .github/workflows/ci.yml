@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -35,33 +36,132 @@ jobs:
       - run: yarn typecheck
       - run: yarn test
 
-  mutation:
-    # Fails the build under each config's break threshold. The point is not
-    # the number: tests that assert nothing still pass, and this is what
-    # notices. One job per gate, so the slowest gate sets the wall time
-    # rather than their sum. The scripts config sets ignoreStatic: a static
-    # mutant (a module-level constant) reruns the whole suite, and in scripts/
-    # those were 64% of the mutants and 99% of the run time. src keeps its
-    # static mutants: they are mostly killed, and without them it scores 92.
-    # The configs cap concurrency at 3 for laptops; a runner has 4 vCPUs.
-    # The plugin gate (the Expo config plugin and the Hermes source-map
-    # scripts, which decide whether a debug id, a dSYM action or a source-map
-    # upload reaches a customer build) runs in place: its tests need the
-    # workspace's nested node_modules, which a Stryker sandbox never copies.
-    name: mutation (${{ matrix.gate }})
+  # Mutation gates. Each fails the build under its config's break threshold.
+  # The point is not the number: tests that assert nothing still pass, and
+  # this is what notices.
+  #
+  # One gate per stryker.<gate>.json, each a call to mutation-gate.yml with a
+  # shard count. That workflow cuts the gate into N jobs (scripts/
+  # cli-mutation.ts): Stryker places a mutant only when a `mutate` range holds
+  # all of it, so the cuts fall only between lines no mutant spans, and shards
+  # are balanced by mutant count. Each shard runs with `break` lifted and
+  # uploads its JSON report; the gate's `score` job merges them, checks the
+  # merged mutant count against the plan, and enforces `break` on the whole
+  # through mutation-testing-metrics, the calculation Stryker itself uses. The
+  # merged report is kept as the mutation-<gate> artifact.
+  #
+  # On a pull request a gate runs only when something it reads changed: its
+  # mutated files, the tests in its Jest `testMatch`, its own config, or
+  # anything every gate reads (package.json and its Jest config, yarn.lock,
+  # the tsconfigs, these workflows, the sharding scripts). A gate that does
+  # not run shows as skipped. Pushes to main and manual runs run every gate,
+  # which also catches what a path filter cannot see (a test helper outside
+  # testMatch changing what a test kills).
+  #
+  # Each config carries its own Jest config for the mutation run: roots and
+  # testMatch cut to the gate's tests (Stryker already runs only related
+  # tests per mutant; this shrinks Jest's module map and the dry run, 19 s to
+  # 2 s locally), and ts-jest through tsconfig.mutation.json, which sets
+  # isolatedModules, with diagnostics off: transpile only, since typechecking
+  # is the js job's. A local sample of 397 src mutants went 162 s -> 113 s
+  # with identical per-mutant results.
+  #
+  # scripts sets ignoreStatic: a static mutant (a module-level constant)
+  # reruns the whole suite, and in scripts/ those were 64% of the mutants and
+  # 99% of the run time. src keeps its static mutants: they are mostly
+  # killed, and without them it scores 92. The configs cap concurrency at 3
+  # for laptops; a runner has 4 vCPUs. Before: src 36-49 min, scripts 13-22
+  # min, one job each; plugin did not finish. At 3/2/10 shards: src 6-18,
+  # scripts 3-17, plugin 4-17 min a shard. Shards balance by mutant count,
+  # not cost (raw-messages.ts and index.ts mutants are dearer), hence 4/3.
+  #
+  # Tests that read files at runtime (the corpus a parser is scored against)
+  # list those paths in GATE_INPUTS in scripts/mutation-shards.ts.
+  #
+  # To add a gate: its stryker.<gate>.json (with jest.config.testMatch, or
+  # every change selects it), a job below, and that job in the `mutation`
+  # aggregator's `needs`. To reshard, change `shards`.
+  mutation-scope:
+    name: mutation scope
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        gate: [src, scripts, plugin]
+    outputs:
+      gates: ${{ steps.scope.outputs.gates }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A pull request checks out its merge commit; its first parent is
+          # the base branch, so HEAD^1..HEAD is exactly what the PR changes.
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: '22.18'
-      - run: corepack enable
-      - run: yarn install --immutable
-      - run: yarn stryker run stryker.${{ matrix.gate }}.json --concurrency 4
+      - id: scope
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD | tee /dev/stderr | node scripts/cli-mutation.ts scope >> "$GITHUB_OUTPUT"
+          else
+            node scripts/cli-mutation.ts scope --all >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+  mutation-src:
+    name: mutation (src)
+    needs: mutation-scope
+    if: contains(fromJSON(needs.mutation-scope.outputs.gates), 'src')
+    uses: ./.github/workflows/mutation-gate.yml
+    with:
+      gate: src
+      shards: 4
+
+  mutation-scripts:
+    name: mutation (scripts)
+    needs: mutation-scope
+    if: contains(fromJSON(needs.mutation-scope.outputs.gates), 'scripts')
+    uses: ./.github/workflows/mutation-gate.yml
+    with:
+      gate: scripts
+      shards: 3
+
+  # The plugin gate (the Expo config plugin and the Hermes source-map
+  # scripts, which decide whether a debug id, a dSYM action or a source-map
+  # upload reaches a customer build) runs inPlace: its tests need the
+  # workspace's nested node_modules, which a sandbox never copies.
+  # Unsharded it did not finish: about 10% after 70 min. Its Gradle lexer is
+  # one function whose BlockStatement mutant spans 419 others; in 7
+  # line-range shards that one ran past 80 min while the other six took 4-13.
+  # Such a group is now split by mutator into shards of its own
+  # (scripts/mutation-shards.ts), here 5 of the 10. timeoutMS is 15 s, not
+  # 60 (a Stryker timeout is 1.5x the covering tests' own time plus this):
+  # lexer mutants that loop forever each wait it out.
+  mutation-plugin:
+    name: mutation (plugin)
+    needs: mutation-scope
+    if: contains(fromJSON(needs.mutation-scope.outputs.gates), 'plugin')
+    uses: ./.github/workflows/mutation-gate.yml
+    with:
+      gate: plugin
+      shards: 10
+
+  # The one stable check name for branch protection: a gate's checks are
+  # nested (mutation (src) / score) and a filtered-out gate is skipped. Fails
+  # if the scope or any gate failed or was cancelled; skipped gates pass. A new
+  # gate's job goes into `needs`.
+  mutation:
+    name: mutation
+    needs: [mutation-scope, mutation-src, mutation-scripts, mutation-plugin]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "::error::a mutation gate ended $result"; exit 1 ;;
+            esac
+          done
 
   expo-prebuild:
     name: expo prebuild (config plugin)

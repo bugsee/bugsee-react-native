@@ -1,0 +1,76 @@
+name: mutation gate
+
+# One Stryker gate (stryker.<gate>.json), cut into `shards` parallel jobs and
+# scored as a whole. Called from ci.yml once per gate; see the comment there.
+on:
+  workflow_call:
+    inputs:
+      gate:
+        description: The <gate> in stryker.<gate>.json.
+        required: true
+        type: string
+      shards:
+        description: How many parallel jobs to cut the gate into (1 to 12).
+        required: false
+        type: number
+        default: 1
+
+jobs:
+  shard:
+    name: shard ${{ matrix.shard }} of ${{ inputs.shards }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Expressions have no range(); index a table of them instead.
+        shard: ${{ fromJSON(fromJSON('["[]","[1]","[1,2]","[1,2,3]","[1,2,3,4]","[1,2,3,4,5]","[1,2,3,4,5,6]","[1,2,3,4,5,6,7]","[1,2,3,4,5,6,7,8]","[1,2,3,4,5,6,7,8,9]","[1,2,3,4,5,6,7,8,9,10]","[1,2,3,4,5,6,7,8,9,10,11]","[1,2,3,4,5,6,7,8,9,10,11,12]"]')[inputs.shards]) }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: corepack enable
+      - run: yarn install --immutable
+      # Writes reports/mutation/<gate>/shard-<i>.stryker.json: the gate's
+      # config with `mutate` cut to this shard's slice and `break` lifted.
+      - name: Plan this shard
+        run: node scripts/cli-mutation.ts shard ${{ inputs.gate }} ${{ matrix.shard }} ${{ inputs.shards }}
+      - name: Mutate
+        run: yarn stryker run reports/mutation/${{ inputs.gate }}/shard-${{ matrix.shard }}.stryker.json --concurrency 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mutation-${{ inputs.gate }}-shard-${{ matrix.shard }}
+          path: reports/mutation/${{ inputs.gate }}/shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  score:
+    name: score
+    needs: shard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: corepack enable
+      # For Stryker's instrumenter (to re-derive the plan and check that no
+      # mutant went missing) and mutation-testing-metrics (to score).
+      - run: yarn install --immutable
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mutation-${{ inputs.gate }}-shard-*
+          path: reports/mutation/${{ inputs.gate }}
+          merge-multiple: true
+      - name: Merge and enforce the break threshold
+        run: node scripts/cli-mutation.ts merge ${{ inputs.gate }} ${{ inputs.shards }}
+      # Kept under the threshold too: that is when someone needs to look.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: mutation-${{ inputs.gate }}
+          path: reports/mutation/${{ inputs.gate }}/merged.json
+          if-no-files-found: ignore
+          retention-days: 14

@@ -4,7 +4,17 @@
   "testRunner": "jest",
   "jest": {
     "projectType": "custom",
-    "configFile": "package.json"
+    "configFile": "package.json",
+    "config": {
+      "roots": ["<rootDir>/packages/react-native"],
+      "testMatch": [
+        "<rootDir>/packages/react-native/plugin/src/__tests__/**/*.test.ts",
+        "<rootDir>/packages/react-native/scripts/__tests__/**/*.test.js"
+      ],
+      "transform": {
+        "^.+\\.tsx?$": ["ts-jest", { "tsconfig": "<rootDir>/tsconfig.mutation.json", "diagnostics": false }]
+      }
+    }
   },
   "reporters": [
     "clear-text",
@@ -23,7 +33,7 @@
     "low": 97,
     "break": 97
   },
-  "timeoutMS": 60000,
+  "timeoutMS": 15000,
   "inPlace": true,
   "tempDirName": ".stryker-tmp",
   "disableTypeChecks": "packages/react-native/plugin/src/**/*.ts",
