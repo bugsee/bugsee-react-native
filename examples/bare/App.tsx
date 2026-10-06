@@ -22,7 +22,8 @@
  * `breadcrumb-filter` is scenarios/breadcrumb-filter.ts,
  * `network-filter` is scenarios/network-filter.ts,
  * `add-network-event` is scenarios/add-network-event.ts,
- * `feedback` is scenarios/feedback.ts, and `apm` is scenarios/apm.ts.
+ * `feedback` is scenarios/feedback.ts, `apm` is scenarios/apm.ts, and
+ * `cov-*` / `opt-<case>` are scenarios/coverage.ts.
  */
 import { useEffect, useState } from 'react';
 import {
@@ -115,6 +116,12 @@ import {
 import { isFeedbackScenario, runFeedbackScenario } from './scenarios/feedback';
 import { isApmScenario, runApmScenario } from './scenarios/apm';
 import { isAppearanceScenario, runAppearanceScenario } from './scenarios/appearance';
+import {
+  isCoverageScenario,
+  launchOverrides,
+  preLaunchCoverage,
+  runCoverageScenario,
+} from './scenarios/coverage';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -147,6 +154,10 @@ function launchOptions(endpoint: string, scenario: string): LaunchOptions {
   if (isBreadcrumbFilterScenario(scenario)) {
     options.captureBreadcrumbs = true;
   }
+  // The `opt-<case>` scenarios (scenarios/coverage.ts): each case's option
+  // set, through setCustomOption -- the typed model's escape hatch, which
+  // writes the same native payload a first-class accessor does.
+  launchOverrides(scenario, (key, value) => options.setCustomOption(key, value));
   const serialized = BugseeLaunchOptions.serialize(options) as LaunchOptions;
   // This scenario only. APM is on by default; setting the key makes the
   // launch explicit about the capture this scenario is here to produce.
@@ -370,7 +381,7 @@ export default function App() {
       // Before launch(): a crash recovered at the next launch only reaches a
       // handler that is already registered (Task 7.6b).
       if (isNativeScenario(choice.scenario)) {
-        installNativeHandler(choice.scenario);
+        installNativeHandler(choice.scenario, choice.nonce);
       }
       // Before launch(): app ErrorUtils handler (so Bugsee chains to it), and
       // the pre-launch exception probe (must not reach a bundle).
@@ -392,6 +403,11 @@ export default function App() {
       }
       if (isAddNetworkEventScenario(choice.scenario)) {
         installAddNetworkEventFilter(choice.nonce);
+      }
+      // Before launch(): cov-lifecycle's onLifecycleEvent/onStatusChange
+      // subscriptions, so Launching and Launched are seen.
+      if (isCoverageScenario(choice.scenario)) {
+        preLaunchCoverage(choice.scenario, choice.nonce);
       }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
@@ -493,12 +509,17 @@ export default function App() {
         }
 
         if (isFeedbackScenario(choice.scenario)) {
-          runFeedbackScenario(choice.nonce);
+          runFeedbackScenario(choice.scenario, choice.nonce);
           return;
         }
 
         if (isApmScenario(choice.scenario)) {
           runApmScenario(choice.nonce);
+          return;
+        }
+
+        if (isCoverageScenario(choice.scenario)) {
+          await runCoverageScenario(choice.scenario, choice.nonce);
           return;
         }
 
