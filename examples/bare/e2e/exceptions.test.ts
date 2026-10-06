@@ -40,7 +40,8 @@
  * `exc-observe`, which must recover exactly one crash. beta3 `0d9c9d0a-9`
  * did not claim `override_report.plcrash` on the next launch, so those
  * assertions were `it.failing` there; 7.0.0-beta4 claims it (bugsee-cocoa
- * #177) and they are plain `it`. The harness must not copy that file onto
+ * #177), though intermittently on hardware (see the cases), and they are
+ * plain `it`. The harness must not copy that file onto
  * `live_report.plcrash`. The Release gate is the same: the console ended,
  * no `RCTFatalException` bundle, and exactly one `ReactNativeWebException`
  * crash.
@@ -1071,11 +1072,15 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       expect(completed.index).toBeLessThan(appHandler.index);
     });
 
-    // beta3 0d9c9d0a-9 did not claim override_report.plcrash on the next
+    // beta3 0d9c9d0a-9 never claimed override_report.plcrash on the next
     // launch, so this was `.failing` there. 7.0.0-beta4 claims it ahead of
-    // the live crash (bugsee-cocoa #177) and the stored report is recovered
-    // (KRSFT, 2026-10-06). The harness still must not copy that file onto
-    // live_report.plcrash.
+    // the live crash (bugsee-cocoa #177), but not every time: on KRSFT
+    // (2026-10-06) 2 of 5 relaunches left the file on disk and dispatched
+    // nothing, the SDK's version gate (+hasVersionMatchForPendingReport)
+    // being the lead, reported to the iOS SDK team. This asserts the correct
+    // outcome and can be red on a device run for that reason; it does not
+    // relaunch again, which would hide the miss. The harness still must not
+    // copy that file onto live_report.plcrash.
     itIosDevice(
       'a fatal JS error is reported as a crash, then RN\'s handler runs',
       () => {
@@ -1206,11 +1211,15 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       expect(stored).toEqual([]);
     });
 
-    // beta3 0d9c9d0a-9 did not claim override_report.plcrash on the next
+    // beta3 0d9c9d0a-9 never claimed override_report.plcrash on the next
     // launch, so this was `.failing` there. 7.0.0-beta4 claims it ahead of
-    // the live crash (bugsee-cocoa #177) and the stored report is recovered
-    // (KRSFT, 2026-10-06). The harness still must not copy that file onto
-    // live_report.plcrash.
+    // the live crash (bugsee-cocoa #177), but not every time: on KRSFT
+    // (2026-10-06) 2 of 5 relaunches left the file on disk and dispatched
+    // nothing, the SDK's version gate (+hasVersionMatchForPendingReport)
+    // being the lead, reported to the iOS SDK team. This asserts the correct
+    // outcome and can be red on a device run for that reason; it does not
+    // relaunch again, which would hide the miss. The harness still must not
+    // copy that file onto live_report.plcrash.
     itIosDevice(
       'a render error with no boundary is reported once, as a crash, by the root reporter',
       () => {
@@ -1333,11 +1342,15 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       }
     });
 
-    // beta3 0d9c9d0a-9 did not claim override_report.plcrash on the next
+    // beta3 0d9c9d0a-9 never claimed override_report.plcrash on the next
     // launch, so this was `.failing` there. 7.0.0-beta4 claims it ahead of
-    // the live crash (bugsee-cocoa #177) and the stored report is recovered
-    // (KRSFT, 2026-10-06). The harness still must not copy that file onto
-    // live_report.plcrash.
+    // the live crash (bugsee-cocoa #177), but not every time: on KRSFT
+    // (2026-10-06) 2 of 5 relaunches left the file on disk and dispatched
+    // nothing, the SDK's version gate (+hasVersionMatchForPendingReport)
+    // being the lead, reported to the iOS SDK team. This asserts the correct
+    // outcome and can be red on a device run for that reason; it does not
+    // relaunch again, which would hide the miss. The harness still must not
+    // copy that file onto live_report.plcrash.
     itIosDevice('exactly one ReactNativeWebException crash for the fatal', () => {
       const ours = bundles.filter(b => {
         if (b.request.type !== 'crash') {
