@@ -4,7 +4,8 @@
  * `compose-source-maps.js`, which is what `hermes-sourcemaps.js` injects
  * into). A Debug Metro bundle does not go through hermesc or that compose
  * step, so this file runs only with `E2E_RELEASE=1` and a release binary
- * already installed. `debug-files upload` is not invoked.
+ * already installed. This file uploads nothing; the build hook uploads the
+ * composed map only when a real app token is configured.
  *
  * Android: debuggable release APK (`:app:assembleRelease
  * -PbugseeE2eDebuggable=true`), airplane mode on, bundles cleared. The

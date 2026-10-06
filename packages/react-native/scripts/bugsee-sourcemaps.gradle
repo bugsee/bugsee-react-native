@@ -1,0 +1,140 @@
+// Bugsee: debug ids and source-map upload for React Native release bundles.
+//
+// Apply it at the end of the app module's build.gradle. The Expo config
+// plugin writes that line; a bare app resolves the package through node, so
+// a hoisted or nested install works too (README, "Android source maps"):
+//   def bugseeDir = new File(["node", "--print", "require.resolve('@bugsee/react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile()
+//   apply from: new File(new File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle")
+//
+// After each createBundle<Variant>JsAndAssets:
+// - Hermes on: hermesc must have run through hermesc-preserve-js.sh
+//   (react { hermesCommand = ... }). The debug id is injected into the
+//   composed map and the bytecode, then that map is uploaded. Without the
+//   preserved JS the task fails: the bundle would ship without a debug id.
+// - Hermes off: the packaged bundle is Metro's JS and the map is Metro's;
+//   both get the debug id, then the map is uploaded. Any preserve file is an
+//   earlier build's and is ignored.
+// The upload needs a real token (app_token in the root bugsee.properties, or
+// BUGSEE_APP_TOKEN). Without one, with the placeholder, with
+// -PbugseeUploadSourcemaps=false or BUGSEE_UPLOAD_SOURCEMAPS=false it skips
+// with one line, and a failed upload warns: neither fails the build. The
+// version and build number are those of the variant that owns the task.
+//
+// Paths are built with File, never with a separator, and node is RN's own
+// nodeExecutableAndArgs. Not yet verified with Gradle's configuration cache.
+
+// Applied twice, the second copy would find the first one's preserve file
+// gone and fail a correctly wired build. Only the first apply counts.
+if (project.extensions.extraProperties.has("bugseeSourcemapsApplied")) {
+    return
+}
+project.extensions.extraProperties.set("bugseeSourcemapsApplied", true)
+
+def bugseeHermesSourcemaps = new File(buildscript.sourceFile.parentFile, "hermes-sourcemaps.js")
+def bugseeUploadSourcemaps = String.valueOf(findProperty('bugseeUploadSourcemaps') ?: 'true')
+def bugseeProperties = rootProject.file("bugsee.properties")
+def bugseeBuildDir = project.layout.buildDirectory.get().asFile
+def bugseeVariantVersions = [:]
+
+// Keyed the way React Native names the task: createBundle + the variant name
+// with its first letter title-cased + JsAndAssets. A flavor declared with a
+// capital keeps its name. Character.toTitleCase is what RN 0.87 uses and is
+// locale-insensitive; String.toUpperCase() is not (under tr_TR an "i" becomes
+// "İ", and the lookup would miss). Only the two version providers are kept.
+androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+    def output = variant.outputs.first()
+    def key = String.valueOf(Character.toTitleCase(variant.name.charAt(0))) + variant.name.substring(1)
+    bugseeVariantVersions[key] = [output.versionName, output.versionCode]
+}
+
+// hermesc-preserve-js.sh writes beside generated/assets/<x> in
+// intermediates/bugsee-sourcemaps/<x>. Null when the bundle is elsewhere.
+def bugseePreserveDir = { File assetDir ->
+    def relative = bugseeBuildDir.toPath().relativize(assetDir.toPath())
+    if (relative.nameCount < 3 || relative.getName(0).toString() != "generated" || relative.getName(1).toString() != "assets") {
+        return null
+    }
+    bugseeBuildDir.toPath().resolve("intermediates").resolve("bugsee-sourcemaps")
+        .resolve(relative.subpath(2, relative.nameCount)).toFile()
+}
+
+def bugseeMissingPreserve = { String taskName ->
+    "Bugsee: ${taskName} compiled the bundle with Hermes, but hermesc did not run through " +
+        "hermesc-preserve-js.sh, so the app would ship without a debug id and its source map could " +
+        "not be uploaded. Set react { hermesCommand = \"<@bugsee/react-native>/scripts/hermesc-preserve-js.sh\" } " +
+        "in this module's build.gradle (expo prebuild writes it). See " +
+        "node_modules/@bugsee/react-native/README.md, \"Android source maps\"."
+}
+
+tasks.matching { task ->
+    task.name.startsWith("createBundle") && task.name.endsWith("JsAndAssets")
+}.configureEach { bundleTask ->
+    bundleTask.doLast {
+        def asset = bundleTask.bundleAssetName.get()
+        def assetDir = bundleTask.jsBundleDir.get().asFile
+        // Assets are packaged, intermediates are not.
+        def preserveDir = bugseePreserveDir(assetDir)
+        def preserved = preserveDir == null ? null : new File(preserveDir, asset + ".bugsee-js-source")
+        def hermescNote = preserveDir == null ? null : new File(preserveDir, asset + ".bugsee-hermesc")
+        def packagedCopies = [
+            new File(assetDir, asset + ".bugsee-js-source"),
+            new File(assetDir, asset + ".bugsee-hermesc"),
+            new File(assetDir, asset + ".bugsee-recompile"),
+            new File(assetDir, asset + ".bugsee-recompile.map"),
+        ]
+        // createBundleFreeReleaseJsAndAssets belongs to variant freeRelease.
+        def versions = bugseeVariantVersions[bundleTask.name.substring("createBundle".length(), bundleTask.name.length() - "JsAndAssets".length())]
+        def versionName = versions == null ? null : versions[0].getOrNull()
+        def versionCode = versions == null ? null : versions[1].getOrNull()
+        def composed = new File(bundleTask.jsSourceMapsDir.get().asFile, asset + ".map")
+        try {
+            def cmd = []
+            cmd.addAll(bundleTask.nodeExecutableAndArgs.get())
+            cmd.addAll([bugseeHermesSourcemaps.absolutePath, "finish"])
+            if (bundleTask.hermesEnabled.get()) {
+                if (preserved == null || !preserved.isFile()) {
+                    throw new GradleException(bugseeMissingPreserve(bundleTask.name))
+                }
+                def interDir = bundleTask.jsIntermediateSourceMapsDir.get().asFile
+                cmd.addAll([
+                    "--bundle", preserved.absolutePath,
+                    "--bytecode", new File(assetDir, asset).absolutePath,
+                    "--composed", composed.absolutePath,
+                    "--intermediate", new File(interDir, asset + ".compiler.map").absolutePath,
+                    "--packager", new File(interDir, asset + ".packager.map").absolutePath,
+                    "--compose", new File(new File(bundleTask.reactNativeDir.get().asFile, "scripts"), "compose-source-maps.js").absolutePath,
+                ])
+                if (hermescNote.isFile()) {
+                    cmd.add("--hermesc")
+                    cmd.add(hermescNote.getText("UTF-8").trim())
+                }
+                bundleTask.hermesFlags.get().each { flag ->
+                    cmd.add("--hermes-arg")
+                    cmd.add(flag)
+                }
+            } else {
+                cmd.addAll([
+                    "--bundle", new File(assetDir, asset).absolutePath,
+                    "--composed", composed.absolutePath,
+                ])
+            }
+            cmd.addAll([
+                "--platform", "android",
+                "--properties", bugseeProperties.absolutePath,
+                "--upload-sourcemaps", bugseeUploadSourcemaps,
+                // Not Elvis: versionCode 0 is a valid code.
+                "--app-version", versionName == null ? "" : versionName.toString(),
+                "--app-build", versionCode == null ? "" : versionCode.toString(),
+            ])
+            // Gradle 9 removed Project.exec.
+            bundleTask.services.get(org.gradle.process.ExecOperations).exec {
+                commandLine cmd
+            }
+        } finally {
+            packagedCopies.each { copy -> copy.delete() }
+            // This build's only: a later build must never recompile them.
+            preserved?.delete()
+            hermescNote?.delete()
+        }
+    }
+}

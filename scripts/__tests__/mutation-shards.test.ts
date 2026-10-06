@@ -316,7 +316,30 @@ describe('gatesForChanges', () => {
     expect(GATE_INPUTS).toEqual({
       scripts: ['packages/', 'docs/', 'examples/', 'gradle/', 'native-versions.json', 'settings.gradle', 'gradle.properties'],
       src: ['native-versions.json', 'scripts/native-versions.ts', 'scripts/option-keys.ts'],
+      plugin: [
+        'packages/react-native/plugin/',
+        'packages/react-native/scripts/',
+        'packages/react-native/package.json',
+        'packages/react-native/app.plugin.js',
+        'native-versions.json',
+      ],
     });
+  });
+
+  it.each([
+    'packages/react-native/scripts/bugsee-sourcemaps.gradle',
+    'packages/react-native/scripts/hermesc-preserve-js.sh',
+    'packages/react-native/plugin/src/__tests__/fixtures/finish-hook-0.0.0.gradle',
+    'packages/react-native/plugin/build/index.js',
+    'packages/react-native/app.plugin.js',
+  ])('selects plugin when %s, which its tests read, changes', (file) => {
+    const plugin: GateScope = {
+      name: 'plugin',
+      configFile: 'stryker.plugin.json',
+      mutate: ['packages/react-native/plugin/src/**/*.ts', 'packages/react-native/scripts/hermes-sourcemaps.js'],
+      testMatch: ['<rootDir>/packages/react-native/plugin/src/__tests__/**/*.test.ts'],
+    };
+    expect(gatesForChanges([src, plugin], [file])).toEqual(['plugin']);
   });
 
   it('does not take an inherited property for a gate named like one', () => {

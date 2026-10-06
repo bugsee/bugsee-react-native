@@ -1,7 +1,12 @@
 #!/bin/bash
 # Compose the Hermes source map, then inject a debug id into that composed
-# map and into the JavaScript hermesc compiles. The upload command is defined
-# below and is not executed.
+# map and into the JavaScript hermesc compiles, then upload that map with
+# bugsee-cli. The upload needs a real app token: BUGSEE_PLUGIN_APP_TOKEN (the
+# Expo plugin bakes it into this phase), BUGSEE_APP_TOKEN, BUGSEE_TOKEN_IOS,
+# or `ios` in ../credentials.json. BUGSEE_UPLOAD_SOURCEMAPS=false turns it off.
+# Debug configurations skip it unless BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true.
+# Without a token, or with the placeholder, one build-log line says it skipped.
+# A failed upload warns; it never fails the build.
 
 set -euo pipefail
 
@@ -25,6 +30,7 @@ export BUGSEE_JS_BUNDLE="${CONFIGURATION_BUILD_DIR}/${BUNDLE_NAME}.jsbundle"
 export BUGSEE_BYTECODE_BUNDLE="${CONFIGURATION_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/${BUNDLE_NAME}.jsbundle"
 export BUGSEE_REAL_COMPOSE="$REACT_NATIVE_PATH/scripts/compose-source-maps.js"
 export COMPOSE_SOURCEMAP_PATH="$HOOK_DIR/compose-then-inject.js"
+export BUGSEE_CREDENTIALS_FILE="${BUGSEE_CREDENTIALS_FILE:-${SRCROOT}/../credentials.json}"
 
 if [[ "${CONFIGURATION:-}" == *Debug* ]]; then
   export BUGSEE_HERMES_ARGS="-Og -output-source-map"
@@ -60,20 +66,17 @@ fi
 
 /bin/sh "$REAL_XCODE"
 
-# No compose step when Hermes is off. The map Metro wrote is the one to inject.
+# No compose step when Hermes is off. The map Metro wrote is the one to inject
+# and upload. With Hermes on, compose-then-inject.js has already uploaded.
 if [[ "${USE_HERMES:-true}" == "false" && -f "$BUGSEE_BYTECODE_BUNDLE" && -f "$SOURCEMAP_FILE" ]]; then
   "$NODE_BINARY" "$HOOK_DIR/hermes-sourcemaps.js" inject \
     --bundle "$BUGSEE_BYTECODE_BUNDLE" \
     --composed "$SOURCEMAP_FILE"
+  "$NODE_BINARY" "$HOOK_DIR/hermes-sourcemaps.js" upload \
+    --composed "$SOURCEMAP_FILE" \
+    --platform ios \
+    --configuration "${CONFIGURATION:-}" \
+    --credentials "$BUGSEE_CREDENTIALS_FILE" \
+    --app-version "${MARKETING_VERSION:-}" \
+    --app-build "${CURRENT_PROJECT_VERSION:-}"
 fi
-
-# Wired for a later release step. Not called: upload needs a token and a network.
-bugsee_upload_sourcemaps() {
-  local cli_pkg
-  cli_pkg="$(NODE_PATH="$HOOK_DIR/../node_modules" "$NODE_BINARY" -e '
-    const path = require("path");
-    const pkg = require.resolve("@bugsee/cli/package.json", { paths: [process.argv[1]] });
-    process.stdout.write(path.join(path.dirname(pkg), "bin", "bugsee-cli.js"));
-  ' "$HOOK_DIR")"
-  "$NODE_BINARY" "$cli_pkg" debug-files upload --type sourcemaps "$1"
-}

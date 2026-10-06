@@ -1,9 +1,17 @@
+import type { AndroidConfig } from '@expo/config-plugins';
+/** Every refusal starts with this, then the file, the reason and the manual fix. */
+export declare const CANNOT_EDIT = "@bugsee/react-native cannot edit";
 /**
  * The plugin marker is on Maven Central, not the Plugin Portal. Declaring
  * any repositories block replaces Gradle's implicit Plugin Portal, so a
  * missing block gets the portal, Google, and Maven Central together.
  */
 export declare function ensureMavenCentral(settingsGradle: string): string;
+/**
+ * Declares the plugin `apply false` on the root project. A declaration from
+ * an earlier prebuild gets this version written over its own, so a
+ * `--no-clean` prebuild after a wrapper bump does not keep the old pin.
+ */
 export declare function ensureGradlePluginDeclared(projectBuildGradle: string, version: string): string;
 /**
  * `ndkVersion` is the baked `android.sdk`, or null when native crash
@@ -20,6 +28,22 @@ export declare function ensureGradlePluginDeclared(projectBuildGradle: string, v
  * `libreactnative.so` are pre-stripped; the comment does not claim those
  * two are symbolicated. The Hermes preserve command and the finish hook
  * are the JS source-map path, so they are written either way. The hook
- * does not upload.
+ * applies the package's scripts/bugsee-sourcemaps.gradle, which injects the
+ * debug id and uploads the composed map unless `bugseeUploadSourcemaps=false`
+ * or no real token is configured.
  */
-export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null): string;
+export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null, log?: (message: string) => void): string;
+export declare const HERMES_COMMAND_UNREWRITABLE = "@bugsee/react-native cannot edit android/app/build.gradle: react.hermesCommand spans several lines or shares its line with another statement, so it cannot be pointed at scripts/hermesc-preserve-js.sh. Put it alone on one line, or delete it, and prebuild again";
+/**
+ * `uploadSymbols: false` on Android: disables every `uploadBugsee*` task
+ * (mapping, NDK symbols, build info) inside a marked block. On again
+ * removes exactly that block.
+ */
+export declare function ensureSymbolUploads(appBuildGradle: string, enabled: boolean): string;
+export type GradleProperty = AndroidConfig.Properties.PropertiesItem;
+/**
+ * `uploadSourcemaps: false` writes `bugseeUploadSourcemaps=false` into
+ * android/gradle.properties, which the finish hook reads. On (the default)
+ * removes that key.
+ */
+export declare function applyUploadSourcemapsProperty(properties: GradleProperty[], enabled: boolean): GradleProperty[];

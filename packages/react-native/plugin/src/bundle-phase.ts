@@ -3,8 +3,8 @@ import { decodePbxString, encodePbxString } from './pbx-string';
 /**
  * The "Bundle React Native code and images" shell script from the bare
  * example's pbxproj. It runs `bugsee-xcode.sh`, which makes
- * `REACT_NATIVE_PATH` absolute with `cd`/`pwd` and injects after compose.
- * The upload function in that script is not executed.
+ * `REACT_NATIVE_PATH` absolute with `cd`/`pwd`, injects after compose, and
+ * uploads the composed map when a real token is configured.
  */
 export const BARE_BUNDLE_SCRIPT = [
   'set -e',
@@ -32,20 +32,68 @@ const EXPO_REPLACEMENT = [
   '/bin/bash "$BUGSEE_XCODE"',
 ].join('\n');
 
-export function rewriteBundlePhase(script: string): string {
-  if (script.includes('bugsee-xcode.sh')) {
+export interface BundlePhaseSettings {
+  /** `false` exports BUGSEE_UPLOAD_SOURCEMAPS=false for bugsee-xcode.sh. */
+  readonly uploadSourcemaps?: boolean;
+  /** Exported as BUGSEE_PLUGIN_APP_TOKEN, ahead of every other token source. */
+  readonly iosAppToken?: string;
+}
+
+const SETTINGS_BEGIN = '# >>> bugsee settings, written by the @bugsee/react-native config plugin';
+const SETTINGS_END = '# <<< bugsee settings';
+
+function settingsBlock(settings: BundlePhaseSettings): string | null {
+  const lines: string[] = [];
+  if (settings.uploadSourcemaps === false) {
+    lines.push('export BUGSEE_UPLOAD_SOURCEMAPS=false');
+  }
+  if (settings.iosAppToken) {
+    lines.push(`export BUGSEE_PLUGIN_APP_TOKEN='${settings.iosAppToken}'`);
+  }
+  if (lines.length === 0) {
+    return null;
+  }
+  return [SETTINGS_BEGIN, ...lines, SETTINGS_END].join('\n');
+}
+
+function stripSettings(script: string): string {
+  const begin = script.indexOf(SETTINGS_BEGIN);
+  const end = script.indexOf(SETTINGS_END);
+  if (begin < 0 || end < begin) {
     return script;
   }
-  if (EXPO_XCODE_INVOCATION.test(script)) {
-    return script.replace(EXPO_XCODE_INVOCATION, EXPO_REPLACEMENT);
+  let stop = end + SETTINGS_END.length;
+  if (script[stop] === '\n') {
+    stop += 1;
   }
-  if (script.includes('with-environment.sh') && script.includes('react-native-xcode.sh')) {
-    return BARE_BUNDLE_SCRIPT;
+  return script.slice(0, begin) + script.slice(stop);
+}
+
+export const UNRECOGNISED_BUNDLE_PHASE =
+  'Bundle React Native code and images does not run react-native-xcode.sh the way React Native ' +
+  "or Expo's templates do, so the Bugsee hook cannot be wired into it. Run bugsee-xcode.sh " +
+  'from that phase yourself, or regenerate it with `expo prebuild --clean`.';
+
+/**
+ * Wires bugsee-xcode.sh into the bundle phase. Only the two shapes the
+ * templates write are rewritten; any other script is refused rather than
+ * guessed at. A phase this plugin already rewrote keeps its body and gets
+ * its settings block replaced, so a later prebuild can change them.
+ */
+export function rewriteBundlePhase(script: string, settings: BundlePhaseSettings = {}): string {
+  const base = stripSettings(script);
+  let body: string;
+  if (base.includes('bugsee-xcode.sh')) {
+    body = base;
+  } else if (EXPO_XCODE_INVOCATION.test(base)) {
+    body = base.replace(EXPO_XCODE_INVOCATION, EXPO_REPLACEMENT);
+  } else if (base.includes('with-environment.sh') && base.includes('react-native-xcode.sh')) {
+    body = BARE_BUNDLE_SCRIPT;
+  } else {
+    throw new Error(UNRECOGNISED_BUNDLE_PHASE);
   }
-  if (script.includes('react-native-xcode.sh')) {
-    return `${script.replace(/react-native-xcode\.sh/g, 'bugsee-xcode.sh')}\n${EXPO_REPLACEMENT}\n`;
-  }
-  return `${script.replace(/\s*$/, '')}\n${EXPO_REPLACEMENT}\n`;
+  const block = settingsBlock(settings);
+  return block ? `${block}\n${body}` : body;
 }
 
 export interface ShellPhase {
@@ -64,28 +112,27 @@ export interface XcodeProjectLike {
   };
 }
 
-export function rewriteProjectBundlePhase(project: XcodeProjectLike): void {
+export function rewriteProjectBundlePhase(
+  project: XcodeProjectLike,
+  settings: BundlePhaseSettings = {},
+): void {
   const section = project.hash?.project?.objects?.PBXShellScriptBuildPhase;
   if (!section) {
     throw new Error('PBXShellScriptBuildPhase is missing from the Xcode project');
   }
+  const BUNDLE_PHASE = 'Bundle React Native code and images';
   let found = false;
-  for (const [key, phase] of Object.entries(section)) {
-    if (key.endsWith('_comment') || !phase || typeof phase === 'string') {
-      continue;
-    }
-    const name = phase.name ? phase.name.replace(/^"|"$/g, '') : '';
-    if (name !== 'Bundle React Native code and images') {
+  // `<id>_comment` entries are strings; a phase is an object.
+  for (const phase of Object.values(section)) {
+    if (typeof phase !== 'object' || decodePbxString(phase.name ?? '') !== BUNDLE_PHASE) {
       continue;
     }
     if (typeof phase.shellScript !== 'string') {
       throw new Error('Bundle React Native code and images has no shellScript');
     }
-    const current = phase.shellScript.startsWith('"')
-      ? decodePbxString(phase.shellScript)
-      : phase.shellScript;
-    const next = rewriteBundlePhase(current);
-    phase.shellScript = phase.shellScript.startsWith('"') ? encodePbxString(next) : next;
+    const quoted = phase.shellScript.startsWith('"');
+    const next = rewriteBundlePhase(decodePbxString(phase.shellScript), settings);
+    phase.shellScript = quoted ? encodePbxString(next) : next;
     found = true;
   }
   if (!found) {

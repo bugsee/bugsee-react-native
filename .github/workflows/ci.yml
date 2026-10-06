@@ -16,6 +16,10 @@ env:
   # needed to prove the native plumbing compiles and links.
   BUGSEE_TOKEN_IOS: 00000000-0000-4000-8000-000000000000
   BUGSEE_TOKEN_ANDROID: 00000000-0000-4000-8000-000000000000
+  # A dead loopback port, so nothing a job runs (tests, mutants, the build
+  # hooks' source-map upload) can reach the Bugsee API, whatever the token.
+  # ios-e2e sets its own endpoint in the one step that needs it.
+  BUGSEE_ENDPOINT: http://127.0.0.1:9
 
 jobs:
   js:
@@ -117,13 +121,30 @@ jobs:
       gate: scripts
       shards: 2
 
+  # The plugin gate (the Expo config plugin and the Hermes source-map
+  # scripts, which decide whether a debug id, a dSYM action or a source-map
+  # upload reaches a customer build) runs inPlace: its tests need the
+  # workspace's nested node_modules, which a sandbox never copies. Unsharded it did not finish: about 10% after
+  # 70 min. A Gradle-lexer function holds 419 mutants no range can split, so
+  # 7 shards is as fine as it gets; timeoutMS is 15 s (a Stryker timeout is
+  # 1.5x the covering tests' own time plus this), not 60 s: lexer mutants
+  # that loop forever each cost the full timeout.
+  mutation-plugin:
+    name: mutation (plugin)
+    needs: mutation-scope
+    if: contains(fromJSON(needs.mutation-scope.outputs.gates), 'plugin')
+    uses: ./.github/workflows/mutation-gate.yml
+    with:
+      gate: plugin
+      shards: 7
+
   # The one stable check name for branch protection: a gate's checks are
   # nested (mutation (src) / score) and a filtered-out gate is skipped. Fails
   # if the scope or any gate failed or was cancelled; skipped gates pass. A new
   # gate's job goes into `needs`.
   mutation:
     name: mutation
-    needs: [mutation-scope, mutation-src, mutation-scripts]
+    needs: [mutation-scope, mutation-src, mutation-scripts, mutation-plugin]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -137,6 +158,21 @@ jobs:
               *) echo "::error::a mutation gate ended $result"; exit 1 ;;
             esac
           done
+
+  expo-prebuild:
+    name: expo prebuild (config plugin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: corepack enable
+      - run: yarn install --immutable
+      # Spec §13: the plugin's edits survive `expo prebuild --clean`, and a
+      # `--no-clean` prebuild over its own output changes nothing. No pods,
+      # no build yet.
+      - run: ./scripts/check-expo-prebuild.sh
 
   compat:
     name: rn compat (${{ matrix.react-native }})
@@ -194,6 +230,10 @@ jobs:
       - name: Assemble the example
         working-directory: examples/bare/android
         run: ./gradlew assembleDebug :bugsee-e2e-native:testDebugUnitTest
+      # The source-map hook in a real Gradle build with stand-in AGP and React
+      # Native pieces. Off in the js job, which has no JDK set up.
+      - name: Test the source-map Gradle hook
+        run: BUGSEE_GRADLE_TESTS=1 yarn jest packages/react-native/scripts/__tests__/sourcemaps-gradle.test.js
 
   ios-unit:
     name: ios unit (BugseeRNSupport)

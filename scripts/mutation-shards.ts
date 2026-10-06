@@ -240,6 +240,7 @@ export const ALL_GATES_TRIGGERS: readonly string[] = [
   'tsconfig.json',
   'tsconfig.base.json',
   'tsconfig.mutation.json',
+  'scripts/jest-no-network.js',
   '.github/workflows/ci.yml',
   '.github/workflows/mutation-gate.yml',
   'scripts/mutation-shards.ts',
@@ -268,7 +269,10 @@ export function globPrefix(glob: string): string {
  * manifests and native-versions.json; raw-messages-tree walks packages/;
  * docs-versions reads docs/. src: option-manifest-parity reads
  * native-versions.json through scripts/native-versions.ts, and types its
- * manifest with scripts/option-keys.ts.
+ * manifest with scripts/option-keys.ts. plugin: its tests run the Hermes and
+ * Xcode shell hooks and the Gradle hook next to the mutated scripts, read the
+ * Gradle corpus and the compiled plugin under plugin/, and load the package
+ * through its manifest and app.plugin.js.
  */
 export const GATE_INPUTS: Readonly<Record<string, readonly string[]>> = {
   scripts: [
@@ -281,6 +285,13 @@ export const GATE_INPUTS: Readonly<Record<string, readonly string[]>> = {
     'gradle.properties',
   ],
   src: ['native-versions.json', 'scripts/native-versions.ts', 'scripts/option-keys.ts'],
+  plugin: [
+    'packages/react-native/plugin/',
+    'packages/react-native/scripts/',
+    'packages/react-native/package.json',
+    'packages/react-native/app.plugin.js',
+    'native-versions.json',
+  ],
 };
 
 /** What a gate's path filter is made of: its Stryker config and what it reads. */

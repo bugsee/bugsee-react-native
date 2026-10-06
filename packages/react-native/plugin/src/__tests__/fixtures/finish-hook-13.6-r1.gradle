@@ -1,0 +1,86 @@
+// After compose-source-maps.js. Release variants only; debug does not bundle.
+// finish injects the debug id into the composed map and the bytecode, then
+// uploads that map (hermes-sourcemaps.js runs the CLI) when android/bugsee.properties (or
+// BUGSEE_APP_TOKEN) holds a real token. bugseeUploadSourcemaps=false in
+// gradle.properties, or BUGSEE_UPLOAD_SOURCEMAPS=false, turns the upload off;
+// a placeholder or missing token skips it with one line. A failed upload
+// warns and the build goes on.
+def bugseeHermesSourcemaps = new File(new File(["node", "--print", "require.resolve('@bugsee/react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/hermes-sourcemaps.js")
+def bugseeComposeSourceMaps = new File(new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile(), "scripts/compose-source-maps.js")
+afterEvaluate {
+    def bugseeUploadSourcemaps = String.valueOf(findProperty('bugseeUploadSourcemaps') ?: 'true')
+    def bugseeAppVersion = String.valueOf(android.defaultConfig.versionName ?: '')
+    def bugseeAppBuild = String.valueOf(android.defaultConfig.versionCode ?: '')
+    def bugseeProperties = rootProject.file("bugsee.properties")
+    tasks.matching { task ->
+        task.name.startsWith("createBundle") && task.name.endsWith("JsAndAssets")
+    }.configureEach { bundleTask ->
+        bundleTask.doLast {
+            def asset = bundleTask.bundleAssetName.get()
+            def assetDir = bundleTask.jsBundleDir.get().asFile
+            // Same rewrite as hermesc-preserve-js.sh: assets are packaged, intermediates are not.
+            def preserveDir = new File(assetDir.absolutePath.replace(
+                "/generated/assets/",
+                "/intermediates/bugsee-sourcemaps/"
+            ))
+            if (preserveDir.absolutePath == assetDir.absolutePath) {
+                throw new GradleException("Bugsee preserve directory is the packaged asset directory")
+            }
+            def preserved = new File(preserveDir, asset + ".bugsee-js-source")
+            def hermescNote = new File(preserveDir, asset + ".bugsee-hermesc")
+            def packagedCopies = [
+                new File(assetDir, asset + ".bugsee-js-source"),
+                new File(assetDir, asset + ".bugsee-hermesc"),
+                new File(assetDir, asset + ".bugsee-recompile"),
+                new File(assetDir, asset + ".bugsee-recompile.map"),
+            ]
+            try {
+                if (!bundleTask.hermesEnabled.get()) {
+                    // hermesc did not run, so a preserve file here is an earlier build's.
+                    bundleTask.logger.lifecycle("bugsee: Hermes is off for ${bundleTask.name}; no debug id is injected")
+                } else if (!preserved.isFile()) {
+                    bundleTask.logger.warn("bugsee: ${bundleTask.name} ran hermesc without hermesc-preserve-js.sh " +
+                        "(check react.hermesCommand); no debug id is injected and no source map is uploaded")
+                } else {
+                    def composed = new File(bundleTask.jsSourceMapsDir.get().asFile, asset + ".map")
+                    def interDir = bundleTask.jsIntermediateSourceMapsDir.get().asFile
+                    def hook = bugseeHermesSourcemaps
+                    def compose = bugseeComposeSourceMaps
+                    def cmd = []
+                    cmd.addAll(bundleTask.nodeExecutableAndArgs.get())
+                    cmd.addAll([
+                        hook.absolutePath, "finish",
+                        "--bundle", preserved.absolutePath,
+                        "--bytecode", new File(assetDir, asset).absolutePath,
+                        "--composed", composed.absolutePath,
+                        "--intermediate", new File(interDir, asset + ".compiler.map").absolutePath,
+                        "--packager", new File(interDir, asset + ".packager.map").absolutePath,
+                        "--compose", compose.absolutePath,
+                        "--platform", "android",
+                        "--properties", bugseeProperties.absolutePath,
+                        "--upload-sourcemaps", bugseeUploadSourcemaps,
+                        "--app-version", bugseeAppVersion,
+                        "--app-build", bugseeAppBuild,
+                    ])
+                    if (hermescNote.isFile()) {
+                        cmd.add("--hermesc")
+                        cmd.add(hermescNote.getText("UTF-8").trim())
+                    }
+                    bundleTask.hermesFlags.get().each { flag ->
+                        cmd.add("--hermes-arg")
+                        cmd.add(flag)
+                    }
+                    // Gradle 9 removed Project.exec.
+                    bundleTask.services.get(org.gradle.process.ExecOperations).exec {
+                        commandLine cmd
+                    }
+                }
+            } finally {
+                packagedCopies.each { copy -> copy.delete() }
+                // This build's only: a later build must never recompile them.
+                preserved.delete()
+                hermescNote.delete()
+            }
+        }
+    }
+}

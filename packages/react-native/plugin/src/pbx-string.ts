@@ -5,29 +5,11 @@
  * same shape.
  */
 
+const ESCAPES: Readonly<Record<string, string>> = { n: '\n', r: '\r', t: '\t' };
+
+/** `\x` becomes x, or the control character for n, r and t. A lone trailing `\` stays. */
 function unescapeBody(body: string): string {
-  let out = '';
-  for (let i = 0; i < body.length; i += 1) {
-    const current = body[i];
-    if (current === '\\' && i + 1 < body.length) {
-      const next = body[i + 1];
-      if (next === 'n') {
-        out += '\n';
-      } else if (next === 'r') {
-        out += '\r';
-      } else if (next === 't') {
-        out += '\t';
-      } else if (next !== undefined) {
-        out += next;
-      }
-      i += 1;
-      continue;
-    }
-    if (current !== undefined) {
-      out += current;
-    }
-  }
-  return out;
+  return body.replace(/\\([\s\S])/g, (_, next: string) => ESCAPES[next] ?? next);
 }
 
 export function decodePbxString(stored: string): string {

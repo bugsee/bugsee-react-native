@@ -1,15 +1,36 @@
 import type { ConfigPlugin } from '@expo/config-plugins';
+export type AppTokenOption = string | {
+    ios?: string;
+    android?: string;
+};
 export interface BugseePluginProps {
-    /** Unprefixed `app_token` in android/bugsee.properties. */
-    appToken?: string;
     /**
-     * Accepted for the spec's option list. The settled Xcode hook injects
-     * debug ids on the composed map and does not execute the upload.
+     * Bugsee app tokens are per platform. A string is used for both; an
+     * object sets each one. Android: the unprefixed `app_token` in
+     * android/bugsee.properties. iOS: written into the Archive dSYM
+     * post-action and the bundle phase (BUGSEE_PLUGIN_APP_TOKEN), so an
+     * Archive from the Xcode GUI works without a shell environment;
+     * BUGSEE_APP_TOKEN, BUGSEE_TOKEN_IOS and credentials.json still apply
+     * when it is not set. A committed `ios/` (project.pbxproj and the shared
+     * scheme) or `android/bugsee.properties` carries the token.
+     */
+    appToken?: AppTokenOption;
+    /**
+     * Defaults on. After the debug id is injected, both platforms upload the
+     * composed source map with bugsee-cli when a real app token is
+     * configured; a placeholder or missing token skips with one build-log
+     * line, and a failed upload warns without failing the build. `false`
+     * writes `bugseeUploadSourcemaps=false` into android/gradle.properties and
+     * `BUGSEE_UPLOAD_SOURCEMAPS=false` into the iOS bundle phase.
      */
     uploadSourcemaps?: boolean;
     /**
-     * Defaults on. `false` removes the Archive dSYM post-action, including
-     * one left by an earlier prebuild without `--clean`.
+     * Defaults on. `false` keeps native symbols offline on both platforms:
+     * iOS loses the Archive dSYM post-action (including one an earlier
+     * prebuild left), and Android disables the Bugsee Gradle plugin's
+     * `uploadBugsee*` tasks (R8 mapping, NDK symbols, build info) in a marked
+     * block a later prebuild removes again. Source maps follow
+     * `uploadSourcemaps`.
      */
     uploadSymbols?: boolean;
     /**
@@ -25,5 +46,12 @@ export interface BugseePluginProps {
     /** Defaults off. Writes `com.bugsee.app-token` manifest meta-data. */
     autoLaunch?: boolean;
 }
+export declare const APP_GRADLE_NOT_GROOVY: string;
+/** The settings or root Gradle file is Kotlin; the plugin edits Groovy only. */
+export declare function gradleNotGroovy(file: string): string;
+/** The token for one platform, or undefined. Refuses anything that is not token-shaped. */
+export declare function platformToken(appToken: AppTokenOption | undefined, platform: 'ios' | 'android'): string | undefined;
+/** Shared schemes of every .xcodeproj under ios/. Throws when there are none. */
+export declare function listSchemes(iosRoot: string): string[];
 declare const _default: ConfigPlugin<BugseePluginProps>;
 export default _default;
