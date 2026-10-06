@@ -23,7 +23,7 @@
 import Bugsee, { type NetworkFilterEvent } from '@bugsee/react-native';
 import { Platform } from 'react-native';
 
-import { DEAD_ENDPOINT } from '../endpoint';
+import { deadEndpointUrl } from '../endpoint';
 
 export const NETWORK_FILTER_SCENARIOS = ['network-filter'] as const;
 
@@ -67,9 +67,13 @@ function urlOf(event: NetworkFilterEvent): string {
 
 const ON_ANDROID = Platform.OS === 'android';
 
-/** The path the Android probe fetches; the nonce keeps it this run's own. */
+/**
+ * The path the Android probe fetches; the nonce keeps it this run's own. No
+ * "bugsee" in it, so the probe would also be recorded on iOS
+ * (`deadEndpointUrl`).
+ */
 function probePath(nonce: string): string {
-  return `bugsee-e2e-nf/${nonce}`;
+  return `rn-e2e-nf/${nonce}`;
 }
 
 /**
@@ -111,7 +115,7 @@ export function installNetworkFilter(nonce: string): void {
  */
 export function runNetworkFilterScenario(nonce: string): void {
   if (ON_ANDROID) {
-    fetch(`${DEAD_ENDPOINT}/${probePath(nonce)}`).then(
+    fetch(deadEndpointUrl(probePath(nonce))).then(
       () => mark(`probe fetched nonce=${nonce}`),
       () => mark(`probe failed nonce=${nonce}`),
     );

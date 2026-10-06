@@ -46,3 +46,19 @@ export function launchEndpoint(token: string, requested: string | undefined, con
   }
   return { endpoint: wanted, forced: false };
 }
+
+/**
+ * A url on `DEAD_ENDPOINT` for a request the e2e expects native network
+ * capture to record. The iOS SDK's release build drops every request whose
+ * url contains "bugsee", taking it for the SDK's own traffic
+ * (`BGSNetworkInterceptionIsBugseeURL`, 7.0.0-beta3 and beta4); Android has
+ * no such rule. A path with that word would pass on Android and silently
+ * vanish on iOS, so this refuses one outright.
+ */
+export function deadEndpointUrl(path: string): string {
+  const url = `${DEAD_ENDPOINT}/${path}`;
+  if (/bugsee/i.test(url)) {
+    throw new Error(`${url} contains "bugsee"; the iOS SDK never records such a request`);
+  }
+  return url;
+}
