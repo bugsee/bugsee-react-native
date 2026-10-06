@@ -71,8 +71,9 @@ jobs:
   # 99% of the run time. src keeps its static mutants: they are mostly
   # killed, and without them it scores 92. The configs cap concurrency at 3
   # for laptops; a runner has 4 vCPUs. Before: src 36-49 min, scripts 13-22
-  # min, one job each. First sharded run: src 6, 13 and 14 min (3 shards),
-  # scripts 20 min (then 1 shard; now 2).
+  # min, one job each; plugin did not finish. At 3/2/10 shards: src 6-18,
+  # scripts 3-17, plugin 4-17 min a shard. Shards balance by mutant count,
+  # not cost (raw-messages.ts and index.ts mutants are dearer), hence 4/3.
   #
   # Tests that read files at runtime (the corpus a parser is scored against)
   # list those paths in GATE_INPUTS in scripts/mutation-shards.ts.
@@ -110,7 +111,7 @@ jobs:
     uses: ./.github/workflows/mutation-gate.yml
     with:
       gate: src
-      shards: 3
+      shards: 4
 
   mutation-scripts:
     name: mutation (scripts)
@@ -119,7 +120,7 @@ jobs:
     uses: ./.github/workflows/mutation-gate.yml
     with:
       gate: scripts
-      shards: 2
+      shards: 3
 
   # The plugin gate (the Expo config plugin and the Hermes source-map
   # scripts, which decide whether a debug id, a dSYM action or a source-map
