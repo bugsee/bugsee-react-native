@@ -80,7 +80,7 @@ import {
 const itAndroid = ON_ANDROID ? it : it.skip;
 /**
  * Case 6 on iOS needs a crash reporter, and the simulator slice of the iOS SDK
- * has none: 7.0.0-beta3's `ios-arm64_x86_64-simulator` binary carries no
+ * has none: 7.0.0-beta3's and 7.0.0-beta4's `ios-arm64_x86_64-simulator` binaries carry no
  * BGSCrashManager or PLCrashReporter symbols (the SDK compiles crash hooks
  * out under TARGET_OS_SIMULATOR), so a crash there is never recovered and the
  * case fails at its first recovery assertion (Task 3.4f report). It runs only

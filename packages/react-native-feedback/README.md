@@ -51,7 +51,8 @@ published surface:
 appearance.backgroundColor = '#112233';
 ```
 
-The `feedback-spm` 7.0.0-beta3 SwiftUI chat hard-codes `Color.accentColor`
+The `feedback-spm` 7.0.0-beta4 SwiftUI chat (its sources are unchanged
+from 7.0.0-beta3) hard-codes `Color.accentColor`
 and `Color.gray` and does not read `BugseeTheme`, so that assignment does
 not change the chat in this beta. The setter still stores the color on
 `BugseeTheme`.

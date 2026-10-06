@@ -1340,10 +1340,12 @@ RCT_EXPORT_MODULE(Bugsee)
   });
 }
 
-/// An unhandled JS exception. The call stores `override_report.plcrash`.
-/// iOS SDK 7.0.0-beta3 `0d9c9d0a-9` claims only `live_report.plcrash` on the
-/// next launch, so that report is not recovered. Do not copy one file onto
-/// the other. The completion is wrapped in `BGSRNSettleOnce`: on the
+/// An unhandled JS exception. The call stores `override_report.plcrash`,
+/// for the next launch to recover. 7.0.0-beta4 claims it ahead of
+/// `live_report.plcrash` (bugsee-cocoa #177; beta3 claimed only the live
+/// file and dropped this report), but not on every relaunch: on an iPhone
+/// XS 2 of 5 left the file unclaimed (an SDK finding, not ours to work
+/// around). Do not copy one file onto the other. The completion is wrapped in `BGSRNSettleOnce`: on the
 /// simulator the SDK compiles `logUnhandledException` out and never calls
 /// this completion (verified facts), and a promise must still settle.
 - (void)logUnhandledException:(NSString *)payloadJson
@@ -2482,7 +2484,7 @@ RCT_EXPORT_MODULE(Bugsee)
   return released;
 }
 
-/// Writable report colors on BugseeTheme (7.0.0-beta3). Feedback properties
+/// Writable report colors on BugseeTheme (7.0.0-beta4; unchanged from beta3). Feedback properties
 /// and the readonly palette are not report appearance. KVC with any other
 /// name throws NSUnknownKeyException.
 static NSSet<NSString *> *BGSRNReportColorKeys(void) {
@@ -2562,7 +2564,7 @@ static NSString *BGSRNHexFromColor(UIColor *color) {
   return hex;
 }
 
-/// iOS 7.0.0-beta3 returns without invoking `completion` when the SDK is
+/// iOS 7.0.0-beta3 and beta4 return without invoking `completion` when the SDK is
 /// not stopped, so a launched call resolves `false` immediately. That is the
 /// missing completion, not a wait. Stopped, including a nil instance, still
 /// calls the SDK method and settles through `BGSRNSettleOnce`: the

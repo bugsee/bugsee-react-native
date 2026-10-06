@@ -29,24 +29,15 @@
  * own check independently say it should not -- the iOS SDK team has been
  * asked why, and the row is omitted rather than asserted either way.
  *
- * **iOS SDK regression, confirmed and fixed upstream:**
- * https://github.com/bugsee/bugsee-cocoa/pull/164 (base `nextgen`; there is
- * no separate issue -- the PR is the record). Root cause: nextgen lacked
- * Android's `initializeReport`, so global attributes and the identifier were
- * never copied into a new report (`BGSManifestCreator.userAttributes` is
- * legacy and unused on this path). So a live `Bugsee.upload()` report's
- * `manifest.json` `attrs` and `request.json` `email` never carry the global
- * attributes or user identifier at all on iOS 7.0.0-beta3, even though
- * `getAttribute`/`getAllAttributes`/`getUserIdentifier` all read them back
- * correctly right up to the `upload()` call. Case 3's `manifest.attrs`/
- * `email` assertions therefore run as `it.failing` on iOS only, so the suite
- * stays green while asserting the CORRECT (currently unmet) behaviour, and
- * turns red -- forcing an update -- once the RN pin moves to an iOS beta
- * containing bugsee-cocoa#164. Whether a bundle was retained at all, and
- * whether it's this run's own report, is asserted separately in a plain
- * `it` that is never `.failing` -- so a harness regression (no bundle
- * pulled, or the wrong one) fails loudly instead of being swallowed as "the
- * known SDK bug failing as expected".
+ * **iOS SDK regression, fixed in 7.0.0-beta4:**
+ * https://github.com/bugsee/bugsee-cocoa/pull/164 (`fe857ad97`). nextgen
+ * lacked Android's `initializeReport`, so on 7.0.0-beta3 a live
+ * `Bugsee.upload()` report's `manifest.json` `attrs` and `request.json`
+ * `email` never carried the global attributes or user identifier. Case 3
+ * was `it.failing` on iOS until the pin moved to beta4, where it passed on
+ * the simulator (2026-10-06) and became a plain `it` on both platforms.
+ * Whether a bundle was retained at all, and whether it's this run's own
+ * report, is still asserted separately, before case 3.
  *
  * Android preconditions, as for data.test.ts: the debug build is installed on
  * the handset named in device.ts, and Metro is running with
@@ -439,12 +430,9 @@ describeDevice(`attributes and identity round-trip on ${TARGET_NAME}`, () => {
 
   /**
    * `bundles[0]` only -- deliberately asserts nothing. Exactly one bundle,
-   * and that it's this run's own report, is asserted once, in a plain `it`
-   * that is never `.failing` (below): if this helper itself threw and were
-   * called from inside `it.failing`'s case 3, a harness regression (no
-   * bundle pulled, a stale one from an earlier run) would be swallowed as
-   * "the known SDK bug failing as expected" and the suite would stay green
-   * for the wrong reason.
+   * and that it's this run's own report, is asserted once, in its own `it`
+   * (below), so a harness regression (no bundle pulled, a stale one from an
+   * earlier run) fails under its own name rather than as case 3.
    */
   function theBundle(): PulledBundle {
     return bundles[0]!;
@@ -497,33 +485,11 @@ describeDevice(`attributes and identity round-trip on ${TARGET_NAME}`, () => {
   });
 
   /**
-   * Confirmed iOS SDK regression, fixed upstream in
-   * https://github.com/bugsee/bugsee-cocoa/pull/164 (base `nextgen`; there
-   * is no separate issue -- the PR is the record). Root cause: nextgen
-   * lacked Android's `initializeReport`, so global attributes and the
-   * identifier were never copied into a new report --
-   * `BGSManifestCreator.userAttributes` is legacy and unused on this path.
-   * So on iOS 7.0.0-beta3, a live `Bugsee.upload()` report's
-   * `manifest.json` `attrs` comes back `{}` and `request.json` has no
-   * `email` key, even though `getAttribute`/`getAllAttributes`/
-   * `getUserIdentifier` all read them back correctly right up to the
-   * `upload()` call (case 1 above).
-   *
-   * `it.failing` (a Jest built-in): the body below asserts the CORRECT
-   * behaviour -- unweakened, identical in shape to Android's -- and this
-   * test passes exactly because those assertions currently fail on iOS.
-   * Remove `.failing` when fixed, i.e. once the RN pin moves to an iOS beta
-   * containing bugsee-cocoa#164. Android runs the same body as a normal
-   * `it`, since it has no such bug.
-   *
-   * ONLY the two SDK-bug assertions (`manifest.attrs` contents and
-   * `request.json` `email`) live in this block -- the bundle's existence
-   * and identity are already asserted above, in the plain `it` that
-   * precedes this one, precisely so this `.failing` cannot mask a harness
-   * regression as "the known SDK bug failing as expected".
+   * Case 3. On iOS 7.0.0-beta3 this was `it.failing` (bugsee-cocoa#164: a
+   * new report did not start from the global attributes and identifier);
+   * 7.0.0-beta4 carries the fix, so both platforms run it as a plain `it`.
    */
-  const case3 = ON_IOS ? it.failing : it;
-  case3('the retained report carries the attributes and the identifier', () => {
+  it('the retained report carries the attributes and the identifier', () => {
     assertPrecondition();
     const bundle = theBundle();
     expect(bundle.manifest.attrs).toStrictEqual(expectedAttrs(nonce));

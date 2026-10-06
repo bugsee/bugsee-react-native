@@ -85,8 +85,8 @@ describe('the wrapper does not raise the floor above the SDK it wraps', () => {
 });
 
 describe('iOS sits at 15 everywhere, deliberately', () => {
-  // BugseeRNSupport links no React, so it *could* sit at the SDK's 13.0. It
-  // does not, because no RN app can reach 13.0 anyway -- see IOS_FLOOR.
+  // BugseeRNSupport links no React; its floor is the SDK's own 15.0 (since
+  // 7.0.0-beta2), which SwiftPM will not let it sit below -- see IOS_FLOOR.
   it('ios/Support/Package.swift declares the wrapper floor', () => {
     expect(parseSwiftPlatform(read('ios', 'Support', 'Package.swift')))
       .toBe(IOS_FLOOR.spm);
