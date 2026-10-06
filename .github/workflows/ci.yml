@@ -124,11 +124,14 @@ jobs:
   # The plugin gate (the Expo config plugin and the Hermes source-map
   # scripts, which decide whether a debug id, a dSYM action or a source-map
   # upload reaches a customer build) runs inPlace: its tests need the
-  # workspace's nested node_modules, which a sandbox never copies. Unsharded it did not finish: about 10% after
-  # 70 min. A Gradle-lexer function holds 419 mutants no range can split, so
-  # 7 shards is as fine as it gets; timeoutMS is 15 s (a Stryker timeout is
-  # 1.5x the covering tests' own time plus this), not 60 s: lexer mutants
-  # that loop forever each cost the full timeout.
+  # workspace's nested node_modules, which a sandbox never copies.
+  # Unsharded it did not finish: about 10% after 70 min. Its Gradle lexer is
+  # one function whose BlockStatement mutant spans 419 others; in 7
+  # line-range shards that one ran past 80 min while the other six took 4-13.
+  # Such a group is now split by mutator into shards of its own
+  # (scripts/mutation-shards.ts), here 5 of the 10. timeoutMS is 15 s, not
+  # 60 (a Stryker timeout is 1.5x the covering tests' own time plus this):
+  # lexer mutants that loop forever each wait it out.
   mutation-plugin:
     name: mutation (plugin)
     needs: mutation-scope
@@ -136,7 +139,7 @@ jobs:
     uses: ./.github/workflows/mutation-gate.yml
     with:
       gate: plugin
-      shards: 7
+      shards: 10
 
   # The one stable check name for branch protection: a gate's checks are
   # nested (mutation (src) / score) and a filtered-out gate is skipped. Fails

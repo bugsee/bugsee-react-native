@@ -1,6 +1,7 @@
 import {
   ALL_GATES_TRIGGERS,
   GATE_INPUTS,
+  OVERSIZED_COST,
   countMutants,
   mutantKey,
   gatesForChanges,
@@ -187,6 +188,15 @@ describe('planShards', () => {
       );
       expect(kept.sort()).toEqual(split.length > 0 ? ['BlockStatement', 'ConditionalExpression', 'EqualityOperator', 'StringLiteral'] : []);
     }
+  });
+
+  it('gives an oversized group up to a third of a share per shard, as far as its mutators go', () => {
+    // 18 mutants, 6 shards: a share is 3, so the function would take 14 shards
+    // at 1 each; it has 4 mutators, and the 4 small groups get the other 2.
+    expect(OVERSIZED_COST).toBe(3);
+    const shards = planShards([fn, small4], 6);
+    expect(shards.map((s) => s.mutants)).toEqual([2, 2, 6, 4, 3, 1]);
+    expect(shards.filter((s) => s.excludedMutations !== undefined)).toHaveLength(4);
   });
 
   it('leaves a split group out of the ranges around it', () => {

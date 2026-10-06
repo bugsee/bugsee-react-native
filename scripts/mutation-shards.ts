@@ -97,6 +97,15 @@ interface Unit extends MutantGroup {
 }
 
 /**
+ * How much more a mutant of an oversized group is taken to cost than any
+ * other. Such a group is one long function, and in the one we have (the
+ * plugin's Gradle lexer) every mutant runs the whole 368-test corpus and the
+ * ones that loop forever each wait out a timeout: its 419 mutants ran past
+ * 80 min in one shard while 380-440 mutants elsewhere in the gate took 4-13.
+ */
+export const OVERSIZED_COST = 3;
+
+/**
  * Cuts the gate's mutants into `n` shards of as even a mutant count as the
  * safe cut points allow. Files keep their order, so a shard is a contiguous
  * stretch of the sorted file list, whole files in the middle and at most a
@@ -114,13 +123,13 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
   const total = units.reduce((sum, unit) => sum + unit.mutants, 0);
   const share = total / n;
 
-  // How many shards each oversized group takes: enough for an even share
-  // each, but no more than it has mutators, and leaving at least one shard
-  // for everything else.
+  // How many shards each oversized group takes: enough for a third of an even
+  // share each (see OVERSIZED_COST), but no more than it has mutators, and
+  // leaving at least one shard for everything else.
   const heavy = new Map<Unit, number>();
   for (const unit of units) {
     if (n > 1 && unit.mutants > share) {
-      heavy.set(unit, Math.min(Math.ceil(unit.mutants / share), unit.byMutator.size));
+      heavy.set(unit, Math.min(Math.ceil((unit.mutants * OVERSIZED_COST) / share), unit.byMutator.size));
     }
   }
   const light = units.filter((unit) => !heavy.has(unit));
