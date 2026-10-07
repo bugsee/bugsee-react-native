@@ -255,23 +255,30 @@ jobs:
             ${{ runner.temp }}/stub.log
           if-no-files-found: warn
 
-  # The bare release again, from a checkout whose path holds spaces and
-  # parentheses, as C:\Users\First Last\... or "Program Files (x86)" do:
-  # React Native runs hermesCommand through `cmd /c`, whose quote handling
-  # changes when the command path has spaces or ( ).
+  # The bare release again, from a copy of the checkout whose path holds
+  # spaces and parentheses, as C:\Users\First Last\... or "Program Files
+  # (x86)" do: React Native runs hermesCommand through `cmd /c`, whose quote
+  # handling changes when the command path has spaces or ( ). The copy sits
+  # at a short root: under the workspace the New Architecture codegen objects
+  # pass Windows' 260-character path limit and CMake fails before any
+  # JavaScript step (run 37600186416, ninja mkdir "No such file or
+  # directory"), a React Native limit that has nothing to do with spaces.
   android-release-spaced-path:
     name: android release, path with spaces (windows-latest)
     runs-on: windows-latest
     timeout-minutes: 75
     env:
-      APP_ROOT: 'my projects (x86)/bugsee rn'
+      APP_ROOT: 'C:/s (x86)/b rn'
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: 'my projects (x86)/bugsee rn'
+      - name: Copy the checkout to a path with spaces and parentheses
+        run: |
+          mkdir -p "$APP_ROOT"
+          cp -a . "$APP_ROOT/"
+          ls "$APP_ROOT"
       - uses: actions/setup-node@v4
         with:
           node-version: '22.18'
@@ -281,10 +288,10 @@ jobs:
           java-version: 17
       - run: corepack enable
       - run: yarn install --immutable
-        working-directory: 'my projects (x86)/bugsee rn'
+        working-directory: 'C:/s (x86)/b rn'
 
       - name: Credentials (synthetic token, stub endpoint, no NDK upload)
-        working-directory: 'my projects (x86)/bugsee rn'
+        working-directory: 'C:/s (x86)/b rn'
         run: |
           pwd
           yarn workspace bugsee-example-bare credentials
@@ -308,7 +315,7 @@ jobs:
           exit $code
 
       - name: Composed map carries a debug id; the bytecode carries the same one
-        working-directory: 'my projects (x86)/bugsee rn/examples/bare/android/app/build'
+        working-directory: 'C:/s (x86)/b rn/examples/bare/android/app/build'
         run: |
           map="$(find generated/sourcemaps -name 'index.android.bundle.map' | head -1)"
           echo "composed map: $map"
@@ -349,7 +356,7 @@ jobs:
         with:
           name: campaign-windows-hermes-spaced
           path: |
-            my projects (x86)/bugsee rn/examples/bare/android/app/build/outputs/apk/release/app-release.apk
+            C:/s (x86)/b rn/examples/bare/android/app/build/outputs/apk/release/app-release.apk
             ${{ runner.temp }}/gradle.log
             ${{ runner.temp }}/stub.log
           if-no-files-found: warn
