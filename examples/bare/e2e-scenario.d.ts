@@ -10,6 +10,8 @@ declare module '*/e2e-scenario.json' {
     nonce?: string;
     /** Overrides the credentials' endpoint (iOS retention, e2e/bundles.ts). */
     endpoint?: string;
+    /** `smoke`: index.js registers smoke/SmokeApp.tsx instead of App (E2E_SMOKE_ROOT=1). */
+    root?: string;
   };
   export default scenario;
 }

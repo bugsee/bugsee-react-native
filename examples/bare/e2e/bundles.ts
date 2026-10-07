@@ -61,6 +61,7 @@ import {
   iosTarget,
 } from './device';
 import { adb, adbStatus, devicePidsOfApp, devicectl } from './scenario';
+import { scanPaths } from './secret-scan';
 
 const execFileAsync = promisify(execFile);
 
@@ -150,6 +151,10 @@ export function newPulledRoot(): string {
  */
 export function removePulledBundles(): { removed: string[]; kept: string[] } {
   const roots = pulledRoots.splice(0);
+  // Campaign N-29: every pulled file is scanned for tokens before it goes.
+  if (process.env.E2E_SECRET_SCAN !== '0' && roots.length > 0) {
+    scanPaths(roots);
+  }
   if (process.env.E2E_KEEP_BUNDLES === '1') {
     return { removed: [], kept: roots };
   }
@@ -410,7 +415,7 @@ export async function terminateIosApp(): Promise<void> {
     left = await devicePidsOfApp();
   }
   if (left.length > 0) {
-    throw new Error(`terminateIosApp: BareExample still running on the iPhone (pids ${left.join(', ')})`);
+    throw new Error(`terminateIosApp: ${IOS_BUNDLE_ID} still running on the iPhone (pids ${left.join(', ')})`);
   }
 }
 

@@ -67,6 +67,7 @@ import {
   clearBundles,
   listBundles,
   TARGET_NAME,
+  debugOnly,
   describeDevice,
   escape,
   must,
@@ -94,6 +95,15 @@ const describeRelease =
   ON_ANDROID && process.env.E2E_RELEASE === '1' ? describe : describe.skip;
 const describeIosRelease =
   ON_IOS_DEVICE && process.env.E2E_RELEASE === '1' ? describe : describe.skip;
+/**
+ * The Debug cases. Under `E2E_RELEASE=1` the Release subset of this file is
+ * the two `gated E2E_RELEASE=1` blocks (plan MX-CFG-RELEASE: "exceptions
+ * (R-cases)"); the Debug cases assert a __DEV__ bundle and skip (N-28).
+ */
+const DEBUG_CASES = 'Debug case (asserts a __DEV__ bundle); the Release cases are the "gated E2E_RELEASE=1" blocks';
+const describeDebug = debugOnly(describe, DEBUG_CASES);
+const describeIosSimulatorDebug = debugOnly(describeIosSimulator, DEBUG_CASES);
+const describeIosDeviceDebug = debugOnly(describeIosDevice, DEBUG_CASES);
 
 jest.setTimeout(20 * 60_000);
 
@@ -258,7 +268,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     }
   });
 
-  describe('exc-handled', () => {
+  describeDebug('exc-handled', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -394,7 +404,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     });
   });
 
-  describe('exc-rejection', () => {
+  describeDebug('exc-rejection', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -427,7 +437,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     });
   });
 
-  describe('exc-fatal', () => {
+  describeDebug('exc-fatal', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -529,7 +539,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     );
   });
 
-  describe('exc-boundary', () => {
+  describeDebug('exc-boundary', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -576,7 +586,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     );
   });
 
-  describe('exc-root', () => {
+  describeDebug('exc-root', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -647,7 +657,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     );
   });
 
-  describe('exc-prelaunch', () => {
+  describeDebug('exc-prelaunch', () => {
     let run: Run;
     let nonce: string;
     let preSent: LogLine;
@@ -798,7 +808,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
 
   // --- Task 7.5b: iOS simulator documented behaviour -------------------------
 
-  describeIosSimulator('simulator slice (logException compiled out)', () => {
+  describeIosSimulatorDebug('simulator slice (logException compiled out)', () => {
     it('the simulator slice reports no JS exception', async () => {
       await clearBundles();
       const run = await startRun('exc-handled');
@@ -833,7 +843,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
 
   // --- Task 7.5b: iPhone Debug cases 1–13 ------------------------------------
 
-  describeIosDevice('exc-handled (iPhone)', () => {
+  describeIosDeviceDebug('exc-handled (iPhone)', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -958,7 +968,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     });
   });
 
-  describeIosDevice('exc-rejection (iPhone)', () => {
+  describeIosDeviceDebug('exc-rejection (iPhone)', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -988,7 +998,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     });
   });
 
-  describeIosDevice('exc-fatal (iPhone)', () => {
+  describeIosDeviceDebug('exc-fatal (iPhone)', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -1118,7 +1128,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     });
   });
 
-  describeIosDevice('exc-boundary (iPhone)', () => {
+  describeIosDeviceDebug('exc-boundary (iPhone)', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -1162,7 +1172,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     );
   });
 
-  describeIosDevice('exc-root (iPhone)', () => {
+  describeIosDeviceDebug('exc-root (iPhone)', () => {
     let run: Run;
     let nonce: string;
     let bundles: PulledBundle[];
@@ -1234,7 +1244,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
     );
   });
 
-  describeIosDevice('exc-prelaunch (iPhone)', () => {
+  describeIosDeviceDebug('exc-prelaunch (iPhone)', () => {
     let run: Run;
     let nonce: string;
     let preSent: LogLine;

@@ -10,6 +10,7 @@
  */
 import { writeFileSync } from 'node:fs';
 
+import { checkLaunch, launchFactsOf, parseCampaignMode } from '../../../scripts/campaign-endpoint-guard';
 import { checkAndroidBanner } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
 import {
@@ -35,6 +36,7 @@ import {
   awaitMetroServes,
   launchScenario,
   scenarioArgs,
+  smokeRoot,
   writeScenario,
 } from './scenario';
 
@@ -42,6 +44,31 @@ export const PLATFORM = process.env.E2E_PLATFORM;
 export const ON_ANDROID = PLATFORM === 'android';
 export const ON_IOS = PLATFORM === 'ios';
 export const describeDevice = ON_ANDROID || ON_IOS ? describe : describe.skip;
+
+/**
+ * `E2E_STAGING=1` is the STAGING lane (a real token, exactly
+ * https://apidev.bugsee.com); anything else is offline (the placeholder token
+ * and the dead endpoint). Every launch is checked against it (`checkRun`).
+ */
+export const CAMPAIGN_MODE = parseCampaignMode(process.env.E2E_STAGING);
+
+/** A Release build is installed (`E2E_RELEASE=1`): the MX-CFG-RELEASE runs. */
+export const RELEASE = process.env.E2E_RELEASE === '1';
+
+/**
+ * `fn` (an `it` or `describe`, possibly already conditional), skipped under
+ * `E2E_RELEASE=1` because the cases it opens were written for a Debug build
+ * -- `reason` says why, and is printed when it skips. The Release-subset
+ * audit (scripts/campaign-release-audit.ts, N-28) requires every Debug-only
+ * assertion (`expect(run.dev).toBe(true)`) to sit inside one.
+ */
+export function debugOnly<T extends jest.It | jest.Describe>(fn: T, reason: string): T {
+  if (!RELEASE) {
+    return fn;
+  }
+  console.log(`RELEASE-AUDIT skipped under E2E_RELEASE=1: ${reason}`);
+  return ((fn as unknown as { skip?: T }).skip ?? fn) as T;
+}
 
 /** What a suite's title calls the device it runs on. */
 export const TARGET_NAME = ON_IOS
@@ -161,6 +188,33 @@ export interface Run {
   readonly launch?: IosLaunch;
 }
 
+/**
+ * What every launch must show before a suite reads anything from it: the
+ * campaign endpoint guard (N-30) on the app's own launch line -- offline,
+ * the placeholder token against the dead endpoint; staging, a real token
+ * against exactly the staging endpoint; production never -- and, under
+ * `E2E_SMOKE_ROOT=1`, that the smoke root really ran. A refused launch stops
+ * the app before the suite goes on.
+ */
+async function checkRun(ran: LogLine, start: number): Promise<void> {
+  const facts = launchFactsOf(ran.text);
+  const verdict =
+    facts === undefined
+      ? { ok: false, reason: "the app's launch line names no token kind and endpoint" }
+      : checkLaunch(CAMPAIGN_MODE, facts);
+  if (!verdict.ok) {
+    await stopApp().catch(() => {});
+    throw new Error(`campaign endpoint guard (N-30, ${CAMPAIGN_MODE} mode) refused this launch: ${verdict.reason}. The app was stopped.`);
+  }
+  if (smokeRoot()) {
+    must(
+      await log().waitFor(/BUGSEE_E2E launching on \w+ root=smoke/, 15_000, ran.index),
+      'the smoke root (smoke/SmokeApp.tsx) launching, as E2E_SMOKE_ROOT=1 asks',
+      start,
+    );
+  }
+}
+
 /** The SDK's version line on iOS, from the `NSLog` it prints at launch. */
 export const IOS_SDK_LINE = /Bugsee IOS SDK ver:(\S+) build:(\S+)/;
 
@@ -170,11 +224,21 @@ export const IOS_SDK_LINE = /Bugsee IOS SDK ver:(\S+) build:(\S+)/;
  * pinned one, and the SDK reached Launched with the device offline (Android)
  * or against a dead endpoint (iOS).
  */
-export async function startRun(name: string): Promise<Run> {
+export interface RunOptions {
+  /** iOS: the HTTP stub's base URL for the app (stub-server.ts `deviceStubUrl`). */
+  readonly stub?: string;
+}
+
+export async function startRun(name: string, options: RunOptions = {}): Promise<Run> {
   if (ON_IOS) {
-    return startIosRun(name);
+    return startIosRun(name, options);
   }
   const scenario = writeScenario(name);
+  if (smokeRoot()) {
+    // The root is chosen from the JSON at bundle load (index.js), so Metro
+    // must serve this run's file before the launch.
+    await awaitMetroServes(scenario.nonce, 60_000, 'android');
+  }
   const start = log().mark();
   await launchScenario(scenario);
 
@@ -196,6 +260,7 @@ export async function startRun(name: string): Promise<Run> {
   if (!bannerCheck.ok) {
     throw new Error(`SDK build banner does not match the pin: ${bannerCheck.reason}`);
   }
+  await checkRun(ran, start);
   const launched = must(
     await log().waitFor(/BUGSEE_E2E status=2/, 20_000, ran.index),
     'Status.Launched with the device offline',
@@ -224,9 +289,14 @@ export const IOS_STOPPED_FOR_TOKEN = /Bugsee was stopped for current application
  * its embedded one; the simulator, whose app always loads from Metro, also
  * waits for Metro to serve the new JSON.
  */
-async function startIosRun(name: string): Promise<Run> {
+async function startIosRun(name: string, options: RunOptions): Promise<Run> {
   const ios = log() as IosConsole;
-  const extras = { endpoint: DEAD_ENDPOINT };
+  // Staging launches against the credentials' endpoint, which the guard
+  // (checkRun) requires to be exactly the staging one.
+  const extras = {
+    ...(CAMPAIGN_MODE === 'staging' ? {} : { endpoint: DEAD_ENDPOINT }),
+    ...(options.stub === undefined ? {} : { stub: options.stub }),
+  };
   const scenario = writeScenario(name, extras);
   if (iosTarget() === 'simulator') {
     await awaitMetroServes(scenario.nonce);
@@ -248,11 +318,19 @@ async function startIosRun(name: string): Promise<Run> {
   );
   // The retention precondition, both halves: the app took the dead endpoint,
   // and the SDK really failed to reach it.
-  expect(ran.text).toContain(`endpoint=${DEAD_ENDPOINT}`);
+  await checkRun(ran, start);
   const banner = must(await log().waitFor(IOS_SDK_LINE, 15_000, start), 'the iOS SDK version line', start);
   const version = IOS_SDK_LINE.exec(banner.text)![1];
   if (version !== readNativeVersions().ios.sdk) {
     throw new Error(`iOS SDK ${version} launched, but the pin is ${readNativeVersions().ios.sdk}`);
+  }
+  if (CAMPAIGN_MODE === 'staging') {
+    const launched = must(
+      await log().waitFor(/BUGSEE_E2E status=2/, 20_000, ran.index),
+      'Status.Launched against the staging endpoint',
+      start,
+    );
+    return { scenario, start, banner, launched, dev: / dev=true/.test(ran.text), launch };
   }
   const unreachable = must(
     await log().waitFor(

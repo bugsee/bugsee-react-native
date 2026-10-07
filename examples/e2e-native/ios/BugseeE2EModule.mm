@@ -1,5 +1,18 @@
 #import "BugseeE2EModule.h"
 
+#import <React/RCTLog.h>
+#import <os/log.h>
+
+/// Where `nativeLog` lines go: subsystem com.bugsee.e2e, category native.
+static os_log_t BGSE2ENativeLog(void) {
+  static os_log_t log;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    log = os_log_create("com.bugsee.e2e", "native");
+  });
+  return log;
+}
+
 /// A plain name: no separator, so it cannot leave the temporary directory.
 /// The JS rule, again (src/index.ts).
 static BOOL BGSE2EIsPlainName(NSString *name) {
@@ -73,6 +86,74 @@ RCT_EXPORT_MODULE(BugseeE2E)
   BOOL exists = [path isKindOfClass:[NSString class]] &&
                 [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&directory];
   resolve(@(exists && !directory));
+}
+
+/// Blocks the main thread for `ms` from a block dispatched to it, then
+/// resolves (campaign N-12: hang detection).
+- (void)blockMain:(double)ms
+          resolve:(RCTPromiseResolveBlock)resolve
+           reject:(RCTPromiseRejectBlock)reject {
+  if (ms < 0 || ms > 60000) {
+    reject(@"E_BAD_ARGUMENT", @"blockMain: ms out of range", nil);
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSDate *start = [NSDate date];
+    NSLog(@"BugseeE2E: blockMain begin ms=%ld", (long)ms);
+    [NSThread sleepForTimeInterval:ms / 1000.0];
+    NSLog(@"BugseeE2E: blockMain end elapsed=%ld",
+          (long)([[NSDate date] timeIntervalSinceDate:start] * 1000.0));
+    resolve(nil);
+  });
+}
+
+/// One line through os_log (subsystem com.bugsee.e2e, category native).
+- (void)nativeLog:(NSString *)level message:(NSString *)message {
+  if (![message isKindOfClass:[NSString class]]) {
+    return;
+  }
+  os_log_type_t type;
+  if ([level isEqualToString:@"debug"]) {
+    type = OS_LOG_TYPE_DEBUG;
+  } else if ([level isEqualToString:@"info"]) {
+    type = OS_LOG_TYPE_INFO;
+  } else if ([level isEqualToString:@"warn"]) {
+    type = OS_LOG_TYPE_DEFAULT;
+  } else if ([level isEqualToString:@"error"]) {
+    type = OS_LOG_TYPE_ERROR;
+  } else {
+    NSLog(@"BugseeE2E: nativeLog: unknown level ignored");
+    return;
+  }
+  os_log_with_type(BGSE2ENativeLog(), type, "%{public}s", message.UTF8String);
+}
+
+/// One line through React Native's RCTLog, from native code: no JS echo.
+- (void)rctLog:(NSString *)level message:(NSString *)message {
+  if (![message isKindOfClass:[NSString class]]) {
+    return;
+  }
+  RCTLogLevel rct;
+  if ([level isEqualToString:@"trace"]) {
+    rct = RCTLogLevelTrace;
+  } else if ([level isEqualToString:@"info"]) {
+    rct = RCTLogLevelInfo;
+  } else if ([level isEqualToString:@"warn"]) {
+    rct = RCTLogLevelWarning;
+  } else if ([level isEqualToString:@"error"]) {
+    rct = RCTLogLevelError;
+  } else {
+    NSLog(@"BugseeE2E: rctLog: unknown level ignored");
+    return;
+  }
+  _RCTLogNativeInternal(rct, __FILE__, __LINE__, @"%@", message);
+}
+
+/// iOS has no FLAG_SECURE: resolves false, and changes nothing.
+- (void)setFlagSecure:(BOOL)on
+              resolve:(RCTPromiseResolveBlock)resolve
+               reject:(RCTPromiseRejectBlock)reject {
+  resolve(@NO);
 }
 
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

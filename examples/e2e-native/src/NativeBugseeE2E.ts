@@ -23,6 +23,29 @@ export interface Spec extends TurboModule {
   writeTempFile(name: string, contents: string): Promise<string>;
   /** Whether a file exists at `path`. */
   fileExists(path: string): Promise<boolean>;
+  /**
+   * Blocks the main (UI) thread for `ms` milliseconds, from a task posted to
+   * it, and resolves once it has run (campaign N-12: hang detection).
+   */
+  blockMain(ms: number): Promise<void>;
+  /**
+   * One line through the platform's native log: Android `android.util.Log`
+   * (tag `BugseeE2ENative`), iOS `os_log` (subsystem `com.bugsee.e2e`,
+   * category `native`, `%{public}s`). Level: debug, info, warn or error.
+   */
+  nativeLog(level: string, message: string): void;
+  /**
+   * One line through React Native's own native log, with no JS echo: iOS
+   * `RCTLog` (`_RCTLogNativeInternal`), Android `FLog` with RN's tag
+   * `ReactNative`. Level: trace, info, warn or error.
+   */
+  rctLog(level: string, message: string): void;
+  /**
+   * Android: adds (`on`) or clears `WindowManager.LayoutParams.FLAG_SECURE`
+   * on the current activity's window, on the UI thread, and resolves true
+   * once applied. iOS has no such flag: resolves false.
+   */
+  setFlagSecure(on: boolean): Promise<boolean>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('BugseeE2E');

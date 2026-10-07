@@ -122,6 +122,14 @@ import {
   preLaunchCoverage,
   runCoverageScenario,
 } from './scenarios/coverage';
+import {
+  SmokeStage,
+  type SmokeStageScenario,
+  isSmokeScenario,
+  isSmokeStageScenario,
+  runSmokeScenario,
+} from './smoke/scenarios';
+import { isInfraScenario, runInfraScenario } from './scenarios/infra';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -278,6 +286,10 @@ export default function App() {
    */
   const [exceptionRender, setExceptionRender] = useState<
     { scenario: 'exc-boundary' | 'exc-root'; nonce: string } | undefined
+  >();
+  /** Set once Launched for the smoke set's two stage scenarios (smoke/scenarios.tsx). */
+  const [smokeStage, setSmokeStage] = useState<
+    { scenario: SmokeStageScenario; nonce: string } | undefined
   >();
 
   useEffect(() => {
@@ -528,6 +540,24 @@ export default function App() {
           return;
         }
 
+        // The campaign harness's helper proofs (scenarios/infra.ts).
+        if (isInfraScenario(choice.scenario)) {
+          await runInfraScenario(choice.scenario, choice.nonce);
+          return;
+        }
+
+        // The smoke set S1-S8 (smoke/scenarios.tsx, e2e/smoke.test.ts).
+        if (isSmokeScenario(choice.scenario)) {
+          if (isSmokeStageScenario(choice.scenario)) {
+            if (!cancelled) {
+              setSmokeStage({ scenario: choice.scenario, nonce: choice.nonce });
+            }
+            return;
+          }
+          await runSmokeScenario(choice.scenario, choice.nonce);
+          return;
+        }
+
         if (isExceptionScenario(choice.scenario)) {
           if (isExceptionRenderScenario(choice.scenario)) {
             if (!cancelled) {
@@ -657,6 +687,9 @@ export default function App() {
           scenario={exceptionRender.scenario}
           nonce={exceptionRender.nonce}
         />
+      )}
+      {smokeStage !== undefined && (
+        <SmokeStage scenario={smokeStage.scenario} nonce={smokeStage.nonce} />
       )}
     </View>
   );

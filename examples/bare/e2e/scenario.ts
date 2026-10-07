@@ -36,9 +36,13 @@ import { promisify } from 'node:util';
 
 import {
   ADB,
+  ANDROID_COMPONENT,
   ANDROID_PACKAGE,
+  APP_DIR,
   ANDROID_SERIAL,
   IOS_BUNDLE_ID,
+  IOS_EXECUTABLE,
+  IOS_EXECUTABLE_PATH,
   IOS_SIMULATOR_ID,
   iosTarget,
   requireVerifiedIosDevice,
@@ -47,7 +51,8 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export const SCENARIO_FILE = join(__dirname, '..', 'e2e-scenario.json');
+/** In the app under test's root (`E2E_APP_DIR`, device.ts): its bundle imports it. */
+export const SCENARIO_FILE = join(APP_DIR, 'e2e-scenario.json');
 
 export interface Scenario {
   readonly scenario: string;
@@ -58,12 +63,34 @@ export interface Scenario {
 export interface ScenarioExtras {
   /** Replaces the credentials' endpoint (iOS simulator retention, bundles.ts). */
   readonly endpoint?: string;
+  /**
+   * iOS: the HTTP stub's base URL (stub-server.ts), as `-bugseeE2eStub`.
+   * Android asks a fixed tunnelled port and needs nothing here.
+   */
+  readonly stub?: string;
+}
+
+/**
+ * `E2E_SMOKE_ROOT=1`: the scenario file also carries `"root": "smoke"`, and
+ * examples/bare's index.js then registers smoke/SmokeApp.tsx -- the root a
+ * generated app registers -- instead of App. Debug only: a Release bundle
+ * has its JSON baked in. Anything but unset, `0` or `1` throws.
+ */
+export function smokeRoot(raw: string | undefined = process.env.E2E_SMOKE_ROOT): boolean {
+  if (raw === undefined || raw === '' || raw === '0') {
+    return false;
+  }
+  if (raw === '1') {
+    return true;
+  }
+  throw new Error(`E2E_SMOKE_ROOT must be "1" or "0", got ${JSON.stringify(raw)}`);
 }
 
 /** Writes the scenario file for the next launch, with a fresh nonce. */
 export function writeScenario(name: string, extras: ScenarioExtras = {}): Scenario {
   const scenario = { scenario: name, nonce: randomBytes(6).toString('hex') };
-  writeFileSync(SCENARIO_FILE, `${JSON.stringify({ ...scenario, ...extras })}\n`);
+  const root = smokeRoot() ? { root: 'smoke' } : {};
+  writeFileSync(SCENARIO_FILE, `${JSON.stringify({ ...scenario, ...extras, ...root })}\n`);
   return scenario;
 }
 
@@ -89,6 +116,7 @@ export function scenarioArgs({ scenario, nonce }: Scenario, extras: ScenarioExtr
     '-bugseeE2eNonce',
     nonce,
     ...(extras.endpoint === undefined ? [] : ['-bugseeE2eEndpoint', extras.endpoint]),
+    ...(extras.stub === undefined ? [] : ['-bugseeE2eStub', extras.stub]),
     ...metroArgs(),
   ];
 }
@@ -179,14 +207,21 @@ export async function pidOf(): Promise<string | undefined> {
   return pid === '' ? undefined : pid;
 }
 
-const RELEVANT =
-  /ReactNativeJS|Bugsee|AndroidRuntime|FATAL|bareexample|libbugsee|DEBUG\s*:|crashpad|BUGSEE_E2E|BareExample|Terminating app/;
+const RELEVANT = new RegExp(
+  [
+    /ReactNativeJS|Bugsee|AndroidRuntime|FATAL|bareexample|libbugsee|DEBUG\s*:|crashpad|BUGSEE_E2E|BareExample|Terminating app/.source,
+    ANDROID_PACKAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+    IOS_EXECUTABLE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+  ].join('|'),
+);
 
 /** One logcat line, with the device's own timestamp (epoch ms). */
 export interface LogLine {
   readonly index: number;
   readonly deviceMs: number;
   readonly text: string;
+  /** When this process received the line (epoch ms, the Mac's clock). */
+  readonly hostMs?: number;
 }
 
 /**
@@ -213,7 +248,7 @@ export abstract class DeviceLog {
     const added: LogLine[] = [];
     for (const raw of parts) {
       const text = raw.replace(/\r$/, '');
-      const line = { index: this.lines.length, deviceMs: this.stampOf(text), text };
+      const line = { index: this.lines.length, deviceMs: this.stampOf(text), text, hostMs: Date.now() };
       this.lines.push(line);
       added.push(line);
     }
@@ -517,7 +552,7 @@ export async function devicectl(...args: string[]): Promise<Record<string, unkno
   }
 }
 
-/** The iPhone's running BareExample processes' pids. */
+/** The iPhone's running processes of the app under test (`E2E_IOS_EXECUTABLE`): their pids. */
 export async function devicePidsOfApp(): Promise<number[]> {
   const result = await devicectl('info', 'processes');
   const processes = (result.runningProcesses ?? []) as Array<{
@@ -525,7 +560,7 @@ export async function devicePidsOfApp(): Promise<number[]> {
     processIdentifier?: number;
   }>;
   return processes
-    .filter(p => /\/BareExample\.app\/BareExample$/.test(p.executable ?? ''))
+    .filter(p => IOS_EXECUTABLE_PATH.test(p.executable ?? ''))
     .map(p => p.processIdentifier!)
     .filter(pid => typeof pid === 'number');
 }
@@ -541,7 +576,7 @@ export async function launchScenario(scenario: Scenario): Promise<void> {
     'am',
     'start',
     '-n',
-    `${ANDROID_PACKAGE}/.MainActivity`,
+    ANDROID_COMPONENT,
     '-a',
     'android.intent.action.VIEW',
     '-d',
@@ -554,8 +589,12 @@ export async function launchScenario(scenario: Scenario): Promise<void> {
  * pick up the previous scenario file: Metro rebuilds on its file watcher, a
  * beat after the write. (Android steers through the launch URI instead.)
  */
-export async function awaitMetroServes(nonce: string, timeoutMs = 60_000): Promise<void> {
-  const url = `http://localhost:${metroPort()}/index.bundle?platform=ios&dev=true&minify=false`;
+export async function awaitMetroServes(
+  nonce: string,
+  timeoutMs = 60_000,
+  platform: 'ios' | 'android' = 'ios',
+): Promise<void> {
+  const url = `http://localhost:${metroPort()}/index.bundle?platform=${platform}&dev=true&minify=false`;
   const deadline = Date.now() + timeoutMs;
   let last = 'no response';
   while (Date.now() < deadline) {
