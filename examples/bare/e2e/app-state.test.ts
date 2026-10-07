@@ -13,9 +13,11 @@
  *   [FLOW-32] background then foreground, twice: the SDK stays Launched, the
  *             JS and the SDK are not started again, the lines logged after each
  *             resume land in the report, and the video goes on after the gap
- *             (the stage turns white only after the last resume, so the video
- *             must end bright having started on the dark app).
- *   [FLOW-33] five minutes in the background, then foreground: the same.
+ *             (the stage turns white only after the last resume, so bright
+ *             frames, after dark ones, are capture after the gap).
+ *   [FLOW-33] five minutes in the background, then foreground: the same,
+ *             except the line logged before going away, which is older than
+ *             the recording window (`duration` 90 s) and is not expected.
  *             `E2E_LONG_BACKGROUND_MS` may change the wait; the test title
  *             states the wait actually used.
  *   [FLOW-34] JS reload (`DevSettings.reload()`, Debug only): the second
@@ -28,10 +30,12 @@
  *             `by=deadline` within its budget; one made with JS free
  *             completes `by=js` (control).
  *   [DES-16]  a live report handler holding a report for 3 s does not block
- *             the main thread: a ping to main (`blockMain(0)`, every 50 ms)
- *             never takes 500 ms, where a blockMain(1500) control shows a
- *             ping >= 1000 ms. (A JS interval is no witness: iOS runs JS
- *             timers off main, seen on the XS: 68 ms gap during a 1.5 s block.)
+ *             the main thread: pings to main (`blockMain(0)` every 50 ms)
+ *             never complete more than 500 ms apart, where a blockMain(1500)
+ *             control shows >= 1000 ms. (A JS interval alone is no witness:
+ *             iOS runs JS timers off main -- 68 ms gap during a 1.5 s block
+ *             on the XS -- and a ping alone is none on Android, whose timers
+ *             stall with main so no ping is even sent during the block.)
  *
  * Retention as every retaining suite: airplane mode on Android, the dead
  * endpoint on iOS (observe.ts `beginRetainingSuite`).
@@ -244,7 +248,7 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
     return pidsBefore;
   }
 
-  async function assertResumed(run: Run, rounds: number, label: string): Promise<void> {
+  async function assertResumed(run: Run, rounds: number, label: string, awayMs: number): Promise<void> {
     const nonce = run.scenario.nonce;
     const summary = `${label}-${nonce}`;
     must(await log!.waitFor(new RegExp(`BUGSEE_E2E flow uploaded summary=${escape(summary)} nonce=${nonce}`), 30_000, run.start), 'the upload after the last resume', run.start);
@@ -262,7 +266,9 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
 
     const bundle = bundleBySummary(await awaitBundles(1, 90_000), summary);
     const messages = logMessages(bundle);
-    const wanted = [`pre-${label}-${nonce}`, ...Array.from({ length: rounds }, (_, i) => `resume-${i + 1}-${nonce}`), `post-resume-${nonce}`];
+    // A line older than the recording window (duration 90 s) is rightly gone.
+    const pre = awayMs < 60_000 ? [`pre-${label}-${nonce}`] : [];
+    const wanted = [...pre, ...Array.from({ length: rounds }, (_, i) => `resume-${i + 1}-${nonce}`), `post-resume-${nonce}`];
     report(`${label} log lines`, wanted.map(text => ({ text, found: messages.filter(m => m.includes(text)).length })));
     for (const text of wanted) {
       expect(messages.filter(message => message.includes(text))).toHaveLength(1);
@@ -270,20 +276,21 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
     const videos = bundle.binaries.get('video') ?? [];
     expect(videos).toHaveLength(1);
     const lumas = await frameLumas(videos[0]!);
-    const last = lumas[lumas.length - 1]!;
     const firstBright = lumas.findIndex(frame => frame.luma >= LUMA_BRIGHT_MIN);
-    report(`${label} video`, { frames: lumas.length, first: lumas[0], last, firstBright: lumas[firstBright] });
+    const bright = lumas.filter(frame => frame.luma >= LUMA_BRIGHT_MIN).length;
+    report(`${label} video`, { frames: lumas.length, first: lumas[0], last: lumas[lumas.length - 1], firstBright: lumas[firstBright], bright });
     // Capture went on after the gap: the white stage, painted only after the
     // last resume, is in the video, after frames of the dark app.
-    expect(last.luma).toBeGreaterThanOrEqual(LUMA_BRIGHT_MIN);
-    expect(lumas.slice(0, Math.max(firstBright, 0)).some(frame => frame.luma <= LUMA_DARK_MAX)).toBe(true);
+    expect(firstBright).toBeGreaterThan(0);
+    expect(bright).toBeGreaterThan(1);
+    expect(lumas.slice(0, firstBright).some(frame => frame.luma <= LUMA_DARK_MAX)).toBe(true);
   }
 
   it(`[N-10][FLOW-32] background then foreground twice (${SHORT_BACKGROUND_MS / 1000} s away): still Launched, not started again, logs after resume land, video continues`, async () => {
     await clearBundles();
     const run = await startRun('flow-resume');
     await backgroundRounds(run, 2, SHORT_BACKGROUND_MS);
-    await assertResumed(run, 2, 'flow-resume');
+    await assertResumed(run, 2, 'flow-resume', SHORT_BACKGROUND_MS);
   });
 
   it('[N-10][FLOW-22] a vh request while the JS thread is busy completes by=deadline; with JS free, by=js', async () => {
@@ -383,6 +390,6 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
     await clearBundles();
     const run = await startRun('flow-long');
     await backgroundRounds(run, 1, LONG_BACKGROUND_MS);
-    await assertResumed(run, 1, 'flow-long');
+    await assertResumed(run, 1, 'flow-long', LONG_BACKGROUND_MS);
   });
 });

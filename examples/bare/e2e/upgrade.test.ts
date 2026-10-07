@@ -20,17 +20,19 @@
  *
  * U-01 / U-02 seed with scenarios every campaign build has: `attributes`
  * (attributes and a user id, then an upload that stays on the device: a
- * pending report) and `native-crash-segv` (a crash left for the next launch
- * to claim). The next build then runs `flow-upgrade-observe`. Expected:
+ * pending report), one more launch and a minute to settle, and
+ * `native-crash-segv` (a crash left for the next launch to claim). The next
+ * build then runs `flow-upgrade-observe`. Expected:
  *
  *   [FLOW-37] the pending report is still there; the attributes and the user
  *             id read back exactly as the previous build left them.
  *   [FLOW-37][FLOW-38] the crash the previous build left, by the SDK's rule:
- *             iOS (bugsee-cocoa #194) drops a report another build left and
- *             says so ("Dropped a crash report left by another build"): no
- *             crash bundle, the drop line; Android recovers it: one crash
- *             bundle. Either way never silently: a report neither recovered
- *             nor named as dropped fails.
+ *             iOS (bugsee-cocoa #194) drops a report another build left
+ *             (a different SDK version or CFBundleShortVersionString): the
+ *             report the crash queued is gone from PLCrashReporter's queue
+ *             after the next build's launch and no crash bundle is filed (the
+ *             SDK logs the drop only to its internal log, so the queue is the
+ *             witness); Android recovers it: one crash bundle.
  *   [FLOW-39] U-03: the 6.x build runs offline (airplane mode) and is
  *             stopped; 7.x launches over its data, reaches Launched, does not
  *             crash and is still running 10 s later. What the 6.x build left
@@ -41,11 +43,11 @@
  * running any other suite across an upgrade by hand.
  */
 import { type PulledBundle, listAndroidBundles, listIosBundles, pullAndroidBundles, pullIosBundles } from './bundles';
-import { ANDROID_COMPONENT, ANDROID_PACKAGE, iosTarget } from './device';
+import { ANDROID_PACKAGE, iosTarget } from './device';
 import { markerJson, parseUpgradePath } from './flow-config';
 import { ON_ANDROID, ON_IOS, TARGET_NAME, clearBundles, describeDevice, must, report, startRun, stopApp } from './harness';
 import { androidDataFiles, androidPackageInfo, iosAppInfo, installKeepingData } from './install';
-import { crashQueue } from './ios-container';
+import { crashQueue, holdsReport } from './ios-container';
 import { beginRetainingSuite, endRetainingSuite } from './observe';
 import { type DeviceLog, adb, pidOf } from './scenario';
 
@@ -64,6 +66,23 @@ const describeSeeded = ENABLED && PATH !== 'U-03' ? describe : describe.skip;
 const describeLegacy = ENABLED && PATH === 'U-03' && ON_ANDROID ? describe : describe.skip;
 
 const DROPPED = /Dropped a crash report left by another build/;
+
+/** How long the previous build's state settles before the update (U-01, U-02). */
+const SETTLE_MS = 60_000;
+
+/**
+ * Known, intermittent (iOS 7.0.0-beta5 on the XS): attributes set seconds
+ * before the app is updated are sometimes gone after the update
+ * (getAllAttributes is {}) while the user id set with them is kept. Lost in
+ * 6 of 7 updates that came within seconds of the write (U-01 x3, U-02 x2, the
+ * same build reinstalled x1; kept once, U-02 r3), never with a launch and a
+ * minute in between (0 of 3). The SDK keeps attributes in NSUserDefaults
+ * (`bugsee_userAttributesKey`), whose cfprefsd copy an install can discard
+ * before it reaches disk. Intermittent, so a plain `it` (a product-caused
+ * intermittent failure is FAIL, plan 4.1), not `it.failing`. Issue: to file
+ * (bugsee-cocoa), sdk-issues-filed.md.
+ */
+const itQuickUpdate = it;
 
 async function listBundleFiles(): Promise<string[]> {
   return ON_IOS ? listIosBundles() : listAndroidBundles();
@@ -110,6 +129,7 @@ describeUpgrade(`${PATH ?? 'upgrade'} over the previous build's data on ${TARGET
     let observeStart = 0;
     let after: PulledBundle[] = [];
     let crashedLeft: string[] = [];
+    let queueAfter: string[] = [];
     let aliveAfter = false;
 
     beforeAll(async () => {
@@ -129,6 +149,12 @@ describeUpgrade(`${PATH ?? 'upgrade'} over the previous build's data on ${TARGET
         await new Promise(resolve => setTimeout(resolve, 1_000));
       }
       report('seed', { all: seedAll, id: seedId, bundles: seedBundles });
+
+      // An update comes long after the app set its attributes: one more
+      // launch, then a minute, so what the previous build wrote has settled
+      // (an update seconds after the write is the separate case below).
+      await startRun('flow-cold', fromSdk);
+      await new Promise(resolve => setTimeout(resolve, SETTLE_MS));
 
       // 3. A crash the next launch has to deal with.
       const crash = await startRun('native-crash-segv', fromSdk);
@@ -153,11 +179,13 @@ describeUpgrade(`${PATH ?? 'upgrade'} over the previous build's data on ${TARGET
       observed = { all: markerJson(state.text, 'all'), id: markerJson(state.text, 'id') };
       must(await log!.waitFor(new RegExp(`BUGSEE_E2E flow upgrade done status=2 nonce=${observe.scenario.nonce}`), 30_000, state.index), 'the next build still Launched', observe.start);
       aliveAfter = ON_ANDROID ? (await pidOf()) !== undefined : !(observe.launch?.hasEnded() ?? true);
+      queueAfter = ON_IOS && iosTarget() === 'device' ? await crashQueue() : [];
       after = await pullAll();
       report('after the upgrade', {
         observed,
         bundles: after.map(bundle => ({ file: bundle.file, type: bundle.request.type, summary: bundle.request.summary })),
         dropped: log!.all(DROPPED, observeStart).map(line => line.text.trim()),
+        crashQueueAfter: queueAfter,
       });
     });
 
@@ -174,18 +202,49 @@ describeUpgrade(`${PATH ?? 'upgrade'} over the previous build's data on ${TARGET
       expect(observed.id).toEqual((seedId as { value?: unknown }).value);
     });
 
-    it(`[N-15][FLOW-37][FLOW-38] ${PATH}: the next build launches and handles the previous build's crash by the SDK's rule, never silently`, () => {
+    it(`[N-15][FLOW-37][FLOW-38] ${PATH}: the next build launches and handles the previous build's crash by the SDK's rule`, () => {
       expect(aliveAfter).toBe(true);
       const crashes = after.filter(bundle => bundle.request.type === 'crash');
       const dropped = log!.all(DROPPED, observeStart);
+      report('drop line (BGSInternalLog; seen only with the SDK\'s internal log on)', dropped.map(line => line.text.trim()));
       if (ON_IOS) {
-        // bugsee-cocoa #194: a report another build left is dropped, and said so.
-        expect(dropped.length).toBeGreaterThan(0);
+        // bugsee-cocoa #194: a report another build left is dropped
+        // (BGSDropPendingReportsOfAnotherBuild unlinks it): the crash left a
+        // report, the next build's launch took it out of the queue and filed
+        // no crash.
+        expect(holdsReport(crashedLeft)).toBe(true);
+        expect(holdsReport(queueAfter)).toBe(false);
         expect(crashes).toHaveLength(0);
       } else {
         expect(crashes).toHaveLength(1);
         expect(crashes[0]!.captures.get('crash') ?? '').toContain('SIGSEGV');
       }
+    });
+  });
+
+  describeSeeded('an update seconds after the previous build set its attributes', () => {
+    let seedAll: unknown;
+    let observedAll: unknown;
+
+    beforeAll(async () => {
+      await installKeepingData(FROM, ON_IOS);
+      await clearBundles();
+      const seed = await startRun('attributes', { iosSdkVersion: FROM_SDK });
+      const done = must(await log!.waitFor(/BUGSEE_E2E attr done /, 60_000, seed.start), 'the attributes seed finishing', seed.start);
+      seedAll = JSON.parse(/BUGSEE_E2E attr all (.*)$/.exec(must(log!.all(/BUGSEE_E2E attr all /, seed.start, done.index + 1).at(-1), 'the seeded attributes', seed.start).text)![1]!);
+      await installKeepingData(TO, ON_IOS);
+      const observe = await startRun('flow-upgrade-observe');
+      const state = must(
+        await log!.waitFor(new RegExp(`BUGSEE_E2E flow upgrade state all=.* nonce=${observe.scenario.nonce}`), 30_000, observe.start),
+        'the next build reading its state',
+        observe.start,
+      );
+      observedAll = markerJson(state.text, 'all');
+      report('quick update', { seedAll, observedAll });
+    });
+
+    itQuickUpdate(`[N-15][FLOW-37] ${PATH}: attributes set seconds before the update read back after it`, () => {
+      expect(observedAll).toEqual(seedAll);
     });
   });
 
@@ -202,9 +261,13 @@ describeUpgrade(`${PATH ?? 'upgrade'} over the previous build's data on ${TARGET
       report('6.x build', await buildInfo(FROM));
       // Airplane mode is on (beginRetainingSuite): the 6.x SDK reaches nobody.
       const start = log!.mark();
-      await adb('shell', 'am', 'start', '-n', ANDROID_COMPONENT);
+      // Its launcher activity, whatever class the 6.x app named it.
+      await adb('shell', 'monkey', '-p', ANDROID_PACKAGE, '-c', 'android.intent.category.LAUNCHER', '1');
       await new Promise(resolve => setTimeout(resolve, 20_000));
-      report('6.x running', { pid: await pidOf(), lines: log!.all(/Bugsee/i, start).slice(0, 20).map(line => line.text.trim()) });
+      const pid6 = await pidOf();
+      report('6.x running', { pid: pid6, lines: log!.all(/BUGSEE_E2E 6x|Bugsee Android SDK|FATAL EXCEPTION/, start).slice(0, 20).map(line => line.text.trim()) });
+      expect(pid6).toBeDefined();
+      must(await log!.waitFor(/BUGSEE_E2E 6x launched/, 1_000, start), 'the 6.x app launching its SDK', start);
       await stopApp();
       before = await androidDataFiles();
       report('left by 6.x', before);

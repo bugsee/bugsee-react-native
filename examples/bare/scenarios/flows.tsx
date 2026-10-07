@@ -259,18 +259,22 @@ async function runVhDeadline(nonce: string): Promise<void> {
 /**
  * The main-thread witness: pings the main thread (`blockMain(0)` posts a task
  * to it and resolves once it ran) every 50 ms until `stop()`, and keeps the
- * slowest round trip. A busy main thread shows as a slow ping on both
- * platforms; JS timers alone do not show it (iOS runs them off main).
+ * longest time between two completed pings. A busy main thread stretches it
+ * on both platforms: on iOS the ping waits behind the busy main thread, on
+ * Android the 50 ms timer between pings does (Android drives JS timers from
+ * the main thread's frame callbacks; iOS does not).
  */
 function mainPinger(): { stop: () => Promise<{ pings: number; maxPingMs: number }> } {
   let running = true;
   let pings = 0;
   let maxPingMs = 0;
+  let last = Date.now();
   const loop = (async () => {
     while (running) {
-      const started = Date.now();
       await blockMain(0);
-      maxPingMs = Math.max(maxPingMs, Date.now() - started);
+      const now = Date.now();
+      maxPingMs = Math.max(maxPingMs, now - last);
+      last = now;
       pings += 1;
       await sleep(50);
     }

@@ -105,17 +105,25 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
     });
   }
 
-  /** Waits until a report of this run has an upload outcome, then returns every outcome so far. */
-  async function awaitOutcomes(run: Run, timeoutMs: number): Promise<StgEvent[]> {
-    const nonce = run.scenario.nonce;
-    must(
-      await log!.waitFor(new RegExp(`BUGSEE_E2E stg event name=(AfterReportUploaded|ReportUploadFailed|ReportUploadFailedWithFutureRetry) id=\\S+ nonce=${nonce}`), timeoutMs, run.start),
-      `an upload outcome for a report of ${run.scenario.scenario}`,
-      run.start,
-    );
+  /**
+   * Waits until a report of `run` (or of `earlier`, a crash run whose report
+   * may be sent before it dies: Android's Java crash) has an upload outcome,
+   * then returns every outcome so far, from both.
+   */
+  async function awaitOutcomes(run: Run, timeoutMs: number, earlier?: Run): Promise<StgEvent[]> {
+    const runs = earlier === undefined ? [run] : [earlier, run];
+    const from = runs[0]!.start;
+    const deadline = Date.now() + timeoutMs;
+    const outcomes = (): StgEvent[] => runs.flatMap(r => events(r.scenario.nonce, from)).filter(event => OUTCOME.test(event.name));
+    while (outcomes().length === 0 && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+    }
+    if (outcomes().length === 0) {
+      must(undefined, `an upload outcome for a report of ${runs.map(r => r.scenario.scenario).join(' or ')}`, from);
+    }
     // Let a duplicate delivery show itself before counting.
     await new Promise(resolve => setTimeout(resolve, 10_000));
-    return events(nonce, run.start).filter(event => OUTCOME.test(event.name));
+    return outcomes();
   }
 
   function evidence(id: string, run: Run, extra: Record<string, unknown>): void {
@@ -156,7 +164,7 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
     await died(crash);
     await stopApp();
     const observe = await startRun('stg-observe');
-    const outcomes = await awaitOutcomes(observe, 180_000);
+    const outcomes = await awaitOutcomes(observe, 180_000, crash);
     const recovered = log!.all(new RegExp(`BUGSEE_E2E stg recovered (before|after) type=crash id=\\S+ nonce=${observe.scenario.nonce}`), observe.start).map(line => line.text.trim());
     evidence(id, crash, { observeNonce: observe.scenario.nonce, outcomes: outcomes.map(o => `${o.name}:${o.id}`), recovered });
     await assertDelivered(outcomes);
