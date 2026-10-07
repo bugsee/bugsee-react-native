@@ -26,9 +26,24 @@ static BOOL BGSE2EIsPlainName(NSString *name) {
 
 RCT_EXPORT_MODULE(BugseeE2E)
 
-/// The native crash is Android's (a JNI signal); on iOS this only says so.
+/// A real signal crash, as Android's JNI one: `segv` stores through a bad
+/// pointer (EXC_BAD_ACCESS, SIGSEGV), `abort` calls abort() (SIGABRT). Not an
+/// NSException -- that is `Bugsee.testNativeCrash()` -- so the crash reporter
+/// sees a signal with no Objective-C exception behind it. Any other kind is
+/// logged and ignored (JS refuses it before it crosses).
 - (void)crashNative:(NSString *)kind {
-  NSLog(@"BugseeE2E: crashNative is Android-only; nothing happens on iOS");
+  if ([kind isEqualToString:@"segv"]) {
+    NSLog(@"BugseeE2E: crashNative segv");
+    // A low, never-mapped address; volatile so the store is not elided.
+    volatile int *bad = (volatile int *)(uintptr_t)0x10;
+    *bad = 1;
+    return;
+  }
+  if ([kind isEqualToString:@"abort"]) {
+    NSLog(@"BugseeE2E: crashNative abort");
+    abort();
+  }
+  NSLog(@"BugseeE2E: crashNative: unknown kind ignored");
 }
 
 /// UTF-8 into NSTemporaryDirectory(), replacing any file there. No SDK call,

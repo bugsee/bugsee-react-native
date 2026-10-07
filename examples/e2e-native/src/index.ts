@@ -18,9 +18,8 @@ const FILE_NAME = /^[\w.-]{1,64}$/;
 
 /**
  * Crashes the process natively: SIGSEGV (`'segv'`) or SIGABRT (`'abort'`),
- * from JNI code on Android. On iOS the native side only logs that it is
- * Android-only. Any other kind throws a TypeError here and never reaches
- * native code.
+ * from JNI code on Android and from the module's Objective-C++ on iOS. Any
+ * other kind throws a TypeError here and never reaches native code.
  */
 export function crashNative(kind: NativeCrashKind): void {
   if (typeof kind !== 'string' || !CRASH_KINDS.includes(kind)) {

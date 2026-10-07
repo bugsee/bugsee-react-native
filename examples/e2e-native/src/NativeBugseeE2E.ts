@@ -11,7 +11,8 @@ export interface Spec extends TurboModule {
   /**
    * Android: `'segv'` stores through a null pointer in JNI (SIGSEGV),
    * `'abort'` calls `abort()` (SIGABRT). Any other kind is logged and ignored.
-   * iOS: logs that it is Android-only and returns.
+   * iOS: `'segv'` stores through a bad pointer (EXC_BAD_ACCESS, SIGSEGV),
+   * `'abort'` calls `abort()` (SIGABRT); any other kind is logged and ignored.
    */
   crashNative(kind: string): void;
   /**

@@ -16,7 +16,7 @@
  * and then call `crashNative(kind)`. Observe installs the same handler and
  * does nothing else.
  */
-import Bugsee, { type BugseeReportHandler } from '@bugsee/react-native';
+import Bugsee, { type BugseeReport, type BugseeReportHandler } from '@bugsee/react-native';
 import { crashNative, fileExists, writeTempFile } from 'bugsee-e2e-native';
 
 export const NATIVE_SCENARIOS = [
@@ -24,6 +24,7 @@ export const NATIVE_SCENARIOS = [
   'native-crash-segv',
   'native-crash-abort',
   'native-crash-observe',
+  'native-crash-recover',
 ] as const;
 
 export type NativeScenario = (typeof NATIVE_SCENARIOS)[number];
@@ -45,6 +46,27 @@ function isCrashScenario(
 
 function needsHandler(scenario: NativeScenario): boolean {
   return isCrashScenario(scenario) || scenario === 'native-crash-observe';
+}
+
+/**
+ * `native-crash-recover` (iOS signal crash, ios-native-crash.test.ts): the
+ * relaunch's handler labels the recovered crash with this run's nonce in
+ * `onBeforeReportCreated` or `onAfterReportCreated`, whichever the SDK
+ * offers, then says so. The labels in the crash bundle are what the test
+ * asserts: the edits a recovery handler makes must reach the report.
+ */
+function recoverHandler(nonce: string): BugseeReportHandler {
+  const label = async (phase: string, report: BugseeReport) => {
+    mark(`recover ${phase} type=${report.type} id=${report.id} nonce=${nonce}`);
+    if (report.type === 'crash') {
+      await report.setLabels(['e2e-recovered', nonce]);
+      mark(`recover ${phase} labels-set id=${report.id} nonce=${nonce}`);
+    }
+  };
+  return {
+    onBeforeReportCreated: report => label('before', report),
+    onAfterReportCreated: report => label('after', report),
+  };
 }
 
 function mark(message: string): void {
@@ -85,7 +107,12 @@ async function runSmoke(nonce: string): Promise<void> {
  * thread, so the handler must not log `after type=crash`. It is not how an
  * NDK crash is delivered to JS.
  */
-export function installNativeHandler(scenario: NativeScenario): void {
+export function installNativeHandler(scenario: NativeScenario, nonce = ''): void {
+  if (scenario === 'native-crash-recover') {
+    Bugsee.setReportHandler(recoverHandler(nonce));
+    mark(`recover handler installed nonce=${nonce}`);
+    return;
+  }
   if (!needsHandler(scenario)) {
     return;
   }
@@ -98,7 +125,7 @@ export function runNativeScenario(scenario: NativeScenario, nonce: string): void
     runSmoke(nonce).catch((error: unknown) => mark(`smoke threw ${nameOf(error)}`));
     return;
   }
-  if (scenario === 'native-crash-observe') {
+  if (scenario === 'native-crash-observe' || scenario === 'native-crash-recover') {
     return;
   }
   if (isCrashScenario(scenario)) {

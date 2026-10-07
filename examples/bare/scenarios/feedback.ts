@@ -5,6 +5,7 @@
  * listener, then calls `showFeedbackUI`. The lines are the later device
  * pass's contract. This scenario does not upload a report.
  */
+import Bugsee from '@bugsee/react-native';
 import {
   appearance,
   setGreeting,
@@ -12,7 +13,7 @@ import {
   showFeedbackUI,
 } from '@bugsee/react-native-feedback';
 
-export const FEEDBACK_SCENARIOS = ['feedback'] as const;
+export const FEEDBACK_SCENARIOS = ['feedback', 'feedback-chat'] as const;
 
 export type FeedbackScenario = (typeof FEEDBACK_SCENARIOS)[number];
 
@@ -20,7 +21,16 @@ export function isFeedbackScenario(name: string): name is FeedbackScenario {
   return (FEEDBACK_SCENARIOS as readonly string[]).includes(name);
 }
 
-export function runFeedbackScenario(nonce: string): void {
+/**
+ * `feedback-chat` first sets an e-mail-shaped user identifier: the SDKs
+ * then prefill the chat's e-mail and skip the "notify me by e-mail"
+ * screen, so the chat itself -- where the greeting belongs -- is what
+ * opens, with no tap. `feedback` leaves the identifier alone.
+ */
+export function runFeedbackScenario(scenario: FeedbackScenario, nonce: string): void {
+  if (scenario === 'feedback-chat') {
+    Bugsee.setUserIdentifier(`e2e-${nonce}@example.com`);
+  }
   setGreeting(`hello ${nonce}`);
   appearance.backgroundColor = '#112233';
   setListener({
