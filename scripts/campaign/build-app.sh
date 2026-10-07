@@ -95,6 +95,11 @@ for target in "${TARGETS[@]}"; do
       xcode "$cfg" iphonesimulator "generic/platform=iOS Simulator" "$log"
       rc=$?
       artifact="$APP_DIR/ios/build/Build/Products/${cfg}-iphonesimulator/$(scheme).app"
+      # Same embed assertion as the device targets and run-ios.sh: a link or
+      # embed miss fails here, not later as a silent launch.
+      if [[ $rc -eq 0 ]]; then
+        node "$HERE/../cli-assert-framework-embedded.ts" "$artifact" >>"$log" 2>&1 || rc=$?
+      fi
       ;;
     ios-device-debug|ios-device-release)
       cfg=Debug; [[ "$target" == *release ]] && cfg=Release
