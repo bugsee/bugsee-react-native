@@ -36,6 +36,7 @@ abstract class FakeBundle extends DefaultTask {
     @Internal abstract ListProperty<String> getNodeExecutableAndArgs()
     @Internal abstract Property<Boolean> getHermesEnabled()
     @Internal abstract ListProperty<String> getHermesFlags()
+    @Internal abstract Property<String> getHermesCommand()
     @TaskAction void run() {}
 }
 
@@ -67,13 +68,15 @@ components.variants << new FakeVariant(name: 'customRelease', outputs: [output('
 // Starts with an "i": under the tr_TR locale this build runs in, String.toUpperCase()
 // would give "İnternalRelease", while RN's task name title-cases it to "InternalRelease".
 components.variants << new FakeVariant(name: 'internalRelease', outputs: [output('7.0', 70)])
+// Hermes on through a hermesCommand that names the shell launcher: fine off Windows.
+components.variants << new FakeVariant(name: 'shellRelease', outputs: [output('8.0', 8)])
 extensions.add('androidComponents', components)
 
 apply from: 'scripts/bugsee-sourcemaps.gradle'
 // A second apply (a bare app that copied the example and followed the README) is a no-op.
 apply from: 'scripts/bugsee-sourcemaps.gradle'
 
-def bundle = { String variant, boolean hermes, String bundleDir = null ->
+def bundle = { String variant, boolean hermes, String bundleDir = null, String hermesCommand = null ->
     // As React Native names the task: replaceFirstChar { it.titlecase() }.
     def cap = String.valueOf(Character.toTitleCase(variant.charAt(0))) + variant.substring(1)
     tasks.register("createBundle\${cap}JsAndAssets", FakeBundle) { t ->
@@ -85,6 +88,7 @@ def bundle = { String variant, boolean hermes, String bundleDir = null ->
         t.nodeExecutableAndArgs.set([findProperty('nodePath').toString()])
         t.hermesEnabled.set(hermes)
         t.hermesFlags.set(['-O', '-output-source-map'])
+        if (hermesCommand != null) t.hermesCommand.set(hermesCommand)
     }
 }
 bundle('freeRelease', true)
@@ -96,6 +100,7 @@ bundle('StagingRelease', false)
 // Outside generated/assets: no preserve directory to map to, and none needed with Hermes off.
 bundle('customRelease', false, 'custom/js')
 bundle('internalRelease', false)
+bundle('shellRelease', true, null, '/opt/bugsee/scripts/hermesc-preserve-js.SH')
 `;
 
 // Records argv, then does what finish would to the files it was given.
@@ -143,6 +148,10 @@ function argOf(argv, name) {
     fs.mkdirSync(preserve('freeRelease'), { recursive: true });
     fs.writeFileSync(path.join(preserve('freeRelease'), 'index.android.bundle.bugsee-js-source'), 'js');
     fs.writeFileSync(path.join(preserve('freeRelease'), 'index.android.bundle.bugsee-hermesc'), '/opt/hermesc\n');
+    fs.mkdirSync(assets('shellRelease'), { recursive: true });
+    fs.writeFileSync(path.join(assets('shellRelease'), 'index.android.bundle'), 'bundle');
+    fs.mkdirSync(preserve('shellRelease'), { recursive: true });
+    fs.writeFileSync(path.join(preserve('shellRelease'), 'index.android.bundle.bugsee-js-source'), 'js');
     // Hermes off with a stale preserve file from an earlier Hermes build.
     fs.mkdirSync(preserve('paidRelease'), { recursive: true });
     fs.writeFileSync(path.join(preserve('paidRelease'), 'index.android.bundle.bugsee-js-source'), 'stale');
@@ -165,6 +174,7 @@ function argOf(argv, name) {
         'createBundleStagingReleaseJsAndAssets',
         'createBundleCustomReleaseJsAndAssets',
         'createBundleInternalReleaseJsAndAssets',
+        'createBundleShellReleaseJsAndAssets',
       ],
       { encoding: 'utf8', timeout: 10 * 60 * 1000 },
     );
@@ -234,20 +244,29 @@ function argOf(argv, name) {
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}${result.stderr}`;
     expect(output).toContain(
-      'Bugsee: createBundleBrokenReleaseJsAndAssets compiled the bundle with Hermes, but hermesc did not run through hermesc-preserve-js.sh',
+      'Bugsee: createBundleBrokenReleaseJsAndAssets compiled the bundle with Hermes, but hermesc did not run through the preserve wrapper',
+    );
+    // The fix it names is the per-OS launcher.
+    expect(output).toContain(
+      'System.getProperty("os.name").startsWith("Windows") ? "hermesc-preserve-js.cmd" : "hermesc-preserve-js.sh"',
     );
     expect(output).toContain('hermesCommand');
     expect(output).toContain('"Android source maps"');
     expect(calls.some((argv) => argOf(argv, '--bundle').includes('/react/brokenRelease/'))).toBe(false);
-    // Only that task failed; --continue ran the other six, each once although
+    // Only that task failed; --continue ran the other seven, each once although
     // the script was applied twice.
-    expect(calls).toHaveLength(7);
+    expect(calls).toHaveLength(8);
     expect(output.match(/compiled the bundle with Hermes/g)).toHaveLength(1);
   });
 
   it('applied twice, finishes a correctly wired Hermes bundle once', () => {
     expect(calls.filter((argv) => argOf(argv, '--bundle').includes('/react/freeRelease/'))).toHaveLength(1);
     expect(`${result.stdout}${result.stderr}`).not.toContain('createBundleFreeReleaseJsAndAssets FAILED');
+  });
+
+  it('off Windows, a hermesCommand naming a .sh is not refused', () => {
+    expect(argOf(callFor('shellRelease'), '--app-version')).toBe('8.0');
+    expect(`${result.stdout}${result.stderr}`).not.toContain('a shell script, but on Windows');
   });
 
   it('finishes a Hermes-off bundle outside generated/assets', () => {

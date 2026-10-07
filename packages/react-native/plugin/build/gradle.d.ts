@@ -33,7 +33,20 @@ export declare function ensureGradlePluginDeclared(projectBuildGradle: string, v
  * or no real token is configured.
  */
 export declare function ensureAppAppliesPlugin(appBuildGradle: string, ndkVersion: string | null, log?: (message: string) => void): string;
-export declare const HERMES_COMMAND_UNREWRITABLE = "@bugsee/react-native cannot edit android/app/build.gradle: react.hermesCommand spans several lines or shares its line with another statement, so it cannot be pointed at scripts/hermesc-preserve-js.sh. Put it alone on one line, or delete it, and prebuild again";
+/**
+ * The launcher for the host the build runs on: React Native runs
+ * hermesCommand through `cmd /c` on Windows, which cannot run a shell
+ * script. Chosen when Gradle configures, so one build.gradle serves a repo
+ * shared across macOS, Linux and Windows.
+ */
+export declare const HERMES_COMMAND_EXPR = "new File([\"node\", \"--print\", \"require.resolve('@bugsee/react-native/package.json')\"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + \"/scripts/hermesc-preserve-js\" + (System.getProperty(\"os.name\").startsWith(\"Windows\") ? \".cmd\" : \".sh\")";
+/**
+ * The value earlier versions wrote: the shell launcher on every host, which
+ * a Windows build cannot run. Recognised only as this exact text, and moved
+ * to HERMES_COMMAND_EXPR.
+ */
+export declare const LEGACY_HERMES_COMMAND_EXPR = "new File([\"node\", \"--print\", \"require.resolve('@bugsee/react-native/package.json')\"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + \"/scripts/hermesc-preserve-js.sh\"";
+export declare const HERMES_COMMAND_UNREWRITABLE = "@bugsee/react-native cannot edit android/app/build.gradle: react.hermesCommand spans several lines or shares its line with another statement, so it cannot be pointed at scripts/hermesc-preserve-js.sh (.cmd on Windows). Put it alone on one line, or delete it, and prebuild again";
 /**
  * `uploadSymbols: false` on Android: disables every `uploadBugsee*` task
  * (mapping, NDK symbols, build info) inside a marked block. On again

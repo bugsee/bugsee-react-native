@@ -49,7 +49,9 @@ react {
 
     /* Hermes Commands */
     // Preserve the JS bundle, then inject the composed map after hermesc.
-    hermesCommand = file("../../node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.sh").absolutePath
+    // Windows runs hermesCommand through cmd, which cannot run the .sh.
+    hermesCommand = file("../../node_modules/@bugsee/react-native/scripts/hermesc-preserve-js" +
+        (System.getProperty("os.name").startsWith("Windows") ? ".cmd" : ".sh")).absolutePath
     //
     //   The list of flags to pass to the Hermes compiler. By default is "-O", "-output-source-map"
     // hermesFlags = ["-O", "-output-source-map"]
@@ -135,7 +137,7 @@ android {
 // createBundle<Variant>JsAndAssets the hook injects the debug id into the
 // composed map and the bytecode (Hermes) or Metro's bundle and map (no Hermes),
 // then uploads the map when bugsee.properties holds a real token. It fails
-// the bundle task if Hermes ran without hermesc-preserve-js.sh (hermesCommand
+// the bundle task if Hermes ran without the preserve wrapper (hermesCommand
 // above). -PbugseeUploadSourcemaps=false turns the upload off.
 apply from: file("../../node_modules/@bugsee/react-native/scripts/bugsee-sourcemaps.gradle")
 

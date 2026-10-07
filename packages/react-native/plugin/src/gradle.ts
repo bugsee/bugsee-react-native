@@ -1031,8 +1031,23 @@ function removeInsertedSymbolTable(source: string): string {
   return kept.join('\n');
 }
 
-const HERMES_COMMAND_EXPR =
-  'new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/scripts/hermesc-preserve-js.sh"';
+const BUGSEE_PACKAGE_DIR_EXPR =
+  'new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath()';
+
+/**
+ * The launcher for the host the build runs on: React Native runs
+ * hermesCommand through `cmd /c` on Windows, which cannot run a shell
+ * script. Chosen when Gradle configures, so one build.gradle serves a repo
+ * shared across macOS, Linux and Windows.
+ */
+export const HERMES_COMMAND_EXPR = `${BUGSEE_PACKAGE_DIR_EXPR} + "/scripts/hermesc-preserve-js" + (System.getProperty("os.name").startsWith("Windows") ? ".cmd" : ".sh")`;
+
+/**
+ * The value earlier versions wrote: the shell launcher on every host, which
+ * a Windows build cannot run. Recognised only as this exact text, and moved
+ * to HERMES_COMMAND_EXPR.
+ */
+export const LEGACY_HERMES_COMMAND_EXPR = `${BUGSEE_PACKAGE_DIR_EXPR} + "/scripts/hermesc-preserve-js.sh"`;
 
 const SOURCEMAPS_SCRIPT = 'scripts/bugsee-sourcemaps.gradle';
 
@@ -1043,7 +1058,7 @@ const SOURCEMAPS_HOOK_MARKER =
 /**
  * The hook is the package's own Gradle script, so the bare example and Expo
  * apps run the same code: inject after compose, upload, fail the bundle
- * task when Hermes skipped hermesc-preserve-js.sh.
+ * task when Hermes skipped the preserve wrapper.
  */
 const SOURCEMAPS_APPLY = `apply from: new File(new File(["node", "--print", "require.resolve('@bugsee/react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile(), "${SOURCEMAPS_SCRIPT}")`;
 
@@ -1053,7 +1068,7 @@ const LEGACY_HOOK_MARKER = '// After compose-source-maps.js. Release variants on
 /** The line both earlier inline hooks have after their comments; user code does not. */
 const LEGACY_HOOK_FINGERPRINT = 'def bugseeHermesSourcemaps = ';
 
-export const HERMES_COMMAND_UNREWRITABLE = `${CANNOT_EDIT} ${APP_GRADLE}: react.hermesCommand spans several lines or shares its line with another statement, so it cannot be pointed at scripts/hermesc-preserve-js.sh. Put it alone on one line, or delete it, and prebuild again`;
+export const HERMES_COMMAND_UNREWRITABLE = `${CANNOT_EDIT} ${APP_GRADLE}: react.hermesCommand spans several lines or shares its line with another statement, so it cannot be pointed at scripts/hermesc-preserve-js.sh (.cmd on Windows). Put it alone on one line, or delete it, and prebuild again`;
 
 /** Brackets all close, something is there, and it does not end in an operator. */
 function completeExpression(code: string): boolean {
@@ -1075,11 +1090,14 @@ const HERMES_COMMAND = /^([ \t]*)hermesCommand(\s*=(?!=)|\.set\()/;
 const REACT_BLOCK = /^\s*react\s*\{\s*$/;
 
 /**
- * Points react.hermesCommand at hermesc-preserve-js.sh. Only the setting at
- * the top level of the react block counts: one in a comment, a string,
- * another block or a nested block is left alone. A one-line
- * `hermesCommand = …` or `hermesCommand.set(…)` is rewritten, a trailing
- * comment kept. Anything this cannot read with certainty (a value that
+ * Points react.hermesCommand at the preserve launcher for the host. Only the
+ * setting at the top level of the react block counts: one in a comment, a
+ * string, another block or a nested block is left alone. A value that already
+ * names hermesc-preserve-js is kept (this plugin's, or the user's own), except
+ * the exact value earlier versions wrote, which is moved to the per-host one.
+ * Any other one-line `hermesCommand = …` or `hermesCommand.set(…)` is
+ * rewritten, a trailing comment kept. Anything this cannot read with
+ * certainty (a value that
  * continues on the next line, an open bracket or multi-line string, nothing
  * after `=`, another statement after `;`) is refused. A react block without
  * the setting gets one. With no react block the file is left alone, and the
@@ -1103,7 +1121,14 @@ function rewriteHermesCommand(source: string): string {
       continue;
     }
     found = true;
-    if (line.raw.includes('hermesc-preserve-js.sh')) {
+    // The value as written, up to a trailing comment.
+    const valueEnd = line.raw.slice(0, line.commentAt ?? line.raw.length).trimEnd().length;
+    const written = line.raw.slice(match[0].length, valueEnd).trim();
+    if (match[2] !== '.set(' && written === LEGACY_HERMES_COMMAND_EXPR) {
+      lines[i] = `${match[1] as string}hermesCommand = ${HERMES_COMMAND_EXPR}${line.raw.slice(valueEnd)}`;
+      continue;
+    }
+    if (line.raw.includes('hermesc-preserve-js')) {
       continue;
     }
     // Comments are spaces in the mask, so the whole masked line is the value.
@@ -1114,7 +1139,6 @@ function rewriteHermesCommand(source: string): string {
       throw new Error(HERMES_COMMAND_UNREWRITABLE);
     }
     // The value is replaced; what follows it (whitespace, a comment, the CR) is kept.
-    const valueEnd = line.raw.slice(0, line.commentAt ?? line.raw.length).trimEnd().length;
     lines[i] = `${match[1] as string}hermesCommand = ${HERMES_COMMAND_EXPR}${line.raw.slice(valueEnd)}`;
   }
   if (!found) {

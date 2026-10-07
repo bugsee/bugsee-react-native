@@ -47,7 +47,7 @@ const SYMBOL_BLOCK = (indent: string): string =>
     .join('\n');
 
 const HERMES_COMMAND =
-  'hermesCommand = new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/scripts/hermesc-preserve-js.sh"';
+  'hermesCommand = new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/scripts/hermesc-preserve-js" + (System.getProperty("os.name").startsWith("Windows") ? ".cmd" : ".sh")';
 
 describe('ensureMavenCentral, exactly', () => {
   const header = lines(

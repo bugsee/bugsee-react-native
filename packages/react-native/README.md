@@ -122,17 +122,28 @@ def bugseeDir = new File(["node", "--print", "require.resolve('@bugsee/react-nat
 
 react {
     // Copies the JS aside before hermesc compiles it, so the debug id can
-    // reach the bytecode.
-    hermesCommand = new File(new File(bugseeDir, "scripts"), "hermesc-preserve-js.sh").absolutePath
+    // reach the bytecode. React Native runs this command through cmd on
+    // Windows, so Windows gets the .cmd launcher and macOS and Linux the .sh.
+    hermesCommand = new File(new File(bugseeDir, "scripts"),
+        System.getProperty("os.name").startsWith("Windows") ? "hermesc-preserve-js.cmd" : "hermesc-preserve-js.sh").absolutePath
 }
 
 // At the end of the file. Applying it twice is harmless.
 apply from: new File(new File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle")
 ```
 
-If Hermes compiles a bundle without going through `hermesc-preserve-js.sh`,
-the bundle task fails rather than ship a release without a debug id. With
-Hermes off, the plain JS bundle and Metro's map get the id instead.
+The OS is checked when Gradle configures the build, so one `build.gradle`
+works on macOS, Linux and Windows. Both launchers run
+`scripts/hermesc-preserve-js.js` with `node`, which must be on the `PATH` (as
+React Native's own bundling already needs). The wrapper exits non-zero when
+hermesc writes no bytecode.
+
+If Hermes compiles a bundle without going through the wrapper, the bundle
+task fails rather than ship a release without a debug id. On Windows a
+`hermesCommand` that names a `.sh` (what earlier versions of this README
+said) fails the bundle task before hermesc runs, with the line to use
+instead: `cmd` cannot run a shell script. With Hermes off, the plain JS
+bundle and Metro's map get the id instead.
 
 - **The upload needs a real token.** Set `app_token` in
   `android/bugsee.properties`, or `BUGSEE_APP_TOKEN`. Without a token, or with
@@ -145,9 +156,13 @@ Hermes off, the plain JS bundle and Metro's map get the id instead.
   the path; the Gradle hook takes the path relative to the build directory.
   The three agree unless the bundle directory itself nests another
   `generated/assets`, which React Native never does.
-- **Limitations.** The preserve wrapper is a shell script, so Hermes release
-  builds on a Windows host are not supported yet. The hook has not yet been
-  verified with Gradle's configuration cache.
+- **Expo.** `expo prebuild` writes the same per-OS choice. A `hermesCommand`
+  that an earlier prebuild wrote (the `.sh` on every OS) is recognised by its
+  exact text and moved to the per-OS one; a `hermesCommand` of your own that
+  already names `hermesc-preserve-js` is left as it is.
+- **Limitations.** Windows builds are verified from a project path without
+  spaces. The hook has not yet been verified with Gradle's configuration
+  cache.
 
 ## Licence
 

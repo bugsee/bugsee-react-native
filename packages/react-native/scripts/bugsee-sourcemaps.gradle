@@ -7,8 +7,9 @@
 //   apply from: new File(new File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle")
 //
 // After each createBundle<Variant>JsAndAssets:
-// - Hermes on: hermesc must have run through hermesc-preserve-js.sh
-//   (react { hermesCommand = ... }). The debug id is injected into the
+// - Hermes on: hermesc must have run through the preserve wrapper
+//   (react { hermesCommand = ... }: hermesc-preserve-js.sh on macOS and
+//   Linux, hermesc-preserve-js.cmd on Windows). The debug id is injected into the
 //   composed map and the bytecode, then that map is uploaded. Without the
 //   preserved JS the task fails: the bundle would ship without a debug id.
 // - Hermes off: the packaged bundle is Metro's JS and the map is Metro's;
@@ -47,7 +48,7 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
     bugseeVariantVersions[key] = [output.versionName, output.versionCode]
 }
 
-// hermesc-preserve-js.sh writes beside generated/assets/<x> in
+// The preserve wrapper writes beside generated/assets/<x> in
 // intermediates/bugsee-sourcemaps/<x>. Null when the bundle is elsewhere.
 def bugseePreserveDir = { File assetDir ->
     def relative = bugseeBuildDir.toPath().relativize(assetDir.toPath())
@@ -58,17 +59,40 @@ def bugseePreserveDir = { File assetDir ->
         .resolve(relative.subpath(2, relative.nameCount)).toFile()
 }
 
+// The hermesCommand the README and expo prebuild write: the launcher for the
+// host, so one build.gradle serves macOS, Linux and Windows.
+def bugseeHermesCommandFix =
+    "react { hermesCommand = new File(new File(bugseeDir, \"scripts\"), " +
+        "System.getProperty(\"os.name\").startsWith(\"Windows\") ? \"hermesc-preserve-js.cmd\" : \"hermesc-preserve-js.sh\").absolutePath }"
+
 def bugseeMissingPreserve = { String taskName ->
     "Bugsee: ${taskName} compiled the bundle with Hermes, but hermesc did not run through " +
-        "hermesc-preserve-js.sh, so the app would ship without a debug id and its source map could " +
-        "not be uploaded. Set react { hermesCommand = \"<@bugsee/react-native>/scripts/hermesc-preserve-js.sh\" } " +
+        "the preserve wrapper, so the app would ship without a debug id and its source map could " +
+        "not be uploaded. Set ${bugseeHermesCommandFix} " +
         "in this module's build.gradle (expo prebuild writes it). See " +
         "node_modules/@bugsee/react-native/README.md, \"Android source maps\"."
+}
+
+// React Native runs hermesCommand through `cmd /c` on Windows, and cmd cannot
+// run a shell script: it exits 0, no bytecode is written, and the task only
+// fails later on a missing .hbc. Say why before that happens.
+def bugseeShellOnWindows = { String taskName, String command ->
+    "Bugsee: ${taskName} would run hermesc through ${command}, a shell script, but on Windows " +
+        "React Native runs hermesCommand with cmd, which cannot run it, so no bytecode would be " +
+        "written. Set ${bugseeHermesCommandFix} in this module's build.gradle (expo prebuild " +
+        "writes it). See node_modules/@bugsee/react-native/README.md, \"Android source maps\"."
 }
 
 tasks.matching { task ->
     task.name.startsWith("createBundle") && task.name.endsWith("JsAndAssets")
 }.configureEach { bundleTask ->
+    bundleTask.doFirst {
+        def command = bundleTask.hermesCommand.getOrElse("")
+        if (bundleTask.hermesEnabled.get() && System.getProperty("os.name").startsWith("Windows") &&
+                command.toLowerCase(Locale.ROOT).endsWith(".sh")) {
+            throw new GradleException(bugseeShellOnWindows(bundleTask.name, command))
+        }
+    }
     bundleTask.doLast {
         def asset = bundleTask.bundleAssetName.get()
         def assetDir = bundleTask.jsBundleDir.get().asFile
