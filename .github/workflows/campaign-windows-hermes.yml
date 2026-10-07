@@ -151,6 +151,8 @@ jobs:
           if (-not (Select-String -Path "$env:RUNNER_TEMP/guard.log" -SimpleMatch "a shell script, but on Windows" -Quiet)) { Write-Error "FAIL: no Bugsee guard message"; exit 1 }
           if (Select-String -Path "$env:RUNNER_TEMP/guard.log" -SimpleMatch "NoSuchFileException" -Quiet) { Write-Error "FAIL: hermesc ran before the guard"; exit 1 }
           Write-Output "guard: failed with the fix, before hermesc"
+          # pwsh would otherwise exit with Gradle's (expected) non-zero code.
+          exit 0
 
   # The same on the Expo example: the config plugin writes hermesCommand, the
   # per-OS launcher, during `expo prebuild` on this Windows runner.
