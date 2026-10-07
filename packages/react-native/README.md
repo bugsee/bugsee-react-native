@@ -14,9 +14,16 @@ added.
 | React Native | 0.81 or later, New Architecture enabled |
 | iOS | 15.0 or later |
 | Android | API 21 or later |
+| JavaScript engine | Hermes (React Native's default) |
 
 The New Architecture is the default from React Native 0.76. On 0.81 it can
 still be turned off; this package requires it on.
+
+Hermes is required; JavaScriptCore (Hermes off) is not supported. React
+Native removed JSC from core in 0.81, and the community package that replaces
+it, `@react-native-community/javascriptcore`, does not work with current React
+Native: its Android JSC cannot parse React Native's own bundle, and its iOS
+build fails on 0.86 and 0.87.
 
 ## Install
 
@@ -157,8 +164,7 @@ apply from: new File(new File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle")
 ```
 
 If Hermes compiles a bundle without going through `hermesc-preserve-js.sh`,
-the bundle task fails rather than ship a release without a debug id. With
-Hermes off, the plain JS bundle and Metro's map get the id instead.
+the bundle task fails rather than ship a release without a debug id.
 
 - **The upload needs a real token.** Set `app_token` in
   `android/bugsee.properties`, or `BUGSEE_APP_TOKEN`. Without a token, or with

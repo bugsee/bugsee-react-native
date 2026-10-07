@@ -56,6 +56,8 @@ The floor is a reach decision, and reach is not linear in the version number. A 
 
 0.81 still permits opting out of the New Architecture, so support there is **conditional on it being enabled** — the default since 0.76. That is a documented requirement, not a legacy fallback: still one native source set per platform, a TurboModule spec with no legacy path, and no interop shims.
 
+**Hermes is required; JavaScriptCore (Hermes off) is not supported** (decided 2026-10-07 for the first beta). React Native removed JSC from core in 0.81; the replacement, `@react-native-community/javascriptcore` (0.2.0, March 2025), does not work with current React Native: on Android its 2019 JSC cannot parse React Native's own bundle (`??`/`?.`), and on iOS it fails to link on 0.87 and to `pod install` on 0.86 (campaign build lane, MX-HERMES-OFF). The wrapper still reports `js-engine: jsc` and the source-map hook still handles a plain bundle when Hermes is off; neither is a supported configuration.
+
 0.80 is the hard technical floor. `codegenConfig.ios.modulesProvider`, which is how the TurboModule avoids colliding with the SDK's own `Bugsee` class (§6.4), does not exist before 0.80. 0.81 clears it with a version to spare.
 
 ---
@@ -113,7 +115,7 @@ It is not merely an identity struct. It extends `ReportHandler` *and* `DataReque
 |---|---|
 | `getWrapperType()` / `wrapperType` | `"react_native"` |
 | `getWrapperVersion()` / `getWrapperBuild()` | package version and build |
-| `getContext()` / `context` | RN version, JS engine (Hermes/JSC), build configuration |
+| `getContext()` / `context` | RN version, JS engine (`hermes`; `jsc` is still reported if Hermes is off, though that is unsupported, §4.5), build configuration |
 | `onLifecycleEvent(name, data)` | lifecycle delivery; fires **before** the app's own listener |
 | `getSecureRectangles(display)` / `secureRectsForDisplay:` | pull-based secure rectangles |
 | `ReportHandler` callbacks | attachments and report mutation; fire **before** the app's `setReportHandler` |
