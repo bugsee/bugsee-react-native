@@ -456,7 +456,16 @@ export default function App() {
       // owns the launch (api-attach on a manifest-launched build).
       if (isApiScenario(choice.scenario)) {
         try {
-          if (await preLaunchApi(choice.scenario, choice.nonce)) {
+          const apiContext = {
+            token,
+            options: () => launchOptions(endpoint, choice.scenario),
+            setStage: (next: ApiStageState | undefined) => {
+              if (!cancelled) {
+                setApiStage(next);
+              }
+            },
+          };
+          if (await preLaunchApi(choice.scenario, choice.nonce, apiContext)) {
             return;
           }
         } catch (apiCause) {

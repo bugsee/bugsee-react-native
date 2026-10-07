@@ -66,7 +66,7 @@ export function apiLaunchOverrides(scenario: string, options: BugseeLaunchOption
   }
 }
 
-export async function preLaunchApi(scenario: string, nonce: string): Promise<boolean> {
+export async function preLaunchApi(scenario: string, nonce: string, context: ApiContext): Promise<boolean> {
   if (groups.lifecycle.includes(scenario)) {
     return preLaunchLifecycle(scenario, nonce);
   }
@@ -77,7 +77,7 @@ export async function preLaunchApi(scenario: string, nonce: string): Promise<boo
     await preLaunchUi(scenario, nonce);
   }
   if (isOptionScenario(scenario)) {
-    preLaunchOptions(scenario, nonce);
+    return preLaunchOptions(scenario, nonce, context);
   }
   return false;
 }

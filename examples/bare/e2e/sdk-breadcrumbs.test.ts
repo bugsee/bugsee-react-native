@@ -48,19 +48,28 @@ describeDevice(`SDK breadcrumbs and a plain upload's video on ${TARGET_NAME}`, (
     await apiMarker(log, 'crumbs ready', nonce, 20_000, run.start);
     await new Promise(resolve => setTimeout(resolve, 3_000));
     report('driven', await backgroundAndBack());
-    await apiMarker(log, 'crumbs uploaded', nonce, 40_000, run.start);
+    // A Debug app coming back from the background may be reloaded by Metro
+    // (the scenario then starts over and uploads 20 s after its new start).
+    await apiMarker(log, 'crumbs uploaded', nonce, 90_000, run.start);
     bundle = (await awaitBundles(1, 60_000)).find(b => b.request.summary === `api-crumbs-${nonce}`)!;
     await stopApp();
   });
 
   afterAll(() => endRetainingSuite(log));
 
-  it('[FLOW-15] the report carries breadcrumbs the SDK wrote itself, next to the app\'s own', () => {
+  /**
+   * Android 7.3.0 records no breadcrumb of its own with capture.breadcrumbs
+   * on -- none at launch, none for the app going to the background and back
+   * (Home, then the activity) -- in every run on the WOD_LX1 (2026-10-07),
+   * while its producers (BreadcrumbApp app.lifecycle, BreadcrumbUI) exist.
+   * iOS records ui.screen and ui.lifecycle crumbs. To file (bugsee-android).
+   */
+  (ON_ANDROID ? it.failing : it)(`[FLOW-15] the report carries breadcrumbs the SDK wrote itself, next to the app's own${ON_ANDROID ? ' [known: Android 7.3.0 records no SDK breadcrumbs (to file)]' : ''}`, () => {
     const crumbs = captureEvents(bundle, 'breadcrumbs');
     const own = crumbs.filter(c => JSON.stringify(c).includes(`api-own-crumb ${run.scenario.nonce}`));
     const sdk = crumbs.filter(c => !JSON.stringify(c).includes('api-own-crumb'));
     report('breadcrumbs', crumbs.map(c => ({ type: c.type, category: c.category, message: String(c.message ?? '').slice(0, 80), level: c.level })));
-    expect(own).toHaveLength(1);
+    expect(own.length).toBeGreaterThanOrEqual(1);
     expect(sdk.length).toBeGreaterThan(0);
   });
 

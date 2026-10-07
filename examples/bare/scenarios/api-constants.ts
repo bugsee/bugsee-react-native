@@ -237,6 +237,8 @@ export const EFFECT_OPTIONS: Readonly<Record<string, Readonly<Record<string, unk
   'flag-secure-off': { [`${P}capture.respect-flag-secure`]: false },
   'handler-timeout': { [`${P}config.report-handler-callback-timeout`]: 5 },
   'handler-timeout-control': {},
+  /** Why the Android all-keys run (N-06) files no report: one suspect alone. */
+  'out-of-process': { [`${P}config.report-processing-in-process`]: false },
 };
 
 /** N-13: one colour per report appearance key (`#rrggbb`, opaque). */

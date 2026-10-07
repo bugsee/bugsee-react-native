@@ -34,7 +34,6 @@ import {
   READBACK_SHARED,
 } from './api-constants';
 import { stubUrl } from './stub';
-import { deadEndpointUrl } from '../endpoint';
 
 export const OPTION_SCENARIOS = ['api-opt-defaults', 'api-opt-all', 'api-opt-enums'] as const;
 
@@ -102,14 +101,26 @@ function markChunks(tag: string, nonce: string, values: Record<string, unknown>)
   }
 }
 
-/** Before launch(): only net-on-launch acts here. */
-export function preLaunchOptions(scenario: string, nonce: string): void {
+/**
+ * Before launch(): net-on-launch owns its launch. It calls launch() and, in
+ * the same JS turn, starts a request the stub holds for 4 s -- the window
+ * `capture.network.on-launch` exists for (iOS: interception installed on
+ * the launching thread, BGSCaptureCoordinator.m) -- then waits for
+ * Launched and uploads. Returns whether it launched.
+ */
+export async function preLaunchOptions(scenario: string, nonce: string, context: ApiContext): Promise<boolean> {
   const effect = effectOf(scenario);
-  if (effect?.case === 'net-on-launch' || effect?.case === 'net-on-launch-control') {
-    // Not awaited: the request is in flight while the SDK launches.
-    fetch(deadEndpointUrl(`api-onlaunch/${nonce}`)).catch(() => {});
-    mark(`eff prelaunch-fetch nonce=${nonce}`);
+  if (effect?.case !== 'net-on-launch' && effect?.case !== 'net-on-launch-control') {
+    return false;
   }
+  const launched = Bugsee.launch(context.token, context.options());
+  const request = fetch(stubUrl(`/delay/4000/status/200/api-onlaunch-${nonce}`)).catch(() => undefined);
+  mark(`eff launch-and-fetch nonce=${nonce}`);
+  const result = await settle(() => launched);
+  console.log(`BUGSEE_E2E launch() resolved ${String(JSON.parse(result).value)}`);
+  await request;
+  await runEffect(effect.case, 'run', nonce);
+  return true;
 }
 
 export async function runOptionScenario(scenario: string, nonce: string, context: ApiContext): Promise<void> {
