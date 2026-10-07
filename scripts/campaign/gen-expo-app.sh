@@ -91,8 +91,14 @@ main() {
 
   CI=1 npx expo prebuild --clean --no-install >>"$GEN_LOG" 2>&1
   log "expo prebuild --clean: ok"
-  grep -q 'com.bugsee.android.gradle' android/app/build.gradle && log "plugin: Bugsee Gradle plugin applied"
-  grep -q 'bugsee-xcode.sh' ios/*.xcodeproj/project.pbxproj && log "plugin: iOS bundle phase runs bugsee-xcode.sh"
+  # The config plugin's two load-bearing edits must be there (as in
+  # scripts/check-expo-prebuild.sh); a prebuild without them is a failure.
+  grep -q 'com.bugsee.android.gradle' android/app/build.gradle \
+    || { log "FAIL: the config plugin did not apply the Bugsee Gradle plugin"; exit 1; }
+  log "plugin: Bugsee Gradle plugin applied"
+  grep -q 'bugsee-xcode.sh' ios/*.xcodeproj/project.pbxproj \
+    || { log "FAIL: the config plugin did not wire bugsee-xcode.sh into the bundle phase"; exit 1; }
+  log "plugin: iOS bundle phase runs bugsee-xcode.sh"
 
   # Harness support, as gen-rn-app.sh: debuggable release, own Metro port.
   node -e '

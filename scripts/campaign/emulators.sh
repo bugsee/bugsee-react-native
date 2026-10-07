@@ -101,6 +101,7 @@ case "${1:-}" in
     LOCK="${CAMPAIGN_DEVICE_LOCK:-/Volumes/External2TB/Projects/Bugsee/cross/bugsee-react-native/.device-lock}"
     [[ -d "$(dirname "$LOCK")" ]] || { echo "lock directory $(dirname "$LOCK") does not exist; set CAMPAIGN_DEVICE_LOCK" >&2; exit 2; }
     HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    overall=0
     for avd in $AVDS; do
       until mkdir "$LOCK" 2>/dev/null; do sleep 30; done
       serial="emulator-$(port_of "$avd")"
@@ -109,7 +110,8 @@ case "${1:-}" in
       echo "$avd ($serial): API $("$ADB" -s "$serial" shell getprop ro.build.version.sdk | tr -d '\r'), page size $("$ADB" -s "$serial" shell getconf PAGE_SIZE | tr -d '\r')"
       for app in "$@"; do
         for cfg in debug release; do
-          CAMPAIGN_LOCK_HELD=1 "$HERE/launch-check.sh" "$app" android "$cfg" "$serial" 2>&1 | grep -E ": (PASS|FAIL)" || true
+          out="$(CAMPAIGN_LOCK_HELD=1 "$HERE/launch-check.sh" "$app" android "$cfg" "$serial" 2>&1)" || overall=1
+          grep -E ": (PASS|FAIL)" <<<"$out" || echo "$(basename "$app") android $cfg: FAIL (no result line)"
         done
       done
       "$ADB" -s "$serial" emu kill >/dev/null 2>&1 || true
@@ -117,6 +119,7 @@ case "${1:-}" in
       rmdir "$LOCK"
       trap - EXIT
     done
+    exit "$overall"
     ;;
   *)
     sed -n '3,25p' "$0"

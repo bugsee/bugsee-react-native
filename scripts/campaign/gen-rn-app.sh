@@ -127,7 +127,7 @@ log "-- template dependencies installed ($PM $($PM --version))"
 
 # 2. README "Install": the package (from the packed tarball, since it is not
 #    published yet).
-if [[ "$PM" == pnpm ]]; then
+if [[ "$PM" == pnpm && "$README_ONLY" -eq 0 ]]; then
   # pnpm 10+ runs no dependency build script unless allowed, and pnpm 11
   # fails the install over it: @bugsee/cli has a postinstall. The README does
   # not say so (R-4).
@@ -223,7 +223,7 @@ POD_ENV=()
 [[ "$ENGINE" == jsc ]] && POD_ENV=(USE_THIRD_PARTY_JSC=1 USE_HERMES=0)
 (cd ios && env "${POD_ENV[@]+"${POD_ENV[@]}"}" pod install) >>"$GEN_LOG" 2>&1
 log "README ios: pod install"
-if node "$HERE/lib/workaround-fmt.js" ios | tee -a "$GEN_LOG" | grep -q NEEDS_POD_INSTALL; then
+if [[ "$WORKAROUNDS" -eq 1 ]] && node "$HERE/lib/workaround-fmt.js" ios | tee -a "$GEN_LOG" | grep -q NEEDS_POD_INSTALL; then
   (cd ios && env "${POD_ENV[@]+"${POD_ENV[@]}"}" pod install) >>"$GEN_LOG" 2>&1
   log "WORKAROUND W-3 fmt 11.x built as C++17 (React Native + Xcode 26.4+), pod install again"
 fi

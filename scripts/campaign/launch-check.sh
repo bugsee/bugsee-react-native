@@ -61,7 +61,19 @@ ios_app() {
 
 METRO_PID=""
 LOG_PID=""
+RECORDED=0
+record_row() { # result
+  local engine rn
+  engine="$(grep -o 'engine=[a-z]*' "$OUT" 2>/dev/null | head -1)"
+  rn="$(grep -o 'rn=[0-9.]*' "$OUT" 2>/dev/null | head -1)"
+  printf '%s\t%s\t%s\t%s\t%s\t%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$APP" \
+    "$TARGET:$( [[ $TARGET == android ]] && echo "$SERIAL" || echo sim)" "$CONFIG" "$1" "$rn" "$engine" \
+    >>"$LOGS/launch-results.tsv"
+  RECORDED=1
+}
 cleanup() {
+  # Every exit leaves a row: an install or Metro failure is a FAIL, not a gap.
+  [[ "$RECORDED" == 1 ]] || { record_row FAIL; echo "$APP $TARGET $CONFIG: FAIL (before launch, see $OUT)"; }
   [[ -n "$LOG_PID" ]] && kill "$LOG_PID" 2>/dev/null
   if [[ -n "$METRO_PID" ]]; then
     pkill -P "$METRO_PID" 2>/dev/null
@@ -145,9 +157,7 @@ while [[ $SECONDS -lt $deadline ]]; do
   sleep 2
 done
 sleep 2
-engine="$(grep -o 'engine=[a-z]*' "$OUT" | head -1)"
-rn="$(grep -o 'rn=[0-9.]*' "$OUT" | head -1)"
-printf '%s\t%s\t%s\t%s\t%s\t%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$APP" "$TARGET:$( [[ $TARGET == android ]] && echo "$SERIAL" || echo sim)" "$CONFIG" "$result" "$rn" "$engine" >>"$LOGS/launch-results.tsv"
-echo "$APP $TARGET $CONFIG: $result $rn $engine"
+record_row "$result"
+echo "$APP $TARGET $CONFIG: $result $(grep -o 'rn=[0-9.]*' "$OUT" | head -1) $(grep -o 'engine=[a-z]*' "$OUT" | head -1)"
 grep -E "BUGSEE_E2E" "$OUT" | head -8
 [[ "$result" == PASS ]]
