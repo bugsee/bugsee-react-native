@@ -83,8 +83,7 @@ const SETTLE_MS = 60_000;
  * minute in between (0 of 3). The SDK keeps attributes in NSUserDefaults
  * (`bugsee_userAttributesKey`), whose cfprefsd copy an install can discard
  * before it reaches disk. Intermittent, so a plain `it` (a product-caused
- * intermittent failure is FAIL, plan 4.1), not `it.failing`. Issue: to file
- * (bugsee-cocoa), sdk-issues-filed.md.
+ * intermittent failure is FAIL, plan 4.1), not `it.failing`. Issue: bugsee-cocoa#205.
  */
 const itQuickUpdate = it;
 
