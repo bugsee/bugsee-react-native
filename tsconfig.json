@@ -8,5 +8,8 @@
     // not infer the extension.
     "allowImportingTsExtensions": true
   },
-  "include": ["scripts/**/*.ts", "packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"]
+  "include": ["scripts/**/*.ts", "packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"],
+  // Copied into each campaign app and type-checked there, against the packed
+  // package (scripts/campaign/gen-rn-app.sh); it cannot resolve the package here.
+  "exclude": ["scripts/campaign/template/**"]
 }

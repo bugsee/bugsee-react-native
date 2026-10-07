@@ -12,6 +12,7 @@
     },
     "plugins": [
       "@bugsee/react-native"
-    ]
+    ],
+    "scheme": "bugsee-e2e"
   }
 }

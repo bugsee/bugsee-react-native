@@ -1,0 +1,5 @@
+2026-10-07T03:07:00Z		android-debug	FAIL	0	android/app/build/outputs/apk/debug/app-debug.apk	-
+2026-10-07T03:07:00Z		android-release	FAIL	0	android/app/build/outputs/apk/release/app-release.apk	-
+2026-10-07T03:07:01Z		ios-sim-debug	FAIL	1	ios/build/Build/Products/Debug-iphonesimulator/.app	-
+2026-10-07T03:07:01Z		ios-device-debug	FAIL	0	ios/build/Build/Products/Debug-iphoneos/.app	-
+2026-10-07T03:07:02Z		ios-device-release	FAIL	1	ios/build/Build/Products/Release-iphoneos/.app	-
