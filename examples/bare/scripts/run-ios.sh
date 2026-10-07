@@ -36,6 +36,13 @@
 #                           e2e/launch.test.ts) appears. The SDK banner is
 #                           printed, never accepted: it comes before Launched.
 #                           The device must already be held under its lock.
+#                           Debug: the app is pointed at its own Metro with
+#                           -RCT_jsLocation <host>:<port> (port: the app's
+#                           campaign.port, else E2E_METRO_PORT, else 8081; host:
+#                           localhost on the simulator, E2E_METRO_HOST or this
+#                           Mac's en0 address on a device), Metro is started
+#                           on that port if nothing answers there, and the
+#                           wait defaults to 180 s.
 #
 # The SwiftPM delivery path is the other configuration; see README.md.
 set -euo pipefail
@@ -164,13 +171,46 @@ fi
 if [[ "${IOS_LAUNCH:-0}" == 1 ]]; then
   BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")"
   CONSOLE="$(mktemp -t run-ios-console)"
+  APP_ARGS=()
+  LAUNCH_SECONDS="${IOS_LAUNCH_SECONDS:-40}"
+  if [[ "$CONFIGURATION" == Debug ]]; then
+    METRO_PORT="$(cat "$APP_DIR/campaign.port" 2>/dev/null || echo "${E2E_METRO_PORT:-8081}")"
+    METRO_HOST=localhost
+    [[ "$TARGET" == device ]] && METRO_HOST="${E2E_METRO_HOST:-$(ipconfig getifaddr en0)}"
+    if ! curl -sf "http://localhost:$METRO_PORT/status" | grep -q running; then
+      if grep -q '"expo"' "$APP_DIR/app.json" 2>/dev/null; then
+        (cd "$APP_DIR" && CI=1 exec npx expo start --port "$METRO_PORT") >"$CONSOLE.metro" 2>&1 </dev/null &
+      else
+        (cd "$APP_DIR" && exec npx react-native start --port "$METRO_PORT") >"$CONSOLE.metro" 2>&1 </dev/null &
+      fi
+      METRO_PID=$!
+      for _ in $(seq 1 90); do
+        curl -sf "http://localhost:$METRO_PORT/status" | grep -q running && break
+        sleep 1
+      done
+    fi
+    APP_ARGS=(-RCT_jsLocation "$METRO_HOST:$METRO_PORT")
+    LAUNCH_SECONDS="${IOS_LAUNCH_SECONDS:-180}"
+  fi
   if [[ "$TARGET" == simulator ]]; then
-    xcrun simctl launch --console-pty --terminate-running-process "$SIMULATOR" "$BUNDLE_ID" >"$CONSOLE" 2>&1 </dev/null &
+    xcrun simctl launch --console-pty --terminate-running-process "$SIMULATOR" "$BUNDLE_ID" \
+      ${APP_ARGS[@]+"${APP_ARGS[@]}"} >"$CONSOLE" 2>&1 </dev/null &
   else
-    xcrun devicectl device process launch --device "$DEVICE" --terminate-existing --console "$BUNDLE_ID" >"$CONSOLE" 2>&1 </dev/null &
+    # `--` ends devicectl's own options, so the app's arguments reach the app.
+    xcrun devicectl device process launch --device "$DEVICE" --terminate-existing --console "$BUNDLE_ID" \
+      -- ${APP_ARGS[@]+"${APP_ARGS[@]}"} >"$CONSOLE" 2>&1 </dev/null &
   fi
   LAUNCH_PID=$!
-  sleep "${IOS_LAUNCH_SECONDS:-40}"
+  for _ in $(seq 1 "$LAUNCH_SECONDS"); do
+    grep -qE "${IOS_LAUNCH_EXPECT:-BUGSEE_E2E status=2}" "$CONSOLE" && break
+    sleep 1
+  done
+  sleep 2
+  if [[ -n "${METRO_PID:-}" ]]; then
+    pkill -P "$METRO_PID" 2>/dev/null || true
+    kill "$METRO_PID" 2>/dev/null || true
+    lsof -t -iTCP:"$METRO_PORT" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+  fi
   kill "$LAUNCH_PID" 2>/dev/null || true
   wait "$LAUNCH_PID" 2>/dev/null || true
   echo "--- console of $BUNDLE_ID ($CONFIGURATION, $DELIVERY, $TARGET)"
