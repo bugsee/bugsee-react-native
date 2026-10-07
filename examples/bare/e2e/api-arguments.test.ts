@@ -311,13 +311,29 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
 
     it('[API-19f] startChildSpan is a child of its span', () => {
       const child = span(`child-${run.scenario.nonce}`);
-      const parent = span(`api-txn-${run.scenario.nonce}`) ?? undefined;
+      // The transaction carries its name (not a description); its own span is
+      // the root of its `spans` (no parentSpanId), as span-lifecycle.test.ts reads it.
+      let transaction: { name?: unknown; spans?: Array<Record<string, unknown>> } | undefined;
+      const walk = (node: unknown): void => {
+        if (transaction !== undefined || node === null || typeof node !== 'object') return;
+        if (Array.isArray(node)) {
+          node.forEach(walk);
+          return;
+        }
+        const record = node as { name?: unknown; spans?: Array<Record<string, unknown>> };
+        if (record.name === `api-txn-${run.scenario.nonce}` && Array.isArray(record.spans)) {
+          transaction = record;
+          return;
+        }
+        Object.values(record).forEach(walk);
+      };
+      walk(JSON.parse(capture === '' ? '{}' : capture) as unknown);
+      const root = transaction?.spans?.find(s => s.parentSpanId === undefined);
       report('child span', child);
+      report('transaction root', { spanId: root?.spanId, childParent: child?.parentSpanId });
       expect(child).toBeDefined();
-      expect(capture).toContain(`api-txn-${run.scenario.nonce}`);
-      if (parent !== undefined && parent.span_id !== undefined) {
-        expect(child!.parent_span_id).toBe(parent.span_id);
-      }
+      expect(root?.spanId).toBeDefined();
+      expect(child!.parentSpanId).toBe(root!.spanId);
     });
 
     it('[API-19d] setStatus then finish() with no argument ends OK, as documented (divergence 12)', () => {
