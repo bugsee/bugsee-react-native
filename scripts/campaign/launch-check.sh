@@ -52,7 +52,7 @@ case "$CONFIG" in debug|release) ;; *) echo "debug|release" >&2; exit 2 ;; esac
 android_id() {
   node -e '
     const s=require("fs").readFileSync(process.argv[1],"utf8");
-    const m=/applicationId\s+"([^"]+)"/.exec(s); console.log(m?m[1]:"");' "$APP_DIR/android/app/build.gradle"
+    const m=/applicationId\s*=?\s*["\x27]([^"\x27]+)["\x27]/.exec(s); console.log(m?m[1]:"");' "$APP_DIR/android/app/build.gradle"
 }
 ios_app() {
   local cfg="Debug"; [[ "$CONFIG" == release ]] && cfg="Release"
@@ -102,6 +102,7 @@ trap cleanup EXIT
 result=FAIL
 if [[ "$TARGET" == android ]]; then
   ID="$(android_id)"
+  [[ -n "$ID" ]] || { echo "no applicationId in android/app/build.gradle" | tee -a "$OUT"; exit 1; }
   APK="$APP_DIR/android/app/build/outputs/apk/$CONFIG/app-$CONFIG.apk"
   echo "adb reverse before: $("$ADB" -s "$SERIAL" reverse --list | tr '\n' ' ')" >>"$OUT"
   "$ADB" -s "$SERIAL" install -r "$APK" >>"$OUT" 2>&1 || { echo "install failed" | tee -a "$OUT"; exit 1; }
@@ -129,7 +130,12 @@ else
     --predicate 'eventMessage CONTAINS "BUGSEE_E2E" OR eventMessage CONTAINS "Bugsee"' >>"$OUT" 2>&1 </dev/null &
   LOG_PID=$!
   sleep 2
-  xcrun simctl launch "$SIMULATOR" "$ID" >>"$OUT" 2>&1
+  # Debug: point the bundle URL at this app's Metro through the launch
+  # arguments (NSUserDefaults RCT_jsLocation). The RCT_METRO_PORT define from
+  # the Podfile does not reach a prebuilt React Native core (0.84+).
+  JS_LOCATION=()
+  [[ "$CONFIG" == debug ]] && JS_LOCATION=(-RCT_jsLocation "localhost:$PORT")
+  xcrun simctl launch "$SIMULATOR" "$ID" ${JS_LOCATION[@]+"${JS_LOCATION[@]}"} >>"$OUT" 2>&1
 fi
 
 deadline=$((SECONDS + BUDGET))
