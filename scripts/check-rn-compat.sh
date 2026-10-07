@@ -160,7 +160,13 @@ echo "    NativeDOM::measureInWindow calls its callback synchronously with the r
 
 NATIVE_DOM_H="$RN_SRC/ReactCommon/react/nativemodule/dom/NativeDOM.h"
 if [ -f "$NATIVE_DOM_H" ] && grep -q 'MeasureInWindowOnSuccessCallback' "$NATIVE_DOM_H"; then
-  grep -qE 'MeasureInWindowOnSuccessCallback[[:space:]]*=[[:space:]]*SyncCallback' "$NATIVE_DOM_H" \
+  # Over the whole file, not line by line: 0.82 formats the alias over two
+  # lines (`using MeasureInWindowOnSuccessCallback =` then `SyncCallback<…>`),
+  # which a one-line grep reads as a changed type.
+  node -e '
+    const src = require("fs").readFileSync(process.argv[1], "utf8");
+    if (!/using\s+MeasureInWindowOnSuccessCallback\s*=\s*SyncCallback\s*</.test(src)) process.exit(1);
+  ' "$NATIVE_DOM_H" \
     || { echo "FAIL: NativeDOM.h's MeasureInWindowOnSuccessCallback is no longer a SyncCallback"; exit 1; }
   echo "    NativeDOM.h declares MeasureInWindowOnSuccessCallback as a SyncCallback"
 else
