@@ -13,9 +13,13 @@ const {
   bundleOf,
   findHermesc,
   hermescBin,
+  isExecutableFile,
+  isFile,
   outputOf,
   preserveDirOf,
+  resolveFrom,
   run,
+  spawnInherit,
 } = require('../hermesc-preserve-js');
 const { useScratchCwd } = require('./fixtures/scratch-cwd');
 
@@ -45,6 +49,8 @@ describe('argument parsing', () => {
     expect(outputOf(['-w', '-out', 'a.hbc', 'x.js', '-out', 'b.hbc'])).toBe('b.hbc');
     expect(outputOf(['-w', '-out', 'a.hbc', 'x.js'])).toBe('a.hbc');
     expect(outputOf(['x.js', '-out'])).toBeUndefined();
+    // A trailing -out with nothing after it leaves the earlier value.
+    expect(outputOf(['-out', 'a.hbc', '-out'])).toBe('a.hbc');
     expect(outputOf(['-emit-binary', 'x.js'])).toBeUndefined();
     expect(outputOf([])).toBeUndefined();
   });
@@ -127,6 +133,12 @@ describe('findHermesc', () => {
     expect(find([compiled, shipped], { rn: false })).toBeNull();
   });
 
+  it('takes the first candidate that exists, in order, and nothing else', () => {
+    expect(find(['/anything'], { rn: false }, {}, 'darwin')).toBeNull();
+    const all = findHermesc({ env: {}, cwd, platform: 'darwin', isExecutable: () => true, resolve: () => null });
+    expect(all).toBe(sibling);
+  });
+
   it('uses the Windows directory and file name on Windows', () => {
     const win = path.join(compilerDir, 'hermesc', 'win64-bin', 'hermesc.exe');
     expect(find([win, compiled], {}, {}, 'win32')).toBe(win);
@@ -149,6 +161,48 @@ describe('findHermesc', () => {
     } finally {
       fs.rmSync(app, { recursive: true, force: true });
     }
+  });
+});
+
+describe('file helpers', () => {
+  let dir;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-preserve-helpers-'));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('resolveFrom resolves from the given directory, or gives null', () => {
+    fs.mkdirSync(path.join(dir, 'node_modules', 'pkg'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'node_modules', 'pkg', 'package.json'), '{"name":"pkg"}');
+    expect(fs.realpathSync(resolveFrom('pkg/package.json', dir))).toBe(
+      fs.realpathSync(path.join(dir, 'node_modules', 'pkg', 'package.json')),
+    );
+    expect(resolveFrom('no-such-package-for-bugsee-tests/package.json', dir)).toBeNull();
+  });
+
+  it('isFile and isExecutableFile say false, not undefined, for what is not there', () => {
+    const file = path.join(dir, 'f');
+    fs.writeFileSync(file, 'x');
+    expect(isFile(file)).toBe(true);
+    expect(isFile(dir)).toBe(false);
+    expect(isFile(path.join(dir, 'missing'))).toBe(false);
+    expect(isExecutableFile(path.join(dir, 'missing'))).toBe(false);
+    expect(isExecutableFile(dir)).toBe(false);
+    if (!WIN) {
+      expect(isExecutableFile(file)).toBe(false);
+      fs.chmodSync(file, 0o755);
+      expect(isExecutableFile(file)).toBe(true);
+    }
+  });
+
+  it('spawnInherit runs in the given directory and hands hermesc the build log', () => {
+    const result = spawnInherit(process.execPath, ['-e', 'process.exit(process.cwd() === process.argv[1] ? 7 : 8)', fs.realpathSync(dir)], fs.realpathSync(dir));
+    expect(result.status).toBe(7);
+    // Inherited streams are not captured.
+    expect(result.stdout).toBeNull();
+    expect(result.stderr).toBeNull();
   });
 });
 
@@ -245,6 +299,25 @@ describe('run', () => {
     expect(fs.existsSync(path.join(intermediates, 'index.android.bundle.bugsee-js-source'))).toBe(true);
   });
 
+  it('takes the host platform unless one is given', () => {
+    const win = path.join(dir, 'node_modules', 'hermes-compiler', 'hermesc', 'win64-bin', 'hermesc.exe');
+    const { spawn, calls } = spawnWriting('HBC');
+    const deps = { env: {}, cwd: dir, isExecutable: (f) => f === win, resolve: () => null, spawn, stderr };
+    expect(run(argv(), { ...deps, platform: 'win32' })).toBe(0);
+    expect(calls.map((call) => call.file)).toEqual([win]);
+    expect(run(argv(), deps)).toBe(WIN ? 0 : 1);
+  });
+
+  it('writes its failures to stderr by default', () => {
+    const write = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      expect(run(['-w'], { env: {}, cwd: dir })).toBe(1);
+      expect(write).toHaveBeenCalledWith('bugsee: hermesc wrapper could not find the JS bundle\n');
+    } finally {
+      write.mockRestore();
+    }
+  });
+
   it('fails when hermesc exits 0 but writes no bytecode', () => {
     const { spawn } = spawnWriting(null);
     const code = run(argv(), { env: { BUGSEE_REAL_HERMESC: '/h/hermesc' }, cwd: dir, isExecutable: () => true, spawn, stderr });
@@ -319,6 +392,14 @@ describe('run', () => {
     expect(run(argv(), { env: { BUGSEE_REAL_HERMESC: hermesc }, cwd: dir, stderr })).toBe(0);
     expect(fs.readFileSync(`${js}.hbc`, 'utf8')).toBe('HBC');
     expect(fs.readFileSync(path.join(intermediates, 'index.android.bundle.bugsee-hermesc'), 'utf8')).toBe(`${hermesc}\n`);
+  });
+
+  it('runs a real hermesc in the working directory, with relative arguments', () => {
+    if (WIN) return;
+    const hermesc = fakeHermesc(dir);
+    const rel = path.relative(dir, js);
+    expect(run(['-w', '-out', `${rel}.hbc`, rel], { env: { BUGSEE_REAL_HERMESC: hermesc }, cwd: dir, stderr })).toBe(0);
+    expect(fs.readFileSync(`${js}.hbc`, 'utf8')).toBe('HBC');
   });
 
   it('fails with the default helpers when a real hermesc writes nothing, or cannot start', () => {

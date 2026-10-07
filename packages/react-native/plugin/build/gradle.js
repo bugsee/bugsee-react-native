@@ -959,7 +959,8 @@ function rewriteHermesCommand(source) {
         // The value as written, up to a trailing comment.
         const valueEnd = line.raw.slice(0, line.commentAt ?? line.raw.length).trimEnd().length;
         const written = line.raw.slice(match[0].length, valueEnd).trim();
-        if (match[2] !== '.set(' && written === exports.LEGACY_HERMES_COMMAND_EXPR) {
+        // A setter call never equals it: its value carries the closing bracket.
+        if (written === exports.LEGACY_HERMES_COMMAND_EXPR) {
             lines[i] = `${match[1]}hermesCommand = ${exports.HERMES_COMMAND_EXPR}${line.raw.slice(valueEnd)}`;
             continue;
         }

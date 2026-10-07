@@ -44,7 +44,8 @@ function hermescBin(platform) {
   return { osbin: platform === 'linux' ? 'linux64-bin' : 'osx-bin', bin: 'hermesc' };
 }
 
-function defaultResolve(request, from) {
+/** require.resolve from a directory, or null. */
+function resolveFrom(request, from) {
   try {
     return require.resolve(request, { paths: [from] });
   } catch {
@@ -60,7 +61,7 @@ function defaultResolve(request, from) {
  * ships sdks/hermesc beside react-native/package.json. Then the app's own
  * node_modules. Null when none is there.
  */
-function findHermesc({ env, cwd, platform, isExecutable, resolve = defaultResolve }) {
+function findHermesc({ env, cwd, platform, isExecutable, resolve = resolveFrom }) {
   if (env.BUGSEE_REAL_HERMESC && isExecutable(env.BUGSEE_REAL_HERMESC)) {
     return env.BUGSEE_REAL_HERMESC;
   }
@@ -103,7 +104,7 @@ function preserveDirOf(js, env, cwd) {
   return { dir };
 }
 
-function defaultIsExecutable(file) {
+function isExecutableFile(file) {
   try {
     fs.accessSync(file, fs.constants.X_OK);
     return fs.statSync(file).isFile();
@@ -112,7 +113,7 @@ function defaultIsExecutable(file) {
   }
 }
 
-function defaultIsFile(file) {
+function isFile(file) {
   try {
     return fs.statSync(file).isFile();
   } catch {
@@ -120,7 +121,8 @@ function defaultIsFile(file) {
   }
 }
 
-function defaultSpawn(file, args, cwd) {
+/** hermesc's output goes to the build log, as when React Native runs it. */
+function spawnInherit(file, args, cwd) {
   return require('node:child_process').spawnSync(file, args, { cwd, stdio: 'inherit' });
 }
 
@@ -129,8 +131,8 @@ function run(argv, deps = {}) {
   const env = deps.env ?? process.env;
   const cwd = deps.cwd ?? process.cwd();
   const platform = deps.platform ?? process.platform;
-  const isExecutable = deps.isExecutable ?? defaultIsExecutable;
-  const spawn = deps.spawn ?? defaultSpawn;
+  const isExecutable = deps.isExecutable ?? isExecutableFile;
+  const spawn = deps.spawn ?? spawnInherit;
   const stderr = deps.stderr ?? ((line) => process.stderr.write(line));
   const fail = (message) => {
     stderr(`bugsee: ${message}\n`);
@@ -138,7 +140,7 @@ function run(argv, deps = {}) {
   };
 
   const out = outputOf(argv);
-  const bundle = bundleOf(argv, out, (arg) => defaultIsFile(path.resolve(cwd, arg)));
+  const bundle = bundleOf(argv, out, (arg) => isFile(path.resolve(cwd, arg)));
   if (bundle === undefined) {
     return fail('hermesc wrapper could not find the JS bundle');
   }
@@ -172,14 +174,27 @@ function run(argv, deps = {}) {
       ? fail(`hermesc was killed by ${result.signal} (${hermesc})`)
       : result.status;
   }
-  if (!defaultIsFile(bytecode) || fs.statSync(bytecode).size === 0) {
+  if (!isFile(bytecode) || fs.statSync(bytecode).size === 0) {
     return fail(`hermesc exited 0 but wrote no bytecode to ${bytecode} (${hermesc})`);
   }
   return 0;
 }
 
-module.exports = { bundleOf, findHermesc, hermescBin, outputOf, preserveDirOf, run };
+module.exports = {
+  bundleOf,
+  findHermesc,
+  hermescBin,
+  isExecutableFile,
+  isFile,
+  outputOf,
+  preserveDirOf,
+  resolveFrom,
+  run,
+  spawnInherit,
+};
 
+// Stryker disable all: the command-line entry runs only in a child process (the launcher tests).
 if (require.main === module) {
   process.exitCode = run(process.argv.slice(2));
 }
+// Stryker restore all
