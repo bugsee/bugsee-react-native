@@ -285,11 +285,6 @@ const CASES: readonly Case[] = [
       expect(errors[0]!.request.severity).toBe(1);
     },
     simulatorSkip: 'the simulator slice of the iOS SDK compiles logException out',
-    readbackFails: {
-      android:
-        'BugseeOptionEnums.wireValue(IssueSeverity.VeryLow) is 0: IssueSeverity.fromIntValue(int) falls back to VeryLow, ' +
-        'so the first value that maps to it is 0, not 1 (and coerce() snaps every unknown severity to VeryLow)',
-    },
   },
   {
     name: 'screenshot-scale',

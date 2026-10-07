@@ -1306,6 +1306,20 @@ describe('a shared parse budget across the whole tree (review N1)', () => {
       expect(Object.keys(payload.debug_ids ?? {})).toEqual(['/a.js', '/b.js']);
     });
 
+    it('keys debug_ids by the cleaned source for a CodePush data-dir bundle too', () => {
+      const bundle = '/data/user/0/com.example/files/CodePush/abc/index.android.bundle';
+      const error = noStack(new Error('m'));
+      error.stack = `Error: m\n    at f (${bundle}:1:2)`;
+      const payload = buildExceptionPayload({
+        error,
+        platformOS: 'android',
+        debugIds: new Map([[bundle, 'cp-id']]),
+      });
+      expect(payload.frames[0]?.debug_id).toBe('cp-id');
+      expect(payload.debug_ids).toEqual({ [payload.frames[0]!.data.source as string]: 'cp-id' });
+      expect(payload.debug_ids).toEqual({ 'files/CodePush/abc/index.android.bundle': 'cp-id' });
+    });
+
     it('no debug_ids key when nothing is registered', () => {
       const withEmpty = buildExceptionPayload({
         error: noStack(new Error('m')),
@@ -1346,7 +1360,10 @@ describe('a shared parse budget across the whole tree (review N1)', () => {
       expect(error.stack).toContain('file://');
       expect(payload.frames[0]?.data.source).toBe('main.jsbundle');
       expect(payload.frames[0]?.debug_id).toBe('ios-bundle-id');
-      expect(payload.debug_ids).toEqual({ [appBundle]: 'ios-bundle-id' });
+      // The map is keyed like frames[].data.source (cleanSource), so the
+      // key equals the frame's source and the plan's example payload.
+      expect(payload.debug_ids).toEqual({ 'main.jsbundle': 'ios-bundle-id' });
+      expect(Object.keys(payload.debug_ids ?? {})).toEqual([payload.frames[0]?.data.source]);
     });
   });
 });

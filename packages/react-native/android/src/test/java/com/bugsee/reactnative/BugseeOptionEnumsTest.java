@@ -94,6 +94,28 @@ public class BugseeOptionEnumsTest {
                 "com.bugsee.option.capture.logs.level", 0));
     }
 
+    /** IssueSeverity.fromIntValue(int) snaps unknowns to VeryLow; the table must not. */
+    @Test
+    public void refusesASeverityNoConstantCarries() {
+        for (final String key : new String[] {
+                "com.bugsee.option.reporting.defaults.crash-priority",
+                "com.bugsee.option.reporting.defaults.error-priority",
+                "com.bugsee.option.reporting.defaults.bug-priority",
+        }) {
+            for (final int value : new int[] {0, 6, -1, 64}) {
+                assertNull(key + " " + value, BugseeOptionEnums.coerce(key, value));
+            }
+        }
+    }
+
+    @Test
+    public void numberForDropsAnUnknownSeverity() {
+        assertNull(BugseeOptionEnums.numberFor(
+                "com.bugsee.option.reporting.defaults.error-priority", 0.0));
+        assertNull(BugseeOptionEnums.numberFor(
+                "com.bugsee.option.reporting.defaults.error-priority", 6.0));
+    }
+
     @Test
     public void numberForPassesScalarsThroughUntouched() {
         assertEquals(1.0, BugseeOptionEnums.numberFor(
@@ -135,6 +157,12 @@ public class BugseeOptionEnumsTest {
         assertEquals(5.0, BugseeOptionEnums.wireValue(IssueSeverity.Blocker), 0.0);
         assertEquals(0.0, BugseeOptionEnums.wireValue(VideoQuality.Default), 0.0);
         assertEquals(4.0, BugseeOptionEnums.wireValue(FrameRate.Raw), 0.0);
+    }
+
+    @Test
+    public void wireValueOfVeryLowIsOneNotZero() {
+        assertEquals(1.0, BugseeOptionEnums.wireValue(IssueSeverity.VeryLow), 0.0);
+        assertEquals(2.0, BugseeOptionEnums.wireValue(IssueSeverity.Medium), 0.0);
     }
 
     @Test
