@@ -124,8 +124,8 @@ react {
     // Copies the JS aside before hermesc compiles it, so the debug id can
     // reach the bytecode. React Native runs this command through cmd on
     // Windows, so Windows gets the .cmd launcher and macOS and Linux the .sh.
-    hermesCommand = new File(new File(bugseeDir, "scripts"),
-        System.getProperty("os.name").startsWith("Windows") ? "hermesc-preserve-js.cmd" : "hermesc-preserve-js.sh").absolutePath
+    // Keep it on one line: tools that apply this snippet read it as one.
+    hermesCommand = new File(new File(bugseeDir, "scripts"), System.getProperty("os.name").startsWith("Windows") ? "hermesc-preserve-js.cmd" : "hermesc-preserve-js.sh").absolutePath
 }
 
 // At the end of the file. Applying it twice is harmless.
