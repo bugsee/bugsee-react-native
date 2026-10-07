@@ -9,6 +9,7 @@
  * helper here reads that log.
  */
 import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { checkLaunch, launchFactsOf, parseCampaignMode } from '../../../scripts/campaign-endpoint-guard';
 import { checkAndroidBanner } from '../../../scripts/sdk-banner';
@@ -24,7 +25,7 @@ import {
   pullIosBundles,
   terminateIosApp,
 } from './bundles';
-import { ANDROID_PACKAGE, IOS_SIMULATOR_ID, iosDeviceId, iosTarget, verifyIosDevice } from './device';
+import { ANDROID_PACKAGE, APP_DIR, IOS_SIMULATOR_ID, iosDeviceId, iosTarget, verifyIosDevice } from './device';
 import {
   type DeviceLog,
   IosConsole,
@@ -51,6 +52,9 @@ export const describeDevice = ON_ANDROID || ON_IOS ? describe : describe.skip;
  * and the dead endpoint). Every launch is checked against it (`checkRun`).
  */
 export const CAMPAIGN_MODE = parseCampaignMode(process.env.E2E_STAGING);
+
+/** examples/bare, the default app under test (device.ts `APP_DIR`). */
+const BARE_DIR = join(__dirname, '..');
 
 /** A Release build is installed (`E2E_RELEASE=1`): the MX-CFG-RELEASE runs. */
 export const RELEASE = process.env.E2E_RELEASE === '1';
@@ -212,6 +216,20 @@ async function checkRun(ran: LogLine, start: number): Promise<void> {
       'the smoke root (smoke/SmokeApp.tsx) launching, as E2E_SMOKE_ROOT=1 asks',
       start,
     );
+  } else if (APP_DIR === BARE_DIR) {
+    // examples/bare picks its root from the JSON at bundle load (index.js):
+    // a bundle Metro still serves from an E2E_SMOKE_ROOT=1 run would run
+    // SmokeApp here. A generated app always runs SmokeApp, so this is
+    // examples/bare's check only.
+    const launching = must(
+      await log().waitFor(/BUGSEE_E2E launching on \w+/, 15_000, ran.index),
+      'the app launching',
+      start,
+    );
+    if (/ root=smoke/.test(launching.text)) {
+      await stopApp().catch(() => {});
+      throw new Error('examples/bare ran smoke/SmokeApp.tsx, but E2E_SMOKE_ROOT is off: Metro served a bundle from a root=smoke run. Run again once Metro has rebuilt.');
+    }
   }
 }
 
