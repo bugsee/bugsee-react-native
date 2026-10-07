@@ -24,7 +24,7 @@ import Bugsee from '@bugsee/react-native';
 import { appearance as feedbackAppearance, setGreeting, setListener, showFeedbackUI } from '@bugsee/react-native-feedback';
 import { rctLog } from 'bugsee-e2e-native';
 
-import { delay, mark, settle } from './api-common';
+import { delay, mark, settled } from './api-common';
 import { FEEDBACK_COLOURS, REPORT_COLOURS } from './api-constants';
 
 export const UI_SCENARIOS = [
@@ -41,6 +41,12 @@ export function uiLaunchOverrides(scenario: string, apply: (key: string, value: 
   if (scenario === 'api-sdk-crumbs') {
     apply('com.bugsee.option.capture.breadcrumbs', true);
   }
+  if (scenario === 'api-dialog-keys') {
+    // The severity labels (severityLabelActiveColor) and the labels field
+    // show only with these on.
+    apply('com.bugsee.option.reporting.ui.priority-selector-enabled', true);
+    apply('com.bugsee.option.reporting.ui.labels-enabled', true);
+  }
 }
 
 export async function preLaunchUi(scenario: string, nonce: string): Promise<void> {
@@ -48,12 +54,12 @@ export async function preLaunchUi(scenario: string, nonce: string): Promise<void
     return;
   }
   const calls = {
-    greeting: await settle(() => setGreeting(`hello-pre ${nonce}`)),
-    colour: await settle(() => {
+    greeting: await settled(() => setGreeting(`hello-pre ${nonce}`)),
+    colour: await settled(() => {
       feedbackAppearance.backgroundColor = '#112233';
     }),
-    listener: await settle(() => setListener({ onNewMessageSent: () => {} })),
-    show: await settle(() => showFeedbackUI()),
+    listener: await settled(() => setListener({ onNewMessageSent: () => {} })),
+    show: await settled(() => showFeedbackUI()),
   };
   mark(`feedback prelaunch nonce=${nonce} status=${await Bugsee.getStatus()} calls=${JSON.stringify(calls)}`);
 }
@@ -138,8 +144,9 @@ async function dialogKeys(nonce: string): Promise<void> {
   const { readback, foreign } = paintReport();
   mark(`dialog-keys readback nonce=${nonce} values=${JSON.stringify(readback)}`);
   mark(`dialog-keys foreign nonce=${nonce} values=${JSON.stringify(foreign)}`);
-  // Filled fields, so textColor has text to paint; hints show where empty.
-  Bugsee.showReportDialog(`api-dialog-${nonce}`, `api-description ${nonce}`);
+  // A summary, so textColor has text to paint; no description, so the
+  // empty field shows its hint (hintColor, placeholderColor).
+  Bugsee.showReportDialog(`api-dialog-${nonce}`, '');
   mark(`dialog-keys shown nonce=${nonce}`);
 }
 
@@ -163,11 +170,11 @@ function paintFeedback(nonce: string): void {
 async function feedbackNull(nonce: string): Promise<void> {
   Bugsee.setUserIdentifier(`e2e-${nonce}@example.com`);
   const calls = {
-    greeting: await settle(() => setGreeting(`hello-gone ${nonce}`)),
-    greetingNull: await settle(() => setGreeting(null)),
-    listener: await settle(() => setListener({ onNewMessagesReceived: () => {} })),
-    listenerNull: await settle(() => setListener(null)),
-    listenerNullAgain: await settle(() => setListener(null)),
+    greeting: await settled(() => setGreeting(`hello-gone ${nonce}`)),
+    greetingNull: await settled(() => setGreeting(null)),
+    listener: await settled(() => setListener({ onNewMessagesReceived: () => {} })),
+    listenerNull: await settled(() => setListener(null)),
+    listenerNullAgain: await settled(() => setListener(null)),
   };
   showFeedbackUI();
   mark(`feedback null nonce=${nonce} calls=${JSON.stringify(calls)}`);

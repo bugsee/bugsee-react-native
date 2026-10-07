@@ -101,6 +101,8 @@ export const READBACK_ANDROID: Readonly<Record<string, unknown>> = {
 };
 
 export const READBACK_IOS: Readonly<Record<string, unknown>> = {
+  /** iOS defaults adaptive video on (Android off): flipped here. */
+  [`${P}capture.video.adaptive`]: false,
   [`${P}capture.avplayer`]: true,
   [`${P}capture.bluetooth-status`]: true,
   [`${P}capture.camera-preview`]: true,

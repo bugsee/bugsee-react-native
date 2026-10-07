@@ -35,7 +35,7 @@ import {
 import ENUMS from '../../../packages/react-native/src/options/option-enums.json';
 import KEYS from '../../../packages/react-native/src/options/option-keys.json';
 import ANDROID_MANIFEST from '../../../packages/react-native/src/options/android-options-manifest.json';
-import { ON_IOS, type Run, TARGET_NAME, awaitBundles, describeDevice, report, startRun, stopApp } from './harness';
+import { ON_IOS, type Run, TARGET_NAME, awaitBundles, describeDevice, listBundles, report, startRun, stopApp } from './harness';
 import { beginRetainingSuite, endRetainingSuite } from './observe';
 import { type DeviceLog } from './scenario';
 
@@ -43,6 +43,18 @@ jest.setTimeout(8 * 60_000);
 
 const OWN_SET: Record<string, unknown> = { ...READBACK_SHARED, ...(ON_IOS ? READBACK_IOS : READBACK_ANDROID) };
 const FOREIGN_KEYS: readonly string[] = ON_IOS ? KEYS.android : KEYS.ios;
+const PLATFORM_NAME: 'android' | 'ios' = ON_IOS ? 'ios' : 'android';
+
+/**
+ * Known product bugs a read-back or the environment record pins (it.failing).
+ * iOS bug 5: beta3..beta5 drop `capture.network.body-size-limit` -- read back
+ * as the default 20480, absent from `environment.sdk.options` (XS, beta5,
+ * 2026-10-07). Filed: https://github.com/bugsee/bugsee-cocoa/issues/197
+ */
+const KNOWN_READBACK: Record<'android' | 'ios', Record<string, string>> = {
+  android: {},
+  ios: { 'com.bugsee.option.capture.network.body-size-limit': 'bugsee-cocoa#197' },
+};
 const ACCESSORS: Record<string, string> = { ...ACCESSOR_KEYS.shared, ...(ON_IOS ? ACCESSOR_KEYS.ios : ACCESSOR_KEYS.android) };
 
 /** Android enum keys and their enum, from the SDK's option manifest. */
@@ -98,7 +110,10 @@ describeDevice(`every launch option read back on ${TARGET_NAME}`, () => {
     all = chunks(log, 'opt all', nonce, allRun.start);
     getters = jsonAfter(getterLine.text, 'values');
     await apiMarker(log, 'opt all uploaded', nonce, 15_000, getterLine.index, allRun.start);
-    bundle = (await awaitBundles(1, 60_000)).find(b => b.request.summary === `api-opt-all-${nonce}`)!;
+    const allBundles = await awaitBundles(1, 90_000);
+    report('all-keys run bundles', allBundles.map(b => ({ summary: b.request.summary, type: b.request.type })));
+    report('all-keys run files on device', await listBundles());
+    bundle = allBundles.find(b => b.request.summary === `api-opt-all-${nonce}`)!;
     await stopApp();
 
     enumsRun = await startRun('api-opt-enums');
@@ -117,7 +132,8 @@ describeDevice(`every launch option read back on ${TARGET_NAME}`, () => {
   for (const [key, value] of Object.entries(OWN_SET)) {
     const id = optId(key);
     const via = Object.values(ACCESSORS).includes(key) ? 'a typed accessor' : 'setCustomOption';
-    it(`[${id}] ${key.replace('com.bugsee.option.', '')} = ${JSON.stringify(value)} (set through ${via}) reads back, and is not the default`, () => {
+    const known = KNOWN_READBACK[PLATFORM_NAME][key];
+    (known !== undefined ? it.failing : it)(`[${id}] ${key.replace('com.bugsee.option.', '')} = ${JSON.stringify(value)} (set through ${via}) reads back, and is not the default`, () => {
       if (key in defaults) {
         expect({ key, default: defaults[key], differs: !same(defaults[key], value) }).toEqual({ key, default: defaults[key], differs: true });
       }
@@ -132,6 +148,7 @@ describeDevice(`every launch option read back on ${TARGET_NAME}`, () => {
   });
 
   it(`[OPT-ACC-01][OPT-ACC-0${ON_IOS ? 3 : 2}] the report's environment records every value set`, () => {
+    expect(bundle).toBeDefined();
     const recorded = (bundle.request.environment as { sdk?: { options?: Record<string, unknown> } }).sdk?.options ?? {};
     report('environment.sdk.options keys', Object.keys(recorded).length);
     const misses: Array<Record<string, unknown>> = [];
@@ -148,8 +165,17 @@ describeDevice(`every launch option read back on ${TARGET_NAME}`, () => {
       }
     }
     report('environment record misses', misses);
-    expect(misses).toEqual([]);
+    // The known bugs are pinned on their own below.
+    expect(misses.filter(miss => KNOWN_READBACK[PLATFORM_NAME][miss.key as string] === undefined)).toEqual([]);
   });
+
+  for (const [key, bug] of Object.entries(KNOWN_READBACK[PLATFORM_NAME])) {
+    it.failing(`[${optId(key)}] ${key.replace('com.bugsee.option.', '')} is recorded in the report's environment [known: ${bug}]`, () => {
+      const recorded = (bundle.request.environment as { sdk?: { options?: Record<string, unknown> } }).sdk?.options ?? {};
+      const found = [key, key.replace(/\./g, ':'), key.replace('com.bugsee.option.', '')].find(candidate => candidate in recorded);
+      expect(found === undefined ? '(absent)' : recorded[found]).toEqual(OWN_SET[key]);
+    });
+  }
 
   it('[OPT-ACC-08][API-44] every enum value reads back as its internal value, not an ordinal', () => {
     const table = { ...ENUM_VALUES, ...(ON_IOS ? {} : ANDROID_ENUM_VALUES) };

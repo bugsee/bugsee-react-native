@@ -51,6 +51,11 @@ export async function settle(fn: () => unknown): Promise<string> {
   }
 }
 
+/** `settle`, parsed: for a marker that groups several calls in one JSON object. */
+export async function settled(fn: () => unknown): Promise<unknown> {
+  return JSON.parse(await settle(fn)) as unknown;
+}
+
 /** Every lifecycle event a scenario subscribed for, in order, `<name>[:<id>]`. */
 export function recordEvents(nonce: string, tag: string): string[] {
   const seen: string[] = [];

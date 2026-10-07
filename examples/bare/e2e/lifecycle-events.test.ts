@@ -68,8 +68,13 @@ describeDevice(`lifecycle events on ${TARGET_NAME}`, () => {
     const summary = await apiMarker(log!, 'after-crash summary', after.scenario.nonce, 40_000, after.start);
     const events = jsonAfter<string[]>(summary.text, 'events');
     report('events after the crash', events);
+    report(
+      'scenario starts and RN loads since the crash run',
+      log!.all(/BUGSEE_E2E scenario=|Running "BareExample"|BUGSEE_E2E api after-crash event/, crash.start).map(line => line.text.trim().slice(-160)),
+    );
     expect(events.filter(e => e === 'RelaunchedAfterCrash')).toHaveLength(1);
-    expect(events.slice(0, 2)).toEqual(['Launching', 'Launched']);
+    // At this launch: iOS sends it between Launching and Launched.
+    expect(events).toEqual(expect.arrayContaining(['Launching', 'Launched']));
     await stopApp();
   });
 

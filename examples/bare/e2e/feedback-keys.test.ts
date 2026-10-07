@@ -23,9 +23,15 @@
  * and dates (M-C1, staging), the error, loading and version-changed states,
  * and the input text colour (no text typed).
  */
-import { apiMarker, jsonAfter, type Settled } from './api-markers';
+import { apiMarker, jsonAfter, keepShot, type Settled } from './api-markers';
 import { FEEDBACK_COLOURS, FEEDBACK_KEYS } from '../scenarios/api-constants';
-import { ANDROID_PACKAGE } from './device';
+import { execFile } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { promisify } from 'node:util';
+
+import { ANDROID_PACKAGE, IOS_BUNDLE_ID, IOS_SIMULATOR_ID, iosTarget } from './device';
 import { ON_ANDROID, ON_IOS, type Run, TARGET_NAME, describeDevice, must, report, startRun, stopApp } from './harness';
 import { colourOf, colourPixels } from './media';
 import { androidTopActivity, beginRetainingSuite, captureScreen, endRetainingSuite, ocrLines } from './observe';
@@ -34,6 +40,8 @@ import { uiDump } from './screen';
 
 jest.setTimeout(8 * 60_000);
 
+const execFileAsync = promisify(execFile);
+
 const PLATFORM = ON_IOS ? 'ios' : 'android';
 const BOUND: readonly string[] = FEEDBACK_KEYS[PLATFORM];
 const FEEDBACK_ACTIVITY = `${ANDROID_PACKAGE}/com.bugsee.library.feedback.FeedbackActivity`;
@@ -41,14 +49,83 @@ const MIN_PIXELS = 40;
 
 /** Keys the open chat paints, per platform. */
 const CHAT_PIXEL: Record<'android' | 'ios', readonly string[]> = {
-  android: ['actionBarColor', 'backgroundColor', 'bottomDelimiterColor', 'inputTextHintColor', 'titleTextColor'],
+  android: ['actionBarColor', 'backgroundColor', 'inputTextColor', 'inputTextHintColor', 'titleTextColor'],
   ios: ['backgroundColor', 'barsColor', 'closeButtonColor', 'inputBackgroundColor', 'navigationBarColor', 'titleTextColor'],
 };
 /** Keys the e-mail screen paints, per platform. */
 const EMAIL_PIXEL: Record<'android' | 'ios', readonly string[]> = {
-  android: ['emailBackgroundColor', 'emailContinueNotActiveColor', 'emailSkipTextColor'],
+  android: ['bottomDelimiterColor', 'emailBackgroundColor', 'emailContinueNotActiveColor', 'emailSkipTextColor'],
   ios: ['emailBackgroundColor', 'emailContinueNotActiveColor', 'emailSkipColor'],
 };
+
+function blend(top: string, under: string, alpha: number): string {
+  const channel = (hex: string, at: number) => Number.parseInt(hex.slice(at, at + 2), 16);
+  return `#${[1, 3, 5]
+    .map(at => Math.round(alpha * channel(top, at) + (1 - alpha) * channel(under, at)).toString(16).padStart(2, '0'))
+    .join('')}`;
+}
+
+/**
+ * The colour a key shows as, where the SDK draws it blended. Android 7.3.0's
+ * Compose chat draws the empty input's hint in `inputText` at alpha 0.5 over
+ * the background (ChatMessageInput.kt), so that is where inputTextColor shows;
+ * `bottomDelimiterColor` is the e-mail field's border (RequestEmailScreen.kt).
+ */
+function paintedAs(key: string): string {
+  if (ON_ANDROID && key === 'inputTextColor') {
+    return blend(FEEDBACK_COLOURS.inputTextColor!, FEEDBACK_COLOURS.backgroundColor!, 0.5);
+  }
+  return FEEDBACK_COLOURS[key]!;
+}
+
+/**
+ * Keys Android 7.3.0 reads back but never paints, pinned (it.failing): the
+ * feedback module (FeedbackColors.kt, ChatMessageInput.kt) never reads
+ * Feedback::ActionBarColor or Feedback::EmailContinueNotActiveColor, and the
+ * chat's hint is drawn from InputTextColor, not InputTextHintColor
+ * (WOD_LX1, 2026-10-07). To file (bugsee-android): sdk-issues-filed.md.
+ */
+const KNOWN_NOT_PAINTED: Record<'android' | 'ios', Record<string, string>> = {
+  android: {
+    actionBarColor: 'Android 7.3.0 never reads Feedback::ActionBarColor (to file)',
+    emailContinueNotActiveColor: 'Android 7.3.0 never reads Feedback::EmailContinueNotActiveColor (to file)',
+    inputTextHintColor: 'Android 7.3.0 draws the hint from InputTextColor at alpha 0.5 (to file)',
+  },
+  ios: {},
+};
+
+/** One pixel test: `it`, or `it.failing` with the known reason in the title. */
+function pixelIt(base: jest.It, key: string, where: string, shot: () => string): void {
+  const known = KNOWN_NOT_PAINTED[PLATFORM][key];
+  (known !== undefined ? base.failing : base)(`[${faOf(key)}] ${key} paints the ${where}${known !== undefined ? ` [known: ${known}]` : ''}`, async () => {
+    const found = await colourPixels(shot(), colourOf(paintedAs(key)), 20);
+    report(`${key} ${paintedAs(key)} pixels`, { count: found.count, box: found.box });
+    expect(found.count).toBeGreaterThan(MIN_PIXELS);
+  });
+}
+
+
+const ON_IPHONE = ON_IOS && iosTarget() === 'device';
+/**
+ * The e-mail screen needs a container the feedback store has never written:
+ * Android clears the app's data (`pm clear`), the simulator reinstalls the
+ * app and resets its Keychain. The iPhone is not reinstalled from a test (only run-ios.sh installs
+ * there): its first-open screen stays MANUAL (M-B6).
+ */
+const itFresh = ON_IPHONE ? it.skip : it;
+
+/** Uninstalls and reinstalls the simulator's copy of the app: a fresh data container. */
+async function reinstallSimulatorApp(): Promise<void> {
+  const { stdout } = await execFileAsync('xcrun', ['simctl', 'get_app_container', IOS_SIMULATOR_ID, IOS_BUNDLE_ID, 'app']);
+  const copy = join(mkdtempSync(join(tmpdir(), 'api-feedback-app-')), basename(stdout.trim()));
+  await execFileAsync('cp', ['-R', stdout.trim(), copy]);
+  await execFileAsync('xcrun', ['simctl', 'uninstall', IOS_SIMULATOR_ID, IOS_BUNDLE_ID]);
+  await execFileAsync('xcrun', ['simctl', 'install', IOS_SIMULATOR_ID, copy]);
+  // The feedback e-mail and the user identifier live in the Keychain, which
+  // a reinstall keeps (feedback.test.ts): reset it too.
+  await execFileAsync('xcrun', ['simctl', 'keychain', IOS_SIMULATOR_ID, 'reset']);
+  rmSync(dirname(copy), { recursive: true, force: true });
+}
 
 function faOf(key: string): string {
   return `FA-${String(Object.keys(FEEDBACK_COLOURS).indexOf(key) + 1).padStart(2, '0')}`;
@@ -100,6 +177,7 @@ describeDevice(`the feedback package's keys, nulls and pre-launch use on ${TARGE
         report('top activity', await androidTopActivity());
       }
       shot = await captureScreen('feedback-keys');
+      keepShot(shot, `chat-${run.scenario.nonce}`);
       report('readback', readback);
       report('foreign', foreign);
     });
@@ -114,9 +192,11 @@ describeDevice(`the feedback package's keys, nulls and pre-launch use on ${TARGE
         });
         continue;
       }
+      // The feedback getter answers from the package's own record of what
+      // was applied (react-native-feedback/src/appearance.ts), as written.
       it(`[${faOf(key)}] ${key} reads back as set`, () => {
         expect(foreign[key]).toBeUndefined();
-        expect(readback[key]).toBe(`${FEEDBACK_COLOURS[key]}ff`);
+        expect(readback[key]).toBe(FEEDBACK_COLOURS[key]);
       });
       if (!CHAT_PIXEL[PLATFORM].includes(key)) {
         continue;
@@ -128,11 +208,7 @@ describeDevice(`the feedback package's keys, nulls and pre-launch use on ${TARGE
         });
         continue;
       }
-      it(`[${faOf(key)}] ${key} paints the chat`, async () => {
-        const found = await colourPixels(shot, colourOf(FEEDBACK_COLOURS[key]!), 20);
-        report(`${key} ${FEEDBACK_COLOURS[key]} pixels`, { count: found.count, box: found.box });
-        expect(found.count).toBeGreaterThan(MIN_PIXELS);
-      });
+      pixelIt(it, key, 'chat', () => shot);
     }
   });
 
@@ -143,14 +219,20 @@ describeDevice(`the feedback package's keys, nulls and pre-launch use on ${TARGE
     let dump = '';
 
     beforeAll(async () => {
+      if (ON_IPHONE) {
+        return;
+      }
       if (ON_ANDROID) {
         // A fresh install as far as the feedback store knows.
         await adbStatus('shell', 'pm', 'clear', ANDROID_PACKAGE);
+      } else {
+        await reinstallSimulatorApp();
       }
       run = await startRun('api-feedback-email');
       await apiMarker(log!, 'feedback shown', run.scenario.nonce, 20_000, run.start);
       await new Promise(resolve => setTimeout(resolve, 6_000));
       shot = await captureScreen('feedback-email');
+      keepShot(shot, `email-${run.scenario.nonce}`);
       text = await ocrLines(shot);
       report('e-mail screen text', text);
       if (ON_ANDROID) {
@@ -160,9 +242,13 @@ describeDevice(`the feedback package's keys, nulls and pre-launch use on ${TARGE
       }
     });
 
-    afterAll(back);
+    afterAll(async () => {
+      if (!ON_IPHONE) {
+        await back();
+      }
+    });
 
-    it('[FB-06] the first open shows the e-mail screen, not the chat', async () => {
+    itFresh('[FB-06] the first open shows the e-mail screen, not the chat', async () => {
       if (ON_ANDROID) {
         expect(await androidTopActivity()).toBe(FEEDBACK_ACTIVITY);
         // An e-mail field to type into, which the chat screen does not have.
@@ -174,11 +260,7 @@ describeDevice(`the feedback package's keys, nulls and pre-launch use on ${TARGE
     });
 
     for (const key of EMAIL_PIXEL[PLATFORM]) {
-      it(`[${faOf(key)}] ${key} paints the e-mail screen`, async () => {
-        const found = await colourPixels(shot, colourOf(FEEDBACK_COLOURS[key]!), 20);
-        report(`${key} ${FEEDBACK_COLOURS[key]} pixels`, { count: found.count, box: found.box });
-        expect(found.count).toBeGreaterThan(MIN_PIXELS);
-      });
+      pixelIt(itFresh, key, 'e-mail screen', () => shot);
     }
   });
 

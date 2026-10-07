@@ -394,16 +394,19 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   });
 
   on(['A', 'S'])('[OPT-002] capture.breadcrumbs.extras adds SDK breadcrumbs the control does not record', async () => {
+    // Android is sent to the background and back; iOS is not driven
+    // (switching apps loses the run's console) and uploads after 4 s.
+    const step = ON_ANDROID ? 'background' : 'run';
     const crumbsOf = async (name: string): Promise<Array<Record<string, unknown>>> => {
-      const key = `${name}--background`;
+      const key = `${name}--${step}`;
       if (!cache.has(key)) {
         cache.set(
           key,
           (async () => {
             await clearBundles();
-            const { run } = await launch(name, 'background');
-            await apiMarker(log!, `eff ready case=${name}`, run.scenario.nonce, 15_000, run.start);
+            const { run } = await launch(name, step);
             if (ON_ANDROID) {
+              await apiMarker(log!, `eff ready case=${name}`, run.scenario.nonce, 15_000, run.start);
               await adbStatus('shell', 'input', 'keyevent', 'KEYCODE_HOME');
               await new Promise(resolve => setTimeout(resolve, 3_000));
               await adbStatus('shell', 'am', 'start', '-n', `${ANDROID_PACKAGE}/.MainActivity`);

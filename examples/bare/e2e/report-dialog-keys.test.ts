@@ -12,7 +12,7 @@
  * Keys that paint only in a state the dialog does not open in (a pressed
  * button: `actionBarButtonBackgroundClickedColor`) are read back only (M-A11).
  */
-import { apiMarker, jsonAfter } from './api-markers';
+import { apiMarker, jsonAfter, keepShot } from './api-markers';
 import { REPORT_COLOURS, REPORT_KEYS } from '../scenarios/api-constants';
 import { ON_ANDROID, ON_IOS, type Run, TARGET_NAME, describeDevice, report, startRun } from './harness';
 import { colourOf, colourPixels } from './media';
@@ -25,6 +25,45 @@ const PLATFORM = ON_IOS ? 'ios' : 'android';
 const BOUND: readonly string[] = REPORT_KEYS[PLATFORM];
 /** Keys a just-opened dialog cannot show (pressed states). */
 const NOT_ON_SCREEN = new Set(['actionBarButtonBackgroundClickedColor']);
+/**
+ * iOS draws the version label at alpha 0.8 (BGSVersionCell.m), over the
+ * dialog background: the colour on screen is that blend.
+ */
+function paintedAs(key: string): string {
+  if (ON_IOS && key === 'versionColor') {
+    return blend(REPORT_COLOURS.versionColor!, REPORT_COLOURS.backgroundColor!, 0.8);
+  }
+  return REPORT_COLOURS[key]!;
+}
+
+function blend(top: string, under: string, alpha: number): string {
+  const channel = (hex: string, at: number) => Number.parseInt(hex.slice(at, at + 2), 16);
+  return `#${[1, 3, 5]
+    .map(at => Math.round(alpha * channel(top, at) + (1 - alpha) * channel(under, at)).toString(16).padStart(2, '0'))
+    .join('')}`;
+}
+
+/**
+ * Keys a platform reads back but never paints, pinned (it.failing).
+ * iOS 7.0.0-beta5: the report dialog's close and send controls are round
+ * shape buttons (BGSShapeView, system blue and translucent white on the
+ * simulator and the XS); `reportCloseButtonColor` is used only in
+ * commented-out code (BGSReportController.m) and `reportSendButtonColor`
+ * only as the title colour of the send shape's untitled inner button
+ * (BGSBarButtonItem.m). Neither colour appears. To file (bugsee-cocoa):
+ * sdk-issues-filed.md.
+ */
+const KNOWN_NOT_PAINTED: Record<'android' | 'ios', Record<string, string>> = {
+  // Android 7.3.0: nothing in the library reads Report::ActionBarColor (only
+  // the constant exists); the bar stays the theme's near-black while
+  // ActionBarTextColor paints its text (WOD_LX1, 2026-10-07). To file.
+  android: { actionBarColor: 'Android 7.3.0 never reads Report::ActionBarColor (to file)' },
+  ios: {
+    closeButtonColor: 'iOS beta5 never applies reportCloseButtonColor (to file)',
+    sendButtonColor: 'iOS beta5 never applies reportSendButtonColor (to file)',
+  },
+};
+
 /** A colour region this small or smaller is noise, not paint. */
 const MIN_PIXELS = 40;
 
@@ -48,6 +87,7 @@ describeDevice(`the report dialog's appearance keys on ${TARGET_NAME}`, () => {
     report('foreign', foreign);
     await new Promise(resolve => setTimeout(resolve, 5_000));
     shot = await captureScreen('dialog-keys');
+    keepShot(shot, `${ON_IOS ? 'ios' : 'android'}-${run.scenario.nonce}`);
   });
 
   afterAll(async () => {
@@ -72,8 +112,9 @@ describeDevice(`the report dialog's appearance keys on ${TARGET_NAME}`, () => {
     if (NOT_ON_SCREEN.has(key)) {
       continue;
     }
-    it(`[${raOf(key)}] ${key} paints the open dialog`, async () => {
-      const found = await colourPixels(shot, colourOf(REPORT_COLOURS[key]!), 20);
+    const known = KNOWN_NOT_PAINTED[PLATFORM][key];
+    (known !== undefined ? it.failing : it)(`[${raOf(key)}] ${key} paints the open dialog${known !== undefined ? ` [known: ${known}]` : ''}`, async () => {
+      const found = await colourPixels(shot, colourOf(paintedAs(key)), 20);
       report(`${key} ${REPORT_COLOURS[key]} pixels`, { count: found.count, box: found.box });
       expect(found.count).toBeGreaterThan(MIN_PIXELS);
     });

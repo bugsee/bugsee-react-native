@@ -65,7 +65,17 @@ describeDevice(`console levels and the native-only log stream on ${TARGET_NAME}`
     });
   }
 
-  it('[FLOW-13] a native RCTLog warning with no console call lands once and is filtered once', () => {
+  /**
+   * iOS (XS, beta5, Debug, 2026-10-07): the line lands three times -- once
+   * as the bridge's Custom (98) line at Warning (2), and twice more as
+   * source 2 at level 4, RN's own stderr/os_log output of the RCTLog, which
+   * the SDK captures -- and the log filter runs three times (counts.rct 3).
+   * BGSRNConsoleCapture.mm forwards a native RCTLog line without arming the
+   * echo drop it arms for console.* lines. A wrapper bug (G16), to fix:
+   * sdk-issues-filed.md "to fix (wrapper)". Android: once.
+   */
+  const itNativeOnly = ON_IOS ? it.failing : it;
+  itNativeOnly('[FLOW-13] a native RCTLog warning with no console call lands once and is filtered once', () => {
     const lines = linesOf('rct');
     report('native-only line', lines);
     expect(lines).toHaveLength(1);

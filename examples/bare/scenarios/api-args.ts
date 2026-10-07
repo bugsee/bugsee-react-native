@@ -31,7 +31,7 @@ import Bugsee, {
   SpanStatus,
 } from '@bugsee/react-native';
 
-import { delay, mark, settle } from './api-common';
+import { delay, mark, settle, settled } from './api-common';
 import { deadEndpointUrl } from '../endpoint';
 
 /** Every `BreadcrumbLevel`, in the order breadcrumbs/types.ts lists them. */
@@ -132,14 +132,14 @@ async function subscriptions(nonce: string): Promise<void> {
 
 async function exceptionValues(nonce: string): Promise<void> {
   const results = {
-    string: await settle(() => Bugsee.logException(`api-exc string ${nonce}`)),
-    object: await settle(() => Bugsee.logException({ kind: 'plain', nonce })),
-    null: await settle(() => Bugsee.logException(null)),
+    string: await settled(() => Bugsee.logException(`api-exc string ${nonce}`)),
+    object: await settled(() => Bugsee.logException({ kind: 'plain', nonce })),
+    null: await settled(() => Bugsee.logException(null)),
   };
   await delay(1_500);
   const video = {
-    on: await settle(() => Bugsee.logException(new Error(`api-exc video-on ${nonce}`), { includeVideo: true })),
-    off: await settle(() => Bugsee.logException(new Error(`api-exc video-off ${nonce}`), { includeVideo: false })),
+    on: await settled(() => Bugsee.logException(new Error(`api-exc video-on ${nonce}`), { includeVideo: true })),
+    off: await settled(() => Bugsee.logException(new Error(`api-exc video-off ${nonce}`), { includeVideo: false })),
   };
   mark(`exc-values done nonce=${nonce} results=${JSON.stringify(results)} video=${JSON.stringify(video)}`);
 }
@@ -259,9 +259,9 @@ async function handlerNull(nonce: string): Promise<void> {
 function installMembersHandler(nonce: string): void {
   Bugsee.setReportHandler({
     onAfterReportCreated: async (report: BugseeReport) => {
-      const seen: Record<string, string> = {};
+      const seen: Record<string, unknown> = {};
       const call = async (name: string, fn: () => Promise<unknown>) => {
-        seen[name] = await settle(fn);
+        seen[name] = await settled(fn);
       };
       await call('getSummary', () => report.getSummary());
       await call('getDescription', () => report.getDescription());

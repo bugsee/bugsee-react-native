@@ -53,6 +53,16 @@ function reasonOf(bundle: PulledBundle): string {
   return String(exception.reason ?? '');
 }
 
+/** The JS payload's `reason` (exception.reason is the payload as JSON text). */
+function payloadReason(bundle: PulledBundle): string {
+  const text = reasonOf(bundle);
+  try {
+    return String((JSON.parse(text) as { reason?: unknown }).reason ?? '');
+  } catch {
+    return text;
+  }
+}
+
 /** Runs `scenario`, waits for `marker`, then for `count` bundles. */
 async function runFor(
   log: DeviceLog,
@@ -151,8 +161,13 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       const nonce = run.scenario.nonce;
       const results = jsonAfter<Record<string, Settled>>(done.text, 'results');
       expect(Object.values(results).every(r => r.ok)).toBe(true);
-      expect(errors.filter(b => reasonOf(b).includes(`api-exc string ${nonce}`))).toHaveLength(1);
-      expect(errors.filter(b => reasonOf(b).includes('plain') || reasonOf(b).includes(nonce) && reasonOf(b).includes('kind'))).toHaveLength(1);
+      // payload.ts describeThrown (R9): a string is the reason; an object
+      // with no string `message`, and null (typeof "object"), are
+      // `Non-Error thrown: object`.
+      const reasons = errors.map(b => payloadReason(b));
+      report('payload reasons', reasons);
+      expect(reasons.filter(r => r === `api-exc string ${nonce}`)).toHaveLength(1);
+      expect(reasons.filter(r => r === 'Non-Error thrown: object')).toHaveLength(2);
       // The three values plus the two includeVideo errors.
       expect(errors).toHaveLength(5);
     });
@@ -161,8 +176,8 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       const nonce = run.scenario.nonce;
       const video = jsonAfter<Record<string, Settled>>(done.text, 'video');
       expect(video.on!.ok && video.off!.ok).toBe(true);
-      const on = errors.find(b => reasonOf(b).includes(`api-exc video-on ${nonce}`));
-      const off = errors.find(b => reasonOf(b).includes(`api-exc video-off ${nonce}`));
+      const on = errors.find(b => payloadReason(b) === `api-exc video-on ${nonce}`);
+      const off = errors.find(b => payloadReason(b) === `api-exc video-off ${nonce}`);
       expect(on).toBeDefined();
       expect(off).toBeDefined();
       report('includeVideo files', { on: types(on!), off: types(off!) });
@@ -179,6 +194,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       await clearBundles();
       run = await startRun('api-boundary');
       fallback = await apiMarker(log!, 'boundary fallback', run.scenario.nonce, 30_000, run.start);
+      await new Promise(resolve => setTimeout(resolve, 2_000));
       report('fallback', fallback.text.trim());
       if (!ON_SIMULATOR) {
         bundles = (await awaitBundles(1, 45_000)).filter(b => b.request.type === 'error');
@@ -188,8 +204,13 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
     });
 
     it('[API-13b] the fallback function is called with the error and the component stack', () => {
+      // React renders the fallback first from getDerivedStateFromError (no
+      // stack yet), then again once componentDidCatch has stored the stack.
+      const calls = log!.all(new RegExp(`BUGSEE_E2E api boundary fallback nonce=${run.scenario.nonce} `), run.start);
+      report('fallback calls', calls.map(line => line.text.trim()));
+      expect(calls.every(line => line.text.includes(`error=api-boundary render ${run.scenario.nonce}`))).toBe(true);
+      expect(calls.some(line => wordAfter(line.text, 'stack') === 'has-thrower')).toBe(true);
       expect(fallback.text).toContain(`error=api-boundary render ${run.scenario.nonce}`);
-      expect(wordAfter(fallback.text, 'stack')).toBe('has-thrower');
       expect(log!.all(new RegExp(`BUGSEE_E2E api boundary onError nonce=${run.scenario.nonce}`), run.start)).toHaveLength(1);
     });
 
@@ -299,14 +320,18 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       }
     });
 
-    it('[API-19d] setStatus then finish() with no argument ends with the status set (divergence 12 recorded)', () => {
+    it('[API-19d] setStatus then finish() with no argument ends OK, as documented (divergence 12)', () => {
       const recorded = span(`set-status-${run.scenario.nonce}`);
       report('setStatus+finish span', recorded);
       expect(recorded).toBeDefined();
       const timeout = span(`status-Timeout-${run.scenario.nonce}`)?.status;
       const ok = span(`status-OK-${run.scenario.nonce}`)?.status;
       report('setStatus(Timeout)+finish() recorded as', { recorded: recorded!.status, timeoutIs: timeout, okIs: ok });
-      expect([timeout, ok]).toContainEqual(recorded!.status);
+      // beta-coverage-report.md item 12: a no-arg finish() is OK on both
+      // SDKs, so setStatus alone never reaches a report.
+      expect(ok).toBeDefined();
+      expect(recorded!.status).toEqual(ok);
+      expect(recorded!.status).not.toEqual(timeout);
     });
 
     it('[API-19g] a finished span rejects further use with E_SPAN_HANDLE_DEAD', () => {

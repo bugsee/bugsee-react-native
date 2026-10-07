@@ -3,6 +3,9 @@
  * `BUGSEE_E2E api <what> nonce=<n> key=value ...`, where a value is a word or
  * a JSON object/array (which may hold spaces).
  */
+import { copyFileSync, mkdirSync } from 'node:fs';
+import { basename, join } from 'node:path';
+
 import { must } from './harness';
 import { type DeviceLog, type LogLine } from './scenario';
 
@@ -73,4 +76,18 @@ export interface Settled {
   readonly ok: boolean;
   readonly value?: unknown;
   readonly error?: { name?: string; code?: unknown; message?: string; thrown?: string };
+}
+
+/**
+ * Keeps a copy of a screen capture in `E2E_API_SHOTS` (a directory), when
+ * set: the pulled-bundle roots it lives in are deleted at the end of a suite,
+ * and a pixel result is easier to judge with the picture.
+ */
+export function keepShot(file: string, label: string): void {
+  const dir = process.env.E2E_API_SHOTS;
+  if (dir === undefined || dir === '') {
+    return;
+  }
+  mkdirSync(dir, { recursive: true });
+  copyFileSync(file, join(dir, `${label}-${basename(file)}`));
 }

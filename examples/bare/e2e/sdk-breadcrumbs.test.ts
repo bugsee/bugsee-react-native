@@ -4,31 +4,24 @@
  *
  * Scenario `api-sdk-crumbs` (scenarios/api-ui.ts) launches with
  * `capture.breadcrumbs` on, shows a white screen, adds one breadcrumb of its
- * own, and uploads 20 s later. In between, this test sends the app to the
- * background and back -- Android with the Home key and an activity start,
- * the simulator by opening Settings and relaunching the app -- so the SDK has
- * an app-lifecycle change to record. The iPhone is not driven (no other app
- * may be opened on it): there the crumbs are whatever the launch produced.
+ * own, and uploads 20 s later. In between, this test sends the Android app
+ * to the background and back (the Home key, then an activity start), so the
+ * SDK has an app-lifecycle change to record. iOS is not driven: there the
+ * crumbs are whatever the launch produced (the SDK's own navigation and
+ * lifecycle crumbs).
  *
  * Video: decodable h264, more than one frame, and not black -- the white
  * stage makes the centre of at least one frame bright.
  */
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-
 import { type PulledBundle, captureEvents } from './bundles';
 import { apiMarker } from './api-markers';
-import { ANDROID_COMPONENT, IOS_BUNDLE_ID, IOS_SIMULATOR_ID, iosTarget } from './device';
-import { ON_ANDROID, ON_IOS, type Run, TARGET_NAME, awaitBundles, describeDevice, report, startRun, stopApp } from './harness';
+import { ANDROID_COMPONENT } from './device';
+import { ON_ANDROID, type Run, TARGET_NAME, awaitBundles, describeDevice, report, startRun, stopApp } from './harness';
 import { LUMA_BRIGHT_MIN, frameLumas, probeCodec } from './media';
 import { beginRetainingSuite, endRetainingSuite, frameCount } from './observe';
 import { type DeviceLog, adbStatus } from './scenario';
 
-const execFileAsync = promisify(execFile);
-
 jest.setTimeout(5 * 60_000);
-
-const ON_SIMULATOR = ON_IOS && iosTarget() === 'simulator';
 
 async function backgroundAndBack(): Promise<string> {
   if (ON_ANDROID) {
@@ -37,13 +30,10 @@ async function backgroundAndBack(): Promise<string> {
     await adbStatus('shell', 'am', 'start', '-n', ANDROID_COMPONENT);
     return 'home key, then the activity again';
   }
-  if (ON_SIMULATOR) {
-    await execFileAsync('xcrun', ['simctl', 'launch', IOS_SIMULATOR_ID, 'com.apple.Preferences']);
-    await new Promise(resolve => setTimeout(resolve, 3_000));
-    await execFileAsync('xcrun', ['simctl', 'launch', IOS_SIMULATOR_ID, IOS_BUNDLE_ID]);
-    return 'Settings opened, then the app again';
-  }
-  return 'not driven (iPhone)';
+  // iOS is not driven: switching apps on the simulator suspends the app
+  // and loses the run's console, and no other app may be opened on the
+  // iPhone. iOS records its navigation and lifecycle crumbs at launch.
+  return 'not driven (iOS)';
 }
 
 describeDevice(`SDK breadcrumbs and a plain upload's video on ${TARGET_NAME}`, () => {
