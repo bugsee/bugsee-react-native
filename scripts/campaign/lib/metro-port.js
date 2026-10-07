@@ -3,8 +3,10 @@
 // port, so its Debug build never loads another app's bundle from a Metro some
 // other lane started on 8081. Writes <app>/campaign.port and bakes the port
 // into the iOS build (RCT_METRO_PORT on React-Core, from the Podfile's
-// post_install). Android takes it at build time:
-// -PreactNativeDevServerPort=<port> (build-app.sh).
+// post_install) where React-Core compiles from source (0.81-0.83); a
+// prebuilt core (0.84+) ignores it, so launch-check.sh also passes
+// -RCT_jsLocation localhost:<port> at launch. Android takes it at build
+// time: -PreactNativeDevServerPort=<port> (build-app.sh).
 'use strict';
 const fs = require('fs');
 const path = require('path');
