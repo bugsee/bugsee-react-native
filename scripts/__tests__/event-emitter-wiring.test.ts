@@ -5,7 +5,8 @@ const pkg = (...p: string[]) =>
   readFileSync(join(__dirname, '..', '..', 'packages', 'react-native', ...p), 'utf8');
 
 const spec = pkg('src', 'NativeBugsee.ts');
-const declaresAnEmitter = /:\s*EventEmitter</.test(spec);
+// The spec spells it CodegenTypes.EventEmitter (root import, API-49).
+const declaresAnEmitter = /:\s*CodegenTypes\.EventEmitter</.test(spec);
 
 /**
  * A spec that declares an `EventEmitter` needs more than a conforming module

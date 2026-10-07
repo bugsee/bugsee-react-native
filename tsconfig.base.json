@@ -4,11 +4,11 @@
     "lib": ["ES2022"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    // RN 0.87 sets exports["./Libraries/*"].types to null, so deep imports
-    // into react-native resolve to .js with no declarations. This condition is
-    // RN's own sanctioned opt-in to the typed deep-import surface, which is
-    // where codegen types such as UnsafeObject live.
-    "customConditions": ["react-native-legacy-deep-imports"],
+    // No "react-native-legacy-deep-imports" condition: RN 0.87 declares no
+    // types for deep imports without it, and a consumer's tsc compiles this
+    // package's source with the consumer's tsconfig, which does not set it
+    // (API-49). Leaving it out here makes a deep import fail our own
+    // typecheck first. Codegen types come from the root `CodegenTypes`.
     // <BugseeSecure> is the library's first .tsx; the automatic runtime is
     // what React Native's Babel preset compiles it with.
     "jsx": "react-jsx",

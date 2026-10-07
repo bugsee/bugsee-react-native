@@ -184,7 +184,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        react-native: ['0.81', '0.83', '0.86', '0.87']
+        react-native: ['0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -195,6 +195,54 @@ jobs:
       # this: its android/ and ios/ projects come from one version's template,
       # and swapping the npm dependency does not swap the project.
       - run: ./scripts/check-rn-compat.sh ${{ matrix.react-native }}
+
+  # The packed tarballs installed into a fresh `react-native init` app, as a
+  # customer gets them from npm (scripts/check-pack-install.sh). Inside the
+  # workspace every lookup finds the repo root and the repo's own tsconfig,
+  # so none of the jobs above can see what this does: native-versions.json
+  # missing from the tarball broke Gradle and pod install for every npm
+  # install (BLK-17), and the app's own `tsc` failed on 0.87 (API-49).
+  # Typecheck on every supported minor; Gradle configuration on the floor
+  # and the latest.
+  pack-install:
+    name: pack install (${{ matrix.react-native }}${{ matrix.android && ', android' || '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        react-native: ['0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87']
+        include:
+          - react-native: '0.81'
+            android: true
+          - react-native: '0.87'
+            android: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - uses: actions/setup-java@v4
+        if: matrix.android
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: ./scripts/check-pack-install.sh ${{ matrix.react-native }} --typecheck ${{ matrix.android && '--android' || '' }}
+
+  # The iOS half: `pod install` evaluates both podspecs from the tarballs and
+  # vendors the SDK (BLK-17).
+  pack-install-ios:
+    name: pack install (${{ matrix.react-native }}, ios)
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        react-native: ['0.81', '0.87']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: ./scripts/check-pack-install.sh ${{ matrix.react-native }} --ios
 
   android:
     name: android

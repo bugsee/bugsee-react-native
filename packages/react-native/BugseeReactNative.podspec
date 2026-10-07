@@ -1,7 +1,16 @@
 require 'json'
 
 package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
-native  = JSON.parse(File.read(File.join(__dir__, '..', '..', 'native-versions.json')))
+# The one source of every native pin. In this repo it is the root file. In an
+# app the package sits in node_modules, where the root file is not above it, so
+# prepack ships a copy at the package root (scripts/pack-native-versions.ts);
+# that copy is read first.
+native_versions_file = [
+  File.join(__dir__, 'native-versions.json'),
+  File.join(__dir__, '..', '..', 'native-versions.json'),
+].find { |path| File.file?(path) }
+raise "native-versions.json not found in #{__dir__} or the repo root above it" unless native_versions_file
+native  = JSON.parse(File.read(native_versions_file))
 
 Pod::Spec.new do |s|
   s.name         = 'BugseeReactNative'
@@ -51,16 +60,24 @@ Pod::Spec.new do |s|
     VERSION="#{native['ios']['sdk']}"
     STAMP=".bugsee-xcframework-version"
     if [ ! -d "Bugsee.xcframework" ] || [ "$(cat "${STAMP}" 2>/dev/null)" != "${VERSION}" ]; then
-      rm -rf "Bugsee.xcframework"
-      curl -sSfL -o /tmp/Bugsee-${VERSION}.zip \
+      # A download directory of this run's own. A fixed /tmp path is shared by
+      # every pod install on the machine: two at once overwrote and deleted
+      # each other's archive mid-extract ("bad CRC").
+      WORK="$(mktemp -d "${TMPDIR:-/tmp}/bugsee-xcframework.XXXXXX")"
+      # Unpacked beside its destination, so the final mv is a rename on one
+      # filesystem: a failed download or extract leaves nothing half-written.
+      STAGE="$(mktemp -d "./.bugsee-xcframework.XXXXXX")"
+      trap 'rm -rf "${WORK}" "${STAGE}"' EXIT
+      curl -sSfL -o "${WORK}/Bugsee.zip" \
         "https://download.bugsee.com/sdk/ios/spm/Bugsee-${VERSION}.zip"
       # Only the framework. The archive also carries the iOS SDK's own
       # README.md and LICENSE at its root, and extracting everything drops
       # them into this package -- where npm publishes README.md and LICENSE
       # whatever `files` says. That is how this package came to ship the SDK's
       # CocoaPods instructions and PLCrashReporter's licence.
-      unzip -q -o /tmp/Bugsee-${VERSION}.zip 'Bugsee.xcframework/*' -d .
-      rm -f /tmp/Bugsee-${VERSION}.zip
+      unzip -q -o "${WORK}/Bugsee.zip" 'Bugsee.xcframework/*' -d "${STAGE}"
+      rm -rf "Bugsee.xcframework"
+      mv "${STAGE}/Bugsee.xcframework" "Bugsee.xcframework"
       printf '%s' "${VERSION}" > "${STAMP}"
     fi
   CMD

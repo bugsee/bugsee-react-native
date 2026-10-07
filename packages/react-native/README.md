@@ -29,17 +29,33 @@ Manager. Earlier versions use CocoaPods, where the podspec vendors the same
 XCFramework — run `pod install` as usual. Nothing is published to CocoaPods
 trunk, so no `pod repo update` is needed.
 
-**Android.** Autolinking picks the module up; no Gradle changes are required.
+**Android.** Autolinking picks the module up, and the app builds and
+launches with no Gradle changes. Release symbolication needs the Bugsee Gradle
+plugin and the source-map hooks: see [Release symbolication](#release-symbolication).
+
+**pnpm 10 and later** run no dependency's install script unless the project
+decides, and pnpm 11 fails the install until it does
+(`ERR_PNPM_IGNORED_BUILDS`): `@bugsee/cli`, which uploads symbols and source
+maps, has a `postinstall`. Its binary comes from a platform-specific optional
+dependency, so the script is only a download fallback for registry mirrors
+that lack those packages. Decide in `pnpm-workspace.yaml`:
+
+```yaml
+allowBuilds:
+  '@bugsee/cli': false   # true only if your registry lacks @bugsee/cli-<platform>
+```
+
+React Native itself also needs `nodeLinker: hoisted` under pnpm.
 
 ## Use
 
 ```ts
-import Bugsee, { createDefaultLaunchOptions } from '@bugsee/react-native';
+import Bugsee, { BugseeLaunchOptions, createDefaultLaunchOptions } from '@bugsee/react-native';
 
 const options = createDefaultLaunchOptions();
 options.captureLogs = true;
 
-await Bugsee.launch('<your app token>', options.serialize());
+await Bugsee.launch('<your app token>', BugseeLaunchOptions.serialize(options));
 ```
 
 `launch` resolves to whether the SDK started. It can decline — already
@@ -108,6 +124,16 @@ so when the root file already has one the pin goes into it (its braces must
 stand alone on their lines, or the prebuild refuses); a new block is written
 only when there is none.
 
+## Release symbolication
+
+A Release build has to send Bugsee what turns its crash frames back into
+source: the JS source map (with a debug id that ties it to the shipped
+bundle), the R8 mapping and the native (NDK) symbols on Android, and the
+dSYMs on iOS. **An Expo app gets all of it from the config plugin.** A bare
+app needs the three sections below — the Android source-map hooks, the Bugsee
+Gradle plugin, and the iOS bundle phase. Without them the app still builds
+and runs, but JS and native frames in Release reports stay unsymbolicated.
+
 ## Android source maps
 
 Release builds give the Hermes bundle a debug id and upload its source map, so
@@ -148,6 +174,119 @@ Hermes off, the plain JS bundle and Metro's map get the id instead.
 - **Limitations.** The preserve wrapper is a shell script, so Hermes release
   builds on a Windows host are not supported yet. The hook has not yet been
   verified with Gradle's configuration cache.
+
+## Android: Bugsee Gradle plugin
+
+Uploads the R8/ProGuard mapping, the native (NDK) symbols and the build info
+of each Release build. It is a Gradle plugin, so autolinking cannot add it;
+the config plugin writes these same edits for an Expo app.
+
+`android/settings.gradle` — the plugin is published to Maven Central, which
+Gradle does not search for plugins unless told to:
+
+```groovy
+pluginManagement {
+    includeBuild("../node_modules/@react-native/gradle-plugin")
+    repositories {
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+    }
+}
+```
+
+`android/build.gradle` — declare it at the version this package is built
+against (`android.gradlePlugin` in
+`node_modules/@bugsee/react-native/native-versions.json`), above
+`apply plugin: "com.facebook.react.rootproject"`:
+
+```groovy
+plugins {
+    id 'com.bugsee.android.gradle' version '4.0.7' apply false
+}
+```
+
+`android/app/build.gradle` — apply it, and for native crash symbols add the
+NDK module at the SDK version the package pins, with symbol extraction on
+(AGP extracts none by default, so there would be nothing to upload):
+
+```groovy
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+apply plugin: "com.bugsee.android.gradle"
+
+android {
+    buildTypes {
+        release {
+            ndk {
+                debugSymbolLevel 'SYMBOL_TABLE'
+            }
+        }
+    }
+}
+
+// bugseeDir as in "Android source maps" above.
+def bugseeVersions = new groovy.json.JsonSlurper().parse(new File(bugseeDir, "native-versions.json"))
+
+dependencies {
+    implementation "com.bugsee:bugsee-android-ndk:${bugseeVersions.android.sdk}"
+}
+```
+
+`android/bugsee.properties` (next to `android/build.gradle`; keep it out of
+version control if the token is private):
+
+```properties
+app_token=<your Android app token>
+plugin.ndk.enabled=true
+```
+
+## iOS: bundle phase
+
+The JS half of iOS symbolication. In Xcode, the app target's **Bundle React
+Native code and images** build phase runs React Native's
+`react-native-xcode.sh`. Point it at this package's `bugsee-xcode.sh`
+instead, which runs React Native's script, then composes the Hermes source
+map, gives the bundle and the map a debug id, and uploads the map:
+
+```sh
+set -e
+
+WITH_ENVIRONMENT="$REACT_NATIVE_PATH/scripts/xcode/with-environment.sh"
+REACT_NATIVE_XCODE="${SRCROOT}/../node_modules/@bugsee/react-native/scripts/bugsee-xcode.sh"
+
+/bin/sh -c "\"$WITH_ENVIRONMENT\" \"$REACT_NATIVE_XCODE\""
+```
+
+The upload needs a real token, from `BUGSEE_APP_TOKEN` or `BUGSEE_TOKEN_IOS`
+in the build environment (for example `export BUGSEE_APP_TOKEN=…` in
+`ios/.xcode.env.local`). Without one the phase bundles as usual and says it
+skipped the upload; `BUGSEE_UPLOAD_SOURCEMAPS=false` turns the upload off,
+and a failed upload warns without failing the build. Debug builds skip it.
+
+Native iOS frames come from the dSYMs. The config plugin adds an Archive
+post-action that uploads them with `bugsee-cli xcode post-action`; a bare app
+adds the same post-action to its scheme's Archive action.
+
+## Troubleshooting
+
+**`fmt`: "call to consteval function … is not a constant expression" (iOS,
+React Native 0.81 and 0.82, Xcode 26.4 or later).** Not Bugsee: React Native
+0.81 and 0.82 build `fmt` 11.0.2 from source, which newer Apple clang rejects
+as C++20 ([fmtlib/fmt#4740](https://github.com/fmtlib/fmt/issues/4740)); 0.83
+and later ship `fmt` 12 and are not affected. Build that one pod as C++17 from
+the `post_install` in `ios/Podfile`, after `react_native_post_install(...)`,
+then run `pod install` again:
+
+```ruby
+    installer.pods_project.targets.each do |target|
+      next unless target.name == 'fmt'
+      target.build_configurations.each do |config|
+        config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
+      end
+    end
+```
 
 ## Licence
 

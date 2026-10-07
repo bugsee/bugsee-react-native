@@ -8,6 +8,10 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "types": ["node", "jest"],
+    // The example is an app, and it uses RN 0.87's typed deep-import surface
+    // (react-native/Libraries/...) the way an app may opt in. The library's
+    // own config deliberately does not (tsconfig.base.json).
+    "customConditions": ["react-native-legacy-deep-imports"],
     "noEmit": true,
     "allowImportingTsExtensions": true
   },

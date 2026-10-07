@@ -1,9 +1,10 @@
-import type { TurboModule } from 'react-native';
+// CodegenTypes from the package root, not the deep
+// `react-native/Libraries/Types/CodegenTypes` path: 0.87 declares no types for
+// deep imports unless the consumer opts in, and this file is compiled by the
+// consumer's tsc (API-49). Root export and codegen's qualified-name support
+// both exist from 0.80, below the 0.81 floor.
+import type { CodegenTypes, TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
-import type {
-  EventEmitter,
-  UnsafeObject,
-} from 'react-native/Libraries/Types/CodegenTypes';
 
 /**
  * The native surface. Codegen turns this into the C++/Java/ObjC++ spec both
@@ -34,7 +35,7 @@ export interface Spec extends TurboModule {
    * Deriving keeps one source, one mapping, and tests that cover both
    * platforms at once.
    */
-  readonly onLifecycleEvent: EventEmitter<{ name: string; reportId?: string }>;
+  readonly onLifecycleEvent: CodegenTypes.EventEmitter<{ name: string; reportId?: string }>;
 
 
   /**
@@ -46,7 +47,7 @@ export interface Spec extends TurboModule {
    * configuration are JS-side facts. Call before `launch`: the SDK reads the
    * wrapper while building a report's environment.
    */
-  setWrapperInfo(identity: UnsafeObject): void;
+  setWrapperInfo(identity: CodegenTypes.UnsafeObject): void;
   /**
    * Publishes the regions the SDK must not record, for one display, as a flat
    * list of four-number rectangles: `[left, top, right, bottom, ...]`, in the
@@ -118,7 +119,7 @@ export interface Spec extends TurboModule {
    * 6.5`/`Task 6.6` are what actually emit it, from the same per-module event
    * bus every other emitter here goes through.
    */
-  readonly onDataRequest: EventEmitter<{
+  readonly onDataRequest: CodegenTypes.EventEmitter<{
     requestId: string;
     type: string;
     originX: number;
@@ -142,12 +143,12 @@ export interface Spec extends TurboModule {
    */
   setViewTreeEnabled(enabled: boolean): void;
 
-  launch(token: string, options: UnsafeObject): Promise<boolean>;
-  relaunch(options: UnsafeObject): Promise<boolean>;
+  launch(token: string, options: CodegenTypes.UnsafeObject): Promise<boolean>;
+  relaunch(options: CodegenTypes.UnsafeObject): Promise<boolean>;
   stop(): Promise<boolean>;
   getStatus(): Promise<number>;
   /** The options the SDK reports as being in effect. */
-  getLaunchOptions(): Promise<UnsafeObject>;
+  getLaunchOptions(): Promise<CodegenTypes.UnsafeObject>;
   testCrash(): void;
 
   /**
@@ -245,7 +246,7 @@ export interface Spec extends TurboModule {
    * dropped by the SDK; this event is not a second timeout that would pass
    * the original through.
    */
-  readonly onNetworkFilterRequest: EventEmitter<{ requestId: string; eventJson: string }>;
+  readonly onNetworkFilterRequest: CodegenTypes.EventEmitter<{ requestId: string; eventJson: string }>;
   /**
    * Installs or removes the native network filter (`setNetworkEventFilter`
    * on both SDKs). `true` registers the bridge; `false` passes `null`, which
@@ -281,7 +282,7 @@ export interface Spec extends TurboModule {
    * A request that never gets an answer is dropped by the SDK's own timeout;
    * this event is not a second one.
    */
-  readonly onLogFilterRequest: EventEmitter<{ requestId: string; line: string }>;
+  readonly onLogFilterRequest: CodegenTypes.EventEmitter<{ requestId: string; line: string }>;
   /**
    * Installs or removes the native log filter (`setLogEventFilter` on both
    * SDKs). `true` registers the bridge; `false` passes `null`, which is how
@@ -337,7 +338,7 @@ export interface Spec extends TurboModule {
    * passed that id. It sits beside `crumbJson`; it is not a key inside the
    * crumb the callback sees. An SDK crumb omits it.
    */
-  readonly onBreadcrumbFilterRequest: EventEmitter<{
+  readonly onBreadcrumbFilterRequest: CodegenTypes.EventEmitter<{
     requestId: string;
     crumbJson: string;
     addId?: string;
@@ -394,14 +395,14 @@ export interface Spec extends TurboModule {
    * because `UnsafeObject` has no way to say "absent" other than omitting a
    * member.
    */
-  getAttribute(name: string): Promise<UnsafeObject>;
+  getAttribute(name: string): Promise<CodegenTypes.UnsafeObject>;
   /**
    * Every attribute, from the persisted copy the report is built from --
    * where a fractional value is a 32-bit float, already widened back to a
    * `Double` the way the SDK's own JSON writer would (design doc Phase 5).
    * `{}` when none are set.
    */
-  getAllAttributes(): Promise<UnsafeObject>;
+  getAllAttributes(): Promise<CodegenTypes.UnsafeObject>;
   clearAttribute(name: string): Promise<void>;
   clearAllAttributes(): Promise<void>;
   /**
@@ -413,7 +414,7 @@ export interface Spec extends TurboModule {
    */
   setUserIdentifier(identifier: string): void;
   /** `{}` when absent (including a native empty string), else `{ value }`. */
-  getUserIdentifier(): Promise<UnsafeObject>;
+  getUserIdentifier(): Promise<CodegenTypes.UnsafeObject>;
   clearUserIdentifier(): void;
 
   /**
@@ -427,7 +428,7 @@ export interface Spec extends TurboModule {
    * the native deadline for THIS handle — JS marks the handle dead locally
    * once it passes, whether or not the app's callback has settled.
    */
-  readonly onReportHandlerRequest: EventEmitter<{
+  readonly onReportHandlerRequest: CodegenTypes.EventEmitter<{
     handleId: string;
     phase: string;
     reportId: string;
@@ -449,7 +450,7 @@ export interface Spec extends TurboModule {
    */
   completeReportHandler(handleId: string): void;
   /** The live state of the report behind `handleId`, as a plain snapshot. */
-  reportRead(handleId: string): Promise<UnsafeObject>;
+  reportRead(handleId: string): Promise<CodegenTypes.UnsafeObject>;
   /**
    * Applies a validated patch to the report behind `handleId`. All-or-nothing
    * on both sides of the bridge: JS validates before crossing, and native
@@ -483,7 +484,7 @@ export interface Spec extends TurboModule {
    */
   createReport(): Promise<string | null>;
   /** The live state of the created report behind `handleId`, the `BugseeReportSnapshot` wire shape. */
-  createdReportRead(handleId: string): Promise<UnsafeObject>;
+  createdReportRead(handleId: string): Promise<CodegenTypes.UnsafeObject>;
   /**
    * Applies a validated patch, as JSON text, the same transport as
    * {@link reportUpdate}.
@@ -534,15 +535,15 @@ export interface Spec extends TurboModule {
     name: string,
     operation: string,
     attributesJson: string | null,
-  ): UnsafeObject;
+  ): CodegenTypes.UnsafeObject;
   /** Starts a span under the active span on this thread and retains it. */
-  startSpan(operation: string, description: string | null): UnsafeObject;
+  startSpan(operation: string, description: string | null): CodegenTypes.UnsafeObject;
   /**
    * The active span on this thread, or a snapshot whose `handle` is `''`
    * when there is none. A span this bridge already holds comes back with
    * the same handle.
    */
-  getActiveSpan(): UnsafeObject;
+  getActiveSpan(): CodegenTypes.UnsafeObject;
   /**
    * `setName`, which sets the operation on both SDKs.
    *
@@ -560,7 +561,7 @@ export interface Spec extends TurboModule {
     handle: string,
     operation: string,
     description: string | null,
-  ): UnsafeObject;
+  ): CodegenTypes.UnsafeObject;
   /**
    * Finishes the span and releases every retained span that is now
    * finished, including children a parent finish cancelled. `statusSet`
