@@ -8,7 +8,7 @@
  * credentials.json and android/bugsee.properties hold (default: examples/bare)
  * and each extra `--credentials` file (e.g. the staging worktree's). Paths
  * are files or directories (recursive); a `.zip` is also scanned entry by
- * entry. A `SECRET-SCAN FOUND` line already in a scanned log (the device
+ * entry, each finding named `<zip>!<entry>`. A `SECRET-SCAN FOUND` line already in a scanned log (the device
  * harness's in-run scan of pulled bundles) counts as a finding too.
  * `E2E_SECRET_SCAN_KNOWN=<base name>[,...]`: findings in those files are
  * printed as KNOWN and do not fail (a recorded decision only).
@@ -78,15 +78,28 @@ let scanned = 0;
 for (const file of paths.flatMap(filesUnder)) {
   scanned += 1;
   const data = readFileSync(file);
-  for (const finding of scanBytes(data, needles)) {
+  // A zip is read entry by entry below; its raw bytes would only repeat a
+  // stored entry under the zip's own name, past E2E_SECRET_SCAN_KNOWN.
+  const zip = file.endsWith('.zip');
+  for (const finding of zip ? [] : scanBytes(data, needles)) {
     (isKnownFile(file, known) ? accepted : found).push(
       isKnownFile(file, known) ? describeKnown(file, finding) : describeFinding(file, finding),
     );
   }
-  if (file.endsWith('.zip')) {
-    const entries = execFileSync('unzip', ['-p', file], { maxBuffer: 1024 * 1024 * 1024 });
-    for (const finding of scanBytes(entries, needles)) {
-      found.push(describeFinding(`${file} (unzipped)`, finding));
+  if (zip) {
+    // Entry by entry, so a finding names the entry and E2E_SECRET_SCAN_KNOWN
+    // applies to the entry's own name, as in the in-run scan.
+    const entries = execFileSync('unzip', ['-Z1', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+      .split('\n')
+      .filter(entry => entry !== '' && !entry.endsWith('/'));
+    for (const entry of entries) {
+      const bytes = execFileSync('unzip', ['-p', file, entry], { maxBuffer: 1024 * 1024 * 1024 });
+      const where = `${file}!${entry}`;
+      for (const finding of scanBytes(bytes, needles)) {
+        (isKnownFile(entry, known) ? accepted : found).push(
+          isKnownFile(entry, known) ? describeKnown(where, finding) : describeFinding(where, finding),
+        );
+      }
     }
   }
   if (/\.(log|txt|json)$/.test(file)) {

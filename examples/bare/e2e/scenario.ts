@@ -569,7 +569,7 @@ export async function devicePidsOfApp(): Promise<number[]> {
  * Starts the app fresh on `scenario`. force-stop first: `am start` on an
  * already-running app resumes it without re-running JS.
  */
-export async function launchScenario(scenario: Scenario): Promise<void> {
+export async function launchScenario(scenario: Scenario, extras: ScenarioExtras = {}): Promise<void> {
   await adb('shell', 'am', 'force-stop', ANDROID_PACKAGE);
   await adb(
     'shell',
@@ -580,7 +580,7 @@ export async function launchScenario(scenario: Scenario): Promise<void> {
     '-a',
     'android.intent.action.VIEW',
     '-d',
-    `'${scenarioUri(scenario)}'`,
+    `'${scenarioUri(scenario, extras)}'`,
   );
 }
 

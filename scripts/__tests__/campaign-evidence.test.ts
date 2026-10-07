@@ -210,8 +210,11 @@ describe('cellOf and verdictOf', () => {
     [['fail', 'fail', 'fail'], 'FAIL 3/3'],
     [['pass', 'fail', 'pass'], 'FLAKY 2/3'],
     [['known', 'known'], 'FAIL 2/2 (known)'],
-    [['known', 'fail'], 'FAIL 2/2 (known)'],
+    [['known'], 'FAIL 1/1 (known)'],
+    [['known', 'fail'], 'FAIL 2/2'],
+    [['fail', 'known', 'known'], 'FAIL 3/3'],
     [['known', 'pass'], 'FLAKY 1/2'],
+    [['known', 'pass', 'fail'], 'FLAKY 1/3'],
   ] as const)('%p -> %p', (outcomes, cell) => {
     expect(cellOf(outcomes)).toBe(cell);
   });
@@ -221,6 +224,9 @@ describe('cellOf and verdictOf', () => {
     [['PASS 2/2', 'FLAKY 1/2'], 'FLAKY'],
     [['FLAKY 1/2', 'FAIL 2/2'], 'FAIL'],
     [['FAIL 2/2 (known)', 'PASS 2/2'], 'FAIL (known)'],
+    [['FAIL 2/2 (known)', 'FAIL 1/1'], 'FAIL'],
+    [['FAIL 1/1', 'FAIL 2/2 (known)'], 'FAIL'],
+    [['FAIL 2/2 (known)', 'FLAKY 1/2'], 'FAIL (known)'],
     [['BLOCKED (worker)', 'PASS 1/1'], 'BLOCKED'],
     [['BLOCKED (x)', 'FLAKY 1/2'], 'FLAKY'],
     [['N/A (x)', '-'], 'N/A'],

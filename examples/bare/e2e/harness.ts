@@ -233,14 +233,18 @@ export async function startRun(name: string, options: RunOptions = {}): Promise<
   if (ON_IOS) {
     return startIosRun(name, options);
   }
-  const scenario = writeScenario(name);
+  // Offline, the launch URI carries the dead endpoint, as iOS's launch
+  // arguments do: a real token left in credentials.json still goes nowhere
+  // (N-30). The app forces it anyway for the placeholder token.
+  const extras = CAMPAIGN_MODE === 'staging' ? {} : { endpoint: DEAD_ENDPOINT };
+  const scenario = writeScenario(name, extras);
   if (smokeRoot()) {
     // The root is chosen from the JSON at bundle load (index.js), so Metro
     // must serve this run's file before the launch.
     await awaitMetroServes(scenario.nonce, 60_000, 'android');
   }
   const start = log().mark();
-  await launchScenario(scenario);
+  await launchScenario(scenario, extras);
 
   const ran = must(
     await log().waitFor(
@@ -251,6 +255,8 @@ export async function startRun(name: string, options: RunOptions = {}): Promise<
     `the app starting scenario ${name} (nonce ${scenario.nonce})`,
     start,
   );
+  // The guard first: the launch line precedes the native start.
+  await checkRun(ran, start);
   const banner = must(
     await log().waitFor(/Bugsee Android SDK \S+ \[[0-9a-f]+\]/, 15_000, start),
     'the SDK build banner',
@@ -260,7 +266,6 @@ export async function startRun(name: string, options: RunOptions = {}): Promise<
   if (!bannerCheck.ok) {
     throw new Error(`SDK build banner does not match the pin: ${bannerCheck.reason}`);
   }
-  await checkRun(ran, start);
   const launched = must(
     await log().waitFor(/BUGSEE_E2E status=2/, 20_000, ran.index),
     'Status.Launched with the device offline',
@@ -316,8 +321,8 @@ async function startIosRun(name: string, options: RunOptions): Promise<Run> {
     `the app starting scenario ${name} (nonce ${scenario.nonce})`,
     start,
   );
-  // The retention precondition, both halves: the app took the dead endpoint,
-  // and the SDK really failed to reach it.
+  // The guard first (N-30), then the retention precondition's other half:
+  // the SDK really failed to reach the dead endpoint.
   await checkRun(ran, start);
   const banner = must(await log().waitFor(IOS_SDK_LINE, 15_000, start), 'the iOS SDK version line', start);
   const version = IOS_SDK_LINE.exec(banner.text)![1];

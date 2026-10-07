@@ -221,7 +221,9 @@ export function cellOf(outcomes: readonly RunOutcome[]): string {
   const m = outcomes.length;
   const passes = outcomes.filter(o => o === 'pass').length;
   const known = outcomes.filter(o => o === 'known').length;
-  if (known > 0 && passes === 0) {
+  // `(known)` only when every run is the pinned bug: a real failure next to
+  // it is a failure, never signed off as the known one.
+  if (known === m) {
     return `FAIL ${m}/${m} (known)`;
   }
   if (passes === m) {
@@ -234,13 +236,17 @@ export function cellOf(outcomes: readonly RunOutcome[]): string {
 }
 
 const SEVERITY: ReadonlyArray<[RegExp, number]> = [
+  [/^FAIL\b(?!.*\(known\))/, 6],
   [/^FAIL\b/, 5],
   [/^FLAKY\b/, 4],
   [/^BLOCKED\b/, 3],
   [/^PASS\b/, 1],
 ];
 
-/** The worst cell: FAIL, then FLAKY, then BLOCKED, then PASS; N/A and `-` do not count. */
+/**
+ * The worst cell: FAIL, then FAIL (known), then FLAKY, then BLOCKED, then
+ * PASS; N/A and `-` do not count.
+ */
 export function verdictOf(cells: readonly string[]): string {
   let worst: { rank: number; cell: string } | undefined;
   for (const cell of cells) {
