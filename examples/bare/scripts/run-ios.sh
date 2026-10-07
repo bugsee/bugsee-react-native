@@ -75,6 +75,8 @@ if [[ "$APP_DIR" == "$EXAMPLE_DIR" ]]; then
 fi
 
 restore_cocoapods() {
+  local status=$?
+  set +e
   echo "--- restoring CocoaPods delivery in $APP_DIR/ios"
   if git -C "$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     git -C "$APP_DIR" checkout -- ios
@@ -83,7 +85,13 @@ restore_cocoapods() {
     rm -rf "$APP_DIR/ios"
     tar -xf "$SPM_BACKUP" -C "$APP_DIR"
   fi
-  (cd "$APP_DIR/ios" && pod install >/dev/null)
+  (cd "$APP_DIR/ios" && pod install >/dev/null) || { echo "restore: pod install failed"; exit 1; }
+  # The SPM build leaves xcshareddata/swiftpm/Package.resolved behind.
+  if git -C "$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$APP_DIR" clean -fdq -- ios
+  fi
+  echo "--- restored"
+  exit "$status"
 }
 
 if [[ "$DELIVERY" == spm ]]; then

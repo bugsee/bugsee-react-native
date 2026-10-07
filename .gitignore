@@ -41,3 +41,4 @@ packages/react-native-feedback/BugseeFeedbackSources/
 reports/
 packages/react-native/.bugsee-xcframework-version
 packages/react-native-feedback/.bugsee-feedback-sources-version
+examples/*/ios/build-spm/
