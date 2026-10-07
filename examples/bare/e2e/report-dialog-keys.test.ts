@@ -50,17 +50,17 @@ function blend(top: string, under: string, alpha: number): string {
  * simulator and the XS); `reportCloseButtonColor` is used only in
  * commented-out code (BGSReportController.m) and `reportSendButtonColor`
  * only as the title colour of the send shape's untitled inner button
- * (BGSBarButtonItem.m). Neither colour appears. To file (bugsee-cocoa):
- * sdk-issues-filed.md.
+ * (BGSBarButtonItem.m). Neither colour appears. Filed:
+ * bugsee-cocoa#201.
  */
 const KNOWN_NOT_PAINTED: Record<'android' | 'ios', Record<string, string>> = {
   // Android 7.3.0: nothing in the library reads Report::ActionBarColor (only
   // the constant exists); the bar stays the theme's near-black while
-  // ActionBarTextColor paints its text (WOD_LX1, 2026-10-07). To file.
-  android: { actionBarColor: 'Android 7.3.0 never reads Report::ActionBarColor (to file)' },
+  // ActionBarTextColor paints its text (WOD_LX1, 2026-10-07). Filed: bugsee-android#217.
+  android: { actionBarColor: 'Android 7.3.0 never reads Report::ActionBarColor (bugsee-android#217)' },
   ios: {
-    closeButtonColor: 'iOS beta5 never applies reportCloseButtonColor (to file)',
-    sendButtonColor: 'iOS beta5 never applies reportSendButtonColor (to file)',
+    closeButtonColor: 'iOS beta5 never applies reportCloseButtonColor (bugsee-cocoa#201)',
+    sendButtonColor: 'iOS beta5 never applies reportSendButtonColor (bugsee-cocoa#201)',
   },
 };
 

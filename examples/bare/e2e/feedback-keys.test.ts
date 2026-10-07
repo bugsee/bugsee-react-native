@@ -83,23 +83,23 @@ function paintedAs(key: string): string {
  * showFeedbackUI() presents FeedbackChatView with Bugsee.getUserIdentifier()
  * as the e-mail, nothing asks for one -- seen on the simulator after a
  * reinstall and a Keychain reset (2026-10-07). Android shows one. The
- * feedbackEmail* theme keys therefore paint nothing. To file (bugsee-cocoa).
+ * feedbackEmail* theme keys therefore paint nothing. Filed: bugsee-cocoa#202.
  */
-const IOS_NO_EMAIL_SCREEN = 'iOS beta5 feedback has no e-mail screen (to file)';
-const IOS_NO_EMAIL_SCREEN_KEY = 'iOS beta5 feedback has no e-mail screen to paint (to file)';
+const IOS_NO_EMAIL_SCREEN = 'iOS beta5 feedback has no e-mail screen (bugsee-cocoa#202)';
+const IOS_NO_EMAIL_SCREEN_KEY = 'iOS beta5 feedback has no e-mail screen to paint (bugsee-cocoa#202)';
 
 /**
  * Keys Android 7.3.0 reads back but never paints, pinned (it.failing): the
  * feedback module (FeedbackColors.kt, ChatMessageInput.kt) never reads
  * Feedback::ActionBarColor or Feedback::EmailContinueNotActiveColor, and the
  * chat's hint is drawn from InputTextColor, not InputTextHintColor
- * (WOD_LX1, 2026-10-07). To file (bugsee-android): sdk-issues-filed.md.
+ * (WOD_LX1, 2026-10-07). Filed: bugsee-android#218.
  */
 const KNOWN_NOT_PAINTED: Record<'android' | 'ios', Record<string, string>> = {
   android: {
-    actionBarColor: 'Android 7.3.0 never reads Feedback::ActionBarColor (to file)',
-    emailContinueNotActiveColor: 'Android 7.3.0 never reads Feedback::EmailContinueNotActiveColor (to file)',
-    inputTextHintColor: 'Android 7.3.0 draws the hint from InputTextColor at alpha 0.5 (to file)',
+    actionBarColor: 'Android 7.3.0 never reads Feedback::ActionBarColor (bugsee-android#218)',
+    emailContinueNotActiveColor: 'Android 7.3.0 never reads Feedback::EmailContinueNotActiveColor (bugsee-android#218)',
+    inputTextHintColor: 'Android 7.3.0 draws the hint from InputTextColor at alpha 0.5 (bugsee-android#218)',
   },
   ios: {
     emailBackgroundColor: IOS_NO_EMAIL_SCREEN_KEY,

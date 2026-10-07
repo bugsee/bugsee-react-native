@@ -62,9 +62,9 @@ describeDevice(`SDK breadcrumbs and a plain upload's video on ${TARGET_NAME}`, (
    * on -- none at launch, none for the app going to the background and back
    * (Home, then the activity) -- in every run on the WOD_LX1 (2026-10-07),
    * while its producers (BreadcrumbApp app.lifecycle, BreadcrumbUI) exist.
-   * iOS records ui.screen and ui.lifecycle crumbs. To file (bugsee-android).
+   * iOS records ui.screen and ui.lifecycle crumbs. Filed: bugsee-android#219.
    */
-  (ON_ANDROID ? it.failing : it)(`[FLOW-15] the report carries breadcrumbs the SDK wrote itself, next to the app's own${ON_ANDROID ? ' [known: Android 7.3.0 records no SDK breadcrumbs (to file)]' : ''}`, () => {
+  (ON_ANDROID ? it.failing : it)(`[FLOW-15] the report carries breadcrumbs the SDK wrote itself, next to the app's own${ON_ANDROID ? ' [known: Android 7.3.0 records no SDK breadcrumbs (bugsee-android#219)]' : ''}`, () => {
     const crumbs = captureEvents(bundle, 'breadcrumbs');
     const own = crumbs.filter(c => JSON.stringify(c).includes(`api-own-crumb ${run.scenario.nonce}`));
     const sdk = crumbs.filter(c => !JSON.stringify(c).includes('api-own-crumb'));

@@ -152,9 +152,9 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
    * Android 7.3.0: with detect.crash=false the JS fatal is not reported, but
    * a native SIGSEGV still is, at the next launch ("Native crash: null
    * pointer dereference", crash.tombstone; WOD_LX1, 2026-10-07): the NDK
-   * crash path does not honour the option. To file (bugsee-android).
+   * crash path does not honour the option. Filed: bugsee-android#220.
    */
-  (HERE === 'A' ? it.failing : on(['X']))(`[OPT-025] detect.crash=false: neither a JS fatal nor a native crash is reported${HERE === 'A' ? ' [known: Android NDK crashes ignore detect.crash=false (to file)]' : ''}`, async () => {
+  (HERE === 'A' ? it.failing : on(['X']))(`[OPT-025] detect.crash=false: neither a JS fatal nor a native crash is reported${HERE === 'A' ? ' [known: Android NDK crashes ignore detect.crash=false (bugsee-android#220)]' : ''}`, async () => {
     await clearBundles();
     const js = await launch('crash-off', 'js');
     expect(jsonAfter(js.options.text, 'values')).toEqual({ 'com.bugsee.option.detect.crash': false });
@@ -257,9 +257,9 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   /**
    * iOS 7.0.0-beta5: nothing in the library reads detect.kill -- it is only
    * registered (BGSOptionsDescriptors.m) -- and a SIGKILL while running
-   * files nothing at the next launch (XS, 2026-10-07). To file (bugsee-cocoa).
+   * files nothing at the next launch (XS, 2026-10-07). Filed: bugsee-cocoa#203.
    */
-  (HERE === 'X' ? it.failing : it.skip)('[OPT-068] detect.kill: a SIGKILL is reported at the next launch [known: iOS beta5 never reads detect.kill (to file)]', async () => {
+  (HERE === 'X' ? it.failing : it.skip)('[OPT-068] detect.kill: a SIGKILL is reported at the next launch [known: iOS beta5 never reads detect.kill (bugsee-cocoa#203)]', async () => {
     await clearBundles();
     const first = await launch('kill', 'idle');
     await apiMarker(log!, 'eff idle case=kill', first.run.scenario.nonce, 10_000, first.run.start);
@@ -347,9 +347,9 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
    * ("complete", body null, then "complete" with the body), and the second
    * carries the untyped body with body-without-type at its default (false)
    * as well as with it on (XS, 2026-10-07): the option never withholds it.
-   * BGSNetworkHelperMethods.m gates only the first. To file (bugsee-cocoa).
+   * BGSNetworkHelperMethods.m gates only the first. Filed: bugsee-cocoa#204.
    */
-  (ON_IOS ? it.failing : on(['A']))(`[OPT-007] capture.network.body-without-type: a response body with no Content-Type is kept only with the option${ON_IOS ? ' [known: iOS keeps untyped bodies with the option off (to file)]' : ''}`, async () => {
+  (ON_IOS ? it.failing : on(['A']))(`[OPT-007] capture.network.body-without-type: a response body with no Content-Type is kept only with the option${ON_IOS ? ' [known: iOS keeps untyped bodies with the option off (bugsee-cocoa#204)]' : ''}`, async () => {
     const bodyOf = async (name: string): Promise<string> => {
       const outcome = await uploaded(name, 'bytes', true);
       const events = networkOf(own(outcome, name)).filter(e => String(e.url ?? '').includes(`api-bytes-${outcome.run.scenario.nonce}`));
@@ -409,7 +409,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   // runs undriven differ only by chance (simulator: 2 crumbs with extras, 12
   // without, the control's being http crumbs).
   /** Android 7.3.0 records no SDK breadcrumb at all (sdk-breadcrumbs.test.ts, N-11): nothing to add to. */
-  (HERE === 'A' ? it.failing : it.skip)('[OPT-002] capture.breadcrumbs.extras adds SDK breadcrumbs the control does not record [known: Android 7.3.0 records no SDK breadcrumbs (to file)]', async () => {
+  (HERE === 'A' ? it.failing : it.skip)('[OPT-002] capture.breadcrumbs.extras adds SDK breadcrumbs the control does not record [known: Android 7.3.0 records no SDK breadcrumbs (bugsee-android#219)]', async () => {
     // Android is sent to the background and back; iOS is not driven
     // (switching apps loses the run's console) and uploads after 4 s.
     const step = ON_ANDROID ? 'background' : 'run';
@@ -597,8 +597,8 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
    * Out of process, Android assembles the report through JobScheduler. On
    * the WOD_LX1 (7.3.0, 2026-10-07) no report is filed within 90 s, in
    * airplane mode or with the network on (dead endpoint): the option is read
-   * back as set, but the upload never becomes a bundle. To file
-   * (bugsee-android), pending the SDK team's view of the job's constraints.
+   * back as set, but the upload never becomes a bundle. Filed:
+   * bugsee-android#221, pending the SDK team's view of the job's constraints.
    */
   const outOfProcess = async (): Promise<Outcome & { bundles: PulledBundle[] }> => {
     const key = 'out-of-process--run';
@@ -629,7 +629,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(jsonAfter(options.text, 'values')).toEqual({ 'com.bugsee.option.config.report-processing-in-process': false });
   });
 
-  (HERE === 'A' ? it.failing : it.skip)('[OPT-081] config.report-processing-in-process=false still files the report (network on, dead endpoint) [known: Android 7.3.0 files no report out of process (to file)]', async () => {
+  (HERE === 'A' ? it.failing : it.skip)('[OPT-081] config.report-processing-in-process=false still files the report (network on, dead endpoint) [known: Android 7.3.0 files no report out of process (bugsee-android#221)]', async () => {
     const { run, bundles } = await outOfProcess();
     expect(bundles.map(b => b.request.summary)).toContain(`api-eff-out-of-process-${run.scenario.nonce}`);
   });
