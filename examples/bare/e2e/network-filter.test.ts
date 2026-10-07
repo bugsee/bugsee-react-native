@@ -4,8 +4,9 @@
  * Same retention as wrapper-channel.test.ts. One network event the filter
  * rewrites is the event in the retained bundle. A filter that never settles
  * leaves that event out. `duration` stays 90: this scenario uses the app's
- * launch options and does not override them. The request is one native
- * capture already records; this test does not fetch.
+ * launch options and does not override them. The request is the scenario's own
+ * `fetch` to the dead endpoint, on both platforms (the SDK's own session
+ * traffic is not offered to the filter since iOS 7.0.0-beta5).
  *
  * Android: WOD_LX1, Metro on E2E_METRO_PORT (8085 for this task).
  * iOS: the simulator named by IOS_SIMULATOR_ID (not `booted`), or the
