@@ -269,13 +269,27 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
       'the upload starting',
       run.start,
     );
-    await airplane(true);
-    await new Promise(resolve => setTimeout(resolve, 10_000));
-    await ensureOnline();
-    const outcomes = await awaitOutcomes(run, 300_000);
-    evidence('S-7', run, { kind: 'mid-upload cut', cutAfter: started.text.trim(), outcomes: outcomes.map(o => `${o.name}:${o.id}`) });
-    const delivered = outcomes.filter(outcome => outcome.name === 'AfterReportUploaded');
-    expect(delivered).toHaveLength(1);
+    let back: number;
+    try {
+      await airplane(true);
+      await new Promise(resolve => setTimeout(resolve, 10_000));
+      // The cut must really have interrupted the upload: nothing delivered
+      // yet and the report still on the device. A first shot that finished
+      // before airplane mode took effect is not FLOW-36 (cursor P2).
+      const early = events(run.scenario.nonce, run.start).filter(event => event.name === 'AfterReportUploaded');
+      const kept = await listBundles();
+      report('after the cut', { delivered: early.map(event => event.id), kept });
+      expect(early).toEqual([]);
+      expect(kept.length).toBeGreaterThan(0);
+    } finally {
+      back = log!.mark();
+      await ensureOnline();
+    }
+    const afterBack = await awaitOutcomes(run, 300_000, undefined, back);
+    evidence('S-7', run, { kind: 'mid-upload cut', cutAfter: started.text.trim(), outcomes: afterBack.map(o => `${o.name}:${o.id}`) });
+    // Delivered after the network came back, exactly once over the whole run.
+    expect(afterBack.filter(outcome => outcome.name === 'AfterReportUploaded')).toHaveLength(1);
+    expect(events(run.scenario.nonce, run.start).filter(event => event.name === 'AfterReportUploaded')).toHaveLength(1);
     expect(await listBundles()).toEqual([]);
   });
 
