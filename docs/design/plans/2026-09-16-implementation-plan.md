@@ -18,7 +18,7 @@ Every phase's requirements implicitly include this section.
 
 - React Native floor **0.81.0**, New Architecture required. No `oldarch` source set, no legacy bridge fallback. 0.81 still allows opting out of the New Architecture; that is a documented requirement on the consumer, not a second code path. Hard technical floor is 0.80 (`codegenConfig.ios.modulesProvider`).
 - Android SDK **7.3.0** (pinned transitionally as `7.3.0-SNAPSHOT` while the release is pending — see Phase 3's rulings), Gradle plugin **4.0.7**, pinned exactly. Neither older pin carries what this wrapper needs: 7.2.0 has no wrapper channel, report-contract methods, `BugseeReportHandlerThread` or `com.bugsee.option.$$WRAPPER` consumer, and 4.0.6 strips every extension's provider (workbook 1.4). The plugin marker resolves from **Maven Central**, not the Gradle Plugin Portal.
-- iOS SDK **7.0.0-beta4** from `https://github.com/bugsee/spm`, requirement `exact`. SwiftPM will not admit a prerelease into a range. iOS deployment target **15.0**.
+- iOS SDK **7.0.0-beta5** from `https://github.com/bugsee/spm`, requirement `exact`. SwiftPM will not admit a prerelease into a range. iOS deployment target **15.0**.
 - Package `@bugsee/react-native`. `toSwiftName` maps it to `ReactNative`, which is **reserved**, so `react-native.config.js` pins `spm: { name: 'BugseeReactNative' }` and the SPM product name must match exactly.
 - All native versions live in **one** file, `native-versions.json`, consumed by the podspec, `Package.swift` and the Gradle module. The SPM pin and podspec URL must never disagree.
 - Every SDK entry point is called on the **main thread** on iOS. `launchWithToken:` off-main logs *"Incorrect bugsee launch…"* and misbehaves.

@@ -14,7 +14,7 @@ The single most important finding behind this design: **iOS 7.x and Android 7.x 
 
 ## 2. Goals
 
-- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.3.0** (pinned transitionally as `7.3.0-SNAPSHOT` while the release is pending — see the plan's Phase 3 rulings) and iOS **7.0.0-beta4** (SPM only, iOS deployment target 15.0).
+- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.3.0** (pinned transitionally as `7.3.0-SNAPSHOT` while the release is pending — see the plan's Phase 3 rulings) and iOS **7.0.0-beta5** (SPM only, iOS deployment target 15.0).
 - Expose the capabilities 7.x added and 6.x never had: breadcrumbs, notification relay, APM, user identity, hang/HTTP-error/frustration/anomaly detection, SDK status, report handlers.
 - Make the wrapper's option surface **provably** consistent with the native SDKs, enforced in CI rather than by review.
 - Work on bare React Native and on Expo, including Expo apps that regenerate native projects with `prebuild`.
@@ -127,7 +127,7 @@ Verified during Phase 3, on-device and by reading both SDKs' sources. `bugsee/sp
 
 **Android.** A crash the SDK recovers through its own bounded early-recovery dispatch — a call off the live `BugseeReportHandlerThread`, completion `Callback.NOOP` — completes natively at once (`completed by=recovery`) and never reaches JS; the bridge detects this by thread name, not by `isTerminating` (the plan's Phase 3 rulings). A crash recovered at the *next launch*, when that launch is JS-initiated, is not one path. A Java uncaught exception is dispatched on the live `BugseeReportHandlerThread` with the ordinary 25 s live deadline, so it does reach JS and `onAfterReportCreated`'s edits land in the retained crash bundle. Verified on the WOD_LX1 (Task 3.4d): the relaunch logged `deadline=25000` and `completed by=js`, never `by=recovery`. An NDK crash (SIGSEGV or SIGABRT) recovered at that same JS-initiated launch is the bounded path instead: the SDK dispatches it on `bugsee-report-handler-bounded`, the bridge completes `by=recovery`, and the JS handler is never asked. Verified on the WOD_LX1 (Task 7.6b): the relaunch logged `completed by=recovery phase=after` and never `by=js`.
 
-**iOS.** Live dispatch is on the main thread (25 s deadline); a report recovered at relaunch is dispatched off main (2.5 s deadline) — and, unlike Android's bounded early-recovery path, it **does** reach JS, because iOS re-persists the report on a late completion until the bundle is assembled. The recovery case cannot run in the Simulator: the simulator slice of 7.0.0-beta3 has no crash reporter (Task 3.4f), and neither has 7.0.0-beta4's (no PLCrashReporter symbol in `ios-arm64_x86_64-simulator`), so it is gated `E2E_IOS_RECOVERY=1` and proven only on physical hardware (§12).
+**iOS.** Live dispatch is on the main thread (25 s deadline); a report recovered at relaunch is dispatched off main (2.5 s deadline) — and, unlike Android's bounded early-recovery path, it **does** reach JS, because iOS re-persists the report on a late completion until the bundle is assembled. The recovery case cannot run in the Simulator: the simulator slice of 7.0.0-beta3 has no crash reporter (Task 3.4f), and neither has 7.0.0-beta4's or 7.0.0-beta5's (no PLCrashReporter symbol in `ios-arm64_x86_64-simulator`), so it is gated `E2E_IOS_RECOVERY=1` and proven only on physical hardware (§12).
 
 **iOS threading, load-bearing for both cases.** The SDK invokes the live report handler with `dispatch_async` onto main; its completion is a thread-agnostic run-once that hops to a private queue. Main is never blocked waiting for it (`BGSIssueReportingCoordinator.m` on `nextgen`). Consequently the bridge's own report ops and its call to `completeReportHandler` must never hop to main themselves — there is no need to, and queuing behind whatever UI work is already on main would eat into the handle's deadline for nothing. The bridge completes from background queues throughout.
 
@@ -518,7 +518,7 @@ Work outside this repository that this design depends on or has surfaced.
 > of 2026-09-15. Phase 3 of the plan (rulings and *Verified facts*,
 > 2026-09-28) superseded them: Android moved to `7.3.0` (pinned transitionally
 > as `7.3.0-SNAPSHOT`), the Gradle plugin to `4.0.7`, and iOS to `7.0.0-beta3`
-> with a 15.0 deployment target; iOS then moved to `7.0.0-beta4` (2026-10-06). Read this appendix for the shape of the
+> with a 15.0 deployment target; iOS then moved to `7.0.0-beta4` (2026-10-06) and `7.0.0-beta5`. Read this appendix for the shape of the
 > verification (what was checked and how), not for the version numbers
 > themselves.
 

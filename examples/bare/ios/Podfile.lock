@@ -1949,8 +1949,8 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   boost: 8502bfdc46e2804408af2e163049ece181009af4
   BugseeE2ENative: b4cd280a78bae9185d1a391769ececb30b0eb846
-  BugseeReactNative: ac04523adf1a6e3a445d84f3a7656d980e4d28ab
-  BugseeReactNativeFeedback: f55b2673ed02f3299b6801e154a3256ed5aa19f0
+  BugseeReactNative: 88abb514d656415a893768677c595ecb205d4d4a
+  BugseeReactNativeFeedback: 9ad67da421fa88a044bbe5ae80ac9fb282197fdf
   DoubleConversion: 501a575c40c0b50c89685762dd3e415e6bb26fb0
   fast_float: 7c925d1cebf8328d4018d061f49377e9f887e3b4
   FBLazyVector: e08a27053b503eeb756ea4bd75d570d2f2522a1b
