@@ -70,6 +70,7 @@ import {
   adb,
   resetScenario,
 } from './scenario';
+import { operatorEnabled, operatorStep } from './operator';
 
 jest.setTimeout(12 * 60_000);
 
@@ -80,6 +81,13 @@ jest.setTimeout(12 * 60_000);
  */
 const itIosOperator =
   ON_IOS && iosTarget() === 'device' && process.env.E2E_IOS_OPERATOR === '1' ? it : it.skip;
+
+/**
+ * Case 6 on Android (campaign N-18, step M-A1): a person taps Send on the
+ * WOD_LX1, prompted by operator.ts. Runs only with `E2E_ANDROID_OPERATOR=1`;
+ * this file never taps the dialog. Airplane mode retains the report.
+ */
+const itAndroidOperator = !ON_IOS && operatorEnabled('android') ? it : it.skip;
 
 /** How long a bundle is given to land after the call that files it. */
 const BUNDLE_WAIT_MS = 120_000;
@@ -355,6 +363,33 @@ describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
       expect(bundle.request.severity).toBe(3);
       expect(labelsOf(bundle)).toEqual(expect.arrayContaining([`dlg-${nonce}`]));
       expect(sourceType(bundle)).toBe('code_dialog');
+    });
+
+    itAndroidOperator('submitting the dialog files the report (Android) [API-38]', async () => {
+      const bundle = await operatorStep(
+        {
+          id: 'M-A1',
+          device: 'Android WOD_LX1',
+          timeoutMs: 90_000,
+          instructions: [
+            `The Bugsee report dialog is open with summary "dlg-${nonce}".`,
+            'Tap the check-mark (Send / "Отправить") at the top right of the dialog.',
+          ],
+        },
+        async () => {
+          if ((await listBundles()).length === 0) {
+            return undefined;
+          }
+          return (await awaitBundles(1, 1_000)).find(b => b.request.summary === `dlg-${nonce}`);
+        },
+      );
+      report('M-A1 bundle', { file: bundle.file, source: bundle.request.source, severity: bundle.request.severity });
+      expect(bundle.request.description).toBe(`dd-${nonce}`);
+      expect(bundle.request.severity).toBe(3);
+      expect(labelsOf(bundle)).toEqual(expect.arrayContaining([`dlg-${nonce}`]));
+      expect(sourceType(bundle)).toBe('code_dialog');
+      const filed = (await awaitBundles(1, 1_000)).filter(b => b.request.summary === `dlg-${nonce}`);
+      expect(filed).toHaveLength(1);
     });
   });
 

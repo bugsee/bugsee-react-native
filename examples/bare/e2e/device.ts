@@ -14,9 +14,9 @@
  *            writes there as well as to os_log.
  */
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -175,8 +175,84 @@ export function requireVerifiedIosDevice(): string {
 
 /** Booted simulator to drive; `booted` is whichever one is already running. */
 export const IOS_SIMULATOR_ID = process.env.IOS_SIMULATOR_ID ?? 'booted';
-export const ANDROID_PACKAGE = 'com.bareexample';
-export const IOS_BUNDLE_ID = 'org.reactjs.native.example.BareExample';
+
+/**
+ * The app under test (campaign N-01). examples/bare by default; a generated
+ * app (another RN version, an Expo app, a packed-tarball install) is named
+ * through the environment, so every suite runs against it unchanged:
+ *
+ *   E2E_APP_ID            Android application id      (com.bareexample)
+ *   E2E_ANDROID_ACTIVITY  launch activity, `.X` or FQN (.MainActivity)
+ *   E2E_IOS_BUNDLE_ID     iOS bundle id               (org.reactjs.native.example.BareExample)
+ *   E2E_IOS_EXECUTABLE    iOS executable / NSLog name (BareExample)
+ *   E2E_APP_DIR           the app's root on this Mac: where e2e-scenario.json
+ *                         and credentials.json live, and whose node_modules
+ *                         name the React Native version (examples/bare)
+ *
+ * Each is validated when this module loads: a typo fails the run at once
+ * rather than as a launch of nothing.
+ */
+const APP_ID = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+const BUNDLE_ID = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
+const EXECUTABLE = /^[A-Za-z0-9_][A-Za-z0-9_ .-]{0,63}$/;
+const ACTIVITY = /^(\.|[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*\.)[A-Za-z_][A-Za-z0-9_$]*$/;
+
+function checked(name: string, raw: string | undefined, fallback: string, rule: RegExp): string {
+  if (raw === undefined) {
+    return fallback;
+  }
+  if (!rule.test(raw)) {
+    throw new Error(`${name} is not a valid value: ${JSON.stringify(raw)}`);
+  }
+  return raw;
+}
+
+export function parseAndroidAppId(raw: string | undefined): string {
+  return checked('E2E_APP_ID', raw, 'com.bareexample', APP_ID);
+}
+
+export function parseAndroidActivity(raw: string | undefined): string {
+  return checked('E2E_ANDROID_ACTIVITY', raw, '.MainActivity', ACTIVITY);
+}
+
+export function parseIosBundleId(raw: string | undefined): string {
+  return checked('E2E_IOS_BUNDLE_ID', raw, 'org.reactjs.native.example.BareExample', BUNDLE_ID);
+}
+
+export function parseIosExecutable(raw: string | undefined): string {
+  return checked('E2E_IOS_EXECUTABLE', raw, 'BareExample', EXECUTABLE);
+}
+
+/** `E2E_APP_DIR`, absolute, or examples/bare. Must hold a package.json. */
+export function parseAppDir(raw: string | undefined, fallback = join(__dirname, '..')): string {
+  if (raw === undefined || raw === '') {
+    return fallback;
+  }
+  const dir = resolvePath(raw);
+  if (!existsSync(join(dir, 'package.json'))) {
+    throw new Error(`E2E_APP_DIR=${raw}: no package.json at ${dir}`);
+  }
+  return dir;
+}
+
+export const ANDROID_PACKAGE = parseAndroidAppId(process.env.E2E_APP_ID);
+export const ANDROID_ACTIVITY = parseAndroidActivity(process.env.E2E_ANDROID_ACTIVITY);
+/** `<package>/<activity>`, as `am start -n` takes it. */
+export const ANDROID_COMPONENT = `${ANDROID_PACKAGE}/${ANDROID_ACTIVITY}`;
+export const IOS_BUNDLE_ID = parseIosBundleId(process.env.E2E_IOS_BUNDLE_ID);
+export const IOS_EXECUTABLE = parseIosExecutable(process.env.E2E_IOS_EXECUTABLE);
+export const APP_DIR = parseAppDir(process.env.E2E_APP_DIR);
+
+/** `text` with every regex metacharacter escaped. */
+function literal(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** The `<executable>[<pid>:<tid>]` prefix of the app's NSLog lines; group 1 is the pid, 2 the tid. */
+export const IOS_PID_TID = new RegExp(`${literal(IOS_EXECUTABLE)}\\[(\\d+):(\\d+)\\]`);
+
+/** devicectl's executable path for the app: `.../<executable>.app/<executable>`. */
+export const IOS_EXECUTABLE_PATH = new RegExp(`/${literal(IOS_EXECUTABLE)}\\.app/${literal(IOS_EXECUTABLE)}$`);
 
 const ANDROID_HOME =
   process.env.ANDROID_HOME ?? `${process.env.HOME}/Library/Android/sdk`;
@@ -291,7 +367,7 @@ async function spawnAndroid(uri?: string): Promise<ChildProcess> {
     'am',
     'start',
     '-n',
-    `${ANDROID_PACKAGE}/.MainActivity`,
+    ANDROID_COMPONENT,
     ...(uri === undefined ? [] : ['-a', 'android.intent.action.VIEW', '-d', `'${uri}'`]),
   ]);
   return logcat;
