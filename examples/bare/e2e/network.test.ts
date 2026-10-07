@@ -10,6 +10,15 @@
  * the allowlisted iPhone. Retention is `DEAD_ENDPOINT` via `startRun`. If
  * the bundle has no such request, this test fails and says so.
  *
+ * A second fetch carries the lowercase word "bugsee" in its path and query. A
+ * customer request like that IS recorded on both platforms (iOS drops none
+ * since 7.0.0-beta5, which tells the SDK's own traffic apart by session,
+ * bugsee-cocoa #192; Android never had a url rule). On iOS the SDK's own
+ * session traffic to the dead endpoint (`/v2/sessions`) must no longer appear
+ * in the capture. Android's capture never held it either (it runs in airplane
+ * mode, so the SDK's session request is not even attempted there): the same
+ * assertion holds on both, and it is only a regression guard on iOS.
+ *
  * Launch still sets `duration` to 90 (App.tsx). This file does not change it.
  *
  * Markers, from scenarios/network.ts:
@@ -24,6 +33,7 @@ import {
   removePulledBundles,
   terminateIosApp,
 } from './bundles';
+import { bugseeNamedUrl } from '../endpoint';
 import { ANDROID_PACKAGE } from './device';
 import {
   ON_IOS,
@@ -50,12 +60,18 @@ jest.setTimeout(5 * 60_000);
 /**
  * The path scenarios/network.ts fetches, written here rather than imported:
  * the scenario is app code, and an e2e that compared the app against itself
- * could not fail. It must not contain "bugsee": the iOS SDK's release build
- * drops any such url as its own traffic, which is what kept this test red on
- * iOS while Android passed.
+ * could not fail. It does not contain "bugsee" (through 7.0.0-beta4 the iOS
+ * SDK's release build dropped any such url as its own traffic, which kept this
+ * test red on iOS while Android passed); the "bugsee" request has its own
+ * test below.
  */
 function fetchPath(nonce: string): string {
   return `rn-e2e-fetch/${nonce}`;
+}
+
+/** The url scenarios/network.ts fetches with "bugsee" in it, built from the e2e's own helper. */
+function namedUrl(nonce: string): string {
+  return bugseeNamedUrl(nonce);
 }
 
 function urlOf(event: Record<string, unknown>): string {
@@ -177,5 +193,28 @@ describeDevice(`JS fetch in a retained bundle on ${TARGET_NAME}`, () => {
     // A miss fails here and names what the bundle held. Do not accept
     // "either outcome".
     expect(summary.containsFetch).toBe(true);
+  });
+
+  it('a customer request whose url contains "bugsee" (path and query) is recorded', () => {
+    const [bundle] = bundles as [PulledBundle];
+    const events = captureEvents(bundle, 'network');
+    const wanted = namedUrl(nonce);
+    expect(wanted).toMatch(/bugsee/);
+    expect(new URL(wanted).pathname).toContain('bugsee');
+    expect(new URL(wanted).search).toContain('bugsee');
+    const matches = events.filter(event => urlOf(event) === wanted);
+    report('bugsee-named assertion', {
+      wanted,
+      recorded: matches.length,
+      networkUrls: events.map(event => urlOf(event)),
+    });
+    expect(matches.length).toBeGreaterThan(0);
+  });
+
+  it('the SDK\'s own session traffic is not in the network capture', () => {
+    const [bundle] = bundles as [PulledBundle];
+    const ownTraffic = captureEvents(bundle, 'network').filter(event => urlOf(event).includes('/v2/sessions'));
+    report('own traffic', ownTraffic.map(event => urlOf(event)));
+    expect(ownTraffic).toEqual([]);
   });
 });

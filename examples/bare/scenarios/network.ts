@@ -8,7 +8,7 @@
  */
 import Bugsee from '@bugsee/react-native';
 
-import { deadEndpointUrl } from '../endpoint';
+import { bugseeNamedUrl, deadEndpointUrl } from '../endpoint';
 
 export const NETWORK_SCENARIOS = ['network'] as const;
 
@@ -26,10 +26,16 @@ function mark(message: string): void {
  * The URL this scenario fetches. The host is the closed loopback the e2e
  * already uses (`DEAD_ENDPOINT`); the path carries the nonce so the bundle
  * assertion can tell this request from the SDK's own traffic to that host.
- * No "bugsee" in it: the iOS SDK drops such a url (`deadEndpointUrl`).
+ * No "bugsee" in it (`deadEndpointUrl` refuses one): this is the probe that
+ * is not about that word.
  */
 export function fetchUrl(nonce: string): string {
   return deadEndpointUrl(`rn-e2e-fetch/${nonce}`);
+}
+
+/** The request with "bugsee" in its path and its query, for the same bundle. */
+export function bugseeFetchUrl(nonce: string): string {
+  return bugseeNamedUrl(nonce);
 }
 
 /** Called once the SDK reaches `Launched`. */
@@ -41,6 +47,14 @@ export async function runNetworkScenario(nonce: string): Promise<void> {
     mark(`fetched status=${response.status} nonce=${nonce}`);
   } catch (error) {
     mark(`fetch failed ${error instanceof Error ? error.message : String(error)} nonce=${nonce}`);
+  }
+  const named = bugseeFetchUrl(nonce);
+  mark(`fetching named nonce=${nonce}`);
+  try {
+    const response = await fetch(named);
+    mark(`fetched named status=${response.status} nonce=${nonce}`);
+  } catch (error) {
+    mark(`fetch named failed ${error instanceof Error ? error.message : String(error)} nonce=${nonce}`);
   }
   mark(`sent nonce=${nonce}`);
   Bugsee.upload(`network-${nonce}`, '');

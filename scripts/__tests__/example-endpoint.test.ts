@@ -1,4 +1,4 @@
-import { DEAD_ENDPOINT, deadEndpointUrl, isPlaceholderToken, launchEndpoint } from '../../examples/bare/endpoint';
+import { DEAD_ENDPOINT, bugseeNamedUrl, deadEndpointUrl, isPlaceholderToken, launchEndpoint } from '../../examples/bare/endpoint';
 
 /**
  * The example app never reaches the real Bugsee server with the committed
@@ -59,10 +59,12 @@ describe('launchEndpoint', () => {
 
 /**
  * A request the example expects native network capture to record. The iOS
- * SDK's release build treats any url containing "bugsee" as its own traffic
- * and never records it (BGSNetworkInterceptionIsBugseeURL, 7.0.0-beta3 and
- * beta4). network.test.ts failed on iOS for exactly that: its path was
- * `bugsee-e2e-fetch/<nonce>`.
+ * SDK's release build treated any url containing "bugsee" as its own traffic
+ * and never recorded it (BGSNetworkInterceptionIsBugseeURL, 7.0.0-beta3 and
+ * beta4; beta5 tells its traffic apart by session instead). network.test.ts
+ * failed on iOS for exactly that: its path was `bugsee-e2e-fetch/<nonce>`.
+ * The guard stays for the probes that are not about the word; the one test
+ * that is uses `bugseeNamedUrl`.
  */
 describe('deadEndpointUrl', () => {
   it('puts the path on the dead loopback endpoint', () => {
@@ -75,5 +77,25 @@ describe('deadEndpointUrl', () => {
     // Case-insensitive on purpose: the SDK's check is case-sensitive today,
     // and a looser guard does not depend on that.
     expect(() => deadEndpointUrl('e2e/BugSee/abc123')).toThrow(/bugsee/);
+  });
+});
+
+describe('bugseeNamedUrl', () => {
+  it('carries lowercase "bugsee" in both the path and the query, on the dead endpoint', () => {
+    const url = new URL(bugseeNamedUrl('abc123'));
+    expect(`${url.protocol}//${url.host}`).toBe(DEAD_ENDPOINT);
+    expect(url.pathname).toContain('bugsee');
+    expect(url.search).toContain('bugsee');
+    expect(url.pathname).toContain('abc123');
+    expect(url.pathname + url.search).not.toMatch(/[A-Z]/);
+  });
+
+  it('refuses a tag that already carries the word, so the word is always the helper\'s', () => {
+    expect(() => bugseeNamedUrl('my-bugsee')).toThrow(/bugsee/);
+    expect(() => bugseeNamedUrl('BugSee')).toThrow(/bugsee/);
+  });
+
+  it('is exactly what deadEndpointUrl refuses', () => {
+    expect(() => deadEndpointUrl(bugseeNamedUrl('abc123').slice(DEAD_ENDPOINT.length + 1))).toThrow(/bugsee/);
   });
 });
