@@ -80,7 +80,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { type PulledBundle, airplane, removePulledBundles, terminateIosApp } from './bundles';
-import { ANDROID_PACKAGE, IOS_SIMULATOR_ID, iosTarget } from './device';
+import { ANDROID_PACKAGE, IOS_PID_TID, IOS_SIMULATOR_ID, iosTarget } from './device';
 import {
   ON_IOS,
   type Run,
@@ -234,8 +234,8 @@ const INTEGRAL_RAW: Array<[string, string]> = [
 
 const MARKER = /BUGSEE_E2E attr (\S+) (.*)$/;
 
-/** iOS: the pid an NSLog line's `BareExample[<pid>:<tid>]` prefix carries. */
-const IOS_PID_LINE = /BareExample\[(\d+):/;
+/** iOS: the pid an NSLog line's `<executable>[<pid>:<tid>]` prefix carries (device.ts `IOS_PID_TID`). */
+const IOS_PID_LINE = IOS_PID_TID;
 
 /** The app's current pid -- `pidof` on Android, the run's own banner line on iOS. */
 async function currentPid(bannerText: string): Promise<string | undefined> {

@@ -23,7 +23,7 @@
 import { readFileSync } from 'node:fs';
 
 import { terminateIosApp } from './bundles';
-import { ANDROID_PACKAGE, iosTarget } from './device';
+import { ANDROID_PACKAGE, IOS_PID_TID, iosTarget } from './device';
 import {
   ON_IOS,
   type Run,
@@ -49,7 +49,8 @@ import {
 
 jest.setTimeout(5 * 60_000);
 
-const IOS_PID_LINE = /BareExample\[(\d+):/;
+/** The `<executable>[<pid>:<tid>]` prefix (device.ts), so a generated app matches too. */
+const IOS_PID_LINE = IOS_PID_TID;
 
 /** A native crash anywhere in the run: neither case may see one. */
 const CRASHED = ON_IOS ? /Terminating app|SIGABRT|SIGSEGV/ : /Fatal signal|FATAL EXCEPTION/;
