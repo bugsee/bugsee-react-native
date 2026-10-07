@@ -83,6 +83,37 @@ def bugseeShellOnWindows = { String taskName, String command ->
         "writes it). See node_modules/@bugsee/react-native/README.md, \"Android source maps\"."
 }
 
+// React Native runs hermesCommand through `cmd /c` on Windows. cmd keeps the
+// quotes around a command path with spaces only when nothing in it is one of
+// & < > ( ) @ ^ |; otherwise it strips them and runs the path cut at the first
+// space ("C:\Program Files (x86)\..." becomes "C:\Program"). React Native
+// passes its own paths relative to the project root for that reason, and runs
+// hermesc from there, so the launcher is given the same way when its absolute
+// path would be cut. Another drive, or a relative path that would be cut too,
+// keeps the command as written.
+def bugseeCmdUnsafe = ~/[\s&<>()@^|]/
+def bugseeCmdSafeCommand = { String command, File root ->
+    def file = new File(command)
+    if (!(command =~ bugseeCmdUnsafe) || !file.isAbsolute()) {
+        return command
+    }
+    try {
+        def relative = root.toPath().toAbsolutePath().normalize()
+            .relativize(file.toPath().toAbsolutePath().normalize()).toString()
+        return (relative =~ bugseeCmdUnsafe) ? command : relative
+    } catch (IllegalArgumentException ignored) {
+        return command
+    }
+}
+def bugseeReact = project.extensions.findByName("react")
+if (System.getProperty("os.name").startsWith("Windows") && bugseeReact != null && bugseeReact.hermesCommand.isPresent()) {
+    def written = bugseeReact.hermesCommand.get()
+    def safe = bugseeCmdSafeCommand(written, bugseeReact.root.get().asFile)
+    if (safe != written) {
+        bugseeReact.hermesCommand.set(safe)
+    }
+}
+
 tasks.matching { task ->
     task.name.startsWith("createBundle") && task.name.endsWith("JsAndAssets")
 }.configureEach { bundleTask ->

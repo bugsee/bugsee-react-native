@@ -355,8 +355,15 @@ jobs:
         if: always()
         with:
           name: campaign-windows-hermes-spaced
+          path: C:/s (x86)/b rn/examples/bare/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: warn
+
+      # A second artifact: upload-artifact needs one root, and the logs are on D:.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: campaign-windows-hermes-spaced-logs
           path: |
-            C:/s (x86)/b rn/examples/bare/android/app/build/outputs/apk/release/app-release.apk
             ${{ runner.temp }}/gradle.log
             ${{ runner.temp }}/stub.log
           if-no-files-found: warn

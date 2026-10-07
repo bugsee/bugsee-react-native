@@ -160,9 +160,15 @@ bundle and Metro's map get the id instead.
   that an earlier prebuild wrote (the `.sh` on every OS) is recognised by its
   exact text and moved to the per-OS one; a `hermesCommand` of your own that
   already names `hermesc-preserve-js` is left as it is.
-- **Limitations.** Windows builds are verified from a project path without
-  spaces. The hook has not yet been verified with Gradle's configuration
-  cache.
+- **Windows paths with spaces.** React Native runs `hermesCommand` through
+  `cmd /c`, which cuts an absolute path holding spaces and `(` `)` at the
+  first space. On Windows the hook gives the launcher to React Native
+  relative to the project root instead, as React Native gives its own
+  paths; verified from `C:\s (x86)\b rn`. A project whose path is long
+  can still pass Windows' 260-character limit in React Native's own native
+  build, which has nothing to do with Bugsee.
+- **Limitations.** The hook has not yet been verified with Gradle's
+  configuration cache.
 
 ## Licence
 
