@@ -1,0 +1,117 @@
+name: campaign windows hermes (temporary)
+
+# Beta campaign N-25 / MX-WIN / HOOK-13 (Task 13.7). TEMPORARY: delete after
+# the first beta's campaign. Proves (or disproves) a Hermes release build of
+# the bare example on a Windows host: hermesc through hermesc-preserve-js.sh,
+# the composed map, the debug id in map and bytecode, and the source-map
+# upload, which goes to a stub server on the runner. Never a real token, never
+# a Bugsee endpoint. The APK is kept as an artifact for the device lane
+# (composed-debug-id on the WOD_LX1).
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/campaign-windows-hermes.yml
+      - packages/react-native/scripts/**
+
+concurrency:
+  group: campaign-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Synthetic, not the all-zero placeholder: the placeholder makes the hook
+  # skip the upload, and the upload is part of what this job proves. It only
+  # ever reaches the stub below.
+  BUGSEE_TOKEN_ANDROID: 11111111-2222-4333-8444-555555555555
+  BUGSEE_TOKEN_IOS: 00000000-0000-4000-8000-000000000000
+  BUGSEE_ENDPOINT: http://127.0.0.1:8777
+
+jobs:
+  android-release:
+    name: android release (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: corepack enable
+      - run: yarn install --immutable
+
+      - name: Stub upload server
+        run: |
+          cat > "$RUNNER_TEMP/stub.js" <<'JS'
+          const http = require('http');
+          const fs = require('fs');
+          const log = process.argv[2];
+          http.createServer((req, res) => {
+            let size = 0;
+            req.on('data', (c) => { size += c.length; });
+            req.on('end', () => {
+              fs.appendFileSync(log, `${req.method} ${req.url} ${size}\n`);
+              res.writeHead(200, { 'content-type': 'application/json' });
+              res.end('{"ok":true,"id":"stub","url":"http://127.0.0.1:8777/upload"}');
+            });
+          }).listen(8777, '127.0.0.1');
+          JS
+          : > "$RUNNER_TEMP/stub.log"
+          nohup node "$RUNNER_TEMP/stub.js" "$RUNNER_TEMP/stub.log" > /dev/null 2>&1 &
+          sleep 2
+          curl -s -X POST http://127.0.0.1:8777/ping -d x >/dev/null && echo "stub up"
+
+      - name: Credentials (synthetic token, stub endpoint)
+        run: yarn workspace bugsee-example-bare credentials
+
+      - name: Release build (Hermes)
+        working-directory: examples/bare/android
+        shell: cmd
+        run: gradlew.bat :app:assembleRelease -PreactNativeArchitectures=arm64-v8a -PbugseeE2eDebuggable=true --stacktrace > "%RUNNER_TEMP%\gradle.log" 2>&1 & type "%RUNNER_TEMP%\gradle.log" & findstr /C:"BUILD SUCCESSFUL" "%RUNNER_TEMP%\gradle.log"
+
+      - name: Composed map carries a debug id; the bytecode carries the same one
+        working-directory: examples/bare/android/app/build
+        run: |
+          map="$(find generated/sourcemaps -name 'index.android.bundle.map' | head -1)"
+          echo "composed map: $map"
+          node -e '
+            const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const id = m.debugId || m.debug_id;
+            if (!id) { console.error("FAIL: no debugId in the composed map"); process.exit(1); }
+            console.log("debugId " + id);
+            require("fs").writeFileSync(process.env.RUNNER_TEMP + "/debug-id", id);
+          ' "$map"
+          apk=outputs/apk/release/app-release.apk
+          unzip -o -q "$apk" assets/index.android.bundle -d "$RUNNER_TEMP/apk"
+          id="$(cat "$RUNNER_TEMP/debug-id")"
+          if grep -a -q "$id" "$RUNNER_TEMP/apk/assets/index.android.bundle"; then
+            echo "bytecode carries $id"
+          else
+            echo "FAIL: the packaged bytecode does not carry $id"; exit 1
+          fi
+
+      - name: The source map reached the stub
+        if: always()
+        run: |
+          echo "--- stub requests"; cat "$RUNNER_TEMP/stub.log"
+          echo "--- hook lines"; grep -i "bugsee" "$RUNNER_TEMP/gradle.log" | head -40 || true
+          grep -v "/ping" "$RUNNER_TEMP/stub.log" | grep -q . \
+            || { echo "FAIL: nothing but the probe reached the stub"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: campaign-windows-hermes
+          path: |
+            examples/bare/android/app/build/outputs/apk/release/app-release.apk
+            examples/bare/android/app/build/generated/sourcemaps/**
+            ${{ runner.temp }}/gradle.log
+            ${{ runner.temp }}/stub.log
+          if-no-files-found: warn
