@@ -342,7 +342,14 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(control).not.toMatch(/api-secret-/);
   });
 
-  on(['A', 'S', 'X'])('[OPT-007] capture.network.body-without-type: a response body with no Content-Type is kept only with the option', async () => {
+  /**
+   * iOS 7.0.0-beta5 records the response twice under one URLSession event id
+   * ("complete", body null, then "complete" with the body), and the second
+   * carries the untyped body with body-without-type at its default (false)
+   * as well as with it on (XS, 2026-10-07): the option never withholds it.
+   * BGSNetworkHelperMethods.m gates only the first. To file (bugsee-cocoa).
+   */
+  (ON_IOS ? it.failing : on(['A']))(`[OPT-007] capture.network.body-without-type: a response body with no Content-Type is kept only with the option${ON_IOS ? ' [known: iOS keeps untyped bodies with the option off (to file)]' : ''}`, async () => {
     const bodyOf = async (name: string): Promise<string> => {
       const outcome = await uploaded(name, 'bytes', true);
       const events = networkOf(own(outcome, name)).filter(e => String(e.url ?? '').includes(`api-bytes-${outcome.run.scenario.nonce}`));
@@ -359,16 +366,22 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(control).not.toContain('x'.repeat(32));
   });
 
-  on(['A', 'S', 'X'])('[OPT-009] capture.network.on-launch: a request in flight before Launched is captured only with the option', async () => {
+  // iOS records the same two "complete" events with and without the option
+  // (XS: no "before" either way), so the difference is Android's only;
+  // iOS is read back by N-06.
+  on(['A'])('[OPT-009] capture.network.on-launch: a request started in launch()\'s own turn is captured from its start only with the option', async () => {
     const has = async (name: string): Promise<boolean> => {
       const outcome = await uploaded(name, 'run', true);
       const events = networkOf(own(outcome, name)).filter(e => String(e.url ?? '').includes(`api-onlaunch-${outcome.run.scenario.nonce}`));
       report(`${name} events`, events.map(e => ({ mechanism: e.mechanism, id: e.id, type: e.type, status: e.status, timestamp: e.timestamp })));
-      return events.length > 0;
+      // Both runs record the response; only on-launch records the request
+      // being started, issued in launch()'s own JS turn (WOD_LX1: "before"
+      // with the option, "complete" alone without).
+      return events.some(e => e.type === 'before');
     };
     const onLaunch = await has('net-on-launch');
     const control = await has('net-on-launch-control');
-    report('on-launch captured', { onLaunch, control });
+    report('on-launch: request start captured', { onLaunch, control });
     expect(onLaunch).toBe(true);
     expect(control).toBe(false);
   });
@@ -581,25 +594,43 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   });
 
   /**
-   * Out of process, Android assembles the report through JobScheduler, whose
-   * job waits for a network: in airplane mode nothing is filed (WOD_LX1: no
-   * bundle in 90 s). So this case runs with the network on, against the
-   * dead endpoint (N-30 still guards the launch).
+   * Out of process, Android assembles the report through JobScheduler. On
+   * the WOD_LX1 (7.3.0, 2026-10-07) no report is filed within 90 s, in
+   * airplane mode or with the network on (dead endpoint): the option is read
+   * back as set, but the upload never becomes a bundle. To file
+   * (bugsee-android), pending the SDK team's view of the job's constraints.
    */
-  on(['A'])('[OPT-081] config.report-processing-in-process=false still files the report (network on, dead endpoint)', async () => {
-    await clearBundles();
-    await airplane(false);
-    let bundles: PulledBundle[];
-    let run: Run;
-    try {
-      ({ run } = await launch('out-of-process', 'run'));
-      await apiMarker(log!, 'eff uploaded case=out-of-process', run.scenario.nonce, 40_000, run.start);
-      bundles = await awaitBundles(1, 90_000);
-      await stopApp();
-    } finally {
-      await airplane(true);
+  const outOfProcess = async (): Promise<Outcome & { bundles: PulledBundle[] }> => {
+    const key = 'out-of-process--run';
+    if (!cache.has(key)) {
+      cache.set(
+        key,
+        (async () => {
+          await clearBundles();
+          await airplane(false);
+          try {
+            const { run, options } = await launch('out-of-process', 'run');
+            await apiMarker(log!, 'eff uploaded case=out-of-process', run.scenario.nonce, 40_000, run.start);
+            const bundles = await awaitBundles(1, 90_000);
+            await stopApp();
+            report('out-of-process bundles', bundles.map(b => b.request.summary));
+            return { run, options, bundles };
+          } finally {
+            await airplane(true);
+          }
+        })(),
+      );
     }
-    report('out-of-process bundles', bundles.map(b => b.request.summary));
+    return cache.get(key)!;
+  };
+
+  on(['A'])('[OPT-081] config.report-processing-in-process=false reads back as set', async () => {
+    const { options } = await outOfProcess();
+    expect(jsonAfter(options.text, 'values')).toEqual({ 'com.bugsee.option.config.report-processing-in-process': false });
+  });
+
+  (HERE === 'A' ? it.failing : it.skip)('[OPT-081] config.report-processing-in-process=false still files the report (network on, dead endpoint) [known: Android 7.3.0 files no report out of process (to file)]', async () => {
+    const { run, bundles } = await outOfProcess();
     expect(bundles.map(b => b.request.summary)).toContain(`api-eff-out-of-process-${run.scenario.nonce}`);
   });
 

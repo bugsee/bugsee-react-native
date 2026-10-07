@@ -79,7 +79,9 @@ export const READBACK_ANDROID: Readonly<Record<string, unknown>> = {
   [`${P}config.max-pending-report-age`]: 7,
   [`${P}config.max-pending-reports`]: 9,
   [`${P}config.report-handler-callback-timeout`]: 12,
-  [`${P}config.report-processing-in-process`]: false,
+  // config.report-processing-in-process=false files no report on the
+  // WOD_LX1 (option-effects.test.ts OPT-081), which this run needs for the
+  // environment record: read back there instead.
   [`${P}detect.anr.sampling`]: false,
   [`${P}detect.exit.bg_low_memory_as_error`]: true,
   [`${P}detect.exit.dependency_died`]: true,

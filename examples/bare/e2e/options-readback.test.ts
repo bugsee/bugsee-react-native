@@ -20,9 +20,11 @@
  *                     and reads each back.
  *
  * `config.data-encryption` (iOS) is read back by option-effects.test.ts
- * (`env-diff`), not here: it would encrypt this run's bundle.
+ * (`env-diff`), not here: it would encrypt this run's bundle. Likewise
+ * `config.report-processing-in-process` (Android, OPT-081): off, it files no
+ * report, and this run needs one.
  */
-import { type PulledBundle, airplane } from './bundles';
+import { type PulledBundle } from './bundles';
 import { apiMarker, jsonAfter } from './api-markers';
 import {
   ACCESSOR_KEYS,
@@ -104,12 +106,6 @@ describeDevice(`every launch option read back on ${TARGET_NAME}`, () => {
     defaults = chunks(log, 'opt defaults', defaultsRun.scenario.nonce, defaultsRun.start);
     await stopApp();
 
-    // Android: the all-keys set turns report-processing-in-process off, which
-    // assembles the report through JobScheduler, whose job waits for a
-    // network (option-effects.test.ts OPT-081). Network on, dead endpoint.
-    if (!ON_IOS) {
-      await airplane(false);
-    }
     const allRun = await startRun('api-opt-all');
     const nonce = allRun.scenario.nonce;
     const getterLine = await apiMarker(log, 'opt getters', nonce, 30_000, allRun.start);
@@ -121,9 +117,6 @@ describeDevice(`every launch option read back on ${TARGET_NAME}`, () => {
     report('all-keys run files on device', await listBundles());
     bundle = allBundles.find(b => b.request.summary === `api-opt-all-${nonce}`)!;
     await stopApp();
-    if (!ON_IOS) {
-      await airplane(true);
-    }
 
     enumsRun = await startRun('api-opt-enums');
     await apiMarker(log, 'opt enums done', enumsRun.scenario.nonce, 120_000, enumsRun.start);
