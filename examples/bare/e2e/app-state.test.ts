@@ -86,6 +86,11 @@ const LONG_BACKGROUND_MS = parseLongBackgroundMs(process.env.E2E_LONG_BACKGROUND
 
 const SETTINGS_BUNDLE = 'com.apple.Preferences';
 
+/** iPhone FLOW-40: the .app a fresh install is made from (`E2E_IOS_APP`). */
+const FIRST_LAUNCH_APP = ON_IOS && iosTarget() === 'device' ? process.env.E2E_IOS_APP || undefined : undefined;
+/** The other cases, which do not run when the iPhone run is FLOW-40's own. */
+const itRest: jest.It = FIRST_LAUNCH_APP === undefined ? it : it.skip;
+
 /** The time a line was written: the device's clock when it carries one, else when this host got it. */
 function lineMs(line: LogLine): number {
   return Number.isFinite(line.deviceMs) ? line.deviceMs : line.hostMs ?? Number.NaN;
@@ -169,9 +174,14 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
    * launch needs a fresh install: `E2E_IOS_APP` names the .app this case
    * uninstalls and installs again. Use a Release build there: a Debug build
    * asks for Local Network access itself (React Native's Metro lookup), which
-   * is not the SDK's prompt. Without it the case skips on the iPhone.
+   * is not the SDK's prompt. Without it the case skips on the iPhone; with
+   * it every other case here skips, since the app under test is then that
+   * build (`-t FLOW-40` as its own invocation, campaign-prep-flows.md).
    */
-  const itFirstLaunch = ON_IPHONE && !process.env.E2E_IOS_APP ? it.skip : it;
+  const itFirstLaunch = ON_IPHONE && !FIRST_LAUNCH_APP ? it.skip : it;
+  if (ON_IPHONE && !FIRST_LAUNCH_APP) {
+    console.log('[N-10] FLOW-40 skipped on the iPhone: run it on its own with E2E_IOS_APP=<Release .app> -t FLOW-40');
+  }
 
   itFirstLaunch('[N-10][FLOW-40] the first launch shows no permission prompt', async () => {
     await stopApp();
@@ -187,7 +197,7 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
     } else {
       const device = await verifyIosDevice();
       await execFileAsync('xcrun', ['devicectl', 'device', 'uninstall', 'app', '--device', device, IOS_BUNDLE_ID]);
-      await installKeepingData(process.env.E2E_IOS_APP!, true);
+      await installKeepingData(FIRST_LAUNCH_APP!, true);
     }
     const run = await startRun('flow-cold');
     must(await log!.waitFor(new RegExp(`BUGSEE_E2E flow cold launched nonce=${run.scenario.nonce}`), 15_000, run.start), 'the cold marker', run.start);
@@ -206,7 +216,7 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
     }
   });
 
-  it(`[N-10][FLOW-31][BLK-35] cold start x${COLD_STARTS}: the process is dead before each launch and Launched comes within ${LAUNCHED_BUDGET_MS / 1000} s of the JS bundle, once`, async () => {
+  itRest(`[N-10][FLOW-31][BLK-35] cold start x${COLD_STARTS}: the process is dead before each launch and Launched comes within ${LAUNCHED_BUDGET_MS / 1000} s of the JS bundle, once`, async () => {
     const jsToLaunched: number[] = [];
     const commandToLaunched: number[] = [];
     for (let i = 1; i <= COLD_STARTS; i += 1) {
@@ -300,14 +310,14 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
     expect(lumas.slice(0, firstBright).some(frame => frame.luma <= LUMA_DARK_MAX)).toBe(true);
   }
 
-  it(`[N-10][FLOW-32] background then foreground twice (${SHORT_BACKGROUND_MS / 1000} s away): still Launched, not started again, logs after resume land, video continues`, async () => {
+  itRest(`[N-10][FLOW-32] background then foreground twice (${SHORT_BACKGROUND_MS / 1000} s away): still Launched, not started again, logs after resume land, video continues`, async () => {
     await clearBundles();
     const run = await startRun('flow-resume');
     await backgroundRounds(run, 2, SHORT_BACKGROUND_MS);
     await assertResumed(run, 2, 'flow-resume', SHORT_BACKGROUND_MS);
   });
 
-  it('[N-10][FLOW-22] a vh request while the JS thread is busy completes by=deadline; with JS free, by=js', async () => {
+  itRest('[N-10][FLOW-22] a vh request while the JS thread is busy completes by=deadline; with JS free, by=js', async () => {
     await clearBundles();
     const run = await startRun('flow-vh-deadline');
     const nonce = run.scenario.nonce;
@@ -330,7 +340,7 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
     expect(freeDone.text).toMatch(/completed by=js bytes=\d+ ms=\d+/);
   });
 
-  it('[N-10][DES-16] the main thread stays responsive while a live report handler holds the report', async () => {
+  itRest('[N-10][DES-16] the main thread stays responsive while a live report handler holds the report', async () => {
     await clearBundles();
     const run = await startRun('flow-main-responsive');
     const nonce = run.scenario.nonce;
@@ -349,7 +359,7 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
     expect(bundle.request.labels).toEqual(expect.arrayContaining([`held-${nonce}`]));
   });
 
-  const itReload = debugOnly(it, 'DevSettings.reload() reloads only a Debug (Metro) build');
+  const itReload = debugOnly(itRest, 'DevSettings.reload() reloads only a Debug (Metro) build');
 
   itReload('[N-10][FLOW-34] JS reload: one console capture through the new filter, the new handler only, no stale secure rectangle', async () => {
     await clearBundles();
@@ -400,7 +410,7 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
     expect(g2Luma).toBeGreaterThanOrEqual(LUMA_BRIGHT_MIN);
   });
 
-  it(`[N-10][FLOW-33] ${Math.round(LONG_BACKGROUND_MS / 1000)} s in the background, then foreground: still Launched, not started again, logs land, video continues`, async () => {
+  itRest(`[N-10][FLOW-33] ${Math.round(LONG_BACKGROUND_MS / 1000)} s in the background, then foreground: still Launched, not started again, logs land, video continues`, async () => {
     await clearBundles();
     const run = await startRun('flow-long');
     await backgroundRounds(run, 1, LONG_BACKGROUND_MS);

@@ -114,8 +114,10 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
 
   /**
    * Waits until a report of `run` (or of `earlier`, a crash run whose report
-   * may be sent before it dies: Android's Java crash) has an upload outcome,
-   * then returns every outcome so far, from both. With `after` (a log
+   * may be sent before it dies: Android's Java crash) has the outcome this
+   * mode expects (`DELIVERED`: staging AfterReportUploaded, dry run a
+   * failure), then returns every outcome so far, from both. A failed attempt
+   * before a later delivery does not end the wait. With `after` (a log
    * index), only outcomes logged at or after it count.
    */
   async function awaitOutcomes(run: Run, timeoutMs: number, earlier?: Run, after = 0): Promise<StgEvent[]> {
@@ -126,10 +128,11 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
       runs
         .flatMap(r => events(r.scenario.nonce, from))
         .filter(event => OUTCOME.test(event.name) && event.line.index >= after);
-    while (outcomes().length === 0 && Date.now() < deadline) {
+    const delivered = (): StgEvent[] => outcomes().filter(event => DELIVERED.test(event.name));
+    while (delivered().length === 0 && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 1_000));
     }
-    if (outcomes().length === 0) {
+    if (delivered().length === 0) {
       must(undefined, `an upload outcome for a report of ${runs.map(r => r.scenario.scenario).join(' or ')}`, from);
     }
     // Let a duplicate delivery show itself before counting.
@@ -151,12 +154,13 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
     });
   }
 
-  /** Every outcome of the observed reports is the mode's, and in staging nothing is left behind. */
+  /**
+   * The mode's outcome happened; no report was delivered twice; and in
+   * staging nothing is left behind (a report that only ever failed would
+   * still be on the device), in the dry run the reports are kept.
+   */
   async function assertDelivered(outcomes: readonly StgEvent[]): Promise<void> {
-    expect(outcomes.length).toBeGreaterThan(0);
-    for (const outcome of outcomes) {
-      expect(outcome.name).toMatch(DELIVERED);
-    }
+    expect(outcomes.filter(outcome => DELIVERED.test(outcome.name)).length).toBeGreaterThan(0);
     // Delivered once: no report id is reported uploaded twice.
     const delivered = outcomes.filter(outcome => outcome.name === 'AfterReportUploaded').map(outcome => outcome.id);
     expect(new Set(delivered).size).toBe(delivered.length);
