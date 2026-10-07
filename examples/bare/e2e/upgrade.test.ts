@@ -57,7 +57,11 @@ const PATH = parseUpgradePath(process.env.E2E_UPGRADE_PATH);
 const FROM = process.env.E2E_UPGRADE_FROM ?? '';
 const TO = process.env.E2E_UPGRADE_TO ?? '';
 const FROM_SDK = process.env.E2E_UPGRADE_FROM_SDK;
-const ENABLED = PATH !== undefined && (ON_ANDROID || ON_IOS);
+/**
+ * Android and the iPhone. Not the simulator: its SDK slice has no crash
+ * reporter (ios-native-crash.test.ts), so the crash half cannot run there.
+ */
+const ENABLED = PATH !== undefined && (ON_ANDROID || (ON_IOS && iosTarget() === 'device'));
 if (ENABLED && (FROM === '' || TO === '')) {
   throw new Error('E2E_UPGRADE_PATH is set: E2E_UPGRADE_FROM and E2E_UPGRADE_TO must name both builds');
 }
@@ -163,7 +167,7 @@ describeUpgrade(`${PATH ?? 'upgrade'} over the previous build's data on ${TARGET
         ? await Promise.race([crash.launch!.ended.then(() => true), new Promise<boolean>(resolve => setTimeout(() => resolve(false), 30_000))])
         : await awaitAndroidDeath(30_000);
       expect(died).toBe(true);
-      crashedLeft = ON_IOS && iosTarget() === 'device' ? await crashQueue() : [];
+      crashedLeft = ON_IOS ? await crashQueue() : [];
       report('left by the crash', { queue: crashedLeft });
 
       // 4. The next build over it, data kept; 5. its first launch.
@@ -179,7 +183,7 @@ describeUpgrade(`${PATH ?? 'upgrade'} over the previous build's data on ${TARGET
       observed = { all: markerJson(state.text, 'all'), id: markerJson(state.text, 'id') };
       must(await log!.waitFor(new RegExp(`BUGSEE_E2E flow upgrade done status=2 nonce=${observe.scenario.nonce}`), 30_000, state.index), 'the next build still Launched', observe.start);
       aliveAfter = ON_ANDROID ? (await pidOf()) !== undefined : !(observe.launch?.hasEnded() ?? true);
-      queueAfter = ON_IOS && iosTarget() === 'device' ? await crashQueue() : [];
+      queueAfter = ON_IOS ? await crashQueue() : [];
       after = await pullAll();
       report('after the upgrade', {
         observed,

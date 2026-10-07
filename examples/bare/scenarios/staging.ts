@@ -8,13 +8,14 @@
  *   stg-js-fatal         S-1/S-2: a JS fatal (`campaign <n> js fatal`).
  *   stg-js-handled       S-1/S-2: `logException` of a thrown Error, uploaded
  *                        at once.
- *   stg-native-segv      S-3 (Android NDK) / S-5 (iOS): `crashNative('segv')`.
+ *   stg-native-segv      S-3 (Android NDK) / S-5 (iOS): `crashNative('segv')`,
+ *                        after setting the attribute `campaign` to
+ *                        `campaign <nonce> native segv` (the recovered report
+ *                        carries it: a native crash has no JS text to search).
  *   stg-native-exception S-4 (Android Java) / S-5 (iOS NSException):
- *                        `testNativeCrash()`.
- *   stg-observe          the relaunch after a crash: the recovered report is
- *                        labelled with the crash's nonce (passed as the
- *                        scenario's own nonce is not the crash's: see below)
- *                        and its upload outcome is marked.
+ *                        `testNativeCrash()`, attribute as above.
+ *   stg-observe          the relaunch after a crash: the recovered report's
+ *                        creation and its upload outcome are marked.
  *   stg-upload           S-6 acceptance: attributes, user id, a console line,
  *                        a fetch, an event, a trace, then `upload()` with a
  *                        severity and labels.
@@ -146,11 +147,15 @@ export async function runStagingScenario(scenario: StagingScenario, nonce: strin
       mark(`handled-sent text="${campaignText(nonce, 'js handled')}" nonce=${nonce}`);
       return;
     case 'stg-native-segv':
+      // A native crash carries no JS text: the attribute is what makes the
+      // recovered report findable by `campaign <nonce>` on staging.
+      await Bugsee.setAttribute('campaign', campaignText(nonce, 'native segv'));
       mark(`crashing kind=segv nonce=${nonce}`);
       await sleep(500);
       crashNative('segv');
       return;
     case 'stg-native-exception':
+      await Bugsee.setAttribute('campaign', campaignText(nonce, 'native exception'));
       mark(`crashing kind=native-exception nonce=${nonce}`);
       await sleep(500);
       Bugsee.testNativeCrash();

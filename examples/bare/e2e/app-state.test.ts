@@ -5,11 +5,12 @@
  *             reaches Launched within 10 s of the JS bundle running every time,
  *             once (one Launching, one Launched, one native start); p50/p95
  *             recorded (BLK-35: the XS figure is the one the plan asks for).
- *   [FLOW-40] no permission prompt at the first launch: Android after
- *             `pm clear` (runtime grants reset) the app's own activity is in
- *             front, and the dangerous permissions the package declares are
- *             recorded; iOS (simulator privacy reset; the iPhone after the
- *             container wipe) the screen OCR shows the app and no system alert.
+ *   [FLOW-40] no permission prompt at the first launch (first in the file):
+ *             Android after `pm clear` (runtime grants reset) the app's own
+ *             activity is in front, and the dangerous permissions the package
+ *             declares are recorded; iOS (simulator: privacy reset; iPhone: a
+ *             fresh install of `E2E_IOS_APP`, a Release build) the screen OCR
+ *             shows the app and no system alert.
  *   [FLOW-32] background then foreground, twice: the SDK stays Launched, the
  *             JS and the SDK are not started again, the lines logged after each
  *             resume land in the report, and the video goes on after the gap
@@ -46,7 +47,7 @@ import { promisify } from 'node:util';
 import { type PulledBundle, captureEvents } from './bundles';
 import { ANDROID_COMPONENT, ANDROID_PACKAGE, IOS_BUNDLE_ID, IOS_SIMULATOR_ID, iosTarget, verifyIosDevice } from './device';
 import { parseLongBackgroundMs, percentile } from './flow-config';
-import { androidDangerousPermissions, androidRequestedPermissions } from './install';
+import { androidDangerousPermissions, androidRequestedPermissions, installKeepingData } from './install';
 import {
   ON_ANDROID,
   ON_IOS,
@@ -163,6 +164,48 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
 
   afterAll(() => endRetainingSuite(log));
 
+  /**
+   * iPhone: privacy grants (TCC) live outside the data container, so a first
+   * launch needs a fresh install: `E2E_IOS_APP` names the .app this case
+   * uninstalls and installs again. Use a Release build there: a Debug build
+   * asks for Local Network access itself (React Native's Metro lookup), which
+   * is not the SDK's prompt. Without it the case skips on the iPhone.
+   */
+  const itFirstLaunch = ON_IPHONE && !process.env.E2E_IOS_APP ? it.skip : it;
+
+  itFirstLaunch('[N-10][FLOW-40] the first launch shows no permission prompt', async () => {
+    await stopApp();
+    await clearBundles();
+    if (ON_ANDROID) {
+      // First-launch state: data and runtime grants reset.
+      await adb('shell', 'pm', 'clear', ANDROID_PACKAGE);
+      const requested = await androidRequestedPermissions();
+      report('declared permissions', requested);
+      report('declared dangerous (runtime) permissions', await androidDangerousPermissions(requested));
+    } else if (ON_SIMULATOR) {
+      await execFileAsync('xcrun', ['simctl', 'privacy', IOS_SIMULATOR_ID, 'reset', 'all', IOS_BUNDLE_ID]);
+    } else {
+      const device = await verifyIosDevice();
+      await execFileAsync('xcrun', ['devicectl', 'device', 'uninstall', 'app', '--device', device, IOS_BUNDLE_ID]);
+      await installKeepingData(process.env.E2E_IOS_APP!, true);
+    }
+    const run = await startRun('flow-cold');
+    must(await log!.waitFor(new RegExp(`BUGSEE_E2E flow cold launched nonce=${run.scenario.nonce}`), 15_000, run.start), 'the cold marker', run.start);
+    // A prompt the SDK asked for would be up by now.
+    await new Promise(resolve => setTimeout(resolve, 4_000));
+    if (ON_ANDROID) {
+      const top = await androidTopActivity();
+      report('top activity', top);
+      expect(top).toBe(`${ANDROID_PACKAGE}/${ANDROID_COMPONENT.split('/')[1]}`);
+    } else {
+      const lines = await ocrLines(await captureScreen('flow-first-launch'));
+      report('screen text', lines);
+      // The app itself is on screen, so the OCR saw it.
+      expect(lines.some(line => /Bugsee React Native/.test(line))).toBe(true);
+      expect(lines.filter(line => /Would Like to|Don.t Allow|^Allow\b|Allow While Using|Not Now/i.test(line))).toEqual([]);
+    }
+  });
+
   it(`[N-10][FLOW-31][BLK-35] cold start x${COLD_STARTS}: the process is dead before each launch and Launched comes within ${LAUNCHED_BUDGET_MS / 1000} s of the JS bundle, once`, async () => {
     const jsToLaunched: number[] = [];
     const commandToLaunched: number[] = [];
@@ -197,35 +240,6 @@ describeDevice(`app state around the SDK on ${TARGET_NAME} (N-10)`, () => {
       jsToLaunched: { p50: percentile(jsToLaunched, 50), p95: percentile(jsToLaunched, 95), all: jsToLaunched },
       commandToLaunched: { p50: percentile(commandToLaunched, 50), p95: percentile(commandToLaunched, 95), all: commandToLaunched },
     });
-  });
-
-  it('[N-10][FLOW-40] the first launch shows no permission prompt', async () => {
-    await stopApp();
-    await clearBundles();
-    if (ON_ANDROID) {
-      // First-launch state: data and runtime grants reset.
-      await adb('shell', 'pm', 'clear', ANDROID_PACKAGE);
-      const requested = await androidRequestedPermissions();
-      report('declared permissions', requested);
-      report('declared dangerous (runtime) permissions', await androidDangerousPermissions(requested));
-    } else if (ON_SIMULATOR) {
-      await execFileAsync('xcrun', ['simctl', 'privacy', IOS_SIMULATOR_ID, 'reset', 'all', IOS_BUNDLE_ID]);
-    }
-    const run = await startRun('flow-cold');
-    must(await log!.waitFor(new RegExp(`BUGSEE_E2E flow cold launched nonce=${run.scenario.nonce}`), 15_000, run.start), 'the cold marker', run.start);
-    // A prompt the SDK asked for would be up by now.
-    await new Promise(resolve => setTimeout(resolve, 4_000));
-    if (ON_ANDROID) {
-      const top = await androidTopActivity();
-      report('top activity', top);
-      expect(top).toBe(`${ANDROID_PACKAGE}/${ANDROID_COMPONENT.split('/')[1]}`);
-    } else {
-      const lines = await ocrLines(await captureScreen('flow-first-launch'));
-      report('screen text', lines);
-      // The app itself is on screen, so the OCR saw it.
-      expect(lines.some(line => /Bugsee React Native/.test(line))).toBe(true);
-      expect(lines.filter(line => /Would Like to|Don.t Allow|^Allow\b|Allow While Using|Not Now/i.test(line))).toEqual([]);
-    }
   });
 
   async function backgroundRounds(run: Run, rounds: number, awayMs: number): Promise<number[]> {

@@ -43,6 +43,7 @@ import { airplane } from './bundles';
 import { iosTarget } from './device';
 import {
   CAMPAIGN_MODE,
+  RELEASE,
   ON_ANDROID,
   ON_IOS,
   type Run,
@@ -72,6 +73,12 @@ const ON_IPHONE = ON_IOS && iosTarget() === 'device';
 const CAN_CRASH = ON_ANDROID || ON_IPHONE;
 const itCrash = CAN_CRASH ? it : it.skip;
 const itAndroid = ON_ANDROID ? it : it.skip;
+/**
+ * A Java crash from `testNativeCrash()` needs a Release build on Android: in
+ * Debug, React Native's red box catches it and the process lives on (seen in
+ * the dry run on the WOD_LX1, twice). The STAGING lane runs Release anyway.
+ */
+const itAndroidRelease = ON_ANDROID && RELEASE ? it : it.skip;
 const itIphone = ON_IPHONE ? it : it.skip;
 const itStagingAndroid = STAGING && ON_ANDROID ? it : it.skip;
 const OPERATOR = operatorEnabled(ON_IOS ? 'ios' : 'android');
@@ -108,13 +115,17 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
   /**
    * Waits until a report of `run` (or of `earlier`, a crash run whose report
    * may be sent before it dies: Android's Java crash) has an upload outcome,
-   * then returns every outcome so far, from both.
+   * then returns every outcome so far, from both. With `after` (a log
+   * index), only outcomes logged at or after it count.
    */
-  async function awaitOutcomes(run: Run, timeoutMs: number, earlier?: Run): Promise<StgEvent[]> {
+  async function awaitOutcomes(run: Run, timeoutMs: number, earlier?: Run, after = 0): Promise<StgEvent[]> {
     const runs = earlier === undefined ? [run] : [earlier, run];
     const from = runs[0]!.start;
     const deadline = Date.now() + timeoutMs;
-    const outcomes = (): StgEvent[] => runs.flatMap(r => events(r.scenario.nonce, from)).filter(event => OUTCOME.test(event.name));
+    const outcomes = (): StgEvent[] =>
+      runs
+        .flatMap(r => events(r.scenario.nonce, from))
+        .filter(event => OUTCOME.test(event.name) && event.line.index >= after);
     while (outcomes().length === 0 && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 1_000));
     }
@@ -133,6 +144,7 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
       mode: STAGING ? 'staging' : 'dry-run',
       target: TARGET_NAME,
       nonce: run.scenario.nonce,
+      // In the report text (JS) or in the attribute `campaign` (native crashes).
       search: `campaign ${run.scenario.nonce}`,
       debugIds: launched === undefined ? undefined : /debug-ids=(\S*)/.exec(launched.text)?.[1],
       ...extra,
@@ -191,7 +203,7 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
     await crashThenObserve('stg-native-segv', 'S-3', settle(5_000));
   });
 
-  itAndroid('[N-19][S-4][FLOW-26] a Java crash is recovered and uploaded', async () => {
+  itAndroidRelease('[N-19][S-4][FLOW-26] a Java crash is recovered and uploaded', async () => {
     await crashThenObserve('stg-native-exception', 'S-4', settle(5_000));
   });
 
@@ -223,6 +235,7 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
     await clearBundles();
     await airplane(true);
     let run: Run;
+    let back: number;
     try {
       run = await startRun('stg-offline-upload');
       must(await log!.waitFor(new RegExp(`BUGSEE_E2E stg uploaded summary=.* nonce=${run.scenario.nonce}`), 30_000, run.start), 'the offline upload', run.start);
@@ -233,12 +246,13 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
       expect(offline).toEqual([]);
       expect(kept.length).toBeGreaterThan(0);
     } finally {
+      // Marked before the network comes back: a delivery while ensureOnline()
+      // waits for the network to settle is already "back online".
+      back = log!.mark();
       await ensureOnline();
     }
-    const back = log!.mark();
-    const outcomes = await awaitOutcomes(run, 240_000);
-    const afterBack = outcomes.filter(outcome => outcome.line.index >= back);
-    evidence('S-7', run, { outcomes: outcomes.map(o => `${o.name}:${o.id}`) });
+    const afterBack = await awaitOutcomes(run, 240_000, undefined, back);
+    evidence('S-7', run, { outcomes: afterBack.map(o => `${o.name}:${o.id}`) });
     expect(afterBack.length).toBeGreaterThan(0);
     await assertDelivered(afterBack);
   });
