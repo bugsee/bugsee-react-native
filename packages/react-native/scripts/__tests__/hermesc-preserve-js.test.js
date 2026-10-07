@@ -177,8 +177,8 @@ describe('file helpers', () => {
   it('resolveFrom resolves from the given directory, or gives null', () => {
     fs.mkdirSync(path.join(dir, 'node_modules', 'pkg'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'node_modules', 'pkg', 'package.json'), '{"name":"pkg"}');
-    expect(fs.realpathSync(resolveFrom('pkg/package.json', dir))).toBe(
-      fs.realpathSync(path.join(dir, 'node_modules', 'pkg', 'package.json')),
+    expect(fs.realpathSync.native(resolveFrom('pkg/package.json', dir))).toBe(
+      fs.realpathSync.native(path.join(dir, 'node_modules', 'pkg', 'package.json')),
     );
     expect(resolveFrom('no-such-package-for-bugsee-tests/package.json', dir)).toBeNull();
   });
