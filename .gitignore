@@ -45,3 +45,4 @@ packages/react-native-feedback/.bugsee-feedback-sources-version
 # Staged into each package by prepack (scripts/pack-native-versions.ts) and
 # removed by postpack; the repo-root file is the only source.
 packages/*/native-versions.json
+examples/*/ios/build-spm/

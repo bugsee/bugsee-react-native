@@ -8,7 +8,9 @@
 # Targets:
 #   android-debug       :app:assembleDebug   (arm64-v8a)
 #   android-release     :app:assembleRelease (arm64-v8a, -PbugseeE2eDebuggable=true),
-#                       then the 16 KB alignment check (check-16kb.sh)
+#                       then the 16 KB alignment check (check-16kb.sh): a
+#                       Bugsee library out of alignment fails the target;
+#                       only another vendor's records PASS-16KB-WARN
 #   ios-sim-debug       Debug, iphonesimulator
 #   ios-sim-release     Release, iphonesimulator
 #   ios-device-debug    Debug, iphoneos, signed for IOS_DEVELOPMENT_TEAM
@@ -26,8 +28,10 @@
 #   <UTC> <app> <target> PASS|FAIL <seconds> <artifact> <sha256>
 set -uo pipefail
 
+# One function, so bash parses the whole script before running any of it.
+main() {
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$(cd "${1:?usage: build-app.sh <app dir> <target>...}" && pwd)"
+APP_DIR="$(cd "${1:?usage: build-app.sh <app dir> <target>...}" && pwd)" || exit 2
 shift
 APP="$(basename "$APP_DIR")"
 LOGS="$(dirname "$APP_DIR")/logs"
@@ -79,6 +83,11 @@ for target in "${TARGETS[@]}"; do
       artifact="$APP_DIR/android/app/build/outputs/apk/release/app-release.apk"
       if [[ $rc -eq 0 ]]; then
         "$HERE/check-16kb.sh" "$artifact" >>"$log" 2>&1 || rc=$?
+        if [[ $rc -eq 4 ]]; then
+          record "$target" PASS-16KB-WARN $((SECONDS - start)) "$artifact"
+          grep "16 KB check" "$log"
+          continue
+        fi
       fi
       ;;
     ios-sim-debug|ios-sim-release)
@@ -108,3 +117,6 @@ for target in "${TARGETS[@]}"; do
   fi
 done
 exit $overall
+}
+
+main "$@"
