@@ -46,3 +46,5 @@ packages/react-native-feedback/.bugsee-feedback-sources-version
 # removed by postpack; the repo-root file is the only source.
 packages/*/native-versions.json
 examples/*/ios/build-spm/
+# `lib/` above is for build output; these are campaign generator steps.
+!scripts/campaign/lib/

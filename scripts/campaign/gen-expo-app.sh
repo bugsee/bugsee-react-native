@@ -99,6 +99,7 @@ main() {
     const fs=require("fs"); const f="android/app/build.gradle"; let s=fs.readFileSync(f,"utf8");
     s=s.replace(/(\n\s*release \{\n)/, "$1            debuggable findProperty(\"bugseeE2eDebuggable\") == \"true\" // campaign harness\n");
     fs.writeFileSync(f,s);'
+  node "$HERE/lib/ios-log-mirror.js" ios | tee -a "$GEN_LOG"
   node "$HERE/lib/metro-port.js" "$DIR" "$PORT" >>"$GEN_LOG"
   log "harness: debuggable release flag, Metro port $PORT"
 

@@ -16,7 +16,9 @@
 # here: use examples/bare/scripts/run-ios.sh (IOS_APP_DIR, IOS_LAUNCH=1).
 #
 # Takes .device-lock (blocking, no timeout) for the whole install+launch and
-# releases it on every exit. A Debug build loads JS from this app's own Metro
+# releases it on every exit. CAMPAIGN_LOCK_HELD=1 means the caller already
+# holds .device-lock (emulators.sh sweep: the emulator is up for several
+# launches) and this script neither takes nor releases it. A Debug build loads JS from this app's own Metro
 # port (campaign.port), never 8081, so another lane's Metro is never used and
 # the 8081 reverse another lane may hold is left alone.
 #
@@ -28,7 +30,9 @@ TARGET="${2:?target android|ios-sim}"
 CONFIG="${3:?debug|release}"
 SERIAL="${4:-AMRJCP4718402860}"
 SIMULATOR=6FA9B3E8-26C7-4232-AA2C-537D9DF32957
-LOCK=/Volumes/External2TB/Projects/Bugsee/cross/bugsee-react-native/.device-lock
+# The campaign's shared device lock (campaign-rules.md); CAMPAIGN_DEVICE_LOCK
+# overrides it on another machine.
+LOCK="${CAMPAIGN_DEVICE_LOCK:-/Volumes/External2TB/Projects/Bugsee/cross/bugsee-react-native/.device-lock}"
 APP="$(basename "$APP_DIR")"
 LOGS="$(dirname "$APP_DIR")/logs"
 mkdir -p "$LOGS"
@@ -39,6 +43,8 @@ ADB="$ANDROID_HOME/platform-tools/adb"
 BUDGET="${LAUNCH_BUDGET:-180}"
 [[ "$TARGET" == android && "$SERIAL" == emulator-* ]] && BUDGET="${LAUNCH_BUDGET:-300}"
 
+# A missing parent would make the mkdir below fail forever, like a held lock.
+[[ -d "$(dirname "$LOCK")" ]] || { echo "lock directory $(dirname "$LOCK") does not exist; set CAMPAIGN_DEVICE_LOCK" >&2; exit 2; }
 case "$TARGET" in android|ios-sim) ;; *) echo "target android|ios-sim" >&2; exit 2 ;; esac
 case "$CONFIG" in debug|release) ;; *) echo "debug|release" >&2; exit 2 ;; esac
 [[ "$SERIAL" == 00008140* || "$SERIAL" == D027034D* ]] && { echo "refused: never this device" >&2; exit 2; }
@@ -66,7 +72,7 @@ cleanup() {
   if [[ "$TARGET" == android && "$CONFIG" == debug ]]; then
     "$ADB" -s "$SERIAL" reverse --remove "tcp:$PORT" 2>/dev/null
   fi
-  rmdir "$LOCK" 2>/dev/null
+  [[ "${CAMPAIGN_LOCK_HELD:-0}" == 1 ]] || rmdir "$LOCK" 2>/dev/null
 }
 
 start_metro() {
@@ -88,7 +94,9 @@ start_metro() {
 : >"$OUT"
 echo "== $APP $TARGET $CONFIG $( [[ $TARGET == android ]] && echo "$SERIAL" || echo "$SIMULATOR") port $PORT" | tee -a "$OUT"
 
-until mkdir "$LOCK" 2>/dev/null; do sleep 30; done
+if [[ "${CAMPAIGN_LOCK_HELD:-0}" != 1 ]]; then
+  until mkdir "$LOCK" 2>/dev/null; do sleep 30; done
+fi
 trap cleanup EXIT
 
 result=FAIL

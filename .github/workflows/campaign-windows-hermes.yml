@@ -47,34 +47,34 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
 
-      - name: Stub upload server
+      # The repo's own stand-in for the symbol API (the upload tests use it):
+      # POST /apps/<token>/symbols answers with a PUT URL on itself, and the
+      # PUT's zip is unpacked and its map's debug_id logged.
+      # The synthetic token makes write-credentials turn NDK symbol upload on;
+      # that is not what this job proves, so take it back out.
+      - name: Credentials (synthetic token, stub endpoint, no NDK upload)
         run: |
-          cat > "$RUNNER_TEMP/stub.js" <<'JS'
-          const http = require('http');
-          const fs = require('fs');
-          const log = process.argv[2];
-          http.createServer((req, res) => {
-            let size = 0;
-            req.on('data', (c) => { size += c.length; });
-            req.on('end', () => {
-              fs.appendFileSync(log, `${req.method} ${req.url} ${size}\n`);
-              res.writeHead(200, { 'content-type': 'application/json' });
-              res.end('{"ok":true,"id":"stub","url":"http://127.0.0.1:8777/upload"}');
-            });
-          }).listen(8777, '127.0.0.1');
-          JS
-          : > "$RUNNER_TEMP/stub.log"
-          nohup node "$RUNNER_TEMP/stub.js" "$RUNNER_TEMP/stub.log" > /dev/null 2>&1 &
-          sleep 2
-          curl -s -X POST http://127.0.0.1:8777/ping -d x >/dev/null && echo "stub up"
+          yarn workspace bugsee-example-bare credentials
+          sed -i '/^plugin.ndk.enabled/d' examples/bare/android/bugsee.properties
 
-      - name: Credentials (synthetic token, stub endpoint)
-        run: yarn workspace bugsee-example-bare credentials
-
-      - name: Release build (Hermes)
-        working-directory: examples/bare/android
-        shell: cmd
-        run: gradlew.bat :app:assembleRelease -PreactNativeArchitectures=arm64-v8a -PbugseeE2eDebuggable=true --stacktrace > "%RUNNER_TEMP%\gradle.log" 2>&1 & type "%RUNNER_TEMP%\gradle.log" & findstr /C:"BUILD SUCCESSFUL" "%RUNNER_TEMP%\gradle.log"
+      # The stub (the repo's own stand-in for the symbol API, as the upload
+      # tests use it) starts in this step so it lives as long as Gradle does.
+      # The job fails on Gradle's exit code.
+      - name: Release build (Hermes) against the stub symbol API
+        shell: pwsh
+        run: |
+          New-Item -ItemType File -Force "$env:RUNNER_TEMP/stub.log" | Out-Null
+          $stub = Start-Process node -PassThru -NoNewWindow -ArgumentList @(
+            'packages/react-native/scripts/__tests__/fixtures/symbol-stub-server.js',
+            '--port', '8777', '--log', "$env:RUNNER_TEMP/stub.log")
+          Start-Sleep -Seconds 2
+          Push-Location examples/bare/android
+          ./gradlew.bat :app:assembleRelease -PreactNativeArchitectures=arm64-v8a -PbugseeE2eDebuggable=true --stacktrace *> "$env:RUNNER_TEMP/gradle.log"
+          $code = $LASTEXITCODE
+          Pop-Location
+          Stop-Process -Id $stub.Id -ErrorAction SilentlyContinue
+          Get-Content "$env:RUNNER_TEMP/gradle.log"
+          exit $code
 
       - name: Composed map carries a debug id; the bytecode carries the same one
         working-directory: examples/bare/android/app/build
@@ -97,13 +97,21 @@ jobs:
             echo "FAIL: the packaged bytecode does not carry $id"; exit 1
           fi
 
-      - name: The source map reached the stub
+      - name: The composed map reached the stub, with that debug id
         if: always()
         run: |
           echo "--- stub requests"; cat "$RUNNER_TEMP/stub.log"
           echo "--- hook lines"; grep -i "bugsee" "$RUNNER_TEMP/gradle.log" | head -40 || true
-          grep -v "/ping" "$RUNNER_TEMP/stub.log" | grep -q . \
-            || { echo "FAIL: nothing but the probe reached the stub"; exit 1; }
+          node -e '
+            const fs = require("fs");
+            const want = fs.existsSync(process.argv[2]) ? fs.readFileSync(process.argv[2], "utf8").trim() : "";
+            if (!want) { console.error("FAIL: no composed-map debug id to look for"); process.exit(1); }
+            const puts = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean)
+              .map((l) => JSON.parse(l)).filter((e) => e.method === "PUT");
+            const hit = puts.some((e) => (e.entries || []).some((x) => x.debugId === want));
+            if (!hit) { console.error("FAIL: no PUT carried a map with debug_id " + want); process.exit(1); }
+            console.log("stub received the map with debug_id " + want);
+          ' "$RUNNER_TEMP/stub.log" "$RUNNER_TEMP/debug-id"
 
       - uses: actions/upload-artifact@v4
         if: always()
