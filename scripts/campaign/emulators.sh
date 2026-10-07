@@ -10,6 +10,9 @@
 #                                .device-lock for as long as it is up.
 #   emulators.sh stop <serial>   kill that emulator
 #   emulators.sh list            the campaign AVDs and their images
+#   emulators.sh sweep <app dir>... for each AVD: take .device-lock, boot it,
+#                                launch-check.sh each app (debug and release),
+#                                stop it, release the lock
 #
 # The floor: the Bugsee Android SDK and the wrapper declare minSdk 21, but
 # every React Native 0.81+ template sets minSdkVersion 24, so an RN app cannot
@@ -91,6 +94,28 @@ case "${1:-}" in
     for avd in $AVDS; do
       printf '%s\t%s\t%s\n' "$avd" "$(image_of "$avd")" \
         "$("$EMULATOR" -list-avds | grep -qx "$avd" && echo created || echo missing)"
+    done
+    ;;
+  sweep)
+    shift
+    LOCK="${CAMPAIGN_DEVICE_LOCK:-/Volumes/External2TB/Projects/Bugsee/cross/bugsee-react-native/.device-lock}"
+    [[ -d "$(dirname "$LOCK")" ]] || { echo "lock directory $(dirname "$LOCK") does not exist; set CAMPAIGN_DEVICE_LOCK" >&2; exit 2; }
+    HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for avd in $AVDS; do
+      until mkdir "$LOCK" 2>/dev/null; do sleep 30; done
+      serial="emulator-$(port_of "$avd")"
+      trap '"$ADB" -s "$serial" emu kill >/dev/null 2>&1; rmdir "$LOCK" 2>/dev/null' EXIT
+      "$0" boot "$avd" >/dev/null
+      echo "$avd ($serial): API $("$ADB" -s "$serial" shell getprop ro.build.version.sdk | tr -d '\r'), page size $("$ADB" -s "$serial" shell getconf PAGE_SIZE | tr -d '\r')"
+      for app in "$@"; do
+        for cfg in debug release; do
+          CAMPAIGN_LOCK_HELD=1 "$HERE/launch-check.sh" "$app" android "$cfg" "$serial" 2>&1 | grep -E ": (PASS|FAIL)" || true
+        done
+      done
+      "$ADB" -s "$serial" emu kill >/dev/null 2>&1 || true
+      sleep 5
+      rmdir "$LOCK"
+      trap - EXIT
     done
     ;;
   *)

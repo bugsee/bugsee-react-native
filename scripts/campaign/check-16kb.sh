@@ -2,12 +2,12 @@
 #
 # N-24 / MX-16KB: Android 16 KB page-size readiness of a release APK or AAB.
 #
-#   check-16kb.sh <app.apk|app.aab>
+#   check-16kb.sh <app.apk>
 #
 # Two checks, both required by Google Play for targetSdk 35+ apps on
 # 16 KB devices:
 #   1. zip alignment: every uncompressed .so starts on a 16 KB boundary
-#      (`zipalign -c -P 16 -v 4`; APK only, bundletool aligns an AAB's splits);
+#      (`zipalign -c -P 16 -v 4`);
 #   2. ELF alignment: every PT_LOAD segment of every .so in lib/arm64-v8a and
 #      lib/x86_64 has p_align >= 2**14 (16384).
 # Prints one line per .so (Bugsee's own marked with *). Exit 1 when zipalign
@@ -16,7 +16,10 @@
 # but not judged: 16 KB pages are a 64-bit-only requirement.
 set -euo pipefail
 
-ARTIFACT="$(cd "$(dirname "${1:?usage: check-16kb.sh <apk|aab>}")" && pwd)/$(basename "$1")"
+ARTIFACT="$(cd "$(dirname "${1:?usage: check-16kb.sh <apk>}")" && pwd)/$(basename "$1")"
+# An AAB keeps its libraries in nested module zips this does not unpack:
+# check the universal APK (bundletool build-apks --mode=universal) instead.
+[[ "$ARTIFACT" == *.apk ]] || { echo "check-16kb.sh takes an APK; for an AAB check its universal APK" >&2; exit 2; }
 : "${ANDROID_HOME:=$HOME/Library/Android/sdk}"
 
 BUILD_TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/* | grep -v rc | sort -V | tail -1)"
@@ -30,6 +33,7 @@ unzip -q "$ARTIFACT" '*.so' -d "$WORK" 2>/dev/null || true
 
 failures=0
 others=0
+examined=0
 echo "--- 16 KB check: $(basename "$ARTIFACT")"
 if [[ "$ARTIFACT" == *.apk ]]; then
   if "$BUILD_TOOLS/zipalign" -c -P 16 -v 4 "$ARTIFACT" >"$WORK/zipalign.txt" 2>&1; then
@@ -51,6 +55,7 @@ while IFS= read -r so; do
   verdict=PASS
   case "$abi" in
     arm64-v8a|x86_64)
+      examined=$((examined + 1))
       if [[ -z "$min_align" || "$min_align" -lt 16384 ]]; then
         verdict=FAIL
         if [[ "$mark" == "*" ]]; then failures=$((failures + 1)); else others=$((others + 1)); fi
@@ -60,6 +65,10 @@ while IFS= read -r so; do
   printf '%s %-5s align=%-6s %s\n' "$mark" "$verdict" "${min_align:-?}" "$rel"
 done < <(find "$WORK" -name '*.so' | sort)
 
+if [[ "$examined" -eq 0 ]]; then
+  echo "16 KB check: FAIL (no 64-bit .so examined)"
+  exit 1
+fi
 if [[ "$failures" -gt 0 ]]; then
   echo "16 KB check: FAIL ($failures Bugsee/zip, $others other)"
   exit 1

@@ -42,3 +42,5 @@ reports/
 packages/react-native/.bugsee-xcframework-version
 packages/react-native-feedback/.bugsee-feedback-sources-version
 examples/*/ios/build-spm/
+# `lib/` above is for build output; these are campaign generator steps.
+!scripts/campaign/lib/

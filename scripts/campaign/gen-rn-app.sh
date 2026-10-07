@@ -69,13 +69,15 @@ CORE_TGZ="$(ls "$TARBALLS"/bugsee-react-native-[0-9]*.tgz 2>/dev/null | head -1 
 NUM="${MINOR#0.}"
 SUFFIX=""
 CAP=""
+# Each variant flag adds its own bit, so no two variants of one minor share
+# a Metro port: 8100 + minor, +100 jsc, +200 yarn, +400 pnpm, +800 readme.
 PORT=$((8100 + NUM))
-if [[ "$ENGINE" == jsc ]]; then SUFFIX="jsc"; CAP="Jsc"; PORT=$((8200 + NUM)); fi
-if [[ "$README_ONLY" -eq 1 ]]; then SUFFIX="${SUFFIX}readme"; CAP="${CAP}Readme"; PORT=$((8600 + NUM)); fi
+if [[ "$ENGINE" == jsc ]]; then SUFFIX="jsc"; CAP="Jsc"; PORT=$((PORT + 100)); fi
 case "$PM" in
-  yarn) SUFFIX="${SUFFIX}yarn"; CAP="${CAP}Yarn"; PORT=$((8400 + NUM)) ;;
-  pnpm) SUFFIX="${SUFFIX}pnpm"; CAP="${CAP}Pnpm"; PORT=$((8500 + NUM)) ;;
+  yarn) SUFFIX="${SUFFIX}yarn"; CAP="${CAP}Yarn"; PORT=$((PORT + 200)) ;;
+  pnpm) SUFFIX="${SUFFIX}pnpm"; CAP="${CAP}Pnpm"; PORT=$((PORT + 400)) ;;
 esac
+if [[ "$README_ONLY" -eq 1 ]]; then SUFFIX="${SUFFIX}readme"; CAP="${CAP}Readme"; PORT=$((PORT + 800)); fi
 NAME="Rn0${NUM}${CAP}"                # Rn081, Rn087Jsc
 ID="com.bugsee.campaign.rn0${NUM}${SUFFIX}"
 DIR="$APPS/rn0${NUM}${SUFFIX:+-$SUFFIX}"
@@ -191,6 +193,9 @@ node -e '
   const t=new Function("return (" + fs.readFileSync("tsconfig.json","utf8") + ")")();
   t.compilerOptions={...(t.compilerOptions||{}), resolveJsonModule:true};
   fs.writeFileSync("tsconfig.json", JSON.stringify(t,null,2)+"\n");'
+
+# 7a. Harness support: BUGSEE_E2E markers reach NSLog (lib/ios-log-mirror.js).
+node "$HERE/lib/ios-log-mirror.js" ios | tee -a "$GEN_LOG"
 
 # 7b. Harness support: this app's own Metro port (lib/metro-port.js).
 node "$HERE/lib/metro-port.js" "$DIR" "$PORT" >>"$GEN_LOG"

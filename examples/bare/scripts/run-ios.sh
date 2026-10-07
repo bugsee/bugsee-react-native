@@ -32,7 +32,9 @@
 #                           console attached for IOS_LAUNCH_SECONDS (default
 #                           40) and print the BUGSEE_E2E / Bugsee lines; exit
 #                           non-zero unless IOS_LAUNCH_EXPECT (default
-#                           "BUGSEE_E2E status=2|Bugsee iOS SDK") appears.
+#                           "BUGSEE_E2E status=2", the contract of
+#                           e2e/launch.test.ts) appears. The SDK banner is
+#                           printed, never accepted: it comes before Launched.
 #                           The device must already be held under its lock.
 #
 # The SwiftPM delivery path is the other configuration; see README.md.
@@ -173,10 +175,10 @@ if [[ "${IOS_LAUNCH:-0}" == 1 ]]; then
   wait "$LAUNCH_PID" 2>/dev/null || true
   echo "--- console of $BUNDLE_ID ($CONFIGURATION, $DELIVERY, $TARGET)"
   grep -E "BUGSEE_E2E|Bugsee|BugseeRN" "$CONSOLE" | cut -c1-240 | head -40
-  if grep -qE "${IOS_LAUNCH_EXPECT:-BUGSEE_E2E status=2|Bugsee iOS SDK}" "$CONSOLE"; then
+  if grep -qE "${IOS_LAUNCH_EXPECT:-BUGSEE_E2E status=2}" "$CONSOLE"; then
     echo "launch: PASS"
   else
-    echo "launch: FAIL (no match for ${IOS_LAUNCH_EXPECT:-BUGSEE_E2E status=2|Bugsee iOS SDK}; console kept at $CONSOLE)"
+    echo "launch: FAIL (no match for ${IOS_LAUNCH_EXPECT:-BUGSEE_E2E status=2}; console kept at $CONSOLE)"
     exit 1
   fi
 fi
