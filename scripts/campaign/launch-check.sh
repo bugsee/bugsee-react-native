@@ -74,7 +74,10 @@ record_row() { # result
 cleanup() {
   # Every exit leaves a row: an install or Metro failure is a FAIL, not a gap.
   [[ "$RECORDED" == 1 ]] || { record_row FAIL; echo "$APP $TARGET $CONFIG: FAIL (before launch, see $OUT)"; }
-  [[ -n "$LOG_PID" ]] && kill "$LOG_PID" 2>/dev/null
+  if [[ -n "$LOG_PID" ]]; then
+    kill "$LOG_PID" 2>/dev/null
+    wait "$LOG_PID" 2>/dev/null
+  fi
   if [[ -n "$METRO_PID" ]]; then
     pkill -P "$METRO_PID" 2>/dev/null
     kill "$METRO_PID" 2>/dev/null
@@ -123,12 +126,13 @@ if [[ "$TARGET" == android ]]; then
     "$ADB" -s "$SERIAL" reverse "tcp:$PORT" "tcp:$PORT" >>"$OUT"
   fi
   "$ADB" -s "$SERIAL" shell am force-stop "$ID"
-  "$ADB" -s "$SERIAL" logcat -c
+  "$ADB" -s "$SERIAL" logcat -c || { echo "logcat -c failed" | tee -a "$OUT"; exit 1; }
   # Straight to a file, detached from this script's stdout: a reader holding
   # the caller's pipe open would keep the caller waiting after we exit.
   "$ADB" -s "$SERIAL" logcat -v time "ReactNativeJS:V" "Bugsee:V" "BugseeRN:V" "AndroidRuntime:E" "*:S" \
     >>"$OUT" 2>&1 </dev/null &
   LOG_PID=$!
+  sleep 2
   "$ADB" -s "$SERIAL" shell monkey -p "$ID" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
 else
   APP_PATH="$(ios_app)"
@@ -150,9 +154,23 @@ else
   xcrun simctl launch "$SIMULATOR" "$ID" ${JS_LOCATION[@]+"${JS_LOCATION[@]}"} >>"$OUT" 2>&1
 fi
 
+launched_this_run() {
+  awk '
+    /BUGSEE_E2E launching on/ { pid = ""; if (match($0, /\( *[0-9]+\)|\[[0-9]+:/)) pid = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", pid); seen = 1; next }
+    seen && /BUGSEE_E2E status=2/ {
+      p = ""; if (match($0, /\( *[0-9]+\)|\[[0-9]+:/)) p = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", p)
+      if (pid == "" || p == pid) { found = 1 }
+    }
+    END { exit found ? 0 : 1 }
+  ' "$OUT"
+}
+
 deadline=$((SECONDS + BUDGET))
 while [[ $SECONDS -lt $deadline ]]; do
-  if grep -q "BUGSEE_E2E status=2" "$OUT"; then result=PASS; break; fi
+  # Only this launch counts: status=2 after this launch's own
+  # "BUGSEE_E2E launching" line, from the same process (Android: logcat's
+  # "(pid)"; iOS: log stream's "[pid:").
+  if launched_this_run; then result=PASS; break; fi
   if grep -qE "FATAL EXCEPTION|launch\(\) rejected" "$OUT"; then break; fi
   sleep 2
 done
