@@ -100,6 +100,18 @@ android {
             keyPassword 'android'
         }
     }
+    // Campaign N-02 (e2e/attach.test.ts): `-PbugseeE2eAutoLaunch=true` merges
+    // src/e2eAutoLaunch/AndroidManifest.xml into the debug build, so the SDK
+    // launches itself from `com.bugsee.app-token` meta-data (the placeholder
+    // token, against the dead endpoint) before any JS runs. Off by default:
+    // a build without the property has no such meta-data.
+    if (findProperty('bugseeE2eAutoLaunch') == 'true') {
+        sourceSets {
+            debug {
+                manifest.srcFile 'src/e2eAutoLaunch/AndroidManifest.xml'
+            }
+        }
+    }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug

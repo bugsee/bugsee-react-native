@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Campaign N-02 only (e2e/attach.test.ts): merged into the debug build when
+  it is made with -PbugseeE2eAutoLaunch=true. The SDK's BugseeInitProvider
+  then launches from this meta-data before any JS runs: the placeholder
+  token, never a real one, against the closed loopback endpoint.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data
+            android:name="com.bugsee.app-token"
+            android:value="00000000-0000-4000-8000-000000000000" />
+        <meta-data
+            android:name="com.bugsee.option.$$ENDPOINT"
+            android:value="https://127.0.0.1:9" />
+    </application>
+</manifest>
