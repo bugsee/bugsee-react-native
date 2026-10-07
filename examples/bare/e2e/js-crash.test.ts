@@ -27,6 +27,7 @@ const itDevice = ON_IOS && iosTarget() === 'simulator' ? it.skip : it;
  * api-device-coverage.md R2) but files it at Blocker (5), not the
  * `reporting.defaults.crash-priority` of 2 it was launched with (XS, run
  * 2026-10-06). Android files it at 2.
+ * Filed: https://github.com/bugsee/bugsee-cocoa/issues/198
  */
 const itSeverity = ON_IOS ? (iosTarget() === 'simulator' ? it.skip : it.failing) : it;
 
