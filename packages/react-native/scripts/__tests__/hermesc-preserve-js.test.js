@@ -157,7 +157,8 @@ describe('findHermesc', () => {
       fs.writeFileSync(real, '');
       fs.chmodSync(real, 0o755);
       const found = findHermesc({ env: {}, cwd: app, platform: process.platform, isExecutable: fs.existsSync });
-      expect(fs.realpathSync(found)).toBe(fs.realpathSync(real));
+      // .native: Windows temp paths can come back in 8.3 short form.
+      expect(fs.realpathSync.native(found)).toBe(fs.realpathSync.native(real));
     } finally {
       fs.rmSync(app, { recursive: true, force: true });
     }
@@ -207,19 +208,21 @@ describe('file helpers', () => {
 });
 
 describe('preserveDirOf', () => {
-  const build = path.join(path.sep, 'app', 'android', 'app', 'build');
+  // Absolute on every host (a drive letter on Windows), as run() passes it.
+  const root = path.resolve(path.sep, 'app');
+  const build = path.join(root, 'android', 'app', 'build');
   const js = path.join(build, 'generated', 'assets', 'react', 'release', 'index.android.bundle');
   const jsDir = path.dirname(js);
 
   it('maps generated/assets to intermediates/bugsee-sourcemaps', () => {
-    expect(preserveDirOf(js, {}, '/')).toEqual({
+    expect(preserveDirOf(js, {}, root)).toEqual({
       dir: path.join(build, 'intermediates', 'bugsee-sourcemaps', 'react', 'release'),
     });
   });
 
   it('refuses a bundle outside generated/assets', () => {
-    const elsewhere = path.join(path.sep, 'app', 'out', 'index.android.bundle');
-    expect(preserveDirOf(elsewhere, {}, '/')).toEqual({
+    const elsewhere = path.join(root, 'out', 'index.android.bundle');
+    expect(preserveDirOf(elsewhere, {}, root)).toEqual({
       error: `refusing to write preserve files beside the bundle (${path.dirname(elsewhere)})`,
     });
   });
@@ -227,13 +230,13 @@ describe('preserveDirOf', () => {
   it('takes BUGSEE_PRESERVE_DIR, relative to the working directory', () => {
     expect(preserveDirOf(js, { BUGSEE_PRESERVE_DIR: 'keep' }, build)).toEqual({ dir: path.join(build, 'keep') });
     // Beside the asset directory, not in it: a shared name prefix is fine.
-    expect(preserveDirOf(js, { BUGSEE_PRESERVE_DIR: `${jsDir}-keep` }, '/')).toEqual({ dir: `${jsDir}-keep` });
+    expect(preserveDirOf(js, { BUGSEE_PRESERVE_DIR: `${jsDir}-keep` }, root)).toEqual({ dir: `${jsDir}-keep` });
   });
 
   it('refuses a BUGSEE_PRESERVE_DIR in the packaged asset directory', () => {
     const error = { error: 'refusing to write preserve files into the packaged asset directory' };
-    expect(preserveDirOf(js, { BUGSEE_PRESERVE_DIR: jsDir }, '/')).toEqual(error);
-    expect(preserveDirOf(js, { BUGSEE_PRESERVE_DIR: path.join(jsDir, 'sub') }, '/')).toEqual(error);
+    expect(preserveDirOf(js, { BUGSEE_PRESERVE_DIR: jsDir }, root)).toEqual(error);
+    expect(preserveDirOf(js, { BUGSEE_PRESERVE_DIR: path.join(jsDir, 'sub') }, root)).toEqual(error);
   });
 });
 
