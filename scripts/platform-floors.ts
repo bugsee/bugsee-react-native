@@ -66,8 +66,8 @@ export const IOS_FLOOR = {
  */
 export const REACT_NATIVE_SUPPORT = {
   floor: '0.81.0',
-  /** What CI builds. 0.81-0.86 are CocoaPods-only; SPM arrived in 0.87. */
-  matrix: ['0.81', '0.83', '0.86', '0.87'],
+  /** What CI builds: every minor. 0.81-0.86 are CocoaPods-only; SPM arrived in 0.87. */
+  matrix: ['0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87'],
 } as const;
 
 /**
