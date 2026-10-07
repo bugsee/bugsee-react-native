@@ -131,11 +131,26 @@ describeStress(`iOS crash recovery stress on the iPhone (N-17): ${ITERATIONS} it
       row.buildRecordAfterCrash = holdsBuildRecord(queueAfterCrash);
       row.prefsAfterCrash = await prefsState();
       if (mode === 'wipe') {
-        row.wipe = await wipeAllButPreferences();
+        // Retried until the preferences are really gone before the relaunch:
+        // a claim with the domain still there is the keep path, not BLK-02.
+        const wipes: unknown[] = [];
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          wipes.push(await wipeAllButPreferences());
+          if (!(await prefsState()).exists) {
+            break;
+          }
+        }
+        row.wipe = wipes;
       }
       const queueBeforeRelaunch = await crashQueue();
       row.queueBeforeRelaunch = queueBeforeRelaunch;
       row.prefsBeforeRelaunch = await prefsState();
+      if (mode === 'wipe') {
+        // The precondition the harness can see: no preferences plist in the
+        // container before the relaunch (cocoa-191b E1's "domain evidently
+        // lost"). cfprefsd's cache is not visible from here.
+        expect((row.prefsBeforeRelaunch as { exists: boolean }).exists).toBe(false);
+      }
 
       const observe = await startRun(CRASH[kind].observe);
       row.observeBuild = IOS_SDK_LINE.exec(observe.banner.text)?.slice(1, 3).join(' ');
