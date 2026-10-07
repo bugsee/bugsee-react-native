@@ -250,3 +250,40 @@ describe('checkCredentials', () => {
     ).toBe(true);
   });
 });
+
+describe('checkCredentials, at its edges', () => {
+  it('reads CRLF properties, and a key indented or spaced', () => {
+    expect(checkCredentials('offline', { properties: `x=1\r\n  app_token = ${REAL}\r\n` }).reason).toBe(
+      'a real token outside the staging lane: bugsee.properties app_token',
+    );
+  });
+
+  it('a line whose key does not start the line is not read', () => {
+    expect(checkCredentials('offline', { properties: `note app_token=${REAL}\n` }).ok).toBe(true);
+  });
+
+  it('an indented comment is a comment; a # inside a value is not', () => {
+    expect(checkCredentials('offline', { properties: `   # app_token=${REAL}\n` }).ok).toBe(true);
+    expect(checkCredentials('offline', { properties: `app_token=${REAL}#\n` }).ok).toBe(false);
+  });
+
+  it('names every place a real token is, comma-separated', () => {
+    expect(checkCredentials('offline', { json: { ios: REAL, android: REAL } }).reason).toBe(
+      'a real token outside the staging lane: credentials.json ios, credentials.json android',
+    );
+  });
+
+  it('staging: a blank plugin endpoint does not count as one', () => {
+    expect(
+      checkCredentials('staging', {
+        json: { ios: REAL, endpoint: STAGING_ENDPOINT },
+        properties: `app_token=${REAL}\nplugin.endpoint=   \n`,
+      }).reason,
+    ).toBe('bugsee.properties has a real app_token but no plugin.endpoint: the Gradle plugin would upload to production');
+  });
+
+  it('a token with characters around the placeholder is not the placeholder', () => {
+    expect(isPlaceholderToken(`x${PLACEHOLDER}`)).toBe(false);
+    expect(isPlaceholderToken(`${PLACEHOLDER}x`)).toBe(false);
+  });
+});

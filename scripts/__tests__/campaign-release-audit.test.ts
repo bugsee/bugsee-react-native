@@ -8,9 +8,11 @@ import { RELEASE_SUBSET, auditSuite, codeOnly, matchingClose, renderAudit } from
  * skips with a stated reason; a Debug-only assertion is always gated.
  */
 const E2E = join(__dirname, '..', '..', 'examples', 'bare', 'e2e');
+/** Stryker's sandbox leaves `examples/` out (stryker.scripts.json ignorePatterns); `yarn test` has it. */
+const itWithExamples = existsSync(E2E) ? it : it.skip;
 
 describe('the e2e suites in the Release subset', () => {
-  it('all exist, and every Debug-only assertion sits in a debugOnly block', () => {
+  itWithExamples('all exist, and every Debug-only assertion sits in a debugOnly block', () => {
     const missing = RELEASE_SUBSET.filter(suite => !existsSync(join(E2E, `${suite}.test.ts`)));
     const audits = RELEASE_SUBSET.filter(suite => !missing.includes(suite)).map(suite =>
       auditSuite(suite, readFileSync(join(E2E, `${suite}.test.ts`), 'utf8')),
@@ -127,5 +129,60 @@ describe('renderAudit', () => {
     expect(failed.text).toContain('Debug-only assertion with no debugOnly gate at line 9');
     expect(failed.text).toContain('FAIL: see above.');
     expect(renderAudit([], ['e']).ok).toBe(false);
+  });
+});
+
+describe('the audit, at its edges', () => {
+  it('codeOnly keeps a block comment line structure and leaves division alone', () => {
+    expect(codeOnly('a /* x\ny */ b')).toBe('a     \n     b');
+    expect(codeOnly('a / b * c')).toBe('a / b * c');
+    expect(codeOnly('x = 1 /2*/')).toBe('x = 1 /2*/');
+    expect(codeOnly('a //x\nb')).toBe('a    \nb');
+  });
+
+  it('reads gates written with spacing, collapses a multi-line reason, and accepts let', () => {
+    const source = [
+      'let  gateA  =  debugOnly(  describe  ,   `two',
+      '   lines`  );',
+      "gateA('a', () => { expect(run.dev).toBe(true); });",
+    ].join('\n');
+    const audit = auditSuite('x', source);
+    expect(audit.gates).toEqual([{ line: 1, reason: 'two lines' }]);
+    expect(audit.ungated).toEqual([]);
+  });
+
+  it('a multi-line constant reason resolves', () => {
+    const source = "const R = 'a\n  b';\nconst g = debugOnly(it, R);\n";
+    expect(auditSuite('x', source).gates).toEqual([{ line: 3, reason: 'a b' }]);
+  });
+
+  it('an assertion written with spacing still counts, and one before the gate call is outside it', () => {
+    const source = [
+      'expect( run.dev ) .toBe( true );',
+      "const g = debugOnly(it, 'r');",
+      "g('a', () => { expect(run.dev)\n  .toBe(true); });",
+    ].join('\n');
+    const audit = auditSuite('x', source);
+    expect(audit.debugAssertions).toBe(2);
+    expect(audit.ungated).toEqual([1]);
+  });
+
+  it('an unclosed gate call covers the rest of the file', () => {
+    const source = "const g = debugOnly(it, 'r');\ng('a', () => {\n  expect(run.dev).toBe(true);\n";
+    expect(auditSuite('x', source).ungated).toEqual([]);
+  });
+
+  it('an inline gate with space before its call still opens a span', () => {
+    const source = "debugOnly(it, 'r') ('a', () => { expect(run.dev).toBe(true); });";
+    expect(auditSuite('x', source).ungated).toEqual([]);
+  });
+
+  it('the report starts with its title and a blank line', () => {
+    const { text } = renderAudit([], []);
+    expect(text.split('\n').slice(0, 3)).toEqual([
+      'Release-subset audit (E2E_RELEASE=1), plan MX-CFG-RELEASE / N-28',
+      '',
+      '',
+    ]);
   });
 });

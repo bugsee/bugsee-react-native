@@ -311,3 +311,40 @@ describe('buildRows and rendering', () => {
     expect(redact('abc 1234567 12345678', ['1234567', '12345678'])).toBe('abc 1234567 [redacted]');
   });
 });
+
+describe('plan parsing, at its edges', () => {
+  it('trims a cell, accepts a range with or without spaces, and anchors at the start', () => {
+    expect(idsOfCell('  API-01a  ')).toEqual(['API-01a']);
+    expect(idsOfCell('MX-RN-81..MX-RN-82')).toEqual(['MX-RN-81', 'MX-RN-82']);
+    expect(idsOfCell('MX-RN-81 ..MX-RN-82')).toEqual(['MX-RN-81', 'MX-RN-82']);
+    expect(idsOfCell('MX-RN-81.. MX-RN-82')).toEqual(['MX-RN-81', 'MX-RN-82']);
+    expect(idsOfCell('see MX-RN-81 .. MX-RN-82')).toEqual([]);
+    expect(idsOfCell('see MX-EXPO-54/55')).toEqual([]);
+    expect(idsOfCell('MX-RN-81 .. MX-EXPO-82')).toEqual(['MX-RN-81']);
+  });
+
+  it('reads a row with spacing around its pipes, but not a heading that only mentions a section', () => {
+    const plan = [
+      'intro ## 2. not a heading',
+      '### 0.4 Gate',
+      '   |  G0-2  |  local tests  |  logs |  ',
+      'text | G0-9 | not a row |',
+      '| G0-3 | trailing pipe text |extra',
+      'see ## 2. inline',
+      '| G0-4 | still in scope | x |',
+      '#### 0.4 too deep',
+      '## 2. Lanes',
+      '| G0-5 | out | x |',
+    ].join('\n');
+    expect(parsePlan(plan)).toEqual([
+      { id: 'G0-2', item: 'local tests', proofs: [] },
+      { id: 'G0-3', item: 'trailing pipe text', proofs: [] },
+      { id: 'G0-4', item: 'still in scope', proofs: [] },
+    ]);
+  });
+
+  it('a proof needs a suite, " > " and a title', () => {
+    const plan = '### 0.4 x\n| API-1 | i | `a > b`, `> b`, `a >b`, `a b`, `a-b > c d` |\n';
+    expect(parsePlan(plan)[0]!.proofs).toEqual(['a > b', 'a-b > c d']);
+  });
+});
