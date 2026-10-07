@@ -1343,9 +1343,9 @@ RCT_EXPORT_MODULE(Bugsee)
 /// An unhandled JS exception. The call stores `override_report.plcrash`,
 /// for the next launch to recover. 7.0.0-beta4 claims it ahead of
 /// `live_report.plcrash` (bugsee-cocoa #177; beta3 claimed only the live
-/// file and dropped this report), but not on every relaunch: on an iPhone
-/// XS 2 of 5 left the file unclaimed (an SDK finding, not ours to work
-/// around). Do not copy one file onto the other. The completion is wrapped in `BGSRNSettleOnce`: on the
+/// file and dropped this report); beta4 still missed some relaunches on an
+/// iPhone XS, which 7.0.0-beta5 fixes (bugsee-cocoa #191: the report is
+/// claimed by the build that armed the reporter). Do not copy one file onto the other. The completion is wrapped in `BGSRNSettleOnce`: on the
 /// simulator the SDK compiles `logUnhandledException` out and never calls
 /// this completion (verified facts), and a promise must still settle.
 - (void)logUnhandledException:(NSString *)payloadJson

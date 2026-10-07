@@ -16,7 +16,7 @@ yarn add @bugsee/react-native @bugsee/react-native-feedback
 
 No Expo config plugin. Autolinking adds `bugsee-android-feedback` on Android.
 On iOS the podspec vendors the `bugsee/feedback-spm` sources for the same
-`7.0.0-beta4` pin as the core SDK, and React Native 0.87 resolves that
+`7.0.0-beta5` pin as the core SDK, and React Native 0.87 resolves that
 package through Swift Package Manager. There is no `spm_dependency`: that
 helper does not embed the framework.
 
@@ -51,8 +51,8 @@ published surface:
 appearance.backgroundColor = '#112233';
 ```
 
-The `feedback-spm` 7.0.0-beta4 SwiftUI chat (its sources are unchanged
-from 7.0.0-beta3) hard-codes `Color.accentColor`
+The `feedback-spm` 7.0.0-beta5 SwiftUI chat (its sources are unchanged
+since 7.0.0-beta3) hard-codes `Color.accentColor`
 and `Color.gray` and does not read `BugseeTheme`, so that assignment does
 not change the chat in this beta. The setter still stores the color on
 `BugseeTheme`.

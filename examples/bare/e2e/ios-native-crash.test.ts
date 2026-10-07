@@ -128,14 +128,12 @@ describeIphone(`a native signal crash recovered on ${TARGET_NAME}`, () => {
     expect(outcome.stillRunning).toBe(false);
   });
 
-  // iOS 7.0.0-beta4 on the XS loses a SIGABRT now and then: in 3 of 16
-  // abort runs on 2026-10-06 the next launch claimed nothing and the handler
-  // was never called (SIGSEGV: 0 of 11). It is not the order of the kinds
-  // (seen abort-first and segv-first) and not a stale queue (the container,
-  // crash queue included, is wiped and asserted gone before each kind). An
-  // intermittent loss cannot be pinned with it.failing without making the
-  // pin flaky, so these two cases state the expected behaviour and go red
-  // when the SDK drops the crash. Open in the beta-coverage report.
+  // iOS 7.0.0-beta4 on the XS lost a SIGABRT now and then (3 of 16 abort
+  // runs on 2026-10-06: the next launch claimed nothing and the handler was
+  // never called; SIGSEGV 0 of 11), because the previous run's report was
+  // gated on versions its launch had not persisted yet (bugsee-cocoa #191).
+  // 7.0.0-beta5 claims it by the build that armed the reporter, so these two
+  // cases are plain `it` and a loss is a regression.
   it('the next launch recovers one crash report naming SIGABRT', async () => {
     assertRecovered(await crashAndRecover('abort'), SIGNALS.abort.name);
   });

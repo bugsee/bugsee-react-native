@@ -49,16 +49,34 @@ export function launchEndpoint(token: string, requested: string | undefined, con
 
 /**
  * A url on `DEAD_ENDPOINT` for a request the e2e expects native network
- * capture to record. The iOS SDK's release build drops every request whose
- * url contains "bugsee", taking it for the SDK's own traffic
- * (`BGSNetworkInterceptionIsBugseeURL`, 7.0.0-beta3 and beta4); Android has
- * no such rule. A path with that word would pass on Android and silently
- * vanish on iOS, so this refuses one outright.
+ * capture to record. Through 7.0.0-beta4 the iOS SDK's release build dropped
+ * every request whose url contained "bugsee", taking it for the SDK's own
+ * traffic (`BGSNetworkInterceptionIsBugseeURL`); 7.0.0-beta5 tells its own
+ * traffic apart by session instead (bugsee-cocoa #192) and records such a
+ * request. Android never had the rule. The guard stays for the probes that
+ * are about something else, so that none of them silently depends on that
+ * word being recorded (or not) on one SDK version; the test of the word
+ * itself builds its url with `bugseeNamedUrl`.
  */
 export function deadEndpointUrl(path: string): string {
   const url = `${DEAD_ENDPOINT}/${path}`;
   if (/bugsee/i.test(url)) {
-    throw new Error(`${url} contains "bugsee"; the iOS SDK never records such a request`);
+    throw new Error(`${url} contains "bugsee"; use bugseeNamedUrl for a request that is meant to carry it`);
   }
   return url;
+}
+
+/**
+ * A customer request whose url deliberately contains the lowercase word
+ * "bugsee" in both the path and the query, on `DEAD_ENDPOINT`. It exists for
+ * the one test that asserts such a request IS recorded (bugsee-cocoa #192):
+ * a host app's own endpoint may well look like that, and the SDK must not
+ * mistake it for its traffic. `tag` keeps it distinct per run and must not
+ * itself carry the word, so the word's presence is always this helper's doing.
+ */
+export function bugseeNamedUrl(tag: string): string {
+  if (/bugsee/i.test(tag)) {
+    throw new Error(`${tag} already contains "bugsee"; the helper adds it itself`);
+  }
+  return `${DEAD_ENDPOINT}/bugsee-e2e-named/${tag}?client=bugsee&tag=${tag}`;
 }

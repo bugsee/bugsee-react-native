@@ -28,7 +28,7 @@ let package = Package(
   ],
   dependencies: [
     // Exact, not a range: SwiftPM will not admit a prerelease into one.
-    .package(url: "https://github.com/bugsee/spm", exact: "7.0.0-beta4")
+    .package(url: "https://github.com/bugsee/spm", exact: "7.0.0-beta5")
   ],
   targets: [
     .target(

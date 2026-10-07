@@ -22,8 +22,8 @@ let package = Package(
   dependencies: [
     .package(name: "ReactNative", path: "../../../../xcframeworks"),
     .package(name: "React-GeneratedCode", path: "../../../ios"),
-    .package(url: "https://github.com/bugsee/spm", exact: "7.0.0-beta4"),
-    .package(url: "https://github.com/bugsee/feedback-spm", exact: "7.0.0-beta4"),
+    .package(url: "https://github.com/bugsee/spm", exact: "7.0.0-beta5"),
+    .package(url: "https://github.com/bugsee/feedback-spm", exact: "7.0.0-beta5"),
   ],
   targets: [
     .target(
