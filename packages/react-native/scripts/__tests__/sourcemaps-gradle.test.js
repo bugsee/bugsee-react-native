@@ -101,6 +101,24 @@ bundle('StagingRelease', false)
 bundle('customRelease', false, 'custom/js')
 bundle('internalRelease', false)
 bundle('shellRelease', true, null, '/opt/bugsee/scripts/hermesc-preserve-js.SH')
+
+// The Windows hermesCommand rewrite, on this host's paths: [command, root].
+def cmdCases = [
+    ['/s (x86)/b rn/node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.cmd', '/s (x86)/b rn'],
+    ['/Users/John(US)/app/node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.cmd', '/Users/John(US)/app'],
+    ['/plain/app/node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.cmd', '/plain/app'],
+    ['/plain/app/tools/hermesc-preserve-js.cmd', '/plain/app'],
+    ['/p&q/app/x.cmd', '/p&q/app'],
+    ['/a b/x.cmd', '/c d/app'],
+    ['/a(b)/x.cmd', '/c/app'],
+    ['node_modules/x (1).cmd', '/app'],
+]
+tasks.register('bugseeCmdCases') {
+    def safe = project.extensions.extraProperties.get('bugseeCmdSafeCommand')
+    doLast {
+        cmdCases.each { c -> println "BUGSEE-CMD|\${c[0]}|\${safe(c[0], new File(c[1]))}" }
+    }
+}
 `;
 
 // Records argv, then does what finish would to the files it was given.
@@ -175,6 +193,7 @@ function argOf(argv, name) {
         'createBundleCustomReleaseJsAndAssets',
         'createBundleInternalReleaseJsAndAssets',
         'createBundleShellReleaseJsAndAssets',
+        'bugseeCmdCases',
       ],
       { encoding: 'utf8', timeout: 10 * 60 * 1000 },
     );
@@ -267,6 +286,33 @@ function argOf(argv, name) {
   it('off Windows, a hermesCommand naming a .sh is not refused', () => {
     expect(argOf(callFor('shellRelease'), '--app-version')).toBe('8.0');
     expect(`${result.stdout}${result.stderr}`).not.toContain('a shell script, but on Windows');
+  });
+
+  it('gives the Windows launcher relative to the root when cmd would cut its absolute path', () => {
+    const got = Object.fromEntries(
+      `${result.stdout}`
+        .split('\n')
+        .filter((line) => line.startsWith('BUGSEE-CMD|'))
+        .map((line) => line.split('|').slice(1)),
+    );
+    expect(got).toEqual({
+      // The campaign job's path: a space and ( ); @ is fine unquoted.
+      '/s (x86)/b rn/node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.cmd':
+        'node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.cmd',
+      // ( ) and no space: unquoted, cmd would still cut it at the bracket.
+      '/Users/John(US)/app/node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.cmd':
+        'node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.cmd',
+      '/plain/app/node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.cmd':
+        'node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.cmd',
+      // Nothing cmd would cut: as written.
+      '/plain/app/tools/hermesc-preserve-js.cmd': '/plain/app/tools/hermesc-preserve-js.cmd',
+      '/p&q/app/x.cmd': 'x.cmd',
+      // The relative path would be cut too (a space, or ( )): as written.
+      '/a b/x.cmd': '/a b/x.cmd',
+      '/a(b)/x.cmd': '/a(b)/x.cmd',
+      // Already relative: as written.
+      'node_modules/x (1).cmd': 'node_modules/x (1).cmd',
+    });
   });
 
   it('finishes a Hermes-off bundle outside generated/assets', () => {
