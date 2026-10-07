@@ -1320,6 +1320,20 @@ describe('a shared parse budget across the whole tree (review N1)', () => {
       expect(payload.debug_ids).toEqual({ 'files/CodePush/abc/index.android.bundle': 'cp-id' });
     });
 
+    it('keeps the first id when two raw paths clean to one source', () => {
+      const first = '/private/var/containers/Bundle/Application/A/App.app/main.jsbundle';
+      const second = '/private/var/containers/Bundle/Application/B/App.app/main.jsbundle';
+      const payload = buildExceptionPayload({
+        error: noStack(new Error('m')),
+        platformOS: 'ios',
+        debugIds: new Map([
+          [first, 'id-first'],
+          [second, 'id-second'],
+        ]),
+      });
+      expect(payload.debug_ids).toEqual({ 'main.jsbundle': 'id-first' });
+    });
+
     it('no debug_ids key when nothing is registered', () => {
       const withEmpty = buildExceptionPayload({
         error: noStack(new Error('m')),
