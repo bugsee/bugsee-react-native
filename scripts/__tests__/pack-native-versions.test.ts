@@ -43,6 +43,13 @@ describe('stageNativeVersions', () => {
     writeFileSync(join(repo, 'native-versions.json'), '{ not json');
 
     expect(() => stageNativeVersions(repo, pkg)).toThrow(/native-versions\.json is not valid JSON/);
+    // The parser's own message (where it choked) stays reachable.
+    try {
+      stageNativeVersions(repo, pkg);
+    } catch (error) {
+      expect((error as Error).cause).toBeInstanceOf(SyntaxError);
+    }
+    expect.assertions(3);
     expect(existsSync(join(pkg, 'native-versions.json'))).toBe(false);
   });
 

@@ -15,12 +15,10 @@ import { join } from 'node:path';
 const FILE = 'native-versions.json';
 
 function requireBugseePackage(packageDir: string): void {
-  let name: unknown;
-  try {
-    name = (JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as { name?: unknown }).name;
-  } catch {
-    name = undefined;
-  }
+  const manifest = join(packageDir, 'package.json');
+  const name = existsSync(manifest)
+    ? (JSON.parse(readFileSync(manifest, 'utf8')) as { name?: unknown }).name
+    : undefined;
   if (typeof name !== 'string' || !name.startsWith('@bugsee/')) {
     throw new Error(`${packageDir} is not a @bugsee package; run this from a package directory (npm/yarn pack do)`);
   }
