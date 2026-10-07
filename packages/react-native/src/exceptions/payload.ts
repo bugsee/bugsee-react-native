@@ -408,7 +408,18 @@ function buildPayloadUnsafe(input: PayloadInput): ExceptionPayload {
   };
 
   if (input.debugIds && input.debugIds.size > 0) {
-    payload.debug_ids = Object.fromEntries(input.debugIds.entries());
+    // Keyed by the cleaned source, exactly as frames[].data.source is, so a
+    // consumer can join the two. The per-frame lookup above stays on fileKey
+    // (the registration's join key); two raw paths that clean to one source
+    // keep the first id.
+    const keyed: Record<string, string> = {};
+    for (const [file, id] of input.debugIds) {
+      const key = cleanSource(file);
+      if (!(key in keyed)) {
+        keyed[key] = id;
+      }
+    }
+    payload.debug_ids = keyed;
   }
 
   return payload;

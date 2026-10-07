@@ -53,12 +53,16 @@ final class BugseeOptionEnums {
                 VideoQuality::fromIntValue);
         BY_KEY.put("com.bugsee.option.capture.video.frame-rate",
                 FrameRate::fromIntValue);
+        // The one-argument fromIntValue falls back to VeryLow for ANY unknown
+        // number, so 0 or 6 would be honoured as "very low" and wireValue
+        // would answer 0 for VeryLow. The two-argument form with a null
+        // default returns null for what no constant carries.
         BY_KEY.put("com.bugsee.option.reporting.defaults.crash-priority",
-                IssueSeverity::fromIntValue);
+                value -> IssueSeverity.fromIntValue(value, null));
         BY_KEY.put("com.bugsee.option.reporting.defaults.error-priority",
-                IssueSeverity::fromIntValue);
+                value -> IssueSeverity.fromIntValue(value, null));
         BY_KEY.put("com.bugsee.option.reporting.defaults.bug-priority",
-                IssueSeverity::fromIntValue);
+                value -> IssueSeverity.fromIntValue(value, null));
     }
 
     private BugseeOptionEnums() {
