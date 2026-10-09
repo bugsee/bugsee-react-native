@@ -78,8 +78,16 @@ case "${1:-}" in
     serial="emulator-$port"
     nohup "$EMULATOR" -avd "$avd" -port "$port" -no-window -no-audio -no-snapshot \
       -no-boot-anim -gpu swiftshader_indirect >"/tmp/$avd.emulator.log" 2>&1 &
-    "$ADB" -s "$serial" wait-for-device
+    # Bounded: a wedged or broken AVD must not hold the shared device lock
+    # forever. On timeout, kill this emulator and exit 3 so a sweep can
+    # release the lock and move on.
+    deadline=$((SECONDS + ${BOOT_TIMEOUT:-600}))
     until [[ "$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; do
+      if (( SECONDS >= deadline )); then
+        echo "$avd ($serial): no boot within ${BOOT_TIMEOUT:-600}s; see /tmp/$avd.emulator.log" >&2
+        "$ADB" -s "$serial" emu kill >/dev/null 2>&1 || true
+        exit 3
+      fi
       sleep 3
     done
     "$ADB" -s "$serial" shell settings put global window_animation_scale 0 || true
@@ -106,7 +114,13 @@ case "${1:-}" in
       until mkdir "$LOCK" 2>/dev/null; do sleep 30; done
       serial="emulator-$(port_of "$avd")"
       trap '"$ADB" -s "$serial" emu kill >/dev/null 2>&1; rmdir "$LOCK" 2>/dev/null' EXIT
-      "$0" boot "$avd" >/dev/null
+      if ! "$0" boot "$avd" >/dev/null; then
+        echo "$avd ($serial): FAIL (did not boot)"
+        overall=1
+        rmdir "$LOCK"
+        trap - EXIT
+        continue
+      fi
       echo "$avd ($serial): API $("$ADB" -s "$serial" shell getprop ro.build.version.sdk | tr -d '\r'), page size $("$ADB" -s "$serial" shell getconf PAGE_SIZE | tr -d '\r')"
       for app in "$@"; do
         for cfg in debug release; do

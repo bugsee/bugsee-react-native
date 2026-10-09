@@ -58,6 +58,19 @@ record() { # target status seconds artifact
   echo "$APP $1: $2 (${3}s) ${4#$APP_DIR/}"
 }
 
+# The embed check is a .ts CLI. Node strips types from a .ts entry point
+# only from 22.18; an older Node dies with ERR_UNKNOWN_FILE_EXTENSION and exit
+# 1, the same code a real embed miss uses. Check first (as run-ios.sh does)
+# and report a too-old Node as tooling (rc 99), never as an embed FAIL.
+embed_check() { # artifact log
+  node -e 'const [maj,min]=process.versions.node.split(".").map(Number);
+    if (maj<22 || (maj===22 && min<18)) {
+      console.error(`Node ${process.versions.node} cannot run the embed check; 22.18+ required.`);
+      process.exit(2);
+    }' >>"$2" 2>&1 || return 99
+  node "$HERE/../cli-assert-framework-embedded.ts" "$1" >>"$2" 2>&1
+}
+
 xcode() { # configuration sdk destination log [extra settings...]
   local cfg="$1" sdk="$2" dest="$3" log="$4"
   shift 4
@@ -98,7 +111,7 @@ for target in "${TARGETS[@]}"; do
       # Same embed assertion as the device targets and run-ios.sh: a link or
       # embed miss fails here, not later as a silent launch.
       if [[ $rc -eq 0 ]]; then
-        node "$HERE/../cli-assert-framework-embedded.ts" "$artifact" >>"$log" 2>&1 || rc=$?
+        embed_check "$artifact" "$log" || rc=$?
       fi
       ;;
     ios-device-debug|ios-device-release)
@@ -108,13 +121,17 @@ for target in "${TARGETS[@]}"; do
       rc=$?
       artifact="$APP_DIR/ios/build/Build/Products/${cfg}-iphoneos/$(scheme).app"
       if [[ $rc -eq 0 ]]; then
-        node "$HERE/../cli-assert-framework-embedded.ts" "$artifact" >>"$log" 2>&1 || rc=$?
+        embed_check "$artifact" "$log" || rc=$?
       fi
       ;;
     *) echo "unknown target $target" >&2; exit 2 ;;
   esac
   if [[ $rc -eq 0 ]]; then
     record "$target" PASS $((SECONDS - start)) "$artifact"
+  elif [[ $rc -eq 99 ]]; then
+    record "$target" TOOLING $((SECONDS - start)) "$artifact"
+    grep "cannot run the embed check" "$log" | tail -1
+    overall=1
   else
     record "$target" FAIL $((SECONDS - start)) "$artifact"
     grep -E "error:|FAILED|What went wrong|^> |FAIL" "$log" | cut -c1-300 | head -15
