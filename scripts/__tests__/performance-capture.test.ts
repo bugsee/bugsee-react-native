@@ -14,18 +14,18 @@ function span(fields: Fields, attributes: Array<{ key: string; value: unknown }>
   return { traceId: 'AB'.repeat(16), flags: 256, kind: 1, ...fields, attributes };
 }
 
-const ROOT = span({ spanId: '1111111111111111', name: 'txn-start' }, [
+const ROOT = span({ spanId: 'a111111111111111', name: 'txn-start' }, [
   str('bugsee.operation', 'txn-renamed'),
   str('bugsee.span.status', 'ERROR'),
   str('bugsee.description', 'txn-desc'),
 ]);
-const CHILD = span({ spanId: '2222222222222222', parentSpanId: '1111111111111111', name: 'cov.child' }, [
+const CHILD = span({ spanId: 'b222222222222222', parentSpanId: 'a111111111111111', name: 'cov.child' }, [
   str('bugsee.operation', 'cov.child'),
   str('bugsee.span.status', 'CANCELLED'),
   str('bugsee.description', 'child-desc'),
   { key: 'n', value: { intValue: '42' } },
 ]);
-const GRANDCHILD = span({ spanId: '3333333333333333', parentSpanId: '2222222222222222', name: 'GET' }, [
+const GRANDCHILD = span({ spanId: 'c333333333333333', parentSpanId: 'b222222222222222', name: 'GET' }, [
   str('bugsee.operation', 'http.client'),
   str('bugsee.span.status', 'OK'),
   str('url.full', 'https://127.0.0.1:9/x'),
@@ -51,38 +51,43 @@ describe('performanceTransactions', () => {
   it('reads an OTLP capture as one transaction per local root, root first', () => {
     const [txn, other, ...rest] = performanceTransactions(otlp([ROOT, CHILD, GRANDCHILD, OTHER_ROOT]));
     expect(rest).toEqual([]);
-    expect(txn).toEqual({
+    expect(txn).toStrictEqual({
       name: 'txn-start',
       operation: 'txn-renamed',
       status: 'ERROR',
       spans: [
         {
-          spanId: '1111111111111111',
+          spanId: 'a111111111111111',
           operation: 'txn-renamed',
           status: 'ERROR',
           description: 'txn-desc',
           attributes: { 'bugsee.operation': 'txn-renamed', 'bugsee.span.status': 'ERROR', 'bugsee.description': 'txn-desc' },
         },
         {
-          spanId: '2222222222222222',
-          parentSpanId: '1111111111111111',
+          spanId: 'b222222222222222',
+          parentSpanId: 'a111111111111111',
           operation: 'cov.child',
           status: 'CANCELLED',
           description: 'child-desc',
           attributes: { 'bugsee.operation': 'cov.child', 'bugsee.span.status': 'CANCELLED', 'bugsee.description': 'child-desc', n: 42 },
         },
         {
-          spanId: '3333333333333333',
-          parentSpanId: '2222222222222222',
+          spanId: 'c333333333333333',
+          parentSpanId: 'b222222222222222',
           operation: 'http.client',
           status: 'OK',
           // url.full comes before bugsee.description.
           description: 'https://127.0.0.1:9/x',
-          attributes: expect.any(Object),
+          attributes: {
+            'bugsee.operation': 'http.client',
+            'bugsee.span.status': 'OK',
+            'url.full': 'https://127.0.0.1:9/x',
+            'bugsee.description': 'not this',
+          },
         },
       ],
     });
-    expect(other).toEqual({
+    expect(other).toStrictEqual({
       name: 'other',
       operation: 'other.op',
       status: undefined,
@@ -91,16 +96,31 @@ describe('performanceTransactions', () => {
   });
 
   it('finds children in any order, across resources, with ids in any case', () => {
-    const upper = { ...CHILD, spanId: CHILD.spanId, parentSpanId: '1111111111111111'.toUpperCase(), traceId: 'ab'.repeat(16) };
+    const upper = { ...CHILD, spanId: CHILD.spanId.toUpperCase(), parentSpanId: 'a111111111111111'.toUpperCase(), traceId: 'AB'.repeat(16) };
     const [txn] = performanceTransactions(
       otlp([GRANDCHILD], [{ scopeSpans: [{ spans: [upper] }, { spans: [ROOT] }] }]),
     );
-    expect(txn!.spans!.map(s => s.spanId)).toEqual(['1111111111111111', '2222222222222222', '3333333333333333']);
+    expect(txn!.spans!.map(s => [s.spanId, s.parentSpanId])).toStrictEqual([
+      ['a111111111111111', undefined],
+      ['b222222222222222', 'a111111111111111'],
+      ['c333333333333333', 'b222222222222222'],
+    ]);
+  });
+
+  it('skips a resource without scopes and a scope without spans, and a non-array resourceSpans', () => {
+    expect(performanceTransactions(otlp([ROOT], [{}, { scopeSpans: [{}] }])).map(t => t.name)).toStrictEqual(['txn-start']);
+    expect(performanceTransactions(JSON.stringify({ resourceSpans: {} }))).toStrictEqual([]);
+  });
+
+  it('keeps the first of two equal copies (both snapshots)', () => {
+    const snap = (text: string) => ({ ...ROOT, attributes: [{ key: 'bugsee.snapshot', value: { boolValue: true } }, str('bugsee.description', text)] });
+    const [txn] = performanceTransactions(otlp([snap('first'), snap('second')]));
+    expect(txn!.spans!.map(s => s.description)).toStrictEqual(['first']);
   });
 
   it('takes a continued root (remote parent flag) as a root, and a span of another trace as not a child', () => {
     const continued = span({ spanId: '5555555555555555', parentSpanId: '9999999999999999', flags: 256 | 0x200, name: 'continued' }, []);
-    const stranger = span({ traceId: 'ef'.repeat(16), spanId: '6666666666666666', parentSpanId: '1111111111111111', name: 's' }, []);
+    const stranger = span({ traceId: 'ef'.repeat(16), spanId: '6666666666666666', parentSpanId: 'a111111111111111', name: 's' }, []);
     const names = performanceTransactions(otlp([ROOT, continued, stranger])).map(t => [t.name, t.spans!.length]);
     expect(names).toEqual([['txn-start', 1], ['continued', 1]]);
   });
@@ -122,9 +142,9 @@ describe('performanceTransactions', () => {
     expect(otlpValue({ intValue: 7 })).toBe(7);
     expect(otlpValue({ doubleValue: 0 })).toBe(0);
     expect(otlpValue({ arrayValue: { values: [{ stringValue: 'a' }, { intValue: '2' }] } })).toEqual(['a', 2]);
-    expect(otlpValue({ arrayValue: {} })).toEqual([]);
+    expect(otlpValue({ arrayValue: {} })).toStrictEqual([]);
     expect(otlpValue({ kvlistValue: { values: [{ key: 'k', value: { boolValue: true } }] } })).toEqual({ k: true });
-    expect(otlpValue({ kvlistValue: {} })).toEqual({});
+    expect(otlpValue({ kvlistValue: {} })).toStrictEqual({});
   });
 
   it('treats an empty parentSpanId as no parent', () => {
