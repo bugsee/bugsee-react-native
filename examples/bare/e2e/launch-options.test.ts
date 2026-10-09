@@ -22,13 +22,13 @@
  * IssueSeverity.Critical 4 (values()[4] is Blocker) / VeryLow 1 / Medium 2
  * (js-crash.test.ts), VideoMode.None 0 and DirectBuffers 21 (no ordinal 21).
  *
- * Android 7.3.0 writes the options in effect into every report,
- * `environment.sdk.options`, keys with `:` for `.` -- and writes an enum
- * option as its constant's ORDINAL (IssueSeverity.Critical, value 4, is
- * written 3). That record is the only device-visible witness for the frame
- * rate (frames depend on what the screen does), so `androidRecorded` reads
- * it with that rule stated. Filed (bug 10):
- * https://github.com/bugsee/bugsee-android/issues/216
+ * Android writes the options in effect into every report,
+ * `environment.sdk.options`, keys with `:` for `.`. 7.3.0 wrote an enum option
+ * as its constant's ORDINAL (IssueSeverity.Critical, value 4, was written 3;
+ * bugsee-android #216); 7.3.1 writes its value (#223). That record is the only
+ * device-visible witness for the frame rate (frames depend on what the screen
+ * does), so `androidRecorded` reads it. The values chosen above still differ
+ * from their ordinals, so a regression to ordinals fails these cases.
  *
  * Options with no effect a device can observe without a human, a backend or
  * hardware are listed in the beta-coverage report, not here.
@@ -109,8 +109,8 @@ function hasLine(outcome: Outcome, text: string): boolean {
 }
 
 /**
- * An option as Android 7.3.0 recorded it in the report: dots become colons,
- * and an enum is written as its constant's ordinal (see the top of the file).
+ * An option as Android recorded it in the report: dots become colons, and
+ * (since 7.3.1) an enum is written as its value (see the top of the file).
  */
 function androidRecorded(bundle: PulledBundle, key: string): unknown {
   const sdk = (bundle.request.environment as { sdk?: { options?: Record<string, unknown> } }).sdk;
@@ -234,8 +234,8 @@ const CASES: readonly Case[] = [
     set: { 'com.bugsee.option.capture.video.frame-rate': 1 },
     effect: async (outcome, control) => {
       if (ON_ANDROID) {
-        // FrameRate.Low is ordinal 0; values()[1] would be Medium (1).
-        expect(androidRecorded(the(outcome), 'com.bugsee.option.capture.video.frame-rate')).toBe(0);
+        // FrameRate.Low is value 1 (ordinal 0); values()[1] would be Medium.
+        expect(androidRecorded(the(outcome), 'com.bugsee.option.capture.video.frame-rate')).toBe(1);
       } else {
         const low = await frameCount(file(the(outcome), 'video'));
         const normal = await frameCount(file(the(control), 'video'));
@@ -248,9 +248,9 @@ const CASES: readonly Case[] = [
     name: 'frame-rate-high',
     platforms: ['android'],
     set: { 'com.bugsee.option.capture.video.frame-rate': 3 },
-    // FrameRate.High is ordinal 2; values()[3] would be Raw (3).
+    // FrameRate.High is value 3 (ordinal 2); values()[3] would be Raw.
     effect: outcome => {
-      expect(androidRecorded(the(outcome), 'com.bugsee.option.capture.video.frame-rate')).toBe(2);
+      expect(androidRecorded(the(outcome), 'com.bugsee.option.capture.video.frame-rate')).toBe(3);
     },
   },
   {
@@ -328,10 +328,10 @@ const CASES: readonly Case[] = [
     name: 'video-mode-direct',
     platforms: ['android'],
     set: { 'com.bugsee.option.capture.video.mode': 21 },
-    // DirectBuffers is ordinal 4; an ordinal lookup has nothing at 21 and
-    // would leave the default, V2 (ordinal 2).
+    // DirectBuffers is value 21 (ordinal 4); an ordinal lookup has nothing at
+    // 21 and would leave the default, V2.
     effect: async outcome => {
-      expect(androidRecorded(the(outcome), 'com.bugsee.option.capture.video.mode')).toBe(4);
+      expect(androidRecorded(the(outcome), 'com.bugsee.option.capture.video.mode')).toBe(21);
       expect(await probeCodec(file(the(outcome), 'video'))).toBe('h264');
     },
   },

@@ -44,12 +44,11 @@ const CHAT_BACKGROUND = '#112233';
  */
 const itColour = ON_IOS ? it.failing : it;
 /**
- * Android 7.3.0 stores the greeting (`setDefaultFeedbackGreeting` writes the
- * feedback preferences' `greeting`) and nothing ever reads it back: the chat
- * opens empty, offline. iOS shows it. Pinned until the Android SDK renders it.
- * Filed: https://github.com/bugsee/bugsee-android/issues/215
+ * Android 7.3.0 stored the greeting and never read it back: the chat opened
+ * empty (bugsee-android #215). 7.3.1 shows it in an empty chat (#225), as iOS
+ * does.
  */
-const itGreeting = ON_ANDROID ? it.failing : it;
+const itGreeting = it;
 
 describeDevice(`the feedback chat on ${TARGET_NAME}`, () => {
   let log: DeviceLog | undefined;

@@ -380,7 +380,8 @@ describeDevice(`the smoke set on ${TARGET_NAME}`, () => {
       // already filed (Android).
       await startRun('smoke-relaunch');
       await awaitBundles(1, 60_000);
-      // Android 7.3.0 also files an error for the same incident (R10): a beat for it.
+      // Android 7.3.0 also filed an error for the same incident (R10; 7.3.1
+      // files the crash only): a beat so an extra report would be counted.
       await new Promise(resolve => setTimeout(resolve, 3_000));
       const all = await awaitBundles(1, 1_000);
       report('S7 bundles', all.map(b => ({ file: b.file, type: b.request.type, reason: payloadOf(b)?.reason })));
