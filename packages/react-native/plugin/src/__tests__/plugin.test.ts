@@ -528,7 +528,7 @@ describe('Android Gradle edits', () => {
     expect(ensureAppAppliesPlugin(next, versions.sdk)).toBe(next);
   });
 
-  it('writes Expo SDK 57 symbol hooks and drops them when native crash reporting is off', () => {
+  it('writes Expo SDK 57 symbol hooks, no symbol level, and drops the NDK when native crash reporting is off', () => {
     const template = expoSdk57AppBuildGradle();
     expect(template).toContain('hermes-compiler/package.json');
     expect(template).not.toContain('hermesc-preserve-js.sh');
@@ -539,17 +539,11 @@ describe('Android Gradle edits', () => {
     expect(next).toContain(`implementation "com.bugsee:bugsee-android-ndk:${versions.sdk}"`);
     expect(next.match(/com\.bugsee\.android\.gradle/g)).toHaveLength(1);
 
-    const debug = buildTypeBody(next, 'debug');
-    const release = buildTypeBody(next, 'release');
-    for (const body of [debug, release]) {
-      expect(body.match(/debugSymbolLevel 'SYMBOL_TABLE'/g)).toHaveLength(1);
-      expect(body.match(/\bndk\s*\{/g)).toHaveLength(1);
-      expect(body).toContain('bugsee-symbol-table:');
-      expect(body).toContain('AGP defaults this to NONE');
-      expect(body).toContain('Maven Hermes and libreactnative.so are pre-stripped');
-      expect(body).toContain('this level does not symbolicate those two');
-    }
-    expect(next.match(/debugSymbolLevel 'SYMBOL_TABLE'/g)).toHaveLength(2);
+    // Gradle plugin 4.0.8 reads the unstripped libraries: no level is written.
+    expect(next).not.toContain('debugSymbolLevel');
+    expect(next).not.toContain('bugsee-symbol-table:');
+    expect(buildTypeBody(next, 'debug')).toBe(buildTypeBody(template, 'debug'));
+    expect(buildTypeBody(next, 'release')).toBe(buildTypeBody(template, 'release'));
 
     const hermes = next.split('\n').filter((line) => /^\s*hermesCommand\s*=/.test(line));
     expect(hermes).toEqual([
@@ -668,7 +662,7 @@ describe('Android Gradle edits', () => {
     }
   });
 
-  it('leaves a hand-written ndk block when native crash reporting is off', () => {
+  it('leaves a hand-written ndk block, on and off, and takes the old block an earlier prebuild wrote', () => {
     const template = expoSdk57AppBuildGradle().replace(
       '        debug {\n            signingConfig signingConfigs.debug\n        }',
       [
@@ -680,12 +674,25 @@ describe('Android Gradle edits', () => {
         '        }',
       ].join('\n'),
     );
-    const enabled = ensureAppAppliesPlugin(template, versions.sdk);
+    // An earlier prebuild wrote the old block into release (debug had the user's own ndk block).
+    const oldBlock = [
+      "            // bugsee-symbol-table: AGP defaults this to NONE, so the plugin's native upload finds",
+      '            // nothing and skips. SYMBOL_TABLE emits symbols for code this app',
+      '            // builds. Maven Hermes and libreactnative.so are pre-stripped;',
+      '            // this level does not symbolicate those two.',
+      '            ndk {',
+      "                debugSymbolLevel 'SYMBOL_TABLE'",
+      '            }',
+    ].join('\n');
+    const releaseBody = buildTypeBody(template, 'release');
+    const closerLine = template.lastIndexOf('\n', template.indexOf(releaseBody) + releaseBody.length) + 1;
+    const withOld = `${template.slice(0, closerLine)}${oldBlock}\n${template.slice(closerLine)}`;
+    expect(buildTypeBody(withOld, 'release')).toContain(oldBlock);
+    const enabled = ensureAppAppliesPlugin(withOld, versions.sdk);
+    // Exactly what a prebuild of the file without the old block gives.
+    expect(enabled).toBe(ensureAppAppliesPlugin(template, versions.sdk));
     expect(buildTypeBody(enabled, 'debug')).toContain("debugSymbolLevel 'FULL'");
-    expect(buildTypeBody(enabled, 'debug')).not.toContain('SYMBOL_TABLE');
-    expect(buildTypeBody(enabled, 'debug')).not.toContain('bugsee-symbol-table:');
-    expect(buildTypeBody(enabled, 'release')).toContain("debugSymbolLevel 'SYMBOL_TABLE'");
-    expect(buildTypeBody(enabled, 'release').match(/\bndk\s*\{/g)).toHaveLength(1);
+    expect(enabled).not.toContain('SYMBOL_TABLE');
 
     const off = ensureAppAppliesPlugin(enabled, null);
     expect(buildTypeBody(off, 'debug')).toContain("debugSymbolLevel 'FULL'");

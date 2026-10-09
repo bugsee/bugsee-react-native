@@ -21,6 +21,13 @@ expect() {
     failures=$((failures + 1))
   fi
 }
+expect_none() {
+  local file="$1" needle="$2"
+  if grep -qF -- "$needle" "$file"; then
+    echo "::error file=examples/expo/$file::not expected: $needle"
+    failures=$((failures + 1))
+  fi
+}
 
 CI=1 yarn expo prebuild --clean --no-install
 
@@ -33,7 +40,8 @@ expect android/app/build.gradle 'apply plugin: "com.bugsee.android.gradle"'
 expect android/app/build.gradle "implementation \"com.bugsee:bugsee-android-ndk:$sdk_version\""
 expect android/app/build.gradle 'scripts/hermesc-preserve-js.sh'
 expect android/app/build.gradle 'scripts/bugsee-sourcemaps.gradle")'
-expect android/app/build.gradle "debugSymbolLevel 'SYMBOL_TABLE'"
+# Gradle plugin 4.0.8 reads unstripped libraries: the config plugin writes no level.
+expect_none android/app/build.gradle 'debugSymbolLevel'
 expect android/bugsee.properties 'No app token configured.'
 expect ios/BugseeExpo.xcodeproj/project.pbxproj 'scripts/bugsee-xcode.sh'
 expect ios/BugseeExpo.xcodeproj/xcshareddata/xcschemes/BugseeExpo.xcscheme 'xcode post-action'

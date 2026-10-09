@@ -24,7 +24,7 @@
     "native-versions.json"
   ],
   "dependencies": {
-    "@bugsee/cli": "0.7.11",
+    "@bugsee/cli": "0.7.12",
     "@expo/config-plugins": "~57.0.9"
   },
   "peerDependencies": {

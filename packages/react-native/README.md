@@ -96,15 +96,14 @@ marked lines, replaces only those, and rewrites exactly one of yours,
 `react.hermesCommand`, with any trailing comment kept. Its own lines are
 recognised only by their markers: the NDK dependency ends in `// bugsee:ndk`
 (as does the opener of the `dependencies` block it adds when the file has
-none), and the symbol-table block starts with `// bugsee-symbol-table:`. A
-`bugsee-android-ndk` dependency of your own, anywhere and however written, is
-never touched: the plugin then adds none of its own and says so in the
-prebuild log. Your own `ndk { }` block is never touched either, and a line of
-yours added inside the plugin's symbol-table block makes it refuse rather
-than delete. It inserts only at anchors that hold nothing but their brace
-(`dependencies {`, `buildscript … }`, `pluginManagement {`, `repositories {`,
-a build type's `{` and `}`; a trailing comment is fine), always as whole
-lines at your indentation, and never splits a line. Where it cannot do that
+none). A `bugsee-android-ndk` dependency of your own, anywhere and however
+written, is never touched: the plugin then adds none of its own and says so in
+the prebuild log. The plugin writes no `debugSymbolLevel` (see
+[Native symbols](#native-symbols-android)), and your own `ndk { }` block or
+level is never touched. It inserts only at anchors that hold nothing but their
+brace (`dependencies {`, `buildscript … }`, `pluginManagement {`,
+`repositories {`; a trailing comment is fine), always as whole lines at your
+indentation, and never splits a line. Where it cannot do that
 with certainty it refuses the prebuild with one error that names the file,
 the reason and the fix, and writes nothing. It refuses:
 
@@ -116,11 +115,9 @@ the reason and the fix, and writes nothing. It refuses:
 - a `react.hermesCommand` that spans several lines or shares its line with
   another statement after `;`;
 - an anchor brace that shares its line with code: a one-line
-  `dependencies { … }` or `release { … }`, a `minifyEnabled true }`, a
-  `buildscript { … }; …`, a one-line `pluginManagement` or `repositories`
-  block (with the option that needs that edit on);
-- its own symbol-table block with a line of yours inside it (with
-  `nativeCrashReporting` off);
+  `dependencies { … }`, a `buildscript { … }; …`, a one-line
+  `pluginManagement` or `repositories` block (with the option that needs that
+  edit on);
 - a `gradlePluginVersion` option or a baked NDK version that is not a plain
   version string.
 
@@ -214,9 +211,8 @@ plugins {
 
 `android/app/build.gradle` — apply it, and for native crash symbols add the
 NDK module at the SDK version the package pins. No `ndk.debugSymbolLevel` is
-needed for Bugsee: Gradle plugin 4.0.8 uploads native symbols from the
-unstripped libraries in `build/intermediates/merged_native_libs`, whatever
-the level. Set one only for what Google Play should get.
+needed for Bugsee ([Native symbols](#native-symbols-android)); set one only
+for what Google Play should get.
 
 ```groovy
 apply plugin: "com.android.application"
@@ -239,6 +235,43 @@ version control if the token is private):
 app_token=<your Android app token>
 plugin.ndk.enabled=true
 ```
+
+### Native symbols (Android)
+
+With `plugin.ndk.enabled=true` (the config plugin writes it for a real token
+unless `nativeCrashReporting` is `false`), each Release build's
+`uploadBugsee<Variant>Native` task uploads native symbols. Bugsee Gradle
+plugin 4.0.8 and later read them from the **unstripped** libraries AGP leaves
+in `build/intermediates/merged_native_libs/<variant>`, keyed by GNU build-id,
+with `bugsee-cli` 0.8.1 or later (the plugin's own floor). That makes them
+independent of `ndk.debugSymbolLevel`:
+
+- every library that still has its debug info is uploaded with it, so crash
+  frames get function names and `file:line`. That covers your own native
+  code, and React Native's `libreactnative.so`, which the Maven
+  `react-android` artefact ships with full DWARF. Libraries shipped stripped
+  (Maven Hermes's `libhermesvm.so`, the Bugsee SDK's own) get their symbol
+  table, function names only;
+- an unchanged prebuilt library (`libreactnative.so`, `libc++_shared.so`) has
+  the same build-id in every release, and the server keeps one copy; a copy
+  stored earlier with function names only is upgraded to the full one;
+- the symbols are a build artefact: nothing is added to the APK or AAB.
+
+`debugSymbolLevel` is therefore **your app's own choice, for Google Play**
+(what AGP packs into `native-debug-symbols.zip` and the AAB). The config
+plugin writes none. Earlier versions of it wrote
+`ndk { debugSymbolLevel 'SYMBOL_TABLE' }`, under a
+`// bugsee-symbol-table:` comment, into the `debug` and `release` build
+types; the next prebuild removes that block, recognised by its exact lines
+only. A block you changed inside is yours: it is left as it is, and the
+prebuild log says so. A level of your own is never touched.
+
+The wrapper's own `@bugsee/cli` (source maps, dSYMs) is 0.7.12 or later.
+If you pin the Gradle plugin's CLI yourself (`plugin.cliPath` or
+`plugin.cliVersion`), use 0.8.1 or later: older CLIs do not read
+`merged_native_libs`, and the plugin then falls back to AGP's
+`native-debug-symbols.zip`, which depends on `debugSymbolLevel` (and
+0.7.0–0.7.11 send nothing for a `SYMBOL_TABLE` zip, bugsee/bugsee-cli#61).
 
 ## iOS: bundle phase
 

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.HERMES_COMMAND_UNREWRITABLE = exports.CANNOT_EDIT = void 0;
+exports.HERMES_COMMAND_UNREWRITABLE = exports.CHANGED_SYMBOL_BLOCK_NOTE = exports.CANNOT_EDIT = void 0;
 exports.ensureMavenCentral = ensureMavenCentral;
 exports.ensureGradlePluginDeclared = ensureGradlePluginDeclared;
 exports.ensureAppAppliesPlugin = ensureAppAppliesPlugin;
@@ -610,12 +610,14 @@ const NDK_EXCLUDE = "exclude group: 'com.bugsee', module: 'bugsee-android-ndk'";
  * with the option omitted or on removes that exclude and adds the
  * implementation line. The wrapper `api` itself is left in place.
  *
- * On (omitted or a version) also writes `debugSymbolLevel 'SYMBOL_TABLE'`
- * on existing debug and release build types when that block is absent.
- * Off removes only the block this plugin inserted. Maven Hermes and
- * `libreactnative.so` are pre-stripped; the comment does not claim those
- * two are symbolicated. The Hermes preserve command and the finish hook
- * are the JS source-map path, so they are written either way. The hook
+ * `ndk.debugSymbolLevel` is never written: Bugsee Gradle plugin 4.0.8 and
+ * later upload native symbols from the unstripped libraries in
+ * `merged_native_libs`, whatever the level, which only decides what AGP packs
+ * for Google Play (the app's own choice). The `debugSymbolLevel
+ * 'SYMBOL_TABLE'` block earlier versions wrote is removed, recognised by its
+ * marker and exact lines only; a level of the user's is left alone. The
+ * Hermes preserve command and the finish hook are the JS source-map path,
+ * so they are written either way. The hook
  * applies the package's scripts/bugsee-sourcemaps.gradle, which injects the
  * debug id and uploads the composed map unless `bugseeUploadSourcemaps=false`
  * or no real token is configured.
@@ -635,7 +637,7 @@ function ensureAppAppliesPlugin(appBuildGradle, ndkVersion, log = console.warn) 
             next = dropNdkExclude(next);
             next = ensureNdkImplementation(next, ndkVersion, log);
         }
-        next = ensureSymbolTable(next, ndkVersion !== null);
+        next = removeInsertedSymbolTable(next, log);
         return ensurePluginApplied(ensureHermesHooks(next));
     });
 }
@@ -773,6 +775,13 @@ function dropNdkExclude(source) {
     removeBlock(lines, at, at + NDK_EXCLUDE_BLOCK.length - 1);
     return lines.join('\n');
 }
+/**
+ * The block earlier versions of this plugin wrote into the debug and release
+ * build types, kept verbatim so it can be recognised and removed. Its text is
+ * a fingerprint, not documentation: `libreactnative.so` is not pre-stripped
+ * (the Maven AAR ships it with DWARF), and with Gradle plugin 4.0.8 the
+ * native upload no longer depends on the level at all.
+ */
 const SYMBOL_TABLE_BLOCK = [
     "// bugsee-symbol-table: AGP defaults this to NONE, so the plugin's native upload finds",
     '// nothing and skips. SYMBOL_TABLE emits symbols for code this app',
@@ -782,58 +791,6 @@ const SYMBOL_TABLE_BLOCK = [
     "    debugSymbolLevel 'SYMBOL_TABLE'",
     '}',
 ];
-function buildTypeSpans(s) {
-    const extent = blockExtent(s, 'buildTypes');
-    if (!extent) {
-        return [];
-    }
-    const spans = [];
-    let depth = 0;
-    for (let i = extent.bodyStart; i < extent.bodyEnd; i += 1) {
-        const ch = s.masked[i];
-        if (ch === '{') {
-            if (depth === 0) {
-                const name = /([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(s.masked.slice(extent.bodyStart, i))?.[1];
-                if (name === 'debug' || name === 'release') {
-                    spans.push({ name, open: i, close: matchingBrace(s.masked, i) });
-                }
-            }
-            depth += 1;
-        }
-        else if (ch === '}') {
-            depth -= 1;
-        }
-    }
-    return spans;
-}
-function insertSymbolTable(source, span) {
-    const s = scan(source, APP_GRADLE);
-    const opener = lineIndexAt(s, span.open);
-    const closer = lineIndexAt(s, span.close);
-    // The block this plugin wrote has an `ndk {` of its own, so it is covered here too.
-    if (codeMatches(s, /debugSymbolLevel\s+(['"])SYMBOL_TABLE\1/g, span.open, span.close).length > 0 ||
-        blockExtent(s, 'ndk', span.open, span.close) !== null) {
-        return source;
-    }
-    // The block goes last, before the closing brace's line; the opener and the
-    // closer must each hold nothing but their brace, or the user's line would
-    // have to be split.
-    const openerLine = s.lines[opener];
-    const closerLine = s.lines[closer];
-    if (!isOpenerLine(openerLine, new RegExp(`^${span.name}\\s*\\{$`)) || !isCloserLine(closerLine)) {
-        const at = isCloserLine(closerLine) ? opener : closer;
-        throw anchorRefusal(APP_GRADLE, s.lines[at], at + 1, `debugSymbolLevel 'SYMBOL_TABLE' for the ${span.name} build type`, "set ndk { debugSymbolLevel 'SYMBOL_TABLE' } in it yourself");
-    }
-    const indent = `${indentOf(openerLine.raw)}    `;
-    return insertLines(source, closer, SYMBOL_TABLE_BLOCK.map((line) => `${indent}${line}`));
-}
-function ensureSymbolTable(source, enabled) {
-    if (!enabled) {
-        return removeInsertedSymbolTable(source);
-    }
-    const spans = buildTypeSpans(scan(source, APP_GRADLE)).sort((a, b) => b.open - a.open);
-    return spans.reduce((current, span) => insertSymbolTable(current, span), source);
-}
 /** How many of Bugsee's symbol-table block lines stand at `start`, in order, at the marker's indentation. */
 function symbolBlockLinesAt(lines, start) {
     const indent = indentOf(lines[start].raw);
@@ -856,13 +813,15 @@ function afterLineComments(lines, start) {
     }
     return j;
 }
+exports.CHANGED_SYMBOL_BLOCK_NOTE = '@bugsee/react-native: android/app/build.gradle has the symbol-table block an earlier version of the plugin wrote, changed inside; it is left as you have it. Bugsee no longer needs ndk.debugSymbolLevel, so you can remove the block, or keep it for Google Play';
 /**
- * Removes exactly Bugsee's symbol-table block, at whatever indentation it
- * stands, and nothing after it. A block whose marker lines are intact but
- * whose body was changed (a user added a line inside) is refused rather than
- * cut; a stray marker loses only its own matching comment lines.
+ * Removes exactly the symbol-table block earlier versions wrote, at whatever
+ * indentation it stands, and nothing after it. A block whose comment lines
+ * are intact but whose body was changed (a user added or edited a line
+ * inside) is the user's now: it is left alone and noted. A stray marker loses
+ * only its own matching comment lines.
  */
-function removeInsertedSymbolTable(source) {
+function removeInsertedSymbolTable(source, log) {
     const s = scan(source, APP_GRADLE);
     const kept = [];
     for (let i = 0; i < s.lines.length; i += 1) {
@@ -873,7 +832,9 @@ function removeInsertedSymbolTable(source) {
             continue;
         }
         if (matched < SYMBOL_TABLE_BLOCK.length && matched >= 4) {
-            throw refusal(APP_GRADLE, `line ${i + 1}: the Bugsee symbol-table block that starts here has been changed inside, so the plugin cannot tell its lines from yours`, 'Restore the block as the plugin wrote it, or remove it and set ndk { debugSymbolLevel } yourself, then run expo prebuild again');
+            log(exports.CHANGED_SYMBOL_BLOCK_NOTE);
+            kept.push(line.raw);
+            continue;
         }
         i += matched - 1;
     }
