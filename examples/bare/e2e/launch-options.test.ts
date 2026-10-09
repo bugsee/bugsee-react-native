@@ -351,19 +351,27 @@ const CASES: readonly Case[] = [
     name: 'custom-option',
     platforms: ['android', 'ios'],
     set: { 'com.bugsee.option.capture.network.body-size-limit': 7 },
-    // A key no accessor surfaces, through setCustomOption: network bodies
-    // are cut at 7 bytes, so the capture shrinks against control.
+    // A key no accessor surfaces, through setCustomOption. Android 7.3.1
+    // drops a body over the limit whole and says why (bugsee-android #231 via
+    // #232: a cut body could not be redacted), so the 64-byte POST body is the
+    // witness on its own. iOS is read against control: bodies are cut at 7
+    // bytes, so the capture shrinks.
     effect: (outcome, control) => {
-      const bodies = (o: Outcome) =>
-        captureEvents(the(o), 'network')
-          .filter(event => event.url === `https://127.0.0.1:9/cov-post/${o.run.scenario.nonce}`)
-          .map(event => (event.custom as { body?: unknown } | undefined)?.body ?? event.body)
-          .filter((body): body is string => typeof body === 'string');
-      report('cov-post bodies', { limited: bodies(outcome), control: bodies(control) });
+      expect(networkUrls(the(outcome))).toContain(covPostUrl(outcome));
+      if (ON_ANDROID) {
+        const starts = covPostEvents(outcome).filter(event => event.type === 'before');
+        report('cov-post starts', starts.map(event => event.custom));
+        expect(starts.length).toBeGreaterThan(0);
+        for (const event of starts) {
+          const custom = event.custom as { body?: unknown; no_body_reason?: unknown } | undefined;
+          expect([custom?.body ?? null, custom?.no_body_reason]).toEqual([null, 'size_too_large']);
+        }
+        return;
+      }
+      report('cov-post bodies', { limited: covPostBodies(outcome), control: covPostBodies(control) });
       // Control keeps the whole 64-byte body (scenarios/coverage.ts POST_BODY).
-      expect(bodies(control)).toContain(POST_BODY);
-      expect(networkUrls(the(outcome))).toContain(`https://127.0.0.1:9/cov-post/${outcome.run.scenario.nonce}`);
-      expect(bodies(outcome).every(body => body.length <= 7)).toBe(true);
+      expect(covPostBodies(control)).toContain(POST_BODY);
+      expect(covPostBodies(outcome).every(body => body.length <= 7)).toBe(true);
     },
     // Filed: https://github.com/bugsee/bugsee-cocoa/issues/197
     readbackFails: {
@@ -374,6 +382,23 @@ const CASES: readonly Case[] = [
 ];
 
 const outcomes = new Map<string, Outcome>();
+
+/** The url scenarios/coverage.ts POSTs to in this outcome's run. */
+function covPostUrl(o: Outcome): string {
+  return `https://127.0.0.1:9/cov-post/${o.run.scenario.nonce}`;
+}
+
+/** The network events of that POST. */
+function covPostEvents(o: Outcome): Array<Record<string, unknown>> {
+  return captureEvents(the(o), 'network').filter(event => event.url === covPostUrl(o));
+}
+
+/** The bodies recorded for that POST. */
+function covPostBodies(o: Outcome): string[] {
+  return covPostEvents(o)
+    .map(event => (event.custom as { body?: unknown } | undefined)?.body ?? event.body)
+    .filter((body): body is string => typeof body === 'string');
+}
 
 /** The URLs in the report's network capture. */
 function networkUrls(bundle: PulledBundle): string[] {
@@ -463,4 +488,20 @@ describeDevice(`launch options and their effects on ${TARGET_NAME}`, () => {
       await item.effect!(outcome, control);
     });
   }
+
+  /**
+   * Control's own POST fails to connect (the dead endpoint); its request body
+   * is still in the capture. Android 7.3.0 recorded it. 7.3.1 reads the body
+   * only while OkHttp writes it, which a refused connection never does, and
+   * records no_body_reason no_data instead. Android only: iOS was not
+   * measured here.
+   */
+  (ON_ANDROID ? it.failing : it.skip)(
+    'control: a POST that fails before any response keeps its request body [known: Android 7.3.1 records it without the body (no_data), https://github.com/bugsee/bugsee-android/issues/246]',
+    async () => {
+      const control = await runCase(CASES[0]!);
+      report('control cov-post bodies', covPostBodies(control));
+      expect(covPostBodies(control)).toContain(POST_BODY);
+    },
+  );
 });

@@ -45,10 +45,13 @@ const CHAT_BACKGROUND = '#112233';
 const itColour = ON_IOS ? it.failing : it;
 /**
  * Android 7.3.0 stored the greeting and never read it back: the chat opened
- * empty (bugsee-android #215). 7.3.1 shows it in an empty chat (#225), as iOS
- * does.
+ * empty (bugsee-android #215). 7.3.1 (#225) is meant to show it in an empty
+ * chat, as iOS does, but on this flow (greeting set just before
+ * showFeedbackActivity, chat opened directly, offline) the WOD_LX1 still shows
+ * an empty chat while the feedback preferences hold the greeting, 2 of 2 runs:
+ * https://github.com/bugsee/bugsee-android/issues/245. Pinned until it shows.
  */
-const itGreeting = it;
+const itGreeting = ON_ANDROID ? it.failing : it;
 
 describeDevice(`the feedback chat on ${TARGET_NAME}`, () => {
   let log: DeviceLog | undefined;
