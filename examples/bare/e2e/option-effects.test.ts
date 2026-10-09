@@ -362,21 +362,23 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
    * as well as with it on (XS, 2026-10-07): the option never withholds it.
    * BGSNetworkHelperMethods.m gates only the first. Filed: bugsee-cocoa#204.
    */
-  (ON_IOS ? it.failing : on(['A']))(`[OPT-007] capture.network.body-without-type: a response body with no Content-Type is kept only with the option${ON_IOS ? ' [known: iOS keeps untyped bodies with the option off (bugsee-cocoa#204)]' : ''}`, async () => {
-    const bodyOf = async (name: string): Promise<string> => {
-      const outcome = await uploaded(name, 'bytes', true);
-      const events = networkOf(own(outcome, name)).filter(e => String(e.url ?? '').includes(`api-bytes-${outcome.run.scenario.nonce}`));
-      // The response body fields only (Android `body`, iOS `custom.body`).
-      const bodies = events.map(e => (e.custom as { body?: unknown } | undefined)?.body ?? e.body ?? null);
-      report(`${name} events`, events.map(e => ({ mechanism: e.mechanism, id: e.id, type: e.type, status: e.status, body: String(JSON.stringify((e.custom as { body?: unknown } | undefined)?.body ?? e.body ?? null)).slice(0, 120), noBody: (e.custom as { no_body_reason?: unknown } | undefined)?.no_body_reason })));
-      expect(events.length).toBeGreaterThan(0);
-      return JSON.stringify(bodies);
-    };
-    const kept = await bodyOf('body-no-type');
-    const control = await bodyOf('body-no-type-control');
-    // The stub's /bytes/64 body is 64 x "x", with no Content-Type.
-    expect(kept).toContain('x'.repeat(32));
-    expect(control).not.toContain('x'.repeat(32));
+  /** The response body fields (Android `body`, iOS `custom.body`) of `name`'s stub fetch, as JSON. */
+  const untypedBodies = async (name: string): Promise<string> => {
+    const outcome = await uploaded(name, 'bytes', true);
+    const events = networkOf(own(outcome, name)).filter(e => String(e.url ?? '').includes(`api-bytes-${outcome.run.scenario.nonce}`));
+    const bodies = events.map(e => (e.custom as { body?: unknown } | undefined)?.body ?? e.body ?? null);
+    report(`${name} events`, events.map(e => ({ mechanism: e.mechanism, id: e.id, type: e.type, status: e.status, body: String(JSON.stringify((e.custom as { body?: unknown } | undefined)?.body ?? e.body ?? null)).slice(0, 120), noBody: (e.custom as { no_body_reason?: unknown } | undefined)?.no_body_reason })));
+    expect(events.length).toBeGreaterThan(0);
+    return JSON.stringify(bodies);
+  };
+
+  // The stub's /bytes/64 body is 64 x "x", with no Content-Type.
+  on(['A', 'S', 'X'])('[OPT-007] capture.network.body-without-type=true keeps a response body with no Content-Type', async () => {
+    expect(await untypedBodies('body-no-type')).toContain('x'.repeat(32));
+  });
+
+  (ON_IOS ? it.failing : on(['A']))(`[OPT-007] capture.network.body-without-type at its default (false) leaves a response body with no Content-Type out${ON_IOS ? ' [known: iOS keeps untyped bodies with the option off (bugsee-cocoa#204)]' : ''}`, async () => {
+    expect(await untypedBodies('body-no-type-control')).not.toContain('x'.repeat(32));
   });
 
   // iOS records the same two "complete" events with and without the option
