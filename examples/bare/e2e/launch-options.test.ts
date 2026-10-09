@@ -27,7 +27,8 @@
  * option as its constant's ORDINAL (IssueSeverity.Critical, value 4, is
  * written 3). That record is the only device-visible witness for the frame
  * rate (frames depend on what the screen does), so `androidRecorded` reads
- * it with that rule stated.
+ * it with that rule stated. Filed (bug 10):
+ * https://github.com/bugsee/bugsee-android/issues/216
  *
  * Options with no effect a device can observe without a human, a backend or
  * hardware are listed in the beta-coverage report, not here.
@@ -143,6 +144,7 @@ const CASES: readonly Case[] = [
     effect: outcome => {
       expect(types(the(outcome))).not.toContain('video');
     },
+    // Filed: https://github.com/bugsee/bugsee-cocoa/issues/196
     effectFails: {
       ios: 'iOS 7.0.0-beta3 and beta4 record capture.video=false (and turns the screenshot off) but still writes a real video into the report',
     },
@@ -363,6 +365,7 @@ const CASES: readonly Case[] = [
       expect(networkUrls(the(outcome))).toContain(`https://127.0.0.1:9/cov-post/${outcome.run.scenario.nonce}`);
       expect(bodies(outcome).every(body => body.length <= 7)).toBe(true);
     },
+    // Filed: https://github.com/bugsee/bugsee-cocoa/issues/197
     readbackFails: {
       ios: 'iOS 7.0.0-beta3 and beta4 drop com.bugsee.option.capture.network.body-size-limit: getLaunchOptions() reports 20480 and the report environment does not list it',
     },

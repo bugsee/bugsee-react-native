@@ -131,6 +131,14 @@ import {
 } from './smoke/scenarios';
 import { isInfraScenario, runInfraScenario } from './scenarios/infra';
 import { FlowStage, isFlowScenario, preLaunchFlow, runFlowScenario } from './scenarios/flows';
+import {
+  ApiStage,
+  type ApiStageState,
+  apiLaunchOverrides,
+  isApiScenario,
+  preLaunchApi,
+  runApiScenario,
+} from './scenarios/api';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -167,6 +175,8 @@ function launchOptions(endpoint: string, scenario: string): LaunchOptions {
   // set, through setCustomOption -- the typed model's escape hatch, which
   // writes the same native payload a first-class accessor does.
   launchOverrides(scenario, (key, value) => options.setCustomOption(key, value));
+  // The campaign API scenarios (scenarios/api.tsx), on the typed model.
+  apiLaunchOverrides(scenario, options);
   const serialized = BugseeLaunchOptions.serialize(options) as LaunchOptions;
   // This scenario only. APM is on by default; setting the key makes the
   // launch explicit about the capture this scenario is here to produce.
@@ -294,6 +304,8 @@ export default function App() {
   >();
   /** Set before launch for the campaign flow scenarios (scenarios/flows.tsx). */
   const [flowStage, setFlowStage] = useState<string | undefined>();
+  /** Set by a campaign API scenario that puts something on screen (scenarios/api.tsx). */
+  const [apiStage, setApiStage] = useState<ApiStageState | undefined>();
 
   useEffect(() => {
     let cancelled = false;
@@ -440,6 +452,26 @@ export default function App() {
       poll = setInterval(() => {
         Bugsee.getStatus().then(observe).catch(() => {});
       }, 100);
+      // The campaign API scenarios' pre-launch step. `true`: the scenario
+      // owns the launch (api-attach on a manifest-launched build).
+      if (isApiScenario(choice.scenario)) {
+        try {
+          const apiContext = {
+            token,
+            options: () => launchOptions(endpoint, choice.scenario),
+            setStage: (next: ApiStageState | undefined) => {
+              if (!cancelled) {
+                setApiStage(next);
+              }
+            },
+          };
+          if (await preLaunchApi(choice.scenario, choice.nonce, apiContext)) {
+            return;
+          }
+        } catch (apiCause) {
+          console.log(`BUGSEE_E2E api pre-launch threw ${String(apiCause)}`);
+        }
+      }
       try {
         const launched = await Bugsee.launch(token, launchOptions(endpoint, choice.scenario));
         console.log(`BUGSEE_E2E launch() resolved ${String(launched)}`);
@@ -555,6 +587,20 @@ export default function App() {
         // N-16; scenarios/staging.ts: N-19).
         if (isFlowScenario(choice.scenario)) {
           await runFlowScenario(choice.scenario, choice.nonce);
+          return;
+        }
+
+        // The campaign API scenarios (scenarios/api.tsx).
+        if (isApiScenario(choice.scenario)) {
+          await runApiScenario(choice.scenario, choice.nonce, {
+            token,
+            options: () => launchOptions(endpoint, choice.scenario),
+            setStage: next => {
+              if (!cancelled) {
+                setApiStage(next);
+              }
+            },
+          });
           return;
         }
 
@@ -710,6 +756,7 @@ export default function App() {
         <SmokeStage scenario={smokeStage.scenario} nonce={smokeStage.nonce} />
       )}
       {flowStage !== undefined && <FlowStage />}
+      {apiStage !== undefined && <ApiStage stage={apiStage} />}
     </View>
   );
 }

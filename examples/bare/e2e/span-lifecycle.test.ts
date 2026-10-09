@@ -40,6 +40,7 @@ interface Transaction {
  * span.ts documents `setName` as the native setName, "which sets the
  * operation on both SDKs". Android does; iOS 7.0.0-beta4 renames the
  * transaction instead and leaves the operation `cov.flow`.
+ * Filed: https://github.com/bugsee/bugsee-cocoa/issues/199
  */
 const itOperation = ON_IOS ? it.failing : it;
 

@@ -40,12 +40,14 @@ const CHAT_BACKGROUND = '#112233';
  * The iOS SwiftUI chat (7.0.0-beta3 and beta4) ignores BugseeTheme, a
  * documented limitation (packages/react-native-feedback/README.md): seen
  * white (#ffffff) on the simulator with #112233 set. Pinned until it does.
+ * Filed: https://github.com/bugsee/bugsee-cocoa/issues/200
  */
 const itColour = ON_IOS ? it.failing : it;
 /**
  * Android 7.3.0 stores the greeting (`setDefaultFeedbackGreeting` writes the
  * feedback preferences' `greeting`) and nothing ever reads it back: the chat
  * opens empty, offline. iOS shows it. Pinned until the Android SDK renders it.
+ * Filed: https://github.com/bugsee/bugsee-android/issues/215
  */
 const itGreeting = ON_ANDROID ? it.failing : it;
 

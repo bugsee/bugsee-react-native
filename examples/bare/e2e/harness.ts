@@ -263,9 +263,13 @@ export async function startRun(name: string, options: RunOptions = {}): Promise<
   // (N-30). The app forces it anyway for the placeholder token.
   const extras = CAMPAIGN_MODE === 'staging' ? {} : { endpoint: DEAD_ENDPOINT };
   const scenario = writeScenario(name, extras);
-  if (smokeRoot()) {
+  if (smokeRoot() || !RELEASE) {
     // The root is chosen from the JSON at bundle load (index.js), so Metro
-    // must serve this run's file before the launch.
+    // must serve this run's file before the launch. A Debug build also
+    // reloads whenever Metro sees the JSON change after the launch (index.js
+    // imports it), restarting the scenario mid-run: let Metro catch up first.
+    // (Two runs sharing one app directory and Metro -- an Android or
+    // simulator run beside an iPhone run -- rewrite it under each other.)
     await awaitMetroServes(scenario.nonce, 60_000, 'android');
   }
   const start = log().mark();
@@ -333,6 +337,12 @@ async function startIosRun(name: string, options: RunOptions): Promise<Run> {
   } else {
     // The allowlisted iPhone, identity-checked, before its first launch.
     await verifyIosDevice();
+    // A Debug app on the iPhone loads Metro's bundle too, and reloads when
+    // Metro sees the JSON change after the launch -- seen 19 s into a run,
+    // which restarted the scenario. Let Metro catch up first.
+    if (!RELEASE) {
+      await awaitMetroServes(scenario.nonce);
+    }
   }
   const launch = ios.launch(scenarioArgs(scenario, extras));
   const { start } = launch;

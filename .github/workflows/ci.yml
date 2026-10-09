@@ -431,14 +431,16 @@ jobs:
       # report-handler and wrapper-channel suites, whose timing windows (a
       # 25 s deadline asserted to within a second) a shared runner cannot
       # promise, and which retain bundles -- on iOS beta3 those carry
-      # credentials, and CI has no policy for keeping them.
+      # credentials, and CI has no policy for keeping them. Jest reads the
+      # argument as a regex over the path: anchored, so a file whose name
+      # merely contains "launch.test.ts" (api-relaunch.test.ts) stays out.
       - name: Reach Status.Launched
         working-directory: examples/bare
         env:
           E2E_PLATFORM: ios
           E2E_IOS_TARGET: simulator
           IOS_SIMULATOR_ID: ${{ steps.sim.outputs.udid }}
-        run: yarn e2e launch.test.ts
+        run: yarn e2e '/launch\.test\.ts$'
 
       # The e2e reads only the console pty. The app's own persisted log says
       # whether a missing marker was never logged or logged and not streamed.

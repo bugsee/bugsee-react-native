@@ -111,7 +111,21 @@ describe("CI's ios-e2e step", () => {
 
   it('runs launch.test.ts and nothing else', () => {
     const run = /\n\s*run:\s*(.+)/.exec(step)?.[1]?.trim();
-    expect(run).toBe('yarn e2e launch.test.ts');
+    expect(run).toBe("yarn e2e '/launch\\.test\\.ts$'");
+  });
+
+  // Jest reads the argument as a regex over each test path: it must select
+  // launch.test.ts alone among the e2e suites (api-relaunch.test.ts holds
+  // "launch.test.ts" as a substring).
+  it('its path pattern selects launch.test.ts alone among the e2e suites', () => {
+    const run = /\n\s*run:\s*(.+)/.exec(step)?.[1]?.trim() ?? '';
+    const pattern = /'([^']+)'/.exec(run)?.[1];
+    expect(pattern).toBeDefined();
+    const e2e = join(__dirname, '..', '..', 'examples', 'bare', 'e2e');
+    const suites = readdirSync(e2e).filter(name => name.endsWith('.test.ts'));
+    expect(suites).toContain('api-relaunch.test.ts');
+    const selected = suites.filter(name => new RegExp(pattern!, 'i').test(join(e2e, name)));
+    expect(selected).toEqual(['launch.test.ts']);
   });
 });
 

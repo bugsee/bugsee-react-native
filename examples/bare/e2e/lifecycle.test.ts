@@ -118,6 +118,9 @@ describeDevice(`stop, status, lifecycle events and data deletion on ${TARGET_NAM
    * iOS 7.0.0-beta4: `clearGenerationsFolder` empties the legacy generations
    * folder, which the nextgen capture no longer writes; the parts under
    * `capture/generations` stay (simulator: 18 before, 66 after).
+   *
+   * Filed: Android https://github.com/bugsee/bugsee-android/issues/214,
+   * iOS https://github.com/bugsee/bugsee-cocoa/issues/195.
    */
   const itDelete = it.failing;
   itDelete('deleteCollectedDataOnDevice(true) after stop resolves true and removes the rolling capture', () => {
