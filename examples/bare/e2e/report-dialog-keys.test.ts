@@ -54,10 +54,9 @@ function blend(top: string, under: string, alpha: number): string {
  * bugsee-cocoa#201.
  */
 const KNOWN_NOT_PAINTED: Record<'android' | 'ios', Record<string, string>> = {
-  // Android 7.3.0: nothing in the library reads Report::ActionBarColor (only
-  // the constant exists); the bar stays the theme's near-black while
-  // ActionBarTextColor paints its text (WOD_LX1, 2026-10-07). Filed: bugsee-android#217.
-  android: { actionBarColor: 'Android 7.3.0 never reads Report::ActionBarColor (bugsee-android#217)' },
+  // Android 7.3.0 never read Report::ActionBarColor (bugsee-android#217);
+  // 7.3.1 paints the dialog bar with it (#224, WOD_LX1).
+  android: {},
   ios: {
     closeButtonColor: 'iOS beta5 never applies reportCloseButtonColor (bugsee-cocoa#201)',
     sendButtonColor: 'iOS beta5 never applies reportSendButtonColor (bugsee-cocoa#201)',
