@@ -157,8 +157,6 @@ function bugseeGroups(): string[][] {
     [NDK_OPENER, ndkLine('9.9.9'), '}'],
     [ndkLine('9.9.9')],
     EXCLUDE_BLOCK.split('\n'),
-    SYMBOL_BLOCK.split('\n'),
-    [SYMBOL_BLOCK.split('\n')[0] as string],
     UPLOADS_OFF_BLOCK.split('\n'),
     declaration('1.2.3'),
     declaration('2.0.0'),
@@ -213,6 +211,8 @@ function lost(userLines: readonly UserLine[], output: string): string | null {
   };
   return walk(0, 0);
 }
+
+const occurrences = (text: string, wanted: string): number => text.split(wanted).length - 1;
 
 const countLines = (text: string, wanted: string): number =>
   text.split('\n').filter((line) => line.replace(/\r$/, '').trim() === wanted).length;
@@ -328,14 +328,13 @@ const appCases: Case[] = [
     segments: [u(REACT_APPLY), b(LEGACY_HOOK_R1.replace('afterEvaluate {\n', 'afterEvaluate {\n    println("added")\n')), u(userDeps)],
   },
   {
-    // A one-line build type cannot take the symbol block without a rewrite of
-    // the user's line, so native crash reporting on refuses; off leaves it.
+    // The plugin writes nothing into a build type, so a one-line one is fine.
     name: 'braces inside a string in a one-line release block',
     segments: [
       u(REACT_APPLY),
       u('android {\n    buildTypes {\n        release { minifyEnabled true; def s = "}}}" }\n    }\n}'),
     ],
-    refuse: (option) => option.ndk !== null,
+    check: (output) => expect(output).not.toContain('bugsee-symbol-table:'),
   },
   {
     name: 'braces inside a string in a release block',
@@ -343,13 +342,8 @@ const appCases: Case[] = [
       u(REACT_APPLY),
       u('android {\n    buildTypes {\n        release {\n            minifyEnabled true; def s = "}}}"\n\n        }\n    }\n}'),
     ],
-    check: (output, option) => {
-      expect(countLines(output, "debugSymbolLevel 'SYMBOL_TABLE'")).toBe(option.ndk === null ? 0 : 1);
-      if (option.ndk !== null) {
-        // Inside the release block, right before its closing brace; the user's blank line stays where it was.
-        expect(output).toMatch(/def s = "}}}"\n\n {12}\/\/ bugsee-symbol-table:[^]*?\n {12}}\n {8}}\n {4}}\n}/);
-      }
-    },
+    // Nothing goes into the release block: the user's blank line still ends it.
+    check: (output) => expect(output).toContain('def s = "}}}"\n\n        }\n    }\n}'),
   },
   {
     name: 'a // comment naming dependencies { before the real block',
@@ -626,7 +620,7 @@ const appCases: Case[] = [
       u(REACT_APPLY),
       u('android {\n    buildTypes {\n        getByName("release") { minifyEnabled true }\n        release {\n            x()\n        }\n    }\n}'),
     ],
-    check: (output, option) => expect(countLines(output, "debugSymbolLevel 'SYMBOL_TABLE'")).toBe(option.ndk === null ? 0 : 1),
+    check: (output) => expect(output).not.toContain('bugsee-symbol-table:'),
   },
   {
     name: 'a trailing block comment then a line comment on the hermesCommand line',
@@ -823,23 +817,19 @@ const anchorCases: Case[] = [
     check: (output) => expect(output).not.toContain(NDK_MARKER),
   },
   {
-    name: 'A06: a build type whose closing brace shares its line with code is refused',
+    name: 'A06: a build type whose closing brace shares its line with code is left as it is',
     segments: [u(REACT_APPLY), u('android {\n    buildTypes {\n        release {\n            minifyEnabled true }\n    }\n}')],
-    refuse: (option) => option.ndk !== null,
+    check: (output) => expect(output).not.toContain('bugsee-symbol-table:'),
   },
   {
-    name: 'A07: a build type whose closing brace follows a comment on its line is refused',
+    name: 'A07: a build type whose closing brace follows a comment on its line is left as it is',
     segments: [u(REACT_APPLY), u('android {\n    buildTypes {\n        release {\n            minifyEnabled true\n            /* end */ }\n    }\n}')],
-    refuse: (option) => option.ndk !== null,
+    check: (output) => expect(output).not.toContain('bugsee-symbol-table:'),
   },
   {
-    name: 'a build type closer with a trailing comment is an anchor',
+    name: 'a build type closer with a trailing comment gets nothing before it',
     segments: [u(REACT_APPLY), u('android {\n    buildTypes {\n        release {\n            minifyEnabled true\n        } // release\n    }\n}')],
-    check: (output, option) => {
-      if (option.ndk !== null) {
-        expect(output).toContain(`${SYMBOL_BLOCK.split('\n').map((line) => `            ${line}`).join('\n')}\n        } // release\n`);
-      }
-    },
+    check: (output) => expect(output).toContain('            minifyEnabled true\n        } // release\n'),
   },
   {
     name: 'A08: an orphaned symbol marker before the user\'s own ndk block takes only the marker',
@@ -851,14 +841,13 @@ const anchorCases: Case[] = [
     ],
   },
   {
-    name: 'A09: a user line added inside Bugsee\'s symbol block refuses when the block would go',
+    name: 'A09: a user line added inside the old symbol block makes the block the user\'s: it stays',
     segments: [
       u(REACT_APPLY),
       u('android {\n    buildTypes {\n        release {'),
       u(SYMBOL_BLOCK.replace("    debugSymbolLevel 'SYMBOL_TABLE'", "    debugSymbolLevel 'SYMBOL_TABLE'\n    abiFilters \"arm64-v8a\"").split('\n').map((line) => `            ${line}`).join('\n')),
       u('        }\n    }\n}'),
     ],
-    refuse: (option) => option.ndk === null,
   },
   {
     name: 'Bugsee\'s symbol block at a deeper indentation than it wrote is still exactly its block',
@@ -905,19 +894,18 @@ const anchorCases: Case[] = [
     segments: [u(REACT_APPLY), b(LEGACY_MARKER), u('/* note */\ndef bugseeHermesSourcemaps = "x"'), u(userAfter)],
   },
   {
-    name: 'a multi-line build type whose opener holds code is refused',
+    name: 'a multi-line build type whose opener holds code is left as it is',
     segments: [u(REACT_APPLY), u('android {\n    buildTypes {\n        release { minifyEnabled true\n        }\n    }\n}')],
-    refuse: (option) => option.ndk !== null,
+    check: (output) => expect(output).not.toContain('bugsee-symbol-table:'),
   },
   {
-    name: 'exactly the four marker comments then a user level line refuses when the block would go',
+    name: 'exactly the four marker comments then a user level line stay: they are the user\'s',
     segments: [
       u(REACT_APPLY),
       u('android {\n    buildTypes {\n        release {'),
       u(SYMBOL_BLOCK.split('\n').slice(0, 4).map((line) => `            ${line}`).join('\n')),
       u("            ndk.debugSymbolLevel 'SYMBOL_TABLE'\n        }\n    }\n}"),
     ],
-    refuse: (option) => option.ndk === null,
   },
   {
     name: 'a code line with a trailing comment between a legacy marker and its fingerprint is user code',
@@ -948,14 +936,54 @@ const anchorCases: Case[] = [
     check: (output) => expect(output).not.toContain('9.9.9'),
   },
   {
-    name: 'exactly the four marker comments of the symbol block before a user ndk block refuses when the block would go',
+    name: 'exactly the four marker comments of the symbol block before a user ndk block stay: they are the user\'s',
     segments: [
       u(REACT_APPLY),
       u('android {\n    buildTypes {\n        release {'),
       u(SYMBOL_BLOCK.split('\n').slice(0, 4).map((line) => `            ${line}`).join('\n')),
       u('            ndk {\n                abiFilters "arm64-v8a"\n            }\n        }\n    }\n}'),
     ],
-    refuse: (option) => option.ndk === null,
+  },
+  {
+    name: 'N01: the old block in debug and release goes; the user\'s FULL in defaultConfig stays',
+    segments: [
+      u(REACT_APPLY),
+      u("android {\n    defaultConfig {\n        ndk { debugSymbolLevel 'FULL' }\n    }\n    buildTypes {\n        debug {\n            signingConfig signingConfigs.debug"),
+      b(SYMBOL_BLOCK.split('\n').map((line) => `            ${line}`).join('\n')),
+      u('        }\n        release {\n            minifyEnabled true'),
+      b(SYMBOL_BLOCK.split('\n').map((line) => `            ${line}`).join('\n')),
+      u('        }\n    }\n}'),
+    ],
+    check: (output) => {
+      expect(output).not.toContain('bugsee-symbol-table:');
+      expect(output).toContain("        ndk { debugSymbolLevel 'FULL' }\n");
+      expect(output).toContain('            signingConfig signingConfigs.debug\n        }\n        release {\n            minifyEnabled true\n        }\n');
+    },
+  },
+  {
+    name: 'N02: the old block, CRLF, in a release that also holds the user\'s own ndk block',
+    segments: [
+      u(REACT_APPLY),
+      u("android {\n    buildTypes {\n        release {\n            ndk {\n                abiFilters 'arm64-v8a'\n            }"),
+      b(SYMBOL_BLOCK.split('\n').map((line) => `            ${line}`).join('\n')),
+      u('        }\n    }\n}'),
+    ],
+    crlf: true,
+    check: (output) => {
+      expect(output).not.toContain('bugsee-symbol-table:');
+      expect(output).toContain("abiFilters 'arm64-v8a'\r\n            }\r\n        }\r\n");
+    },
+  },
+  {
+    name: 'N03: the user\'s own level in debug and release, no marker, is never touched',
+    segments: [
+      u(REACT_APPLY),
+      u("android {\n    buildTypes {\n        debug {\n            ndk {\n                debugSymbolLevel 'NONE'\n            }\n        }\n        release {\n            ndk.debugSymbolLevel = 'FULL'\n        }\n    }\n}"),
+    ],
+  },
+  {
+    name: 'N04: the old block\'s text quoted in a string is the user\'s',
+    segments: [u(REACT_APPLY), u(`def doc = '''\n${SYMBOL_BLOCK}\n'''`), u(userDeps)],
   },
   {
     name: 'a user dependencies block whose opener is the plugin\'s own marked opener shape is kept',
@@ -1041,6 +1069,10 @@ function expectAppOutcome(c: Case, source: Input, option: AppOption): void {
     label,
     (option.ndk === null ? 1 : 0) + (quoted.exclude ?? 0),
   ]);
+  // The plugin writes no debugSymbolLevel and takes the block an earlier
+  // version wrote: every one left is the user's own (code, comment or string).
+  const userText = c.segments.filter((segment) => segment.kind !== 'bugsee').map((segment) => segment.text).join('\n');
+  expect([label, occurrences(once, 'debugSymbolLevel')]).toEqual([label, occurrences(userText, 'debugSymbolLevel')]);
   c.check?.(once, option);
   // CRLF files stay CRLF on every line, and a LF file gains no CR.
   const bareLf = once.split('\n').filter((line, i, all) => i < all.length - 1 && !line.endsWith('\r')).length;
