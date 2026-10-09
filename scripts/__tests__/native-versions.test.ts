@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { readNativeVersions, type NativeVersions } from '../native-versions';
 
 const valid: NativeVersions = {
@@ -127,5 +130,14 @@ describe('readNativeVersions', () => {
           'commit SHA, got "234dcdd".',
       );
     });
+  });
+});
+
+describe('the README restates the pins', () => {
+  it('the manual setup declares the pinned Gradle plugin, and no other version', () => {
+    const readme = readFileSync(join(__dirname, '..', '..', 'packages', 'react-native', 'README.md'), 'utf8');
+    const declared = [...readme.matchAll(/id 'com\.bugsee\.android\.gradle' version '([^']+)'/g)].map(m => m[1]);
+    expect(declared.length).toBeGreaterThan(0);
+    expect(new Set(declared)).toEqual(new Set([readNativeVersions().android.gradlePlugin]));
   });
 });

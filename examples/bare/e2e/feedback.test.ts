@@ -102,8 +102,11 @@ describeDevice(`the feedback chat on ${TARGET_NAME}`, () => {
       expect(top).toBe(FEEDBACK_ACTIVITY);
     }
     // Both platforms title the screen "Feedback", in every locale tried.
+    // Since Android 7.3.1 paints the feedback action bar (bugsee-android
+    // #218), OCR can read the back arrow into the title's line ("< Feedback");
+    // the arrow glyph is dropped, the title still has to match exactly.
     const text = await screenText('feedback');
-    expect(text).toContain('Feedback');
+    expect(text.map(line => line.replace(/^[<‹←]\s*/, ''))).toContain('Feedback');
     // The app's own screen is gone from view: its status label is not read.
     expect(text).not.toContain('Bugsee React Native');
   });

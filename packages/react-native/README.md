@@ -208,7 +208,7 @@ against (`android.gradlePlugin` in
 
 ```groovy
 plugins {
-    id 'com.bugsee.android.gradle' version '4.0.7' apply false
+    id 'com.bugsee.android.gradle' version '4.0.8' apply false
 }
 ```
 
