@@ -12,6 +12,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { checkLaunch, launchFactsOf, parseCampaignMode } from '../../../scripts/campaign-endpoint-guard';
+import { parseNoWipe } from './flow-config';
 import { checkAndroidBanner } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
 import {
@@ -245,6 +246,12 @@ export const IOS_SDK_LINE = /Bugsee IOS SDK ver:(\S+) build:(\S+)/;
 export interface RunOptions {
   /** iOS: the HTTP stub's base URL for the app (stub-server.ts `deviceStubUrl`). */
   readonly stub?: string;
+  /**
+   * iOS: the SDK version this launch must report instead of the pin -- the
+   * installed app is an upgrade test's previous build (upgrade.test.ts, N-15).
+   * Still checked exactly: a launch of any other version throws.
+   */
+  readonly iosSdkVersion?: string;
 }
 
 export async function startRun(name: string, options: RunOptions = {}): Promise<Run> {
@@ -344,8 +351,9 @@ async function startIosRun(name: string, options: RunOptions): Promise<Run> {
   await checkRun(ran, start);
   const banner = must(await log().waitFor(IOS_SDK_LINE, 15_000, start), 'the iOS SDK version line', start);
   const version = IOS_SDK_LINE.exec(banner.text)![1];
-  if (version !== readNativeVersions().ios.sdk) {
-    throw new Error(`iOS SDK ${version} launched, but the pin is ${readNativeVersions().ios.sdk}`);
+  const expected = options.iosSdkVersion ?? readNativeVersions().ios.sdk;
+  if (version !== expected) {
+    throw new Error(`iOS SDK ${version} launched, but this run expects ${expected}`);
   }
   if (CAMPAIGN_MODE === 'staging') {
     const launched = must(
@@ -380,7 +388,21 @@ async function startIosRun(name: string, options: RunOptions): Promise<Run> {
   return { scenario, start, banner, launched, dev: / dev=true/.test(ran.text), launch };
 }
 
+/**
+ * `E2E_NO_WIPE=1`, the no-wipe mode (campaign N-15): `clearBundles()` stops
+ * the app but deletes nothing, so a suite can run across an app upgrade and
+ * see what the previous build left. Anything but unset, `0` or `1` throws.
+ */
+export function noWipe(raw: string | undefined = process.env.E2E_NO_WIPE): boolean {
+  return parseNoWipe(raw);
+}
+
 export async function clearBundles(): Promise<void> {
+  if (noWipe()) {
+    await stopApp();
+    console.log('NO-WIPE: E2E_NO_WIPE=1, the app was stopped and its data kept');
+    return;
+  }
   return ON_IOS ? clearIosBundles() : clearAndroidBundles();
 }
 

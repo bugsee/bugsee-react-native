@@ -49,7 +49,7 @@ import {
   fileNameOf,
   terminateIosApp,
 } from './bundles';
-import { ANDROID_PACKAGE, iosTarget } from './device';
+import { ANDROID_PACKAGE, IOS_EXECUTABLE, IOS_PID_TID, iosTarget } from './device';
 import {
   ON_ANDROID,
   ON_IOS,
@@ -93,12 +93,12 @@ jest.setTimeout(10 * 60_000);
 let log: DeviceLog;
 
 /**
- * iOS: the thread an `NSLog` line came from, `BareExample[<pid>:<tid>]`. The
+ * iOS: the thread an `NSLog` line came from, `<executable>[<pid>:<tid>]` (device.ts `IOS_PID_TID`). The
  * SDK logs its version line from `launchWithToken:` on the main thread, so
  * that line's tid is main's -- the witness for which thread a dispatch was on.
  */
 function threadOf(line: LogLine): string | undefined {
-  return /BareExample\[\d+:(\d+)\]/.exec(line.text)?.[1];
+  return IOS_PID_TID.exec(line.text)?.[2];
 }
 
 const DISPATCH = (phase: string) =>
@@ -165,7 +165,7 @@ async function awaitHostCrashReport(
   const dir = join(homedir(), 'Library', 'Logs', 'DiagnosticReports');
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    for (const file of readdirSync(dir).filter(name => /^BareExample.*\.ips$/.test(name))) {
+    for (const file of readdirSync(dir).filter(name => name.startsWith(IOS_EXECUTABLE) && name.endsWith('.ips'))) {
       const text = readFileSync(join(dir, file), 'utf8');
       const body = text.slice(text.indexOf('\n') + 1);
       try {
@@ -615,7 +615,7 @@ describeDevice(`report handler on ${TARGET_NAME}`, () => {
       'the app calling testNativeCrash()',
       crash.start,
     );
-    const pid = Number(/BareExample\[(\d+):/.exec(crash.banner.text)?.[1]);
+    const pid = Number(IOS_PID_TID.exec(crash.banner.text)?.[1]);
     expect(Number.isInteger(pid)).toBe(true);
 
     // 9.1.4: the process really died of it. testNativeCrash on iOS is

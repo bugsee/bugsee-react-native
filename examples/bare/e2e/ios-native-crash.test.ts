@@ -22,7 +22,7 @@
  * (report-handler.test.ts), so a crash there is never recovered.
  */
 import { type PulledBundle, crashOf } from './bundles';
-import { iosTarget } from './device';
+import { IOS_PID_TID, iosTarget } from './device';
 import { ON_IOS, type Run, TARGET_NAME, awaitBundles, clearBundles, describeDevice, must, report, startRun } from './harness';
 import { beginRetainingSuite, endRetainingSuite, iosCrashQueueFiles } from './observe';
 import { type DeviceLog, devicePidsOfApp, deviceTerminationSignal } from './scenario';
@@ -58,7 +58,7 @@ describeIphone(`a native signal crash recovered on ${TARGET_NAME}`, () => {
     }
     await clearBundles();
     const crash = await startRun(`native-crash-${kind}`);
-    const pid = Number(/BareExample\[(\d+):/.exec(crash.banner.text)?.[1]);
+    const pid = Number(IOS_PID_TID.exec(crash.banner.text)?.[1]);
     must(
       await log!.waitFor(new RegExp(`BUGSEE_E2E native crashing kind=${kind}`), 20_000, crash.start),
       `the app calling crashNative('${kind}')`,

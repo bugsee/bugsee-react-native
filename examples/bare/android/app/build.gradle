@@ -87,8 +87,10 @@ android {
         applicationId "com.bareexample"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Campaign N-15 U-02 (e2e/upgrade.test.ts): the same app with a higher
+        // version, `-PbugseeE2eVersionCode=2`; 1 / "1.0" otherwise.
+        versionCode((findProperty('bugseeE2eVersionCode') ?: '1').toInteger())
+        versionName findProperty('bugseeE2eVersionCode') == null ? "1.0" : "1.${findProperty('bugseeE2eVersionCode')}"
     }
     signingConfigs {
         debug {

@@ -130,6 +130,7 @@ import {
   runSmokeScenario,
 } from './smoke/scenarios';
 import { isInfraScenario, runInfraScenario } from './scenarios/infra';
+import { FlowStage, isFlowScenario, preLaunchFlow, runFlowScenario } from './scenarios/flows';
 
 const STATUS_NAMES: Record<number, string> = {
   [Status.Stopped]: 'Stopped',
@@ -291,6 +292,8 @@ export default function App() {
   const [smokeStage, setSmokeStage] = useState<
     { scenario: SmokeStageScenario; nonce: string } | undefined
   >();
+  /** Set before launch for the campaign flow scenarios (scenarios/flows.tsx). */
+  const [flowStage, setFlowStage] = useState<string | undefined>();
 
   useEffect(() => {
     let cancelled = false;
@@ -421,6 +424,14 @@ export default function App() {
       if (isCoverageScenario(choice.scenario)) {
         preLaunchCoverage(choice.scenario, choice.nonce);
       }
+      // Before launch(): the campaign flow scenarios' subscriptions and
+      // handlers (scenarios/flows.tsx, scenarios/staging.ts).
+      if (isFlowScenario(choice.scenario)) {
+        preLaunchFlow(choice.scenario, choice.nonce);
+        if (!cancelled) {
+          setFlowStage(choice.nonce);
+        }
+      }
       console.log(`BUGSEE_E2E launching on ${Platform.OS}`);
       // Polling starts before launch() is awaited, not after. The SDK brings
       // capture up off the main thread, so by the time the promise resolves the
@@ -537,6 +548,13 @@ export default function App() {
 
         if (isAppearanceScenario(choice.scenario)) {
           await runAppearanceScenario(choice.scenario, choice.nonce);
+          return;
+        }
+
+        // The campaign flow scenarios (scenarios/flows.tsx: N-10, N-15,
+        // N-16; scenarios/staging.ts: N-19).
+        if (isFlowScenario(choice.scenario)) {
+          await runFlowScenario(choice.scenario, choice.nonce);
           return;
         }
 
@@ -691,6 +709,7 @@ export default function App() {
       {smokeStage !== undefined && (
         <SmokeStage scenario={smokeStage.scenario} nonce={smokeStage.nonce} />
       )}
+      {flowStage !== undefined && <FlowStage />}
     </View>
   );
 }
