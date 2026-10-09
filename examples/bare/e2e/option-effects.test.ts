@@ -188,19 +188,15 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(crashes).toEqual([]);
   });
 
-  on(['A', 'X'])('[OPT-026] detect.early-crash: a crash within a second of launch is recovered at the next launch', async () => {
-    await clearBundles();
-    const crash = await launch('early-crash', NATIVE_CRASH);
-    await apiMarker(log!, 'eff crashing case=early-crash', crash.run.scenario.nonce, 10_000, crash.run.start);
-    expect(await waitForExit(20_000)).toBe(true);
-    await stopApp();
-    await launch('early-crash', 'idle');
-    const bundles = await awaitBundles(1, 60_000);
-    await stopApp();
-    const crashes = bundles.filter(b => b.request.type === 'crash');
-    report('early crash recovered', crashes.map(b => ({ summary: b.request.summary, exception: (crashOf(b)?.exception as { name?: unknown } | undefined)?.name })));
-    expect(crashes).toHaveLength(1);
-  });
+  /**
+   * Not covered offline: the early path cannot be isolated from JS. A crash
+   * JS can raise comes after Launched (startRun waits for it), where the
+   * ordinary detect.crash path recovers it with or without
+   * detect.early-crash (on by default); what the option adds -- the early
+   * crash sent synchronously on the next launch -- needs an upload: staging
+   * S-5. Read back by N-06.
+   */
+  it.skip('[OPT-026] detect.early-crash: not isolable from JS -- a JS-raised crash is after Launched, where detect.crash recovers it either way (staging S-5)', () => {});
 
   on(['X'])('[OPT-055] capture.mach-exceptions=false: a SIGSEGV is still recovered, as a signal', async () => {
     await clearBundles();

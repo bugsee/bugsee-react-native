@@ -65,24 +65,29 @@ describeDevice(`console levels and the native-only log stream on ${TARGET_NAME}`
     });
   }
 
+  it('[FLOW-13] a native RCTLog warning with no console call reaches the report', () => {
+    const lines = linesOf('rct');
+    report('native-only line', lines);
+    if (ON_IOS) {
+      // The bridge's RCTLog hook forwards it: warn -> Warning (2), Custom.
+      expect(lines.filter(e => e.source === 98 && e.level === 2)).toHaveLength(1);
+    } else {
+      // Android: logcat (tag unknown:ReactNative), which the SDK reads itself.
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+    }
+  });
+
   /**
-   * iOS (XS, beta5, Debug, 2026-10-07): the line lands three times -- once
-   * as the bridge's Custom (98) line at Warning (2), and twice more as
+   * iOS (XS and simulator, beta5, Debug, 2026-10-07): the line lands three
+   * times -- the bridge's Custom (98) line at Warning (2), and twice more as
    * source 2 at level 4, RN's own stderr/os_log output of the RCTLog, which
    * the SDK captures -- and the log filter runs three times (counts.rct 3).
    * BGSRNConsoleCapture.mm forwards a native RCTLog line without arming the
    * echo drop it arms for console.* lines. A wrapper bug (G16), to fix:
-   * sdk-issues-filed.md "to fix (wrapper)". Android: once.
+   * sdk-issues-filed.md W1. Android: once.
    */
-  const itNativeOnly = ON_IOS ? it.failing : it;
-  itNativeOnly('[FLOW-13] a native RCTLog warning with no console call lands once and is filtered once', () => {
-    const lines = linesOf('rct');
-    report('native-only line', lines);
-    expect(lines).toHaveLength(1);
+  (ON_IOS ? it.failing : it)('[FLOW-13] a native RCTLog warning with no console call lands once and is filtered once', () => {
+    expect(linesOf('rct')).toHaveLength(1);
     expect(counts.rct).toBe(1);
-    if (ON_IOS) {
-      // The bridge's RCTLog hook: warn -> Warning (2), Custom.
-      expect({ level: lines[0]!.level, source: lines[0]!.source }).toEqual({ level: 2, source: 98 });
-    }
   });
 });

@@ -190,7 +190,6 @@ export const ANDROID_ENUM_VALUES: Readonly<Record<string, readonly number[]>> = 
  */
 export const EFFECT_OPTIONS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   'crash-off': { [`${P}detect.crash`]: false },
-  'early-crash': { [`${P}detect.early-crash`]: true },
   exit: { [`${P}detect.exit`]: true, [`${P}detect.exit.user_requested`]: true },
   'exit-control': { [`${P}detect.exit`]: true, [`${P}detect.exit.user_requested`]: false },
   kill: { [`${P}detect.kill`]: true },
