@@ -114,7 +114,7 @@ describe('withBugsee through the Expo mod compiler', () => {
     expect(app).toContain('apply plugin: "com.bugsee.android.gradle"');
     expect(app).toContain(`implementation "com.bugsee:bugsee-android-ndk:${baked.sdk}"`);
     expect(app).toContain('"scripts/bugsee-sourcemaps.gradle")');
-    expect(app).toContain('hermesc-preserve-js.sh');
+    expect(app).toContain('"/scripts/hermesc-preserve-js" + (System.getProperty("os.name").startsWith("Windows") ? ".cmd" : ".sh")');
     expect(app).not.toContain('bugsee-upload-symbols-off:');
     expect(read('gradleProperties')).not.toContain('bugseeUploadSourcemaps');
     expect(read('manifest')).not.toContain('com.bugsee.app-token');
