@@ -7,17 +7,21 @@
   "main": "src/index.ts",
   "files": [
     "src",
+    "!src/**/__tests__",
+    "!src/**/__mocks__",
     "android",
+    "!android/src/test",
     "ios",
     "app.plugin.js",
-    "plugin/build",
+    "plugin/build/**",
     "scripts/hermes-sourcemaps.js",
     "scripts/compose-then-inject.js",
     "scripts/bugsee-xcode.sh",
     "scripts/hermesc-preserve-js.sh",
     "scripts/bugsee-sourcemaps.gradle",
     "react-native.config.js",
-    "*.podspec"
+    "*.podspec",
+    "native-versions.json"
   ],
   "dependencies": {
     "@bugsee/cli": "0.7.11",
@@ -32,7 +36,8 @@
   },
   "scripts": {
     "build:plugin": "node ../../node_modules/typescript/lib/tsc.js -p plugin/tsconfig.json && node plugin/bake-native-versions.js",
-    "prepack": "node ../../scripts/cli-check-releasable-pins.ts"
+    "prepack": "node ../../scripts/cli-check-releasable-pins.ts && node ../../scripts/cli-pack-native-versions.ts stage",
+    "postpack": "node ../../scripts/cli-pack-native-versions.ts unstage"
   },
   "codegenConfig": {
     "name": "RNBugseeSpec",

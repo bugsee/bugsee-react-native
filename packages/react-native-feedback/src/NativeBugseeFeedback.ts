@@ -1,6 +1,8 @@
-import type { TurboModule } from 'react-native';
+// CodegenTypes from the package root: 0.87 declares no types for the deep
+// `react-native/Libraries/Types/CodegenTypes` path unless the consumer opts in,
+// and this file is compiled by the consumer's tsc (API-49).
+import type { CodegenTypes, TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
-import type { EventEmitter } from 'react-native/Libraries/Types/CodegenTypes';
 
 /**
  * The native surface. Codegen turns this into the Java and ObjC++ specs.
@@ -29,8 +31,8 @@ export interface Spec extends TurboModule {
    */
   setAppearanceColor(name: string, r: number, g: number, b: number, a: number): void;
 
-  readonly onNewMessagesReceived: EventEmitter<{ messagesJson: string }>;
-  readonly onNewMessageSent: EventEmitter<{ message: string }>;
+  readonly onNewMessagesReceived: CodegenTypes.EventEmitter<{ messagesJson: string }>;
+  readonly onNewMessageSent: CodegenTypes.EventEmitter<{ message: string }>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('BugseeFeedbackModule');

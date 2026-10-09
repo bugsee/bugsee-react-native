@@ -6,7 +6,10 @@ do not have to depend on this package.
 ## Requirements
 
 The same as `@bugsee/react-native`: React Native 0.81 or later with the New
-Architecture, iOS 15.0 or later, Android API 21 or later.
+Architecture, Hermes, iOS 15.0 or later, Android API 21 or later. Hermes is
+required; JavaScriptCore (Hermes off) is not supported: React Native removed
+JSC from core in 0.81, and the community package does not work with current
+React Native.
 
 ## Install
 

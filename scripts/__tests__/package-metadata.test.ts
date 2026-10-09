@@ -64,13 +64,43 @@ describe('the release guard', () => {
     JSON.parse(read('package.json')) as { scripts?: Record<string, string> }
   ).scripts ?? {};
 
-  it('runs on prepack', () => {
+  // First, and chained with &&: a refused pin stops the pack before anything
+  // is staged (prepack also stages native-versions.json, BLK-17).
+  it('runs on prepack, before anything else', () => {
     expect(scripts.prepack).toBe(
-      'node ../../scripts/cli-check-releasable-pins.ts',
+      'node ../../scripts/cli-check-releasable-pins.ts && node ../../scripts/cli-pack-native-versions.ts stage',
     );
+  });
+
+  it('removes the staged native-versions.json on postpack', () => {
+    expect(scripts.postpack).toBe('node ../../scripts/cli-pack-native-versions.ts unstage');
   });
 
   it('is not left on a hook yarn 4 never runs', () => {
     expect(scripts.prepublishOnly ?? '').not.toMatch(/releasable-pins/);
+  });
+});
+
+describe('the README integration steps', () => {
+  const readme = read('README.md');
+  const versions = JSON.parse(
+    readFileSync(join(__dirname, '..', '..', 'native-versions.json'), 'utf8'),
+  ) as { android: { gradlePlugin: string } };
+
+  // A `plugins {}` block cannot read a file, so the README states the pin as
+  // a literal; it must be the one the package is built against.
+  it('pins the Bugsee Gradle plugin at native-versions.json android.gradlePlugin', () => {
+    const pins = [...readme.matchAll(/id 'com\.bugsee\.android\.gradle' version '([^']+)'/g)].map((m) => m[1]);
+    expect(pins).toEqual([versions.android.gradlePlugin]);
+  });
+
+  // R-1: `serialize` is static; `options.serialize()` was a TypeError.
+  it('serializes launch options with the static form', () => {
+    expect(readme).toMatch(/BugseeLaunchOptions\.serialize\(options\)/);
+    expect(readme).not.toMatch(/options\.serialize\(\)/);
+  });
+
+  it('documents the iOS bundle phase through bugsee-xcode.sh', () => {
+    expect(readme).toMatch(/node_modules\/@bugsee\/react-native\/scripts\/bugsee-xcode\.sh/);
   });
 });

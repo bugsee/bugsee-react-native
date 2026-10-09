@@ -8,11 +8,16 @@
 import { Platform } from 'react-native';
 import type { WrapperFacts } from './identity';
 
+/**
+ * Wide enough for every supported React Native's own declaration: 0.87 types
+ * `prerelease` as a number on some platforms (API-49), and a consumer's tsc
+ * checks this file against whichever version the app is on.
+ */
 interface ReactNativeVersion {
   major: number;
   minor: number;
   patch: number;
-  prerelease?: string | null;
+  prerelease?: string | number | null;
 }
 
 /** `0.87.1`, or `0.88.0-rc.1`, or `unknown`. */

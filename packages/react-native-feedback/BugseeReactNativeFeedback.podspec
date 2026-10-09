@@ -1,7 +1,16 @@
 require 'json'
 
 package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
-native  = JSON.parse(File.read(File.join(__dir__, '..', '..', 'native-versions.json')))
+# The one source of every native pin. In this repo it is the root file. In an
+# app the package sits in node_modules, where the root file is not above it, so
+# prepack ships a copy at the package root (scripts/pack-native-versions.ts);
+# that copy is read first.
+native_versions_file = [
+  File.join(__dir__, 'native-versions.json'),
+  File.join(__dir__, '..', '..', 'native-versions.json'),
+].find { |path| File.file?(path) }
+raise "native-versions.json not found in #{__dir__} or the repo root above it" unless native_versions_file
+native  = JSON.parse(File.read(native_versions_file))
 
 Pod::Spec.new do |s|
   s.name         = 'BugseeReactNativeFeedback'
@@ -49,16 +58,20 @@ Pod::Spec.new do |s|
     VERSION="#{native['ios']['sdk']}"
     STAMP=".bugsee-feedback-sources-version"
     if [ ! -d "BugseeFeedbackSources" ] || [ "$(cat "${STAMP}" 2>/dev/null)" != "${VERSION}" ]; then
-      rm -rf "BugseeFeedbackSources"
-      ARCHIVE="/tmp/feedback-spm-${VERSION}.tar.gz"
-      curl -sSfL -o "${ARCHIVE}" \
+      # A download directory of this run's own, not a fixed /tmp path that
+      # concurrent pod installs share; the sources are staged beside their
+      # destination and renamed into place, so a failure leaves nothing.
+      WORK="$(mktemp -d "${TMPDIR:-/tmp}/bugsee-feedback.XXXXXX")"
+      STAGE="$(mktemp -d "./.bugsee-feedback.XXXXXX")"
+      trap 'rm -rf "${WORK}" "${STAGE}"' EXIT
+      curl -sSfL -o "${WORK}/feedback-spm.tar.gz" \
         "https://codeload.github.com/bugsee/feedback-spm/tar.gz/refs/tags/${VERSION}"
-      STAGE="$(mktemp -d)"
-      tar -xzf "${ARCHIVE}" -C "${STAGE}"
-      SRC="$(echo "${STAGE}"/feedback-spm-*/Sources/BugseeFeedback)"
-      mkdir -p "BugseeFeedbackSources"
-      cp -R "${SRC}/." "BugseeFeedbackSources/"
-      rm -rf "${STAGE}" "${ARCHIVE}"
+      tar -xzf "${WORK}/feedback-spm.tar.gz" -C "${WORK}"
+      SRC="$(echo "${WORK}"/feedback-spm-*/Sources/BugseeFeedback)"
+      mkdir "${STAGE}/BugseeFeedbackSources"
+      cp -R "${SRC}/." "${STAGE}/BugseeFeedbackSources/"
+      rm -rf "BugseeFeedbackSources"
+      mv "${STAGE}/BugseeFeedbackSources" "BugseeFeedbackSources"
       printf '%s' "${VERSION}" > "${STAMP}"
     fi
   CMD
