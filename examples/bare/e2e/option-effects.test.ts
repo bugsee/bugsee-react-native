@@ -148,22 +148,10 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   // -------------------------------------------------------------------------
   // Crash detection off, early crash, Mach exceptions, on-device symbolication
 
-  /**
-   * Android 7.3.0: with detect.crash=false the JS fatal is not reported, but
-   * a native SIGSEGV still is, at the next launch ("Native crash: null
-   * pointer dereference", crash.tombstone; WOD_LX1, 2026-10-07): the NDK
-   * crash path does not honour the option. Filed: bugsee-android#220.
-   */
-  (HERE === 'A' ? it.failing : on(['X']))(`[OPT-025] detect.crash=false: neither a JS fatal nor a native crash is reported${HERE === 'A' ? ' [known: Android NDK crashes ignore detect.crash=false (bugsee-android#220)]' : ''}`, async () => {
+  /** With detect.crash=false: an idle launch after `crash`, and the crash bundles it finds. */
+  async function crashesAfter(crash: () => Promise<void>, label: string): Promise<PulledBundle[]> {
     await clearBundles();
-    const js = await launch('crash-off', 'js');
-    expect(jsonAfter(js.options.text, 'values')).toEqual({ 'com.bugsee.option.detect.crash': false });
-    await apiMarker(log!, 'eff throwing case=crash-off', js.run.scenario.nonce, 10_000, js.run.start);
-    await new Promise(resolve => setTimeout(resolve, 8_000));
-    await stopApp();
-    const native = await launch('crash-off', NATIVE_CRASH);
-    await apiMarker(log!, 'eff crashing case=crash-off', native.run.scenario.nonce, 10_000, native.run.start);
-    expect(await waitForExit(20_000)).toBe(true);
+    await crash();
     await stopApp();
     const idle = await launch('crash-off', 'idle');
     await apiMarker(log!, 'eff idle case=crash-off', idle.run.scenario.nonce, 10_000, idle.run.start);
@@ -171,8 +159,33 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     const names = await listBundles();
     const bundles = names.length === 0 ? [] : await awaitBundles(names.length, 1_000);
     await stopApp();
-    report('bundles after a JS fatal and a native crash with detect.crash=false', bundles.map(b => ({ type: b.request.type, summary: b.request.summary })));
-    expect(bundles.filter(b => b.request.type === 'crash')).toEqual([]);
+    report(`bundles after ${label} with detect.crash=false`, bundles.map(b => ({ type: b.request.type, summary: b.request.summary })));
+    return bundles.filter(b => b.request.type === 'crash');
+  }
+
+  on(['A', 'X'])('[OPT-025] detect.crash=false: a JS fatal is not reported, then or at the next launch', async () => {
+    const crashes = await crashesAfter(async () => {
+      const js = await launch('crash-off', 'js');
+      expect(jsonAfter(js.options.text, 'values')).toEqual({ 'com.bugsee.option.detect.crash': false });
+      await apiMarker(log!, 'eff throwing case=crash-off', js.run.scenario.nonce, 10_000, js.run.start);
+      await new Promise(resolve => setTimeout(resolve, 8_000));
+    }, 'a JS fatal');
+    expect(crashes).toEqual([]);
+  });
+
+  /**
+   * Android 7.3.0 still recovers a native SIGSEGV at the next launch with
+   * detect.crash=false ("Native crash: null pointer dereference", WOD_LX1):
+   * bugsee-android#220, fixed in 7.3.1 -- flip this pin with that adoption.
+   */
+  (HERE === 'A' ? it.failing : on(['X']))(`[OPT-025] detect.crash=false: a native crash is not reported at the next launch${HERE === 'A' ? ' [known: Android NDK crashes ignore detect.crash=false (bugsee-android#220)]' : ''}`, async () => {
+    const crashes = await crashesAfter(async () => {
+      const native = await launch('crash-off', NATIVE_CRASH);
+      expect(jsonAfter(native.options.text, 'values')).toEqual({ 'com.bugsee.option.detect.crash': false });
+      await apiMarker(log!, 'eff crashing case=crash-off', native.run.scenario.nonce, 10_000, native.run.start);
+      expect(await waitForExit(20_000)).toBe(true);
+    }, 'a native crash');
+    expect(crashes).toEqual([]);
   });
 
   on(['A', 'X'])('[OPT-026] detect.early-crash: a crash within a second of launch is recovered at the next launch', async () => {
