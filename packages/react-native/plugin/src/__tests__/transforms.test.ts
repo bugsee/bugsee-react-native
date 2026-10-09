@@ -1150,3 +1150,50 @@ describe('hook lines, exactly', () => {
     expect(next).toContain(`${applied}\n${user}\n`);
   });
 });
+
+describe('Gradle edits: refusal texts, indentation and notes (mutation gaps)', () => {
+  const ndk = 'implementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk';
+
+  it('with native crash reporting off, still notes a user NDK line it leaves alone', () => {
+    const notes: string[] = [];
+    const user = 'dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n';
+    expect(ensureAppAppliesPlugin(user, null, (message) => notes.push(message))).toContain('bugsee-android-ndk:1.0.0');
+    expect(notes).toEqual([expect.stringContaining('declares com.bugsee:bugsee-android-ndk itself')]);
+  });
+
+  it('removes its own NDK line when it is the first line of the file', () => {
+    const own = 'implementation "com.bugsee:bugsee-android-ndk:1.0.0" // bugsee:ndk\nx()\n';
+    const off = ensureAppAppliesPlugin(own, null, () => undefined);
+    expect(off).not.toContain('bugsee-android-ndk:1.0.0');
+    expect(off).toContain('x()\n');
+  });
+
+  it('puts its NDK line at the indentation of the block\'s first entry, after other top-level code', () => {
+    const next = ensureAppAppliesPlugin("x()\ndependencies {\n  implementation 'a'\n}\n", '7.3.0');
+    expect(next).toContain(`dependencies {\n  ${ndk}\n  implementation 'a'\n}`);
+  });
+
+  it('names the open comment when the dependencies opener ends inside one', () => {
+    expect(() => ensureAppAppliesPlugin('dependencies { /*\n*/\n}\n', '7.3.0')).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 1: \`dependencies {\` ends inside a block comment or string that is still open, so the Bugsee NDK dependency cannot be added after it. Close the comment on that line, or declare \`implementation "com.bugsee:bugsee-android-ndk:7.3.0"\` yourself, then run expo prebuild again`,
+    );
+  });
+
+  it('names the open comment when the React plugin line ends inside one', () => {
+    expect(() => ensureAppAppliesPlugin('x()\napply plugin: "com.facebook.react" /*\n*/\n', null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 2: \`apply plugin: "com.facebook.react"\` ends inside a block comment or string that is still open, so \`apply plugin: "com.bugsee.android.gradle"\` cannot be added after it. Close the comment on that line, or add \`apply plugin: "com.bugsee.android.gradle"\` yourself, then run expo prebuild again`,
+    );
+  });
+
+  it('takes a plugins block written without a space before its brace, and refuses one whose opener holds code', () => {
+    expect(ensureGradlePluginDeclared('plugins{\n    id("x") version "1"\n}\n', '4.0.8')).toBe(
+      "plugins{\n    id(\"x\") version \"1\"\n    id 'com.bugsee.android.gradle' version '4.0.8' apply false\n}\n",
+    );
+    expect(ensureGradlePluginDeclared('plugins   {\n  id("x") version "1"\n}\n', '4.0.8')).toBe(
+      "plugins   {\n  id(\"x\") version \"1\"\n  id 'com.bugsee.android.gradle' version '4.0.8' apply false\n}\n",
+    );
+    for (const source of ['def a = 1; plugins {\n    id("x") version "1"\n}\n', 'plugins { id("x") version "1"\n}\n']) {
+      expect(() => ensureGradlePluginDeclared(source, '4.0.8')).toThrow(`${CANNOT_EDIT} android/build.gradle: line 1:`);
+    }
+  });
+});
