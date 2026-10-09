@@ -213,24 +213,16 @@ plugins {
 ```
 
 `android/app/build.gradle` — apply it, and for native crash symbols add the
-NDK module at the SDK version the package pins, with symbol extraction on
-(AGP extracts none by default, so there would be nothing to upload):
+NDK module at the SDK version the package pins. No `ndk.debugSymbolLevel` is
+needed for Bugsee: Gradle plugin 4.0.8 uploads native symbols from the
+unstripped libraries in `build/intermediates/merged_native_libs`, whatever
+the level. Set one only for what Google Play should get.
 
 ```groovy
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 apply plugin: "com.bugsee.android.gradle"
-
-android {
-    buildTypes {
-        release {
-            ndk {
-                debugSymbolLevel 'SYMBOL_TABLE'
-            }
-        }
-    }
-}
 
 // bugseeDir as in "Android source maps" above.
 def bugseeVersions = new groovy.json.JsonSlurper().parse(new File(bugseeDir, "native-versions.json"))

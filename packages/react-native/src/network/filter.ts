@@ -32,6 +32,14 @@ export interface NetworkFilterEvent {
   redirectedFromURL?: string | null;
   /** iOS. A dictionary, or `null`, when the snapshot sent the key. */
   error?: Record<string, unknown> | null;
+  /**
+   * Android, read-only. Since Android SDK 7.3.1 one request can reach the
+   * filter as more than one event with the same `id` and `type`: a supplement
+   * of an earlier one, carrying a part known only later (typically the
+   * request body), has `override` true. Filter it like any other event; a
+   * changed value is not written back.
+   */
+  override?: boolean;
 }
 
 export type NetworkFilter = (

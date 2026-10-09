@@ -429,6 +429,10 @@ final class NetworkFilterBridge {
                 : null;
         put(object, "websocketEvent", websocketEvent);
         object.put("responseCode", event.getResponseCode());
+        // Read-only. Since Android 7.3.1 a request can reach the filter as more
+        // than one event with the same id: a supplement (typically the request
+        // body, known only once it is written) has isOverride() true.
+        object.put("override", event.isOverride());
         final Map<String, String> headers = event.getHeaders();
         if (headers == null) {
             object.put("headers", JSONObject.NULL);
