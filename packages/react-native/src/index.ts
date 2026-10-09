@@ -861,9 +861,16 @@ function optionalReportText(
   return value;
 }
 
+/**
+ * Rejects a blank or non-string token before the bridge, with the code and
+ * message the native modules use for the same refusal (`E_TOKEN`), so a
+ * caller matching on `.code` sees one answer whichever side raised it.
+ */
 function assertUsableToken(token: string): void {
   if (typeof token !== 'string' || token.trim().length === 0) {
-    throw new Error('Bugsee.launch requires a non-empty app token');
+    throw Object.assign(new Error('Bugsee.launch requires a non-empty app token'), {
+      code: 'E_TOKEN',
+    });
   }
 }
 

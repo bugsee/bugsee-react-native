@@ -118,11 +118,11 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
 
     /**
      * The implementation plan (docs/design/plans/2026-09-16-implementation-plan.md,
-     * Phase 1 Red) says a blank token rejects with `E_TOKEN`. `assertUsableToken`
-     * (packages/react-native/src/index.ts) throws a plain Error with no `code`.
-     * Wrapper divergence, to fix (sdk-issues-filed.md "to fix").
+     * Phase 1 Red) says a blank token rejects with `E_TOKEN`, the code the
+     * native modules use. `assertUsableToken` (packages/react-native/src/index.ts)
+     * runs first and carries the same code and message (W2).
      */
-    it.failing('[API-01c] the rejection carries code E_TOKEN', () => {
+    it('[API-01c] the rejection carries code E_TOKEN', () => {
       for (const key of ['blank', 'spaces', 'number']) {
         expect(jsonAfter<Settled>(rejected.text, key).error?.code).toBe('E_TOKEN');
       }
