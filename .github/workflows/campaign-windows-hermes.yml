@@ -1,19 +1,24 @@
 name: campaign windows hermes (temporary)
 
 # Beta campaign N-25 / MX-WIN / HOOK-13 (Task 13.7). TEMPORARY: delete after
-# the first beta's campaign. Proves (or disproves) a Hermes release build of
-# the bare example on a Windows host: hermesc through hermesc-preserve-js.sh,
-# the composed map, the debug id in map and bytecode, and the source-map
-# upload, which goes to a stub server on the runner. Never a real token, never
-# a Bugsee endpoint. The APK is kept as an artifact for the device lane
-# (composed-debug-id on the WOD_LX1).
+# the first beta's campaign. Proves a Hermes release build on a Windows host,
+# for the bare example and for the Expo example after `expo prebuild`:
+# hermesc through hermesc-preserve-js.cmd (React Native runs hermesCommand
+# with `cmd /c`, which cannot run the .sh), the composed map, the debug id in
+# map and bytecode, and the source-map upload, which goes to a stub server on
+# the runner. Never a real token, never a Bugsee endpoint. The APKs are kept
+# as artifacts for the device lane (composed-debug-id on the WOD_LX1).
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - .github/workflows/campaign-windows-hermes.yml
+      - .gitattributes
       - packages/react-native/scripts/**
+      - packages/react-native/plugin/**
+      - examples/bare/android/**
+      - examples/expo/**
 
 concurrency:
   group: campaign-windows-${{ github.ref }}
@@ -54,6 +59,11 @@ jobs:
           java-version: 17
       - run: corepack enable
       - run: yarn install --immutable
+
+      # The wrapper's own tests, on Windows: the .cmd launcher run the way
+      # React Native runs it (cmd /c), with the repository's hermesc.exe.
+      - name: Wrapper tests (Windows)
+        run: yarn jest packages/react-native/scripts/__tests__/hermesc-preserve-js.test.js
 
       # The repo's own stand-in for the symbol API (the upload tests use it):
       # POST /apps/<token>/symbols answers with a PUT URL on itself, and the
@@ -128,6 +138,240 @@ jobs:
           path: |
             examples/bare/android/app/build/outputs/apk/release/app-release.apk
             examples/bare/android/app/build/generated/sourcemaps/**
+            ${{ runner.temp }}/gradle.log
+            ${{ runner.temp }}/stub.log
+          if-no-files-found: warn
+
+      # The guard for builds wired by an earlier README: a hermesCommand that
+      # names the .sh fails the bundle task before hermesc, with the fix,
+      # instead of a NoSuchFileException on the .hbc. hermesCommand is a task
+      # input, so the bundle task reruns.
+      - name: A .sh hermesCommand on Windows fails with the fix
+        shell: pwsh
+        run: |
+          Add-Content examples/bare/android/app/build.gradle "`nreact { hermesCommand = file(`"../../node_modules/@bugsee/react-native/scripts/hermesc-preserve-js.sh`").absolutePath }"
+          Push-Location examples/bare/android
+          ./gradlew.bat :app:createBundleReleaseJsAndAssets -PreactNativeArchitectures=arm64-v8a -PbugseeE2eDebuggable=true *> "$env:RUNNER_TEMP/guard.log"
+          $code = $LASTEXITCODE
+          Pop-Location
+          Get-Content "$env:RUNNER_TEMP/guard.log" | Select-String -Pattern "Bugsee|FAILED|NoSuchFile" | Select-Object -First 20
+          if ($code -eq 0) { Write-Error "FAIL: the bundle task passed with a .sh hermesCommand"; exit 1 }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/guard.log" -SimpleMatch "a shell script, but on Windows" -Quiet)) { Write-Error "FAIL: no Bugsee guard message"; exit 1 }
+          if (Select-String -Path "$env:RUNNER_TEMP/guard.log" -SimpleMatch "NoSuchFileException" -Quiet) { Write-Error "FAIL: hermesc ran before the guard"; exit 1 }
+          Write-Output "guard: failed with the fix, before hermesc"
+          # pwsh would otherwise exit with Gradle's (expected) non-zero code.
+          exit 0
+
+  # The same on the Expo example: the config plugin writes hermesCommand, the
+  # per-OS launcher, during `expo prebuild` on this Windows runner.
+  expo-android-release:
+    name: expo android release (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: corepack enable
+      - run: yarn install --immutable
+
+      # The synthetic token makes the hook upload the map (to the stub);
+      # uploadSymbols false keeps the Gradle plugin's own uploads off, which is
+      # not what this job proves.
+      - name: Expo prebuild (Android) with a synthetic token
+        working-directory: examples/expo
+        run: |
+          cat > app.config.js <<'JS'
+          module.exports = ({ config }) => ({
+            ...config,
+            plugins: [['@bugsee/react-native', { appToken: process.env.BUGSEE_TOKEN_ANDROID, uploadSymbols: false }]],
+          });
+          JS
+          CI=1 yarn expo prebuild --clean --no-install --platform android
+          grep -n 'hermesCommand' android/app/build.gradle
+          grep -qF '"/scripts/hermesc-preserve-js" + (System.getProperty("os.name").startsWith("Windows") ? ".cmd" : ".sh")' android/app/build.gradle
+
+      - name: Release build (Hermes) against the stub symbol API
+        shell: pwsh
+        run: |
+          New-Item -ItemType File -Force "$env:RUNNER_TEMP/stub.log" | Out-Null
+          $stub = Start-Process node -PassThru -NoNewWindow -ArgumentList @(
+            'packages/react-native/scripts/__tests__/fixtures/symbol-stub-server.js',
+            '--port', '8777', '--log', "$env:RUNNER_TEMP/stub.log")
+          Start-Sleep -Seconds 2
+          Push-Location examples/expo/android
+          ./gradlew.bat :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --stacktrace *> "$env:RUNNER_TEMP/gradle.log"
+          $code = $LASTEXITCODE
+          Pop-Location
+          Stop-Process -Id $stub.Id -ErrorAction SilentlyContinue
+          Get-Content "$env:RUNNER_TEMP/gradle.log"
+          exit $code
+
+      - name: Composed map carries a debug id; the bytecode carries the same one
+        working-directory: examples/expo/android/app/build
+        run: |
+          map="$(find generated/sourcemaps -name 'index.android.bundle.map' | head -1)"
+          echo "composed map: $map"
+          node -e '
+            const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const id = m.debugId || m.debug_id;
+            if (!id) { console.error("FAIL: no debugId in the composed map"); process.exit(1); }
+            console.log("debugId " + id);
+            require("fs").writeFileSync(process.env.RUNNER_TEMP + "/debug-id", id);
+          ' "$map"
+          apk=outputs/apk/release/app-release.apk
+          unzip -o -q "$apk" assets/index.android.bundle -d "$RUNNER_TEMP/apk"
+          id="$(cat "$RUNNER_TEMP/debug-id")"
+          if grep -a -q "$id" "$RUNNER_TEMP/apk/assets/index.android.bundle"; then
+            echo "bytecode carries $id"
+          else
+            echo "FAIL: the packaged bytecode does not carry $id"; exit 1
+          fi
+
+      - name: The composed map reached the stub, with that debug id
+        if: always()
+        run: |
+          echo "--- stub requests"; cat "$RUNNER_TEMP/stub.log"
+          echo "--- hook lines"; grep -i "bugsee" "$RUNNER_TEMP/gradle.log" | head -40 || true
+          node -e '
+            const fs = require("fs");
+            const want = fs.existsSync(process.argv[2]) ? fs.readFileSync(process.argv[2], "utf8").trim() : "";
+            if (!want) { console.error("FAIL: no composed-map debug id to look for"); process.exit(1); }
+            const puts = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean)
+              .map((l) => JSON.parse(l)).filter((e) => e.method === "PUT");
+            const hit = puts.some((e) => (e.entries || []).some((x) => x.debugId === want));
+            if (!hit) { console.error("FAIL: no PUT carried a map with debug_id " + want); process.exit(1); }
+            console.log("stub received the map with debug_id " + want);
+          ' "$RUNNER_TEMP/stub.log" "$RUNNER_TEMP/debug-id"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: campaign-windows-hermes-expo
+          path: |
+            examples/expo/android/app/build/outputs/apk/release/app-release.apk
+            examples/expo/android/app/build/generated/sourcemaps/**
+            ${{ runner.temp }}/gradle.log
+            ${{ runner.temp }}/stub.log
+          if-no-files-found: warn
+
+  # The bare release again, from a copy of the checkout whose path holds
+  # spaces and parentheses, as C:\Users\First Last\... or "Program Files
+  # (x86)" do: React Native runs hermesCommand through `cmd /c`, whose quote
+  # handling changes when the command path has spaces or ( ). The copy sits
+  # at a short root: under the workspace the New Architecture codegen objects
+  # pass Windows' 260-character path limit and CMake fails before any
+  # JavaScript step (run 37600186416, ninja mkdir "No such file or
+  # directory"), a React Native limit that has nothing to do with spaces.
+  android-release-spaced-path:
+    name: android release, path with spaces (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      APP_ROOT: 'C:/s (x86)/b rn'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy the checkout to a path with spaces and parentheses
+        run: |
+          mkdir -p "$APP_ROOT"
+          cp -a . "$APP_ROOT/"
+          ls "$APP_ROOT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: corepack enable
+      - run: yarn install --immutable
+        working-directory: 'C:/s (x86)/b rn'
+
+      - name: Credentials (synthetic token, stub endpoint, no NDK upload)
+        working-directory: 'C:/s (x86)/b rn'
+        run: |
+          pwd
+          yarn workspace bugsee-example-bare credentials
+          sed -i '/^plugin.ndk.enabled/d' examples/bare/android/bugsee.properties
+
+      - name: Release build (Hermes) against the stub symbol API
+        shell: pwsh
+        run: |
+          New-Item -ItemType File -Force "$env:RUNNER_TEMP/stub.log" | Out-Null
+          $stub = Start-Process node -PassThru -NoNewWindow -ArgumentList @(
+            "`"$env:APP_ROOT/packages/react-native/scripts/__tests__/fixtures/symbol-stub-server.js`"",
+            '--port', '8777', '--log', "$env:RUNNER_TEMP/stub.log")
+          Start-Sleep -Seconds 2
+          Push-Location "$env:APP_ROOT/examples/bare/android"
+          Write-Output "building in $((Get-Location).Path)"
+          ./gradlew.bat :app:assembleRelease -PreactNativeArchitectures=arm64-v8a -PbugseeE2eDebuggable=true --stacktrace *> "$env:RUNNER_TEMP/gradle.log"
+          $code = $LASTEXITCODE
+          Pop-Location
+          Stop-Process -Id $stub.Id -ErrorAction SilentlyContinue
+          Get-Content "$env:RUNNER_TEMP/gradle.log"
+          exit $code
+
+      - name: Composed map carries a debug id; the bytecode carries the same one
+        working-directory: 'C:/s (x86)/b rn/examples/bare/android/app/build'
+        run: |
+          map="$(find generated/sourcemaps -name 'index.android.bundle.map' | head -1)"
+          echo "composed map: $map"
+          node -e '
+            const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const id = m.debugId || m.debug_id;
+            if (!id) { console.error("FAIL: no debugId in the composed map"); process.exit(1); }
+            console.log("debugId " + id);
+            require("fs").writeFileSync(process.env.RUNNER_TEMP + "/debug-id", id);
+          ' "$map"
+          apk=outputs/apk/release/app-release.apk
+          unzip -o -q "$apk" assets/index.android.bundle -d "$RUNNER_TEMP/apk"
+          id="$(cat "$RUNNER_TEMP/debug-id")"
+          if grep -a -q "$id" "$RUNNER_TEMP/apk/assets/index.android.bundle"; then
+            echo "bytecode carries $id"
+          else
+            echo "FAIL: the packaged bytecode does not carry $id"; exit 1
+          fi
+
+      - name: The composed map reached the stub, with that debug id
+        if: always()
+        run: |
+          echo "--- stub requests"; cat "$RUNNER_TEMP/stub.log"
+          echo "--- hook lines"; grep -i "bugsee" "$RUNNER_TEMP/gradle.log" | head -40 || true
+          node -e '
+            const fs = require("fs");
+            const want = fs.existsSync(process.argv[2]) ? fs.readFileSync(process.argv[2], "utf8").trim() : "";
+            if (!want) { console.error("FAIL: no composed-map debug id to look for"); process.exit(1); }
+            const puts = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean)
+              .map((l) => JSON.parse(l)).filter((e) => e.method === "PUT");
+            const hit = puts.some((e) => (e.entries || []).some((x) => x.debugId === want));
+            if (!hit) { console.error("FAIL: no PUT carried a map with debug_id " + want); process.exit(1); }
+            console.log("stub received the map with debug_id " + want);
+          ' "$RUNNER_TEMP/stub.log" "$RUNNER_TEMP/debug-id"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: campaign-windows-hermes-spaced
+          path: C:/s (x86)/b rn/examples/bare/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: warn
+
+      # A second artifact: upload-artifact needs one root, and the logs are on D:.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: campaign-windows-hermes-spaced-logs
+          path: |
             ${{ runner.temp }}/gradle.log
             ${{ runner.temp }}/stub.log
           if-no-files-found: warn

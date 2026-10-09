@@ -26,6 +26,7 @@
     "packages/react-native/plugin/src/**/*.ts",
     "packages/react-native/scripts/hermes-sourcemaps.js",
     "packages/react-native/scripts/compose-then-inject.js",
+    "packages/react-native/scripts/hermesc-preserve-js.js",
     "!**/__tests__/**"
   ],
   "thresholds": {

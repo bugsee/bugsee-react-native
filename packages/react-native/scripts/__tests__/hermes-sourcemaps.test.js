@@ -182,7 +182,7 @@ fs.writeFileSync(out, JSON.stringify({ version: 3, file: 'recomposed.js', mappin
     fs.writeFileSync(packaged, 'console.log("bugsee-fixture")\n');
 
     const hermesc = path.join(dir, 'hermesc');
-    fs.writeFileSync(hermesc, '#!/bin/sh\nexit 0\n');
+    fs.writeFileSync(hermesc, '#!/bin/sh\nout=""; prev=""\nfor a in "$@"; do [ "$prev" = "-out" ] && out="$a"; prev="$a"; done\nprintf HBC > "$out"\n');
     fs.chmodSync(hermesc, 0o755);
     const preserve = path.join(__dirname, '..', 'hermesc-preserve-js.sh');
     const saved = cp.spawnSync(
@@ -804,7 +804,7 @@ describe('preserve directory paths', () => {
       const packaged = path.join(assets, 'index.android.bundle');
       fs.writeFileSync(packaged, 'console.log("bugsee-fixture")\n');
       const hermesc = path.join(root, 'hermesc');
-      fs.writeFileSync(hermesc, '#!/bin/sh\nexit 0\n');
+      fs.writeFileSync(hermesc, '#!/bin/sh\nout=""; prev=""\nfor a in "$@"; do [ "$prev" = "-out" ] && out="$a"; prev="$a"; done\nprintf HBC > "$out"\n');
       fs.chmodSync(hermesc, 0o755);
       const saved = cp.spawnSync(
         path.join(__dirname, '..', 'hermesc-preserve-js.sh'),

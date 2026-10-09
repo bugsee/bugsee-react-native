@@ -26,6 +26,13 @@ const applyMatch = /^apply from: .*$/m.exec(snippet);
 if (!defMatch || !hermesMatch || !applyMatch) {
   throw new Error('README snippet changed shape; update scripts/campaign/lib/readme-android.js');
 }
+// One line, whole: brackets close on it, and it names both launchers (the
+// per-OS choice). A value split over lines would be cut here silently.
+const hermesLine = hermesMatch[0];
+const depth = [...hermesLine].reduce((d, ch) => d + ('([{'.includes(ch) ? 1 : ')]}'.includes(ch) ? -1 : 0), 0);
+if (depth !== 0 || !hermesLine.includes('hermesc-preserve-js.cmd') || !hermesLine.includes('hermesc-preserve-js.sh')) {
+  throw new Error(`README hermesCommand is not one whole per-OS line: ${hermesLine.trim()}`);
+}
 
 let gradle = fs.readFileSync(gradleFile, 'utf8');
 const reactBlock = gradle.indexOf('\nreact {');

@@ -553,7 +553,7 @@ describe('Android Gradle edits', () => {
 
     const hermes = next.split('\n').filter((line) => /^\s*hermesCommand\s*=/.test(line));
     expect(hermes).toEqual([
-      '    hermesCommand = new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/scripts/hermesc-preserve-js.sh"',
+      '    hermesCommand = new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/scripts/hermesc-preserve-js" + (System.getProperty("os.name").startsWith("Windows") ? ".cmd" : ".sh")',
     ]);
     expect(hermes[0]).not.toContain('../../node_modules');
     expect(hermes[0]).not.toContain('hermes-compiler');
@@ -577,7 +577,7 @@ describe('Android Gradle edits', () => {
     expect(buildTypeBody(off, 'release')).toContain('minifyEnabled enableMinifyInReleaseBuilds');
     expect(buildTypeBody(off, 'debug')).not.toContain('ndk');
     expect(buildTypeBody(off, 'release')).not.toContain('ndk');
-    expect(off).toContain('hermesc-preserve-js.sh');
+    expect(off).toContain('"/scripts/hermesc-preserve-js" + (System.getProperty("os.name").startsWith("Windows") ? ".cmd" : ".sh")');
     expect(off.match(/bugsee-sourcemaps\.gradle/g)).toHaveLength(1);
     expect(ensureAppAppliesPlugin(off, null)).toBe(off);
   });
@@ -593,7 +593,7 @@ describe('Android Gradle edits', () => {
       writeFileSync(join(app, 'node_modules/react-native/package.json'), '{"name":"react-native"}\n');
       writeFileSync(join(nested, 'package.json'), '{"name":"hermes-compiler"}\n');
       const hermesc = join(nested, 'hermesc', osbin, bin);
-      writeFileSync(hermesc, '#!/bin/sh\nexit 0\n');
+      writeFileSync(hermesc, '#!/bin/sh\nout=""; prev=""\nfor a in "$@"; do [ "$prev" = "-out" ] && out="$a"; prev="$a"; done\nprintf HBC > "$out"\n');
       chmodSync(hermesc, 0o755);
       const shipped = join(app, 'node_modules/react-native/sdks/hermesc', osbin, bin);
       mkdirSync(join(app, 'node_modules/react-native/sdks/hermesc', osbin), { recursive: true });
@@ -639,7 +639,7 @@ describe('Android Gradle edits', () => {
       mkdirSync(join(rn, 'sdks/hermesc', osbin), { recursive: true });
       writeFileSync(join(rn, 'package.json'), '{"name":"react-native"}\n');
       const hermesc = join(rn, 'sdks/hermesc', osbin, bin);
-      writeFileSync(hermesc, '#!/bin/sh\nexit 0\n');
+      writeFileSync(hermesc, '#!/bin/sh\nout=""; prev=""\nfor a in "$@"; do [ "$prev" = "-out" ] && out="$a"; prev="$a"; done\nprintf HBC > "$out"\n');
       chmodSync(hermesc, 0o755);
 
       expect(existsSync(join(app, 'node_modules/hermes-compiler'))).toBe(false);

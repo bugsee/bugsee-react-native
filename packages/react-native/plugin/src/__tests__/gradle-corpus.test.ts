@@ -47,6 +47,19 @@ beforeAll(() => {
   EXPR = line.replace(/^\s*hermesCommand = /, '');
 });
 
+/** The value the plugin wrote before Task 13.7: the shell launcher on every OS. */
+const LEGACY_EXPR =
+  'new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/scripts/hermesc-preserve-js.sh"';
+
+/** The earlier line is gone and the per-OS one stands `count` times. */
+const expectMigrated =
+  (count: number) =>
+  (output: string): void => {
+    expect(output).not.toContain(LEGACY_EXPR);
+    expect(countLines(output, `hermesCommand = ${EXPR}`)).toBe(count);
+    expect(EXPR).toContain('(System.getProperty("os.name").startsWith("Windows") ? ".cmd" : ".sh")');
+  };
+
 const EXCLUDE_BLOCK = [
   'configurations.configureEach {',
   "    exclude group: 'com.bugsee', module: 'bugsee-android-ndk'",
@@ -768,6 +781,92 @@ const appCases: Case[] = [
     name: 'a hermesCommand value with an open bracket is refused',
     segments: [u(REACT_APPLY), u(reactOpen), u('    hermesCommand = foo(bar\n    )'), u(reactClose)],
     refuse: true,
+  },
+
+  // --- Task 13.7: the .sh-on-every-OS line an earlier prebuild wrote ---
+  {
+    name: 'the hermesCommand an earlier prebuild wrote moves to the per-OS launcher',
+    segments: [u(REACT_APPLY), u(reactOpen), h(`    hermesCommand = ${LEGACY_EXPR}`), u(reactClose), u(userDeps)],
+    check: expectMigrated(1),
+  },
+  {
+    name: 'the earlier prebuild line keeps a trailing comment the user added',
+    segments: [u(REACT_APPLY), u(reactOpen), h(`    hermesCommand = ${LEGACY_EXPR} // mine`, ' // mine'), u(reactClose)],
+    check: (output) => {
+      expect(output).not.toContain(LEGACY_EXPR);
+      expect(output).toContain(`    hermesCommand = ${EXPR} // mine\n`);
+    },
+  },
+  {
+    name: 'the earlier prebuild line, CRLF',
+    segments: [u(REACT_APPLY), u(reactOpen), h(`    hermesCommand = ${LEGACY_EXPR}`), u(reactClose), u(userDeps)],
+    crlf: true,
+    check: (output) => {
+      expectMigrated(1)(output);
+      expect(output).toContain(`    hermesCommand = ${EXPR}\r\n`);
+    },
+  },
+  {
+    name: 'the earlier prebuild line at tab indentation, among other react settings',
+    segments: [
+      u(REACT_APPLY),
+      u(reactOpen),
+      u('\tbundleCommand = "export:embed"'),
+      h(`\thermesCommand = ${LEGACY_EXPR}`),
+      u('\t// hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"'),
+      u(reactClose),
+    ],
+    check: (output) => {
+      expectMigrated(1)(output);
+      expect(output).toContain(`\thermesCommand = ${EXPR}\n`);
+    },
+  },
+  {
+    name: 'a user hermesCommand that names the .sh itself is the user\'s, and stays',
+    segments: [
+      u('def bugseeDir = new File(["node", "--print", "require.resolve(\'@bugsee/react-native/package.json\')"].execute(null, rootDir).text.trim()).getParentFile()'),
+      u(REACT_APPLY),
+      u(reactOpen),
+      u('    hermesCommand = new File(new File(bugseeDir, "scripts"), "hermesc-preserve-js.sh").absolutePath'),
+      u(reactClose),
+    ],
+    check: (output) => expect(output).not.toContain(EXPR),
+  },
+  {
+    name: 'a user hermesCommand that names the .cmd stays',
+    segments: [u(REACT_APPLY), u(reactOpen), u('    hermesCommand = "C:/tools/hermesc-preserve-js.cmd"'), u(reactClose)],
+    check: (output) => expect(output).not.toContain(EXPR),
+  },
+  {
+    name: 'the earlier expression with more after it is not the plugin\'s line, and stays',
+    segments: [u(REACT_APPLY), u(reactOpen), u(`    hermesCommand = ${LEGACY_EXPR} + ""`), u(reactClose)],
+    check: (output) => expect(output).not.toContain(EXPR),
+  },
+  {
+    name: 'the earlier expression in a setter call is not the plugin\'s line, and stays',
+    segments: [u(REACT_APPLY), u(reactOpen), u(`    hermesCommand.set(${LEGACY_EXPR})`), u(reactClose)],
+    check: (output) => expect(output).not.toContain(EXPR),
+  },
+  {
+    name: 'the earlier expression with a statement after ; is not the plugin\'s line, and stays',
+    segments: [u(REACT_APPLY), u(reactOpen), u(`    hermesCommand = ${LEGACY_EXPR}; bundleCommand = "x"`), u(reactClose)],
+    check: (output) => expect(output).not.toContain(EXPR),
+  },
+  {
+    name: 'the earlier prebuild line inside a block comment stays as written',
+    segments: [u(REACT_APPLY), u(reactOpen), u(`    /*\n    hermesCommand = ${LEGACY_EXPR}\n    */`), u(reactClose)],
+    check: (output) => {
+      expect(output).toContain(`    hermesCommand = ${LEGACY_EXPR}\n`);
+      expect(countLines(output, `hermesCommand = ${EXPR}`)).toBe(1);
+    },
+  },
+  {
+    name: 'the earlier prebuild line in another block stays as written',
+    segments: [u(REACT_APPLY), u(`myTool {\n    hermesCommand = ${LEGACY_EXPR}\n}`), u(reactOpen), u(reactClose)],
+    check: (output) => {
+      expect(output).toContain(`    hermesCommand = ${LEGACY_EXPR}\n`);
+      expect(countLines(output, `hermesCommand = ${EXPR}`)).toBe(1);
+    },
   },
 ];
 
