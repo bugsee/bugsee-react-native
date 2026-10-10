@@ -43,29 +43,6 @@ static BOOL BGSRNConsoleCaptureEnabled(void) {
   return [value boolValue];
 }
 
-static void BGSRNOnRCTLog(RCTLogLevel level, RCTLogSource source, NSString *message) {
-  // JavaScript source is the console echo. The JS patch forwards that call
-  // in dev and in release; recording it here would run the filter twice.
-  // Release builds often never produce this source for console.*, and
-  // dropping the patch instead of this echo would drop those logs.
-  if (source == RCTLogSourceJavaScript) {
-    return;
-  }
-  if (message.length == 0) {
-    return;
-  }
-  NSMutableDictionary *locals = NSThread.currentThread.threadDictionary;
-  if (locals[BGSRNConsoleCaptureKey] != nil) {
-    return;
-  }
-  locals[BGSRNConsoleCaptureKey] = @YES;
-  if (BGSRNConsoleCaptureEnabled()) {
-    [BGSRNWrapperChannelHolder.shared logMessage:message
-                                           level:BGSRNWireLevelForRCTLogLevel(level)];
-  }
-  [locals removeObjectForKey:BGSRNConsoleCaptureKey];
-}
-
 static const NSTimeInterval BGSRNEchoWindowSeconds = 2.0;
 static const NSUInteger BGSRNEchoNoteCap = 32;
 
@@ -238,15 +215,130 @@ BOOL BGSRNDropConsoleEcho(NSString *line, NSInteger source) {
   }
 }
 
+/// Native warnings React Native re-logs from JS. In a Debug build
+/// `_RCTLogNativeInternal` also calls `RCTLog.logIfNoNativeHook`, and
+/// LogBox's warning handler passes a `warn` to the `console.warn` it saved
+/// before any patch. That reaches RCTLog a second time, as
+/// `RCTLogSourceJavaScript`, with the same text. This hook does not record
+/// it, but whatever the log function chain writes for it (an app's stderr
+/// mirror, an NSLog) is a second echo of the line already recorded. Each
+/// entry arms one more echo drop when that delivery arrives. Under the echo
+/// lock.
+static NSMutableArray<BGSRNEchoNote *> *BGSRNRelogNotes;
+
+static void BGSRNExpectJsRelog(NSString *message) {
+  @synchronized(BGSRNEchoLock()) {
+    const NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    if (BGSRNRelogNotes == nil) {
+      BGSRNRelogNotes = [NSMutableArray array];
+    }
+    BGSRNEchoNote *note = [BGSRNEchoNote new];
+    note.text = message;
+    note.expires = now + BGSRNEchoWindowSeconds;
+    [BGSRNRelogNotes addObject:note];
+    while (BGSRNRelogNotes.count > BGSRNEchoNoteCap) {
+      [BGSRNRelogNotes removeObjectAtIndex:0];
+    }
+  }
+}
+
+/// YES once per expected relog of `message`, within the echo window.
+static BOOL BGSRNClaimJsRelog(NSString *message) {
+  @synchronized(BGSRNEchoLock()) {
+    const NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    for (NSInteger index = (NSInteger)BGSRNRelogNotes.count - 1; index >= 0; index--) {
+      if (BGSRNRelogNotes[(NSUInteger)index].expires <= now) {
+        [BGSRNRelogNotes removeObjectAtIndex:(NSUInteger)index];
+      }
+    }
+    for (NSUInteger index = 0; index < BGSRNRelogNotes.count; index++) {
+      if ([BGSRNRelogNotes[index].text isEqualToString:message]) {
+        [BGSRNRelogNotes removeObjectAtIndex:index];
+        return YES;
+      }
+    }
+    return NO;
+  }
+}
+
+/**
+ * Runs before the rest of the log function chain, so every echo drop is
+ * armed before anything in that chain can write the line where the SDK
+ * captures it. Returns YES when this line is to be recorded on the channel
+ * after the chain has run.
+ *
+ * JavaScript source is the console echo. The JS patch forwards that call in
+ * dev and in release; recording it here would run the filter twice. Release
+ * builds often never produce this source for console.*, and dropping the
+ * patch instead of this echo would drop those logs. A JavaScript delivery
+ * that is the relog of a native warning arms one more echo drop.
+ *
+ * A native line is recorded here, once, and its echo drop is armed the way
+ * the JS patch arms one for a console call: a stderr stamp and one raw
+ * stdout or stderr line of that text.
+ */
+static BOOL BGSRNBeginRCTLog(RCTLogLevel level, RCTLogSource source, NSString *message) {
+  if (message.length == 0) {
+    return NO;
+  }
+  if (source == RCTLogSourceJavaScript) {
+    if (BGSRNClaimJsRelog(message)) {
+      BGSRNNoteConsoleEcho(message);
+    }
+    return NO;
+  }
+  if (NSThread.currentThread.threadDictionary[BGSRNConsoleCaptureKey] != nil) {
+    return NO;
+  }
+  if (!BGSRNConsoleCaptureEnabled()) {
+    return NO;
+  }
+  BGSRNNoteConsoleEcho(message);
+#if RCT_DEBUG
+  if (level == RCTLogLevelWarning) {
+    BGSRNExpectJsRelog(message);
+  }
+#endif
+  return YES;
+}
+
+/// Records a native line on the channel, as Custom. The filter runs inside
+/// this call on this thread: that is the channel line, which is kept.
+static void BGSRNForwardRCTLog(RCTLogLevel level, NSString *message) {
+  NSMutableDictionary *locals = NSThread.currentThread.threadDictionary;
+  locals[BGSRNConsoleCaptureKey] = @YES;
+  BGSRNBeginChannelLine(message);
+  @try {
+    [BGSRNWrapperChannelHolder.shared logMessage:message
+                                           level:BGSRNWireLevelForRCTLogLevel(level)];
+  } @finally {
+    BGSRNEndChannelLine(message);
+    [locals removeObjectForKey:BGSRNConsoleCaptureKey];
+  }
+}
+
+/**
+ * Wraps the current log function rather than appending to it
+ * (`RCTAddLogFunction` runs the existing function first): the echo drop of a
+ * line must be armed before the existing function writes that line to
+ * stderr, or the SDK could capture and filter the echo first.
+ */
 void BGSRNInstallConsoleCapture(void) {
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
-    RCTAddLogFunction(^(RCTLogLevel level,
+    RCTLogFunction existing = RCTGetLogFunction();
+    RCTSetLogFunction(^(RCTLogLevel level,
                         RCTLogSource source,
-                        __unused NSString *fileName,
-                        __unused NSNumber *lineNumber,
+                        NSString *fileName,
+                        NSNumber *lineNumber,
                         NSString *message) {
-      BGSRNOnRCTLog(level, source, message);
+      const BOOL forward = BGSRNBeginRCTLog(level, source, message);
+      if (existing != nil) {
+        existing(level, source, fileName, lineNumber, message);
+      }
+      if (forward) {
+        BGSRNForwardRCTLog(level, message);
+      }
     });
   });
 }

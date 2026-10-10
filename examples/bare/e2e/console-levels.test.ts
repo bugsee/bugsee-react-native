@@ -78,15 +78,12 @@ describeDevice(`console levels and the native-only log stream on ${TARGET_NAME}`
   });
 
   /**
-   * iOS (XS and simulator, beta5, Debug, 2026-10-07): the line lands three
-   * times -- the bridge's Custom (98) line at Warning (2), and twice more as
-   * source 2 at level 4, RN's own stderr/os_log output of the RCTLog, which
-   * the SDK captures -- and the log filter runs three times (counts.rct 3).
-   * BGSRNConsoleCapture.mm forwards a native RCTLog line without arming the
-   * echo drop it arms for console.* lines. A wrapper bug (G16), to fix:
-   * sdk-issues-filed.md W1. Android: once.
+   * iOS used to record this line three times (the bridge's Custom line plus
+   * two stderr echoes: RN's own delivery and LogBox's JS relog of the
+   * warning) and filter it three times (W1). BGSRNConsoleCapture.mm now arms
+   * the echo drop for a native line and its relog. Android: logcat, once.
    */
-  (ON_IOS ? it.failing : it)('[FLOW-13] a native RCTLog warning with no console call lands once and is filtered once', () => {
+  it('[FLOW-13] a native RCTLog warning with no console call lands once and is filtered once', () => {
     expect(linesOf('rct')).toHaveLength(1);
     expect(counts.rct).toBe(1);
   });

@@ -16,6 +16,12 @@ NS_ASSUME_NONNULL_BEGIN
  * that echo. Keeping the channel line ends the equal-text claim. A later
  * Custom line of the same text is kept, including `Bugsee.log` and a native
  * `RCTLog` forwarded as Custom.
+ *
+ * A native line arms the same echo drop before the rest of the log function
+ * chain runs, so an app that mirrors RCTLog to stderr does not record it a
+ * second time. In a Debug build RN re-logs a native warning from JS (LogBox);
+ * that JavaScript delivery arms one more drop, for its own echo. The line is
+ * recorded and filtered once.
  */
 void BGSRNInstallConsoleCapture(void);
 
