@@ -15,6 +15,7 @@
  * the documented meaning of the no-arg finish (span.ts) -- so a status set
  * that way is not in the report and is not asserted; `finish(status)` is.
  */
+import { type CaptureTransaction, performanceTransactions } from '../../../scripts/performance-capture';
 import { type PulledBundle } from './bundles';
 import { ON_IOS, type Run, TARGET_NAME, awaitBundles, describeDevice, must, report, startRun } from './harness';
 import { beginRetainingSuite, endRetainingSuite } from './observe';
@@ -22,19 +23,14 @@ import { type DeviceLog } from './scenario';
 
 jest.setTimeout(5 * 60_000);
 
-interface Span {
-  spanId?: string;
-  parentSpanId?: string;
-  operation?: string;
-  description?: string;
-  status?: string;
-}
-interface Transaction {
-  name?: string;
-  operation?: string;
-  status?: string;
-  spans?: Span[];
-}
+/**
+ * Read through performanceTransactions: iOS writes the legacy layout, Android
+ * 7.3.1 OTLP (bugsee-android #207), which it maps to the same fields
+ * (`operation` = `bugsee.operation`, `status` = `bugsee.span.status`,
+ * `description` = `bugsee.description`, the root first with no parent).
+ */
+type Transaction = CaptureTransaction;
+type Span = NonNullable<CaptureTransaction['spans']>[number];
 
 /**
  * span.ts documents `setName` as the native setName, "which sets the
@@ -62,8 +58,8 @@ describeDevice(`span names, descriptions, statuses and the active span on ${TARG
     const bundles: PulledBundle[] = await awaitBundles(1);
     const bundle = bundles.find(b => b.request.summary === `cov-apm-${nonce}`);
     expect(bundle).toBeDefined();
-    const capture = JSON.parse(bundle!.captures.get('performance') ?? '{"transactions":[]}') as { transactions: Transaction[] };
-    const mine = capture.transactions.filter(t => JSON.stringify(t).includes(`txn-desc-${nonce}`));
+    const transactions = performanceTransactions(bundle!.captures.get('performance') ?? '{"transactions":[]}');
+    const mine = transactions.filter(t => JSON.stringify(t).includes(`txn-desc-${nonce}`));
     report('transaction', mine);
     expect(mine).toHaveLength(1);
     transaction = mine[0]!;
