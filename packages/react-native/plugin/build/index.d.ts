@@ -47,7 +47,25 @@ export interface BugseePluginProps {
     gradlePluginVersion?: string;
     /** Defaults off. Writes `com.bugsee.app-token` manifest meta-data. */
     autoLaunch?: boolean;
+    /**
+     * A self-hosted, staging or regional Bugsee API base, such as
+     * `https://bugsee.example.com`: https, no credentials, query or fragment,
+     * and no `/v2` (every reader adds the API version itself). Unset, the
+     * default, keeps every tool and both SDKs on production. Set, it is
+     * written for both platforms' uploads -- `plugin.endpoint` in
+     * android/bugsee.properties, and BUGSEE_ENDPOINT in the iOS bundle phase
+     * and the Archive dSYM post-action -- and for the runtime: the native
+     * module launches with it whenever `launch()` or `relaunch()` is given no
+     * `endpoint` of its own (Android `com.bugsee.reactnative.endpoint`
+     * meta-data, iOS `BugseeReactNativeEndpoint` in Info.plist). With
+     * `autoLaunch` it is also the auto-launched SDK's endpoint, unless the
+     * manifest already sets one. A later prebuild without it removes every
+     * one of these again.
+     */
+    endpoint?: string;
 }
+/** The Info.plist key the iOS native module reads `endpoint` from. */
+export declare const IOS_ENDPOINT_PLIST_KEY = "BugseeReactNativeEndpoint";
 export declare const APP_GRADLE_NOT_GROOVY: string;
 /** The settings or root Gradle file is Kotlin; the plugin edits Groovy only. */
 export declare function gradleNotGroovy(file: string): string;

@@ -131,6 +131,10 @@ android {
             // and the retained report must still be readable, which needs
             // `run-as` -- so a debuggable release. Dev support follows the
             // build type, not this flag. Off unless asked for.
+            // AGP turns R8 obfuscation and optimisation OFF for a debuggable
+            // build even with -PbugseeE2eMinify=true, so such a build never
+            // exercises retrace. Campaign S-4 (e2e/staging-retrace.test.ts)
+            // builds with -PbugseeE2eMinify=true and without this flag.
             debuggable findProperty('bugseeE2eDebuggable') == 'true'
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"

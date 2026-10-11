@@ -23,7 +23,10 @@
  *               for symbolication: S-1 Android, S-2 iPhone).
  *   [S-1][S-2]  a handled JS exception, uploaded at once.
  *   [S-3]       Android NDK crash (`crashNative('segv')`), [S-5] iPhone signal crash.
- *   [S-4]       Android Java crash (`testNativeCrash()`), [S-5] iPhone NSException.
+ *   [FLOW-26]   Android Java crash (`testNativeCrash()`), [S-5] iPhone NSException.
+ *               Not [S-4]: this suite's debuggable build is not obfuscated
+ *               (AGP), so retrace has nothing to do. S-4 runs on a
+ *               non-debuggable R8 build in staging-retrace.test.ts (F7).
  *   [S-6]       online acceptance: one `upload()` carrying attributes, user id,
  *               console, network, event, trace, severity and labels;
  *               BeforeReportUploaded then AfterReportUploaded (EVT-13, EVT-14).
@@ -207,8 +210,8 @@ describeStaging(`staging flows on ${TARGET_NAME} (N-19, ${STAGING ? 'STAGING' : 
     await crashThenObserve('stg-native-segv', 'S-3', settle(5_000));
   });
 
-  itAndroidRelease('[N-19][S-4][FLOW-26] a Java crash is recovered and uploaded', async () => {
-    await crashThenObserve('stg-native-exception', 'S-4', settle(5_000));
+  itAndroidRelease('[N-19][FLOW-26] a Java crash is recovered and uploaded', async () => {
+    await crashThenObserve('stg-native-exception', 'FLOW-26', settle(5_000));
   });
 
   itIphone('[N-19][S-5][FLOW-26] an iPhone signal crash is recovered and uploaded', async () => {

@@ -9,6 +9,7 @@ import {
   withAppBuildGradle,
   withDangerousMod,
   withGradleProperties,
+  withInfoPlist,
   withProjectBuildGradle,
   withSettingsGradle,
   withXcodeProject,
@@ -18,6 +19,7 @@ import type { ConfigPlugin } from '@expo/config-plugins';
 import type { XcodeProjectLike } from './bundle-phase';
 import { rewriteProjectBundlePhase } from './bundle-phase';
 import { dsymPostActionScript } from './dsym-script';
+import { iosRuntimeEndpoint, pluginEndpoint } from './endpoint';
 import {
   CANNOT_EDIT,
   applyUploadSourcemapsProperty,
@@ -26,7 +28,7 @@ import {
   ensureMavenCentral,
   ensureSymbolUploads,
 } from './gradle';
-import { manifestAutoLaunchToken } from './manifest';
+import { endpointMetaData, manifestAutoLaunchToken } from './manifest';
 import { loadNativeVersions } from './native-versions';
 import { bugseePropertiesText } from './properties';
 import { insertDsymPostAction, removeDsymPostAction } from './scheme';
@@ -77,7 +79,26 @@ export interface BugseePluginProps {
   gradlePluginVersion?: string;
   /** Defaults off. Writes `com.bugsee.app-token` manifest meta-data. */
   autoLaunch?: boolean;
+  /**
+   * A self-hosted, staging or regional Bugsee API base, such as
+   * `https://bugsee.example.com`: https, no credentials, query or fragment,
+   * and no `/v2` (every reader adds the API version itself). Unset, the
+   * default, keeps every tool and both SDKs on production. Set, it is
+   * written for both platforms' uploads -- `plugin.endpoint` in
+   * android/bugsee.properties, and BUGSEE_ENDPOINT in the iOS bundle phase
+   * and the Archive dSYM post-action -- and for the runtime: the native
+   * module launches with it whenever `launch()` or `relaunch()` is given no
+   * `endpoint` of its own (Android `com.bugsee.reactnative.endpoint`
+   * meta-data, iOS `BugseeReactNativeEndpoint` in Info.plist). With
+   * `autoLaunch` it is also the auto-launched SDK's endpoint, unless the
+   * manifest already sets one. A later prebuild without it removes every
+   * one of these again.
+   */
+  endpoint?: string;
 }
+
+/** The Info.plist key the iOS native module reads `endpoint` from. */
+export const IOS_ENDPOINT_PLIST_KEY = 'BugseeReactNativeEndpoint';
 
 export const APP_GRADLE_NOT_GROOVY =
   `${CANNOT_EDIT} android/app/build.gradle: it is written in the Kotlin DSL (build.gradle.kts), which ` +
@@ -157,6 +178,7 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   const iosToken = platformToken(options.appToken, 'ios');
   const uploadSourcemaps = options.uploadSourcemaps !== false;
   const uploadSymbols = options.uploadSymbols !== false;
+  const endpoint = pluginEndpoint(options.endpoint);
   const versions = loadNativeVersions(__dirname);
   const edits: GradleEdits = {
     gradlePluginVersion: options.gradlePluginVersion ?? versions.gradlePlugin,
@@ -195,6 +217,7 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
         bugseePropertiesText({
           appToken: androidToken,
           nativeCrashReporting: options.nativeCrashReporting,
+          endpoint,
         }),
       );
       return cfg;
@@ -203,10 +226,24 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
 
   config = withAndroidManifest(config, (cfg) => {
     const token = manifestAutoLaunchToken({ appToken: androidToken, autoLaunch: options.autoLaunch });
+    const edit = endpointMetaData({
+      endpoint,
+      autoLaunchToken: token,
+      existing: (name) => AndroidConfig.Manifest.getMainApplicationMetaDataValue(cfg.modResults, name) ?? undefined,
+    });
+    const mainApplication = AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults);
+    for (const name of edit.remove) {
+      AndroidConfig.Manifest.removeMetaDataItemFromMainApplication(mainApplication, name);
+    }
+    for (const [name, value] of Object.entries(edit.set)) {
+      AndroidConfig.Manifest.addMetaDataItemToMainApplication(mainApplication, name, value);
+    }
+    if (edit.warning) {
+      console.warn(edit.warning);
+    }
     if (!token) {
       return cfg;
     }
-    const mainApplication = AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults);
     AndroidConfig.Manifest.addMetaDataItemToMainApplication(
       mainApplication,
       'com.bugsee.app-token',
@@ -220,14 +257,24 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
       uploadSourcemaps,
       // Only the upload reads it; the Archive action carries its own copy.
       iosAppToken: uploadSourcemaps ? iosToken : undefined,
+      endpoint: uploadSourcemaps ? endpoint : undefined,
     });
+    return cfg;
+  });
+
+  config = withInfoPlist(config, (cfg) => {
+    if (endpoint) {
+      cfg.modResults[IOS_ENDPOINT_PLIST_KEY] = iosRuntimeEndpoint(endpoint);
+    } else {
+      delete cfg.modResults[IOS_ENDPOINT_PLIST_KEY];
+    }
     return cfg;
   });
 
   config = withDangerousMod(config, [
     'ios',
     async (cfg) => {
-      const script = dsymPostActionScript(iosToken);
+      const script = dsymPostActionScript(iosToken, endpoint);
       for (const schemePath of listSchemes(cfg.modRequest.platformProjectRoot)) {
         const xml = await readFile(schemePath, 'utf8');
         const next = uploadSymbols ? insertDsymPostAction(xml, script) : removeDsymPostAction(xml);

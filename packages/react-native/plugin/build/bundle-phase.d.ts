@@ -10,6 +10,11 @@ export interface BundlePhaseSettings {
     readonly uploadSourcemaps?: boolean;
     /** Exported as BUGSEE_PLUGIN_APP_TOKEN, ahead of every other token source. */
     readonly iosAppToken?: string;
+    /**
+     * The validated `endpoint` option, exported as BUGSEE_ENDPOINT for the
+     * source-map upload, ahead of the environment's and credentials.json's.
+     */
+    readonly endpoint?: string;
 }
 export declare const UNRECOGNISED_BUNDLE_PHASE: string;
 /**

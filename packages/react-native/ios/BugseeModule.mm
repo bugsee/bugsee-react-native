@@ -39,6 +39,7 @@
 #import <BugseeRNSupport/BGSRNCreatedReportOps.h>
 #import <BugseeRNSupport/BGSRNSpanHandles.h>
 #import <BugseeRNSupport/BGSRNErrorMessage.h>
+#import <BugseeRNSupport/BGSRNPluginEndpoint.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -65,6 +66,7 @@
 #import "BGSRNCreatedReportOps.h"
 #import "BGSRNSpanHandles.h"
 #import "BGSRNErrorMessage.h"
+#import "BGSRNPluginEndpoint.h"
 #endif
 
 /// Forward-declared: the wrapper's pull path refreshes the origins before the
@@ -1225,6 +1227,13 @@ RCT_EXPORT_MODULE(Bugsee)
   BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithIdentity:identity], NO);
 }
 
+/// The launch options with the Expo plugin's `endpoint` option, from this
+/// app's Info.plist, when JS passed no endpoint (BGSRNPluginEndpoint).
+static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
+  return BGSRNOptionsWithPluginEndpoint(
+      options, [NSBundle.mainBundle objectForInfoDictionaryKey:BGSRNPluginEndpointInfoKey]);
+}
+
 - (void)launch:(NSString *)token
        options:(NSDictionary *)options
        resolve:(RCTPromiseResolveBlock)resolve
@@ -1237,7 +1246,7 @@ RCT_EXPORT_MODULE(Bugsee)
     // launchWithToken: returns the instance, or nil when the SDK declines —
     // already running, or the token was rejected. Declining is a normal
     // outcome, so it resolves false rather than rejecting.
-    Bugsee *instance = [Bugsee launchWithToken:token andOptions:options];
+    Bugsee *instance = [Bugsee launchWithToken:token andOptions:BGSRNResolvedLaunchOptions(options)];
     // launch can replace the log filter. Put the pass-through, or the user
     // filter if one is already on, back. This does not set the filter to nil.
     BGSRNInstallLogEventFilter();
@@ -1254,7 +1263,7 @@ RCT_EXPORT_MODULE(Bugsee)
     // call was made" on iOS and "the SDK restarted" on Android, for one JS
     // signature. optionsFrom: converts the same dictionary, and the started:
     // overload reports what actually happened.
-    [Bugsee relaunchWithOptions:[BugseeOptions optionsFrom:options]
+    [Bugsee relaunchWithOptions:[BugseeOptions optionsFrom:BGSRNResolvedLaunchOptions(options)]
                         started:^(BOOL success) {
                           // Onto the main queue: the SDK invokes started: on
                           // whatever thread its stop completion happens to

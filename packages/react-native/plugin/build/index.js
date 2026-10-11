@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.APP_GRADLE_NOT_GROOVY = void 0;
+exports.APP_GRADLE_NOT_GROOVY = exports.IOS_ENDPOINT_PLIST_KEY = void 0;
 exports.gradleNotGroovy = gradleNotGroovy;
 exports.platformToken = platformToken;
 exports.listSchemes = listSchemes;
@@ -10,11 +10,14 @@ const node_path_1 = require("node:path");
 const config_plugins_1 = require("@expo/config-plugins");
 const bundle_phase_1 = require("./bundle-phase");
 const dsym_script_1 = require("./dsym-script");
+const endpoint_1 = require("./endpoint");
 const gradle_1 = require("./gradle");
 const manifest_1 = require("./manifest");
 const native_versions_1 = require("./native-versions");
 const properties_1 = require("./properties");
 const scheme_1 = require("./scheme");
+/** The Info.plist key the iOS native module reads `endpoint` from. */
+exports.IOS_ENDPOINT_PLIST_KEY = 'BugseeReactNativeEndpoint';
 exports.APP_GRADLE_NOT_GROOVY = `${gradle_1.CANNOT_EDIT} android/app/build.gradle: it is written in the Kotlin DSL (build.gradle.kts), which ` +
     '@bugsee/react-native does not edit. Apply scripts/bugsee-sourcemaps.gradle and set react.hermesCommand by hand ' +
     '(see the package README, "Android source maps"), then run expo prebuild again';
@@ -68,6 +71,7 @@ const withBugsee = (config, props) => {
     const iosToken = platformToken(options.appToken, 'ios');
     const uploadSourcemaps = options.uploadSourcemaps !== false;
     const uploadSymbols = options.uploadSymbols !== false;
+    const endpoint = (0, endpoint_1.pluginEndpoint)(options.endpoint);
     const versions = (0, native_versions_1.loadNativeVersions)(__dirname);
     const edits = {
         gradlePluginVersion: options.gradlePluginVersion ?? versions.gradlePlugin,
@@ -99,16 +103,31 @@ const withBugsee = (config, props) => {
             await (0, promises_1.writeFile)((0, node_path_1.join)(cfg.modRequest.platformProjectRoot, 'bugsee.properties'), (0, properties_1.bugseePropertiesText)({
                 appToken: androidToken,
                 nativeCrashReporting: options.nativeCrashReporting,
+                endpoint,
             }));
             return cfg;
         },
     ]);
     config = (0, config_plugins_1.withAndroidManifest)(config, (cfg) => {
         const token = (0, manifest_1.manifestAutoLaunchToken)({ appToken: androidToken, autoLaunch: options.autoLaunch });
+        const edit = (0, manifest_1.endpointMetaData)({
+            endpoint,
+            autoLaunchToken: token,
+            existing: (name) => config_plugins_1.AndroidConfig.Manifest.getMainApplicationMetaDataValue(cfg.modResults, name) ?? undefined,
+        });
+        const mainApplication = config_plugins_1.AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults);
+        for (const name of edit.remove) {
+            config_plugins_1.AndroidConfig.Manifest.removeMetaDataItemFromMainApplication(mainApplication, name);
+        }
+        for (const [name, value] of Object.entries(edit.set)) {
+            config_plugins_1.AndroidConfig.Manifest.addMetaDataItemToMainApplication(mainApplication, name, value);
+        }
+        if (edit.warning) {
+            console.warn(edit.warning);
+        }
         if (!token) {
             return cfg;
         }
-        const mainApplication = config_plugins_1.AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults);
         config_plugins_1.AndroidConfig.Manifest.addMetaDataItemToMainApplication(mainApplication, 'com.bugsee.app-token', token);
         return cfg;
     });
@@ -117,13 +136,23 @@ const withBugsee = (config, props) => {
             uploadSourcemaps,
             // Only the upload reads it; the Archive action carries its own copy.
             iosAppToken: uploadSourcemaps ? iosToken : undefined,
+            endpoint: uploadSourcemaps ? endpoint : undefined,
         });
+        return cfg;
+    });
+    config = (0, config_plugins_1.withInfoPlist)(config, (cfg) => {
+        if (endpoint) {
+            cfg.modResults[exports.IOS_ENDPOINT_PLIST_KEY] = (0, endpoint_1.iosRuntimeEndpoint)(endpoint);
+        }
+        else {
+            delete cfg.modResults[exports.IOS_ENDPOINT_PLIST_KEY];
+        }
         return cfg;
     });
     config = (0, config_plugins_1.withDangerousMod)(config, [
         'ios',
         async (cfg) => {
-            const script = (0, dsym_script_1.dsymPostActionScript)(iosToken);
+            const script = (0, dsym_script_1.dsymPostActionScript)(iosToken, endpoint);
             for (const schemePath of listSchemes(cfg.modRequest.platformProjectRoot)) {
                 const xml = await (0, promises_1.readFile)(schemePath, 'utf8');
                 const next = uploadSymbols ? (0, scheme_1.insertDsymPostAction)(xml, script) : (0, scheme_1.removeDsymPostAction)(xml);

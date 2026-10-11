@@ -4,6 +4,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.graphics.Point;
 import android.hardware.display.DisplayManager;
 import android.util.Base64;
@@ -222,7 +224,7 @@ public class BugseeModule extends NativeBugseeSpec
         Bugsee.launch(
                 getReactApplicationContext().getApplicationContext(),
                 token,
-                toOptions(options),
+                withConfiguredEndpoint(toOptions(options)),
                 // The SDK reports whether it actually started. Declining — it
                 // is already running, or the token was rejected — is a normal
                 // outcome, so it resolves false rather than rejecting.
@@ -236,7 +238,7 @@ public class BugseeModule extends NativeBugseeSpec
 
     @Override
     public void relaunch(final ReadableMap options, final Promise promise) {
-        Bugsee.relaunch(toOptions(options), relaunched -> {
+        Bugsee.relaunch(withConfiguredEndpoint(toOptions(options)), relaunched -> {
             LogFilterBridge.shared().ensureInstalled();
             promise.resolve(Boolean.TRUE.equals(relaunched));
         });
@@ -1468,6 +1470,27 @@ public class BugseeModule extends NativeBugseeSpec
      * {@link BugseeOptionEnums}, because an enum-typed option arriving as a
      * bare number is ignored by the SDK's Map path.
      */
+    /**
+     * The Expo plugin's {@code endpoint} option, from this app's manifest
+     * meta-data, applied when JS passed no endpoint (PluginEndpoint).
+     */
+    private Map<String, Serializable> withConfiguredEndpoint(final Map<String, Serializable> options) {
+        return PluginEndpoint.withDefault(options, readConfiguredEndpoint());
+    }
+
+    @Nullable
+    private String readConfiguredEndpoint() {
+        try {
+            final Context context = getReactApplicationContext();
+            final ApplicationInfo info = context.getPackageManager()
+                    .getApplicationInfo(context.getPackageName(), PackageManager.GET_META_DATA);
+            return info.metaData == null ? null : info.metaData.getString(PluginEndpoint.META_DATA_KEY);
+        } catch (Exception e) {
+            // No meta-data to read is no configured endpoint: launch as JS asked.
+            return null;
+        }
+    }
+
     private static Map<String, Serializable> toOptions(@Nullable final ReadableMap options) {
         final Map<String, Serializable> result = new HashMap<>();
         if (options == null) {

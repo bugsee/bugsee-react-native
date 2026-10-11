@@ -42,6 +42,9 @@ function settingsBlock(settings) {
     if (settings.iosAppToken) {
         lines.push(`export BUGSEE_PLUGIN_APP_TOKEN='${settings.iosAppToken}'`);
     }
+    if (settings.endpoint) {
+        lines.push(`export BUGSEE_ENDPOINT='${settings.endpoint}'`);
+    }
     if (lines.length === 0) {
         return null;
     }

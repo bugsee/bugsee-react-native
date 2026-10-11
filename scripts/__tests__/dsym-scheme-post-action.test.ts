@@ -1,5 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+import { TOKEN_GUARD } from '../../packages/react-native/plugin/src/dsym-script';
 
 // The shared scheme is what `xcodebuild -scheme BareExample` archives.
 // A user-specific scheme under xcuserdata would not.
@@ -122,5 +126,105 @@ describe('BareExample archive scheme uploads dSYMs', () => {
     expect(action).toMatch(
       /<EnvironmentBuildable>[\s\S]*BlueprintName\s*=\s*"BareExample"[\s\S]*<\/EnvironmentBuildable>/,
     );
+  });
+});
+
+// F1 (campaign STAGING lane): the post-action ran `xcode post-action` with the
+// placeholder token, which registers a build and uploads dSYMs to the
+// configured endpoint -- or to production when none is set. The bundle phase
+// and the Gradle hook already skipped it.
+describe('BareExample archive post-action refuses a missing or placeholder token', () => {
+  const scheme = readFileSync(schemePath, 'utf8');
+  const archive = element(scheme, 'ArchiveAction');
+  const action = executionActions(archive).find((block) => /xcode post-action/.test(scriptOf(block)));
+  const script = action ? scriptOf(action) : '';
+
+  it("carries the plugin's guard, after the token is resolved and before any bugsee-cli call", () => {
+    const guard = TOKEN_GUARD.join('\n');
+    const at = script.indexOf(guard);
+    expect(at).toBeGreaterThan(script.indexOf('-extract ios raw'));
+    expect(at).toBeLessThan(script.indexOf('export BUGSEE_APP_TOKEN'));
+    expect(at).toBeLessThan(script.indexOf('xcode post-action'));
+    expect(script.indexOf(guard, at + 1)).toBe(-1);
+  });
+
+  const PLACEHOLDER = '00000000-0000-4000-8000-000000000000';
+  const SKIP_PLACEHOLDER = 'warning: bugsee: dSYM upload skipped: the app token is the placeholder\n';
+  const SKIP_NONE = 'warning: bugsee: dSYM upload skipped: no app token is configured\n';
+  const itDarwin = process.platform === 'darwin' ? it : it.skip;
+
+  /**
+   * Runs the scheme's script under /bin/sh in a scratch app whose every CLI
+   * path (both native binaries, both install layouts, and the JS entry) is a
+   * fake that records its argv and environment, and fails the test if it is
+   * reached unexpectedly.
+   */
+  function runScheme(env: Record<string, string>, credentials?: object) {
+    const dir = mkdtempSync(join(tmpdir(), 'bugsee-scheme-guard-'));
+    try {
+      const seen = join(dir, 'cli-invoked');
+      const fake = `#!/bin/sh\nprintf 'argv=%s\\ntoken=%s\\nendpoint=%s\\n' "$*" "$BUGSEE_APP_TOKEN" "$BUGSEE_ENDPOINT" > '${seen}'\nexit 0\n`;
+      const write = (file: string, text: string, mode = 0o644): void => {
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, text);
+        chmodSync(file, mode);
+      };
+      for (const arch of ['arm64', 'x64']) {
+        write(join(dir, `node_modules/@bugsee/cli-darwin-${arch}/bin/bugsee-cli`), fake, 0o755);
+        write(join(dir, `node_modules/@bugsee/cli/node_modules/@bugsee/cli-darwin-${arch}/bin/bugsee-cli`), fake, 0o755);
+      }
+      write(
+        join(dir, 'node_modules/@bugsee/cli/bin/bugsee-cli.js'),
+        `require('fs').writeFileSync(${JSON.stringify(seen)}, 'argv=' + process.argv.slice(2).join(' ') + '\\ntoken=' + (process.env.BUGSEE_APP_TOKEN || '') + '\\nendpoint=' + (process.env.BUGSEE_ENDPOINT || '') + '\\n');\n`,
+      );
+      mkdirSync(join(dir, 'ios'));
+      if (credentials) {
+        writeFileSync(join(dir, 'credentials.json'), JSON.stringify(credentials));
+      }
+      const result = spawnSync('/bin/sh', ['-c', script], {
+        encoding: 'utf8',
+        env: { PATH: '/usr/bin:/bin', PROJECT_DIR: join(dir, 'ios'), NODE_BINARY: process.execPath, ...env },
+      });
+      return { ...result, invoked: existsSync(seen) ? readFileSync(seen, 'utf8') : null };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it.each([
+    ['the placeholder in BUGSEE_APP_TOKEN', { BUGSEE_APP_TOKEN: PLACEHOLDER }, SKIP_PLACEHOLDER],
+    ['the placeholder in BUGSEE_TOKEN_IOS', { BUGSEE_TOKEN_IOS: PLACEHOLDER }, SKIP_PLACEHOLDER],
+    ['the CI placeholder variant, upper case, without dashes', { BUGSEE_APP_TOKEN: '000000000000A000B000000000000000' }, SKIP_PLACEHOLDER],
+    ['the placeholder padded with whitespace (the CLI trims it)', { BUGSEE_APP_TOKEN: ` ${PLACEHOLDER}\t` }, SKIP_PLACEHOLDER],
+    ['whitespace only', { BUGSEE_APP_TOKEN: ' \t ' }, SKIP_NONE],
+    ['no token anywhere', {}, SKIP_NONE],
+  ])('%s: exit 0, one warning, bugsee-cli never runs', (_name, env, message) => {
+    const result = runScheme({ BUGSEE_ENDPOINT: 'https://127.0.0.1:9', ...env });
+    expect(result.invoked).toBeNull();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(message);
+    expect(result.stderr).toBe('');
+  });
+
+  // The checked-in default: the placeholder and no endpoint, which would be
+  // production. The test keeps a loopback BUGSEE_ENDPOINT only because
+  // jest-no-network.js refuses any bugsee-cli spawn without one.
+  itDarwin('the placeholder from credentials.json: bugsee-cli never runs', () => {
+    const result = runScheme({ BUGSEE_ENDPOINT: 'https://127.0.0.1:9' }, { ios: PLACEHOLDER, android: PLACEHOLDER, endpoint: '' });
+    expect(result.invoked).toBeNull();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(SKIP_PLACEHOLDER);
+  });
+
+  it('a real token still reaches bugsee-cli, in the environment and not in argv', () => {
+    const token = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const result = runScheme({ BUGSEE_APP_TOKEN: token, BUGSEE_ENDPOINT: 'https://127.0.0.1:9' });
+    expect(result.status).toBe(0);
+    expect(result.invoked).toBe(`argv=xcode post-action\ntoken=${token}\nendpoint=https://127.0.0.1:9\n`);
+  });
+
+  it('a token one digit off the placeholder is not taken for it', () => {
+    const result = runScheme({ BUGSEE_APP_TOKEN: '00000000-0000-4000-8000-000000000001', BUGSEE_ENDPOINT: 'https://127.0.0.1:9' });
+    expect(result.invoked).toMatch(/^argv=xcode post-action\n/);
   });
 });
