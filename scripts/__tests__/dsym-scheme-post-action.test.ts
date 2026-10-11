@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { TOKEN_GUARD } from '../../packages/react-native/plugin/src/dsym-script';
+import { CLI_OUTPUT_FILTER, TOKEN_GUARD } from '../../packages/react-native/plugin/src/dsym-script';
 
 // The shared scheme is what `xcodebuild -scheme BareExample` archives.
 // A user-specific scheme under xcuserdata would not.
@@ -159,11 +159,12 @@ describe('BareExample archive post-action refuses a missing or placeholder token
    * fake that records its argv and environment, and fails the test if it is
    * reached unexpectedly.
    */
-  function runScheme(env: Record<string, string>, credentials?: object) {
+  function runScheme(env: Record<string, string>, credentials?: object, failWith?: string) {
     const dir = mkdtempSync(join(tmpdir(), 'bugsee-scheme-guard-'));
     try {
       const seen = join(dir, 'cli-invoked');
-      const fake = `#!/bin/sh\nprintf 'argv=%s\\ntoken=%s\\nendpoint=%s\\n' "$*" "$BUGSEE_APP_TOKEN" "$BUGSEE_ENDPOINT" > '${seen}'\nexit 0\n`;
+      const okFake = `#!/bin/sh\nprintf 'argv=%s\\ntoken=%s\\nendpoint=%s\\n' "$*" "$BUGSEE_APP_TOKEN" "$BUGSEE_ENDPOINT" > '${seen}'\nexit 0\n`;
+      const fake = failWith ? `#!/bin/sh\nprintf '%s\\n' ${JSON.stringify(failWith)} >&2\nexit 7\n` : okFake;
       const write = (file: string, text: string, mode = 0o644): void => {
         mkdirSync(dirname(file), { recursive: true });
         writeFileSync(file, text);
@@ -226,5 +227,59 @@ describe('BareExample archive post-action refuses a missing or placeholder token
   it('a token one digit off the placeholder is not taken for it', () => {
     const result = runScheme({ BUGSEE_APP_TOKEN: '00000000-0000-4000-8000-000000000001', BUGSEE_ENDPOINT: 'https://127.0.0.1:9' });
     expect(result.invoked).toMatch(/^argv=xcode post-action\n/);
+  });
+
+  // F12: Xcode reads any `error:` line as a build error. The post-action's
+  // output is not parsed for diagnostics, but it relays the CLI the same way
+  // the bundle phase does, so a failed upload reads as a warning here too.
+  it("carries the plugin's CLI output filter, ahead of every bugsee-cli call", () => {
+    const filter = CLI_OUTPUT_FILTER.join('\n');
+    const at = script.indexOf(filter);
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(script.indexOf('xcode post-action'));
+    expect(script).not.toMatch(/^\s*"\$1" xcode post-action/m);
+  });
+
+  it('a failed upload reads as a warning and keeps the CLI exit status', () => {
+    const result = runScheme(
+      { BUGSEE_APP_TOKEN: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', BUGSEE_ENDPOINT: 'https://127.0.0.1:9' },
+      undefined,
+      'error: upload failed: symbol metadata POST: connection refused',
+    );
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('warning: bugsee: upload failed: symbol metadata POST: connection refused');
+    expect(out).not.toMatch(/^\s*(.*: )?(fatal )?error:/im);
+    expect(result.status).toBe(7);
+  });
+});
+
+describe('CLI output filter', () => {
+  function filter(lines: string[]): string {
+    const script = [...CLI_OUTPUT_FILTER, 'run_cli sh -c "$CLI_SCRIPT"', 'exit $?'].join('\n');
+    const result = spawnSync('/bin/sh', ['-c', script], {
+      encoding: 'utf8',
+      env: { PATH: '/usr/bin:/bin', CLI_SCRIPT: `printf '%s\\n' ${lines.map((l) => JSON.stringify(l)).join(' ')}; exit 3` },
+    });
+    expect(result.status).toBe(3);
+    return result.stdout;
+  }
+
+  it.each([
+    ['error: upload failed: x', 'warning: bugsee: upload failed: x'],
+    ['fatal error: boom', 'warning: bugsee: boom'],
+    ['/a/b.js:1:2: error: bad', 'warning: bugsee: bad'],
+    ['bugsee: error: bad', 'warning: bugsee: bad'],
+    ['Error: capitalised', 'warning: bugsee: capitalised'],
+  ])('rewrites %j', (line, expected) => {
+    expect(filter([line])).toBe(`${expected}\n`);
+  });
+
+  it('leaves other lines alone and prints nothing for no output', () => {
+    expect(filter(['uploaded 3 files', 'warning: slow', 'an error occurred'])).toBe(
+      'uploaded 3 files\nwarning: slow\nan error occurred\n',
+    );
+    const script = [...CLI_OUTPUT_FILTER, 'run_cli true', 'echo rc=$?'].join('\n');
+    const r = spawnSync('/bin/sh', ['-c', script], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } });
+    expect(r.stdout).toBe('rc=0\n');
   });
 });

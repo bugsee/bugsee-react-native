@@ -17,6 +17,15 @@ case "$TOKEN_CHECK" in
     exit 0
     ;;
 esac
+# An "error:" line reads as a build error to Xcode; a failed upload is a warning.
+run_cli() {
+  CLI_OUT=$("$@" 2>&1)
+  CLI_RC=$?
+  if [ -n "$CLI_OUT" ]; then
+    printf '%s\n' "$CLI_OUT" | /usr/bin/sed -E 's/^(.*: )?([Ff]atal [Ee]rror|[Ee]rror): (.*)$/warning: bugsee: \3/'
+  fi
+  return $CLI_RC
+}
 if [ -n "$TOKEN" ]; then
   export BUGSEE_APP_TOKEN="$TOKEN"
 fi
@@ -59,13 +68,13 @@ if [ -n "$NODE_BINARY" ] && [ -x "$NODE_BINARY" ]; then
   if [ -n "$NATIVE_PKG" ]; then
     NATIVE_BIN="$(dirname "$NATIVE_PKG")/bin/bugsee-cli"
     if [ -x "$NATIVE_BIN" ]; then
-      "$NATIVE_BIN" xcode post-action
+      run_cli "$NATIVE_BIN" xcode post-action
       exit $?
     fi
   fi
   CLI_JS="$("$NODE_BINARY" --print "try { const fs = require('fs'); const path = require('path'); const appRoot = process.argv[1]; const wrapperPkg = require.resolve('@bugsee/react-native/package.json', { paths: [appRoot] }); const wrapperDir = path.dirname(wrapperPkg); const cliPkg = require.resolve('@bugsee/cli/package.json', { paths: [wrapperDir] }); const cliDir = path.dirname(cliPkg); const rel = JSON.parse(fs.readFileSync(cliPkg, 'utf8')).bin['bugsee-cli']; rel ? path.join(cliDir, rel) : ''; } catch (e) { '' }" "$APP_ROOT")"
   if [ -n "$CLI_JS" ]; then
-    "$NODE_BINARY" "$CLI_JS" xcode post-action
+    run_cli "$NODE_BINARY" "$CLI_JS" xcode post-action
     exit $?
   fi
 fi
