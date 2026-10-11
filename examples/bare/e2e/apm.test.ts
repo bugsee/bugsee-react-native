@@ -10,6 +10,7 @@
  * Marker, from scenarios/apm.ts:
  *   BUGSEE_E2E apm notify=notify-<n> txn=txn-<n>
  */
+import { performanceTransactions } from '../../../scripts/performance-capture';
 import { type PulledBundle, airplane, relayTexts, removePulledBundles, terminateIosApp } from './bundles';
 import { ANDROID_PACKAGE } from './device';
 import {
@@ -124,30 +125,16 @@ describeDevice(`a notification and a transaction on ${TARGET_NAME}`, () => {
   });
 });
 
-/** The span object whose `description` is `wanted`, anywhere in the capture. */
+/**
+ * The span whose `description` is `wanted`, in any transaction of the capture.
+ * performanceTransactions reads both layouts: iOS's legacy one and Android
+ * 7.3.1's OTLP (bugsee-android #207), where the description is
+ * `bugsee.description` and the attributes are flattened to key -> value.
+ */
 function spanByDescription(capture: string, wanted: string): { attributes?: unknown } | undefined {
-  let found: { attributes?: unknown } | undefined;
-  const walk = (node: unknown): void => {
-    if (found !== undefined || node === null || typeof node !== 'object') {
-      return;
-    }
-    if (Array.isArray(node)) {
-      for (const item of node) {
-        walk(item);
-      }
-      return;
-    }
-    const record = node as { description?: unknown; attributes?: unknown };
-    if (record.description === wanted) {
-      found = record;
-      return;
-    }
-    for (const value of Object.values(record)) {
-      walk(value);
-    }
-  };
-  walk(JSON.parse(capture) as unknown);
-  return found;
+  return performanceTransactions(capture)
+    .flatMap(transaction => transaction.spans ?? [])
+    .find(span => span.description === wanted);
 }
 
 async function awaitRelay(title: string, timeoutMs = 20_000): Promise<string[]> {

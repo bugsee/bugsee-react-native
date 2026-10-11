@@ -117,13 +117,10 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
-            // AGP defaults this to NONE, so the plugin's native upload finds
-            // nothing and skips. SYMBOL_TABLE emits symbols for code this app
-            // builds. Maven Hermes and libreactnative.so are pre-stripped;
-            // this level does not symbolicate those two.
-            ndk {
-                debugSymbolLevel 'SYMBOL_TABLE'
-            }
+            // No ndk.debugSymbolLevel: Bugsee Gradle plugin 4.0.8 uploads
+            // native symbols from the unstripped libraries in
+            // build/intermediates/merged_native_libs, whatever the level.
+            // The level only decides what AGP packs for Google Play.
         }
         release {
             // Caution! In production, you need to generate your own keystore file.
@@ -137,12 +134,7 @@ android {
             debuggable findProperty('bugseeE2eDebuggable') == 'true'
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
-            // Same level as debug: run-android.sh is assembleDebug, and a
-            // release build needs the metadata too. Pre-stripped Maven Hermes
-            // and libreactnative.so are not symbolicated by this.
-            ndk {
-                debugSymbolLevel 'SYMBOL_TABLE'
-            }
+            // No ndk.debugSymbolLevel here either (see debug).
         }
     }
 }

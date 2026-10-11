@@ -174,11 +174,10 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   });
 
   /**
-   * Android 7.3.0 still recovers a native SIGSEGV at the next launch with
-   * detect.crash=false ("Native crash: null pointer dereference", WOD_LX1):
-   * bugsee-android#220, fixed in 7.3.1 -- flip this pin with that adoption.
+   * Android 7.3.0 still recovered a native SIGSEGV at the next launch with
+   * detect.crash=false (bugsee-android#220); 7.3.1 does not (#227, WOD_LX1).
    */
-  (HERE === 'A' ? it.failing : on(['X']))(`[OPT-025] detect.crash=false: a native crash is not reported at the next launch${HERE === 'A' ? ' [known: Android NDK crashes ignore detect.crash=false (bugsee-android#220)]' : ''}`, async () => {
+  on(['A', 'X'])('[OPT-025] detect.crash=false: a native crash is not reported at the next launch', async () => {
     const crashes = await crashesAfter(async () => {
       const native = await launch('crash-off', NATIVE_CRASH);
       expect(jsonAfter(native.options.text, 'values')).toEqual({ 'com.bugsee.option.detect.crash': false });
@@ -419,8 +418,14 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   // Android only: there the app is driven to the background and back; iOS
   // runs undriven differ only by chance (simulator: 2 crumbs with extras, 12
   // without, the control's being http crumbs).
-  /** Android 7.3.0 records no SDK breadcrumb at all (sdk-breadcrumbs.test.ts, N-11): nothing to add to. */
-  (HERE === 'A' ? it.failing : it.skip)('[OPT-002] capture.breadcrumbs.extras adds SDK breadcrumbs the control does not record [known: Android 7.3.0 records no SDK breadcrumbs (bugsee-android#219)]', async () => {
+  /**
+   * Android 7.3.0 recorded no SDK breadcrumb at all (bugsee-android#219), so
+   * this was pinned. 7.3.1 records them, and shows what the option does:
+   * BreadcrumbSystemEvents copies the broadcast intent's extras into the
+   * system crumb's data as `extras`. It adds no crumbs (WOD_LX1: the same
+   * five kinds, 16 crumbs, in both runs), so that is the witness.
+   */
+  (HERE === 'A' ? it : it.skip)('[OPT-002] capture.breadcrumbs.extras attaches the intent extras to system breadcrumbs, which the control does not', async () => {
     // Android is sent to the background and back; iOS is not driven
     // (switching apps loses the run's console) and uploads after 4 s.
     const step = ON_ANDROID ? 'background' : 'run';
@@ -452,7 +457,11 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     const control = await crumbsOf('crumb-extras-control');
     const kinds = (crumbs: Array<Record<string, unknown>>) => [...new Set(crumbs.map(c => `${String(c.type)}/${String(c.category)}`))].sort();
     report('crumb kinds', { extras: kinds(extras), control: kinds(control), counts: { extras: extras.length, control: control.length } });
-    expect(extras.length).toBeGreaterThan(control.length);
+    const carryingExtras = (crumbs: Array<Record<string, unknown>>) =>
+      crumbs.filter(c => c.type === 'system' && /"extras":\{"/.test(JSON.stringify(c)));
+    report('system crumbs with extras', { extras: carryingExtras(extras).length, control: carryingExtras(control).length });
+    expect(carryingExtras(control)).toEqual([]);
+    expect(carryingExtras(extras).length).toBeGreaterThan(0);
   });
 
   on(['A'])('[OPT-045][OPT-047] reporting.ui.labels-enabled and priority-selector-enabled add fields to the dialog', async () => {
@@ -606,10 +615,9 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
 
   /**
    * Out of process, Android assembles the report through JobScheduler. On
-   * the WOD_LX1 (7.3.0, 2026-10-07) no report is filed within 90 s, in
-   * airplane mode or with the network on (dead endpoint): the option is read
-   * back as set, but the upload never becomes a bundle. Filed:
-   * bugsee-android#221, pending the SDK team's view of the job's constraints.
+   * the WOD_LX1 7.3.0 filed no report within 90 s (bugsee-android#221);
+   * 7.3.1 keeps the BackgroundJob constructors the job needs (#229) and the
+   * report is filed.
    */
   const outOfProcess = async (): Promise<Outcome & { bundles: PulledBundle[] }> => {
     const key = 'out-of-process--run';
@@ -640,7 +648,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(jsonAfter(options.text, 'values')).toEqual({ 'com.bugsee.option.config.report-processing-in-process': false });
   });
 
-  (HERE === 'A' ? it.failing : it.skip)('[OPT-081] config.report-processing-in-process=false still files the report (network on, dead endpoint) [known: Android 7.3.0 files no report out of process (bugsee-android#221)]', async () => {
+  on(['A'])('[OPT-081] config.report-processing-in-process=false still files the report (network on, dead endpoint)', async () => {
     const { run, bundles } = await outOfProcess();
     expect(bundles.map(b => b.request.summary)).toContain(`api-eff-out-of-process-${run.scenario.nonce}`);
   });

@@ -106,6 +106,7 @@ public class NetworkFilterBridgeTest {
         @Nullable String errorDescription;
         @Nullable String errorShortMessage;
         @Nullable String statusText;
+        boolean override;
         int setUrlCalls;
 
         MutableNetwork(@NonNull final String url) {
@@ -116,6 +117,11 @@ public class NetworkFilterBridgeTest {
         @Override
         public long getTimestamp() {
             return 1L;
+        }
+
+        @Override
+        public boolean isOverride() {
+            return override;
         }
 
         @Override
@@ -349,6 +355,33 @@ public class NetworkFilterBridgeTest {
         assertEquals("OK", event.statusText);
         assertTrue(event.url.contains("token=%3Credacted%3E"));
         assertFalse(event.url.contains("bugsee-secret-token-value"));
+    }
+
+    @Test
+    public void snapshotCarriesTheOverrideFlagAndAReplyCannotChangeIt() throws Exception {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        final MutableNetwork start = new MutableNetwork("https://api.example/v1/items");
+        final MutableNetwork supplement = new MutableNetwork("https://api.example/v1/items");
+        supplement.override = true;
+        supplement.body = "{\"a\":1}";
+        final RecordingCallback startCallback = new RecordingCallback();
+        final RecordingCallback supplementCallback = new RecordingCallback();
+        bridge.ask(start, startCallback);
+        bridge.ask(supplement, supplementCallback);
+
+        final JSONObject first = new JSONObject(sink.json.get(0));
+        final JSONObject second = new JSONObject(sink.json.get(1));
+        assertFalse(first.getBoolean("override"));
+        assertTrue(second.getBoolean("override"));
+        assertEquals("{\"a\":1}", second.getString("body"));
+
+        // JS echoes the key back; it is not written to the event.
+        second.put("override", false);
+        bridge.reply(sink.ids.get(1), second.toString());
+        assertTrue(supplement.override);
+        assertEquals(1, supplementCallback.runs);
+        assertSame(supplement, supplementCallback.last);
     }
 
     @Test

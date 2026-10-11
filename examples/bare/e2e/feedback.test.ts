@@ -44,10 +44,12 @@ const CHAT_BACKGROUND = '#112233';
  */
 const itColour = ON_IOS ? it.failing : it;
 /**
- * Android 7.3.0 stores the greeting (`setDefaultFeedbackGreeting` writes the
- * feedback preferences' `greeting`) and nothing ever reads it back: the chat
- * opens empty, offline. iOS shows it. Pinned until the Android SDK renders it.
- * Filed: https://github.com/bugsee/bugsee-android/issues/215
+ * Android 7.3.0 stored the greeting and never read it back: the chat opened
+ * empty (bugsee-android #215). 7.3.1 (#225) is meant to show it in an empty
+ * chat, as iOS does, but on this flow (greeting set just before
+ * showFeedbackActivity, chat opened directly, offline) the WOD_LX1 still shows
+ * an empty chat while the feedback preferences hold the greeting, 2 of 2 runs:
+ * https://github.com/bugsee/bugsee-android/issues/245. Pinned until it shows.
  */
 const itGreeting = ON_ANDROID ? it.failing : it;
 
@@ -103,8 +105,11 @@ describeDevice(`the feedback chat on ${TARGET_NAME}`, () => {
       expect(top).toBe(FEEDBACK_ACTIVITY);
     }
     // Both platforms title the screen "Feedback", in every locale tried.
+    // Since Android 7.3.1 paints the feedback action bar (bugsee-android
+    // #218), OCR can read the back arrow into the title's line ("< Feedback");
+    // the arrow glyph is dropped, the title still has to match exactly.
     const text = await screenText('feedback');
-    expect(text).toContain('Feedback');
+    expect(text.map(line => line.replace(/^[<‹←]\s*/, ''))).toContain('Feedback');
     // The app's own screen is gone from view: its status label is not read.
     expect(text).not.toContain('Bugsee React Native');
   });

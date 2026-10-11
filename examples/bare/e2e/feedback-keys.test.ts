@@ -49,7 +49,8 @@ const MIN_PIXELS = 40;
 
 /** Keys the open chat paints, per platform. */
 const CHAT_PIXEL: Record<'android' | 'ios', readonly string[]> = {
-  android: ['actionBarColor', 'backgroundColor', 'inputTextColor', 'inputTextHintColor', 'titleTextColor'],
+  // inputTextColor: its own test below, on typed text (7.3.1 draws the hint in inputTextHintColor).
+  android: ['actionBarColor', 'backgroundColor', 'inputTextHintColor', 'titleTextColor'],
   ios: ['backgroundColor', 'barsColor', 'closeButtonColor', 'inputBackgroundColor', 'navigationBarColor', 'titleTextColor'],
 };
 /** Keys the e-mail screen paints, per platform. */
@@ -57,26 +58,6 @@ const EMAIL_PIXEL: Record<'android' | 'ios', readonly string[]> = {
   android: ['bottomDelimiterColor', 'emailBackgroundColor', 'emailContinueNotActiveColor', 'emailSkipTextColor'],
   ios: ['emailBackgroundColor', 'emailContinueNotActiveColor', 'emailSkipColor'],
 };
-
-function blend(top: string, under: string, alpha: number): string {
-  const channel = (hex: string, at: number) => Number.parseInt(hex.slice(at, at + 2), 16);
-  return `#${[1, 3, 5]
-    .map(at => Math.round(alpha * channel(top, at) + (1 - alpha) * channel(under, at)).toString(16).padStart(2, '0'))
-    .join('')}`;
-}
-
-/**
- * The colour a key shows as, where the SDK draws it blended. Android 7.3.0's
- * Compose chat draws the empty input's hint in `inputText` at alpha 0.5 over
- * the background (ChatMessageInput.kt), so that is where inputTextColor shows;
- * `bottomDelimiterColor` is the e-mail field's border (RequestEmailScreen.kt).
- */
-function paintedAs(key: string): string {
-  if (ON_ANDROID && key === 'inputTextColor') {
-    return blend(FEEDBACK_COLOURS.inputTextColor!, FEEDBACK_COLOURS.backgroundColor!, 0.5);
-  }
-  return FEEDBACK_COLOURS[key]!;
-}
 
 /**
  * iOS 7.0.0-beta5's feedback (BugseeFeedback, SwiftUI) has no e-mail screen:
@@ -89,18 +70,13 @@ const IOS_NO_EMAIL_SCREEN = 'iOS beta5 feedback has no e-mail screen (bugsee-coc
 const IOS_NO_EMAIL_SCREEN_KEY = 'iOS beta5 feedback has no e-mail screen to paint (bugsee-cocoa#202)';
 
 /**
- * Keys Android 7.3.0 reads back but never paints, pinned (it.failing): the
- * feedback module (FeedbackColors.kt, ChatMessageInput.kt) never reads
- * Feedback::ActionBarColor or Feedback::EmailContinueNotActiveColor, and the
- * chat's hint is drawn from InputTextColor, not InputTextHintColor
- * (WOD_LX1, 2026-10-07). Filed: bugsee-android#218.
+ * Keys a platform reads back but never paints, pinned (it.failing). Android
+ * 7.3.0 never read Feedback::ActionBarColor or EmailContinueNotActiveColor
+ * and drew the hint from InputTextColor (bugsee-android#218); 7.3.1 paints
+ * all three (#226, WOD_LX1), so Android has none.
  */
 const KNOWN_NOT_PAINTED: Record<'android' | 'ios', Record<string, string>> = {
-  android: {
-    actionBarColor: 'Android 7.3.0 never reads Feedback::ActionBarColor (bugsee-android#218)',
-    emailContinueNotActiveColor: 'Android 7.3.0 never reads Feedback::EmailContinueNotActiveColor (bugsee-android#218)',
-    inputTextHintColor: 'Android 7.3.0 draws the hint from InputTextColor at alpha 0.5 (bugsee-android#218)',
-  },
+  android: {},
   ios: {
     emailBackgroundColor: IOS_NO_EMAIL_SCREEN_KEY,
     emailContinueNotActiveColor: IOS_NO_EMAIL_SCREEN_KEY,
@@ -112,8 +88,8 @@ const KNOWN_NOT_PAINTED: Record<'android' | 'ios', Record<string, string>> = {
 function pixelIt(base: jest.It, key: string, where: string, shot: () => string): void {
   const known = KNOWN_NOT_PAINTED[PLATFORM][key];
   (known !== undefined ? base.failing : base)(`[${faOf(key)}] ${key} paints the ${where}${known !== undefined ? ` [known: ${known}]` : ''}`, async () => {
-    const found = await colourPixels(shot(), colourOf(paintedAs(key)), 20);
-    report(`${key} ${paintedAs(key)} pixels`, { count: found.count, box: found.box });
+    const found = await colourPixels(shot(), colourOf(FEEDBACK_COLOURS[key]!), 20);
+    report(`${key} ${FEEDBACK_COLOURS[key]} pixels`, { count: found.count, box: found.box });
     expect(found.count).toBeGreaterThan(MIN_PIXELS);
   });
 }
@@ -224,6 +200,27 @@ describeDevice(`the feedback package's keys, nulls and pre-launch use on ${TARGE
       }
       pixelIt(it, key, 'chat', () => shot);
     }
+
+    /**
+     * Android 7.3.0 drew the empty input's hint in inputTextColor at alpha 0.5,
+     * which is where this key used to be seen; 7.3.1 draws the hint in
+     * inputTextHintColor (bugsee-android #218 via #226). The input text colour
+     * is now only on text in the field, so this types some (nothing is sent).
+     */
+    (ON_ANDROID ? it : it.skip)('[FA-19] inputTextColor paints text typed into the chat input', async () => {
+      const { xml } = await uiDump();
+      const field = /<node [^>]*class="android\.widget\.EditText"[^>]*>/.exec(xml)?.[0];
+      expect(field).toBeDefined();
+      const [left, top, right, bottom] = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(field!)!.slice(1, 5).map(Number) as [number, number, number, number];
+      await adbStatus('shell', 'input', 'tap', String(Math.round((left + right) / 2)), String(Math.round((top + bottom) / 2)));
+      await adbStatus('shell', 'input', 'text', 'WWWWWWWWWWWW');
+      await new Promise(resolve => setTimeout(resolve, 1_500));
+      const typed = await captureScreen('feedback-typed');
+      keepShot(typed, `chat-typed-${run.scenario.nonce}`);
+      const found = await colourPixels(typed, colourOf(FEEDBACK_COLOURS.inputTextColor!), 20);
+      report(`inputTextColor ${FEEDBACK_COLOURS.inputTextColor} typed pixels`, { count: found.count, box: found.box });
+      expect(found.count).toBeGreaterThan(MIN_PIXELS);
+    });
   });
 
   describe('the e-mail screen on a first open', () => {

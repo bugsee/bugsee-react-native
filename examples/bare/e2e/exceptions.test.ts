@@ -28,8 +28,10 @@
  *   BUGSEE_E2E exc boundary-onError / boundary-fallback
  *   BUGSEE_E2E exc app-handler fatal=<bool>
  *
- * Cases 7 and 10 are `it.failing` on Android for documented 7.3.0 gaps
- * (labels ignored; unhandled also files an error report). Do not weaken them.
+ * Case 7 is `it.failing` on Android for a documented gap (labels ignored,
+ * still in 7.3.1). Do not weaken it. Case 10 was `it.failing` on 7.3.0, which
+ * also filed an error report for an unhandled exception; 7.3.1 files the
+ * crash only (bugsee-android d390b5203, #192), so it is a plain `it`.
  * On iOS both are plain `it` (labels apply; Debug files no second report).
  *
  * Case 12's red-box line must stay on Android. Gated release R2/R3 (controller
@@ -489,8 +491,9 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
         alive,
       });
 
-      // 7.3.0 also files an error report for the same incident (case 10).
-      // Wait for at least the crash, then a short beat for the extra error.
+      // 7.3.0 also filed an error report for the same incident (case 10).
+      // Wait for at least the crash, then a short beat so an extra report,
+      // if one is filed, is seen by case 10.
       await awaitBundles(1, 30_000);
       await new Promise(resolve => setTimeout(resolve, 3_000));
       bundles = await pullAndroidBundles();
@@ -514,7 +517,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       expect(alive).toBe(true);
     });
 
-    itAndroid.failing(
+    itAndroid(
       'the fatal error files no second report for the incident',
       () => {
         const others = bundles.filter(b => {
@@ -798,8 +801,8 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       report('R2 single bundle', { file: only.file, type: only.request.type });
     });
 
-    // Not it.failing on release: debug case 10 stays it.failing for the
-    // crash+error double-file; release retains one bundle for the incident.
+    // Release retains one bundle for the incident (debug case 10 asserts the
+    // same since 7.3.1 stopped filing an error report next to the crash).
     itAndroid('exactly one bundle contains the fatal reason', () => {
       const withFatal = bundles.filter(b => rawCrashContains(b, `E2E fatal ${nonce}`));
       expect(withFatal).toHaveLength(1);

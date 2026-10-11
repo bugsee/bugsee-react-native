@@ -14,7 +14,7 @@ The single most important finding behind this design: **iOS 7.x and Android 7.x 
 
 ## 2. Goals
 
-- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.3.0** (pinned transitionally as `7.3.0-SNAPSHOT` while the release is pending — see the plan's Phase 3 rulings) and iOS **7.0.0-beta5** (SPM only, iOS deployment target 15.0).
+- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.3.1** (7.3.0 first, pinned transitionally as `7.3.0-SNAPSHOT` while that release was pending — see the plan's Phase 3 rulings; 7.3.1 fixes bugsee-android #214–#221 found by the beta campaign) and iOS **7.0.0-beta5** (SPM only, iOS deployment target 15.0).
 - Expose the capabilities 7.x added and 6.x never had: breadcrumbs, notification relay, APM, user identity, hang/HTTP-error/frustration/anomaly detection, SDK status, report handlers.
 - Make the wrapper's option surface **provably** consistent with the native SDKs, enforced in CI rather than by review.
 - Work on bare React Native and on Expo, including Expo apps that regenerate native projects with `prebuild`.
@@ -422,7 +422,7 @@ Four implementation constraints:
     - iOS Debug builds skip the upload unless `BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true`.
   - **`uploadSymbols`** — default on, both platforms.
     - iOS: `false` removes the Archive dSYM post-action.
-    - Android: `false` disables the Gradle plugin's `uploadBugsee*` tasks (R8 mapping, NDK symbols, build info) in a marked block, because Gradle plugin 4.0.7 has no switch of its own.
+    - Android: `false` disables the Gradle plugin's `uploadBugsee*` tasks (R8 mapping, NDK symbols, build info) in a marked block, because the Gradle plugin (4.0.7, and still 4.0.8) has no switch of its own.
   - **`nativeCrashReporting`** — default on (§11.1).
   - **`gradlePluginVersion`** — default: the pin in `native-versions.json`. A `--no-clean` prebuild rewrites an older pin in place.
   - **`autoLaunch`** — default off. Writes the manifest token for a real token only.

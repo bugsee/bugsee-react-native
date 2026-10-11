@@ -13,9 +13,9 @@
  *                     setCustomOption -- reads each back, refreshes a fresh
  *                     options object from the SDK and reads its getters, and
  *                     uploads one report, whose `environment.sdk.options`
- *                     must record each value. Android writes an enum there as
- *                     its constant's ORDINAL (bug 10, bugsee-android#216):
- *                     asserted as that rule, not hidden.
+ *                     must record each value. Android 7.3.0 wrote an enum
+ *                     there as its constant's ORDINAL (bug 10,
+ *                     bugsee-android#216); 7.3.1 writes the value (#223).
  *   api-opt-enums     relaunches once per internal value of each enum key
  *                     and reads each back.
  *
@@ -34,9 +34,7 @@ import {
   READBACK_IOS,
   READBACK_SHARED,
 } from '../scenarios/api-constants';
-import ENUMS from '../../../packages/react-native/src/options/option-enums.json';
 import KEYS from '../../../packages/react-native/src/options/option-keys.json';
-import ANDROID_MANIFEST from '../../../packages/react-native/src/options/android-options-manifest.json';
 import { ON_IOS, type Run, TARGET_NAME, awaitBundles, describeDevice, listBundles, report, startRun, stopApp } from './harness';
 import { beginRetainingSuite, endRetainingSuite } from './observe';
 import { type DeviceLog } from './scenario';
@@ -59,18 +57,6 @@ const KNOWN_READBACK: Record<'android' | 'ios', Record<string, string>> = {
 };
 const ACCESSORS: Record<string, string> = { ...ACCESSOR_KEYS.shared, ...(ON_IOS ? ACCESSOR_KEYS.ios : ACCESSOR_KEYS.android) };
 
-/** Android enum keys and their enum, from the SDK's option manifest. */
-const ANDROID_ENUM_OF: Record<string, keyof typeof ENUMS> = Object.fromEntries(
-  (ANDROID_MANIFEST.options as Array<{ key: string; type: string; enum?: { name: string } }>)
-    .filter(o => o.type === 'enum' && o.enum !== undefined)
-    .map(o => [o.key, o.enum!.name as keyof typeof ENUMS]),
-);
-
-/** The ordinal Android 7.3.0 records for an enum value (constants in value order). */
-function androidOrdinal(key: string, value: number): number {
-  const values = Object.values(ENUMS[ANDROID_ENUM_OF[key]!] as Record<string, number>).sort((a, b) => a - b);
-  return values.indexOf(value);
-}
 
 /** Every `<tag> chunk ... values={...}` part of a run, merged. */
 function chunks(log: DeviceLog, tag: string, nonce: string, from: number): Record<string, unknown> {
@@ -157,11 +143,7 @@ describeDevice(`every launch option read back on ${TARGET_NAME}`, () => {
     for (const [key, value] of Object.entries(OWN_SET)) {
       const candidates = [key, key.replace(/\./g, ':'), key.replace('com.bugsee.option.', '')];
       const found = candidates.find(candidate => candidate in recorded);
-      let expected: unknown = value;
-      if (!ON_IOS && ANDROID_ENUM_OF[key] !== undefined) {
-        // Bug 10 (bugsee-android#216): Android records the ordinal.
-        expected = androidOrdinal(key, value as number);
-      }
+      const expected: unknown = value;
       if (found === undefined || !same(recorded[found], expected)) {
         misses.push({ key, expected, recorded: found === undefined ? '(absent)' : recorded[found] });
       }
