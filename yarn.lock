@@ -1960,58 +1960,58 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@bugsee/cli-darwin-arm64@npm:0.7.11":
-  version: 0.7.11
-  resolution: "@bugsee/cli-darwin-arm64@npm:0.7.11"
+"@bugsee/cli-darwin-arm64@npm:0.7.12":
+  version: 0.7.12
+  resolution: "@bugsee/cli-darwin-arm64@npm:0.7.12"
   conditions: os=darwin & cpu=arm64
   languageName: node
   linkType: hard
 
-"@bugsee/cli-darwin-x64@npm:0.7.11":
-  version: 0.7.11
-  resolution: "@bugsee/cli-darwin-x64@npm:0.7.11"
+"@bugsee/cli-darwin-x64@npm:0.7.12":
+  version: 0.7.12
+  resolution: "@bugsee/cli-darwin-x64@npm:0.7.12"
   conditions: os=darwin & cpu=x64
   languageName: node
   linkType: hard
 
-"@bugsee/cli-linux-arm64@npm:0.7.11":
-  version: 0.7.11
-  resolution: "@bugsee/cli-linux-arm64@npm:0.7.11"
+"@bugsee/cli-linux-arm64@npm:0.7.12":
+  version: 0.7.12
+  resolution: "@bugsee/cli-linux-arm64@npm:0.7.12"
   conditions: os=linux & cpu=arm64 & libc=glibc
   languageName: node
   linkType: hard
 
-"@bugsee/cli-linux-x64@npm:0.7.11":
-  version: 0.7.11
-  resolution: "@bugsee/cli-linux-x64@npm:0.7.11"
+"@bugsee/cli-linux-x64@npm:0.7.12":
+  version: 0.7.12
+  resolution: "@bugsee/cli-linux-x64@npm:0.7.12"
   conditions: os=linux & cpu=x64 & libc=glibc
   languageName: node
   linkType: hard
 
-"@bugsee/cli-win32-arm64@npm:0.7.11":
-  version: 0.7.11
-  resolution: "@bugsee/cli-win32-arm64@npm:0.7.11"
+"@bugsee/cli-win32-arm64@npm:0.7.12":
+  version: 0.7.12
+  resolution: "@bugsee/cli-win32-arm64@npm:0.7.12"
   conditions: os=win32 & cpu=arm64
   languageName: node
   linkType: hard
 
-"@bugsee/cli-win32-x64@npm:0.7.11":
-  version: 0.7.11
-  resolution: "@bugsee/cli-win32-x64@npm:0.7.11"
+"@bugsee/cli-win32-x64@npm:0.7.12":
+  version: 0.7.12
+  resolution: "@bugsee/cli-win32-x64@npm:0.7.12"
   conditions: os=win32 & cpu=x64
   languageName: node
   linkType: hard
 
-"@bugsee/cli@npm:0.7.11":
-  version: 0.7.11
-  resolution: "@bugsee/cli@npm:0.7.11"
+"@bugsee/cli@npm:0.7.12":
+  version: 0.7.12
+  resolution: "@bugsee/cli@npm:0.7.12"
   dependencies:
-    "@bugsee/cli-darwin-arm64": "npm:0.7.11"
-    "@bugsee/cli-darwin-x64": "npm:0.7.11"
-    "@bugsee/cli-linux-arm64": "npm:0.7.11"
-    "@bugsee/cli-linux-x64": "npm:0.7.11"
-    "@bugsee/cli-win32-arm64": "npm:0.7.11"
-    "@bugsee/cli-win32-x64": "npm:0.7.11"
+    "@bugsee/cli-darwin-arm64": "npm:0.7.12"
+    "@bugsee/cli-darwin-x64": "npm:0.7.12"
+    "@bugsee/cli-linux-arm64": "npm:0.7.12"
+    "@bugsee/cli-linux-x64": "npm:0.7.12"
+    "@bugsee/cli-win32-arm64": "npm:0.7.12"
+    "@bugsee/cli-win32-x64": "npm:0.7.12"
   dependenciesMeta:
     "@bugsee/cli-darwin-arm64":
       optional: true
@@ -2027,7 +2027,7 @@ __metadata:
       optional: true
   bin:
     bugsee-cli: bin/bugsee-cli.js
-  checksum: 10c0/1e07fd39c1ffbe7b2f205ea95075155e3986d7dea80cc9c5f536b555174846a9db68034723e8eb7ffdd9d019a7beb2b88d53d45e6443559868b53bc0ecf59a3c
+  checksum: 10c0/5bcc24b20ac3699dcbd010a6777dfde94b56a1bd0b8ff2f8e564de18c7f134c98a04b1ce994d02e48880b4ba0d5274730cfd18f06f3fc8392e4e780e5c8f2975
   languageName: node
   linkType: hard
 
@@ -2047,7 +2047,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@bugsee/react-native@workspace:packages/react-native"
   dependencies:
-    "@bugsee/cli": "npm:0.7.11"
+    "@bugsee/cli": "npm:0.7.12"
     "@expo/config-plugins": "npm:~57.0.9"
     react-native: "npm:0.87.1"
   peerDependencies:

@@ -10,6 +10,7 @@ import type { XcodeProjectLike } from '../bundle-phase';
 import { DSYM_POST_ACTION_SCRIPT, dsymPostActionScript } from '../dsym-script';
 import {
   CANNOT_EDIT,
+  CHANGED_SYMBOL_BLOCK_NOTE,
   HERMES_COMMAND_UNREWRITABLE,
   ensureAppAppliesPlugin,
   ensureGradlePluginDeclared,
@@ -254,15 +255,12 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     expect(beforeHook(ensureAppAppliesPlugin(already, null))).toContain('hermesCommand = "/custom/hermesc-preserve-js.sh"');
   });
 
-  it('adds the symbol block to debug and release only, as a nested-brace-safe last entry', () => {
+  it('writes no symbol level into any build type, on or off', () => {
     const source = lines(
       'android {',
       '    buildTypes {',
       '        debug {',
       '            ext { flag = true }',
-      '        }',
-      '        staging {',
-      '            minifyEnabled true',
       '        }',
       '        release {',
       '            minifyEnabled true',
@@ -273,22 +271,16 @@ describe('ensureAppAppliesPlugin, exactly', () => {
       '}',
       '',
     );
-    const on = ensureAppAppliesPlugin(source, '7.3.0');
-    expect(beforeHook(on)).toBe(
+    expect(beforeHook(ensureAppAppliesPlugin(source, '7.3.0'))).toBe(
       lines(
         'apply plugin: "com.bugsee.android.gradle"',
         'android {',
         '    buildTypes {',
         '        debug {',
         '            ext { flag = true }',
-        SYMBOL_BLOCK('            '),
-        '        }',
-        '        staging {',
-        '            minifyEnabled true',
         '        }',
         '        release {',
         '            minifyEnabled true',
-        SYMBOL_BLOCK('            '),
         '        }',
         '    }',
         '}',
@@ -299,119 +291,17 @@ describe('ensureAppAppliesPlugin, exactly', () => {
         '',
       ),
     );
-    const off = ensureAppAppliesPlugin(on, null);
-    // The hook already ends the file, so the exclude block goes after it.
-    expect(off.endsWith(`\n\n${exclude}\n`)).toBe(true);
-    expect(beforeHook(off)).toBe(
-      lines(
-        'apply plugin: "com.bugsee.android.gradle"',
-        'android {',
-        '    buildTypes {',
-        '        debug {',
-        '            ext { flag = true }',
-        '        }',
-        '        staging {',
-        '            minifyEnabled true',
-        '        }',
-        '        release {',
-        '            minifyEnabled true',
-        '        }',
-        '    }',
-        '}',
-        'dependencies {',
-        '}',
-        '',
-        '',
-      ),
-    );
+    expect(ensureAppAppliesPlugin(source, null)).not.toContain('debugSymbolLevel');
   });
 
-  it('rewrites only its own marked NDK line; a user NDK line is left alone, on or off, and noted', () => {
-    const own = `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n  implementation "com.bugsee:bugsee-android-ndk:1.0.0"   // bugsee:ndk\n    implementation("a")\n}\n`;
-    expect(beforeHook(ensureAppAppliesPlugin(own, '7.3.0'))).toBe(
-      'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n  implementation "com.bugsee:bugsee-android-ndk:7.3.0"   // bugsee:ndk\n    implementation("a")\n}\n\n',
-    );
-    const quiet = jest.fn();
-    ensureAppAppliesPlugin(own, '7.3.0', quiet);
-    ensureAppAppliesPlugin(own, null, quiet);
-    expect(quiet).not.toHaveBeenCalled();
-    const pinned = 'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0" // pinned\n    implementation("a")\n}\n';
-    const log = jest.fn();
-    expect(beforeHook(ensureAppAppliesPlugin(pinned, '7.3.0', log))).toBe(`${pinned}\n`);
-    expect(beforeHook(ensureAppAppliesPlugin(pinned, null, log))).toBe(`${pinned}\n${exclude}\n\n`);
-    expect(log.mock.calls).toEqual([
-      ['@bugsee/react-native: android/app/build.gradle declares com.bugsee:bugsee-android-ndk itself; the plugin leaves that line alone and does not add or remove its own'],
-      ['@bugsee/react-native: android/app/build.gradle declares com.bugsee:bugsee-android-ndk itself; the plugin leaves that line alone and does not add or remove its own'],
-    ]);
-    // The user's artifact in a string anywhere, in any quoting, counts as theirs.
-    const quoted = "apply plugin: \"com.bugsee.android.gradle\"\ndef ndk = 'com.bugsee:bugsee-android-ndk:2.0.0'\ndependencies {\n    implementation(ndk)\n}\n";
-    expect(beforeHook(ensureAppAppliesPlugin(quoted, '7.3.0', log))).toBe(`${quoted}\n`);
-    // A commented-out NDK line is not the dependency: a live one is added.
-    const commented = 'apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    // implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n';
-    expect(beforeHook(ensureAppAppliesPlugin(commented, '7.3.0'))).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n${ndkLine}\n    // implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n\n`,
-    );
-    // The plugin's line never carries any other comment, so a marker-less line with the artifact is the user's.
-    const unmarked = `apply plugin: "com.bugsee.android.gradle"\ndependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n`;
-    expect(beforeHook(ensureAppAppliesPlugin(unmarked, '7.3.0', () => undefined))).toBe(`${unmarked}\n`);
-  });
-
-  it('inserts the NDK line after a dependencies opener that stands alone, at the block\'s own indentation', () => {
-    const tabs = 'apply plugin: "com.bugsee.android.gradle"\ndependencies { // keep sorted\n\timplementation("a")\n}\n';
-    expect(beforeHook(ensureAppAppliesPlugin(tabs, '7.3.0'))).toBe(
-      'apply plugin: "com.bugsee.android.gradle"\ndependencies { // keep sorted\n\timplementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk\n\timplementation("a")\n}\n\n',
-    );
-    for (const opener of ['dependencies { implementation("a") }', 'dependencies { implementation("a")\n}', 'foo { }; dependencies {\n}']) {
-      expect(() => ensureAppAppliesPlugin(`${opener}\n`, '7.3.0')).toThrow(
-        `${CANNOT_EDIT} android/app/build.gradle: line 1: \`${opener.split('\n')[0]}\` shares its line with other code, so the Bugsee NDK dependency cannot be added without rewriting that line. Put the brace alone on its line, or declare \`implementation "com.bugsee:bugsee-android-ndk:7.3.0"\` yourself, then run expo prebuild again`,
-      );
+  it('leaves one-line build types and closers that share their line alone', () => {
+    for (const source of [
+      'android {\n    buildTypes {\n        release { minifyEnabled true }\n    }\n}\n',
+      'android {\n    buildTypes {\n        release {\n            minifyEnabled true }\n    }\n}\n',
+      'android {\n    buildTypes {\n        release {\n            /* end */ }\n    }\n}\n',
+    ]) {
+      expect(beforeHook(ensureAppAppliesPlugin(source, '7.3.0'))).toBe(`apply plugin: "com.bugsee.android.gradle"\n${source}\n${ndkBlock}\n\n`);
     }
-  });
-
-  it('refuses a one-line build type rather than split the user line', () => {
-    const oneLine = 'android {\n    buildTypes {\n        release { minifyEnabled true }\n    }\n}\n';
-    expect(() => ensureAppAppliesPlugin(oneLine, '7.3.0')).toThrow(
-      `${CANNOT_EDIT} android/app/build.gradle: line 3: \`release { minifyEnabled true }\` shares its line with other code, so debugSymbolLevel 'SYMBOL_TABLE' for the release build type cannot be added without rewriting that line. Put the brace alone on its line, or set ndk { debugSymbolLevel 'SYMBOL_TABLE' } in it yourself, then run expo prebuild again`,
-    );
-    // A closer that shares its line with code, or follows a comment on its line, is no anchor either.
-    expect(() => ensureAppAppliesPlugin('android {\n    buildTypes {\n        release {\n            minifyEnabled true }\n    }\n}\n', '7.3.0')).toThrow(
-      `${CANNOT_EDIT} android/app/build.gradle: line 4: \`minifyEnabled true }\` shares its line with other code`,
-    );
-    expect(() => ensureAppAppliesPlugin('android {\n    buildTypes {\n        release {\n            /* end */ }\n    }\n}\n', '7.3.0')).toThrow(
-      `${CANNOT_EDIT} android/app/build.gradle: line 4: \`/* end */ }\` shares its line with other code`,
-    );
-    // Off has nothing to add, so nothing to refuse.
-    expect(beforeHook(ensureAppAppliesPlugin(oneLine, null))).toBe(
-      `apply plugin: "com.bugsee.android.gradle"\n${oneLine}\n${exclude}\n\n`,
-    );
-    // The block goes right before the closer; the user's blank line stays where it was.
-    const spaced = 'android {\n    buildTypes {\n        release {\n            minifyEnabled true\n\n        }\n    }\n}\n';
-    expect(ensureAppAppliesPlugin(spaced, '7.3.0')).toContain(
-      `            minifyEnabled true\n\n${SYMBOL_BLOCK('            ')}\n        }\n`,
-    );
-  });
-
-  it('takes only the build types directly under buildTypes', () => {
-    const nested = 'android {\n    buildTypes {\n        debug {\n            release { }\n        }\n    }\n}\n';
-    expect(beforeHook(ensureAppAppliesPlugin(nested, '7.3.0'))).toBe(
-      lines(
-        'apply plugin: "com.bugsee.android.gradle"',
-        'android {',
-        '    buildTypes {',
-        '        debug {',
-        '            release { }',
-        SYMBOL_BLOCK('            '),
-        '        }',
-        '    }',
-        '}',
-        '',
-        'dependencies { // bugsee:ndk',
-        ndkLine,
-        '}',
-        '',
-        '',
-      ),
-    );
   });
 
   it('leaves build types that already set a symbol level or have an ndk block', () => {
@@ -433,11 +323,19 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     );
   });
 
-  it('removes exactly its own symbol block, at any indentation, and nothing after it', () => {
+  it('removes exactly the old symbol block, at any indentation, on or off, and nothing after it', () => {
     const block = SYMBOL_BLOCK('      ');
     const file = `a()\n${block}\nb()\n`;
     expect(beforeHook(ensureAppAppliesPlugin(file, null))).toBe(
       `apply plugin: "com.bugsee.android.gradle"\na()\nb()\n\n${exclude}\n\n`,
+    );
+    expect(beforeHook(ensureAppAppliesPlugin(file, '7.3.0'))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\na()\nb()\n\n${ndkBlock}\n\n`,
+    );
+    // Inside the build types an earlier prebuild wrote it into.
+    const inside = `android {\n    buildTypes {\n        debug {\n${SYMBOL_BLOCK('            ')}\n        }\n        release {\n            minifyEnabled true\n${SYMBOL_BLOCK('            ')}\n        }\n    }\n}\n`;
+    expect(beforeHook(ensureAppAppliesPlugin(inside, '7.3.0'))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\nandroid {\n    buildTypes {\n        debug {\n        }\n        release {\n            minifyEnabled true\n        }\n    }\n}\n\n${ndkBlock}\n\n`,
     );
     // Comment lines that only resemble the marker, or a different block after it, are the user's.
     const kept = '// bugsee-symbol-table: a comment, no block\nother()\n';
@@ -454,13 +352,29 @@ describe('ensureAppAppliesPlugin, exactly', () => {
     expect(beforeHook(ensureAppAppliesPlugin(twoLines, null))).toBe(
       `apply plugin: "com.bugsee.android.gradle"\na()\nndk {\n}\n\n${exclude}\n\n`,
     );
-    // A user line inside the block makes the plugin refuse, never delete.
-    const edited = `a()\n${SYMBOL_BLOCK('').replace("    debugSymbolLevel 'SYMBOL_TABLE'", "    debugSymbolLevel 'SYMBOL_TABLE'\n    abiFilters \"arm64-v8a\"")}\n`;
-    expect(() => ensureAppAppliesPlugin(edited, null)).toThrow(
-      `${CANNOT_EDIT} android/app/build.gradle: line 2: the Bugsee symbol-table block that starts here has been changed inside, so the plugin cannot tell its lines from yours. Restore the block as the plugin wrote it, or remove it and set ndk { debugSymbolLevel } yourself, then run expo prebuild again`,
+    const threeLines = `a()\n${SYMBOL_BLOCK('').split('\n').slice(0, 3).join('\n')}\nb()\n`;
+    expect(beforeHook(ensureAppAppliesPlugin(threeLines, null))).toBe(
+      `apply plugin: "com.bugsee.android.gradle"\na()\nb()\n\n${exclude}\n\n`,
     );
-    // On, an edited block still counts as the level being set.
-    expect(ensureAppAppliesPlugin(`android {\n    buildTypes {\n        release {\n${SYMBOL_BLOCK('            ').replace("'SYMBOL_TABLE'", "'FULL'")}\n        }\n    }\n}\n`, '7.3.0')).not.toContain("'SYMBOL_TABLE'");
+  });
+
+  it('leaves the old block alone, and says so, once the user changed it inside', () => {
+    const notes: string[] = [];
+    const edited = `a()\n${SYMBOL_BLOCK('').replace("    debugSymbolLevel 'SYMBOL_TABLE'", "    debugSymbolLevel 'FULL'")}\n`;
+    for (const ndk of [null, '7.3.0']) {
+      notes.length = 0;
+      expect(ensureAppAppliesPlugin(edited, ndk, (message) => notes.push(message))).toContain(edited.slice(4));
+      expect(notes).toEqual([CHANGED_SYMBOL_BLOCK_NOTE]);
+    }
+    // Exactly the four comment lines, then the user's own lines: the same.
+    notes.length = 0;
+    const fourThenOwn = `a()\n${SYMBOL_BLOCK('').split('\n').slice(0, 4).join('\n')}\nndk.debugSymbolLevel 'NONE'\n`;
+    expect(ensureAppAppliesPlugin(fourThenOwn, null, (message) => notes.push(message))).toContain(fourThenOwn.slice(4));
+    expect(notes).toEqual([CHANGED_SYMBOL_BLOCK_NOTE]);
+    // The intact block says nothing.
+    notes.length = 0;
+    ensureAppAppliesPlugin(`a()\n${SYMBOL_BLOCK('')}\n`, null, (message) => notes.push(message));
+    expect(notes).toEqual([]);
   });
 
   it('keeps a user afterEvaluate block and adds the hook after it', () => {
@@ -776,16 +690,10 @@ describe('blocks found by keyword', () => {
     );
   });
 
-  it('finds a build type written without a space before its brace', () => {
-    const next = ensureAppAppliesPlugin('android {\n    buildTypes {\n        debug{\n        }\n    }\n}\n', '7.3.0');
-    expect(next).toContain("        debug{\n            // bugsee-symbol-table: ");
-    expect(next).toContain("            ndk {\n                debugSymbolLevel 'SYMBOL_TABLE'\n            }\n        }\n    }\n}");
-  });
-
-  it('counts any whitespace before the symbol level as already set', () => {
+  it('never touches a level of the user\'s', () => {
     const source = "android {\n    buildTypes {\n        release {\n            ndk.debugSymbolLevel  'SYMBOL_TABLE'\n        }\n    }\n}\n";
     expect(beforeHook(ensureAppAppliesPlugin(source, '7.3.0'))).toContain(source);
-    expect(ensureAppAppliesPlugin(source, '7.3.0')).not.toContain('bugsee-symbol-table:');
+    expect(beforeHook(ensureAppAppliesPlugin(source, null))).toContain(source);
   });
 
   it('keeps a marker comment that ends the file', () => {
@@ -1240,5 +1148,52 @@ describe('hook lines, exactly', () => {
     const user = 'x() // note\nafterEvaluate {\n    println("mine")\n}';
     const next = ensureAppAppliesPlugin(`${applied}\n${legacyMarker}\n${user}\n`, null);
     expect(next).toContain(`${applied}\n${user}\n`);
+  });
+});
+
+describe('Gradle edits: refusal texts, indentation and notes (mutation gaps)', () => {
+  const ndk = 'implementation "com.bugsee:bugsee-android-ndk:7.3.0" // bugsee:ndk';
+
+  it('with native crash reporting off, still notes a user NDK line it leaves alone', () => {
+    const notes: string[] = [];
+    const user = 'dependencies {\n    implementation "com.bugsee:bugsee-android-ndk:1.0.0"\n}\n';
+    expect(ensureAppAppliesPlugin(user, null, (message) => notes.push(message))).toContain('bugsee-android-ndk:1.0.0');
+    expect(notes).toEqual([expect.stringContaining('declares com.bugsee:bugsee-android-ndk itself')]);
+  });
+
+  it('removes its own NDK line when it is the first line of the file', () => {
+    const own = 'implementation "com.bugsee:bugsee-android-ndk:1.0.0" // bugsee:ndk\nx()\n';
+    const off = ensureAppAppliesPlugin(own, null, () => undefined);
+    expect(off).not.toContain('bugsee-android-ndk:1.0.0');
+    expect(off).toContain('x()\n');
+  });
+
+  it('puts its NDK line at the indentation of the block\'s first entry, after other top-level code', () => {
+    const next = ensureAppAppliesPlugin("x()\ndependencies {\n  implementation 'a'\n}\n", '7.3.0');
+    expect(next).toContain(`dependencies {\n  ${ndk}\n  implementation 'a'\n}`);
+  });
+
+  it('names the open comment when the dependencies opener ends inside one', () => {
+    expect(() => ensureAppAppliesPlugin('dependencies { /*\n*/\n}\n', '7.3.0')).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 1: \`dependencies {\` ends inside a block comment or string that is still open, so the Bugsee NDK dependency cannot be added after it. Close the comment on that line, or declare \`implementation "com.bugsee:bugsee-android-ndk:7.3.0"\` yourself, then run expo prebuild again`,
+    );
+  });
+
+  it('names the open comment when the React plugin line ends inside one', () => {
+    expect(() => ensureAppAppliesPlugin('x()\napply plugin: "com.facebook.react" /*\n*/\n', null)).toThrow(
+      `${CANNOT_EDIT} android/app/build.gradle: line 2: \`apply plugin: "com.facebook.react"\` ends inside a block comment or string that is still open, so \`apply plugin: "com.bugsee.android.gradle"\` cannot be added after it. Close the comment on that line, or add \`apply plugin: "com.bugsee.android.gradle"\` yourself, then run expo prebuild again`,
+    );
+  });
+
+  it('takes a plugins block written without a space before its brace, and refuses one whose opener holds code', () => {
+    expect(ensureGradlePluginDeclared('plugins{\n    id("x") version "1"\n}\n', '4.0.8')).toBe(
+      "plugins{\n    id(\"x\") version \"1\"\n    id 'com.bugsee.android.gradle' version '4.0.8' apply false\n}\n",
+    );
+    expect(ensureGradlePluginDeclared('plugins   {\n  id("x") version "1"\n}\n', '4.0.8')).toBe(
+      "plugins   {\n  id(\"x\") version \"1\"\n  id 'com.bugsee.android.gradle' version '4.0.8' apply false\n}\n",
+    );
+    for (const source of ['def a = 1; plugins {\n    id("x") version "1"\n}\n', 'plugins { id("x") version "1"\n}\n']) {
+      expect(() => ensureGradlePluginDeclared(source, '4.0.8')).toThrow(`${CANNOT_EDIT} android/build.gradle: line 1:`);
+    }
   });
 });
