@@ -45,13 +45,11 @@ export function pluginEndpoint(value: unknown): string | undefined {
   if (!ENDPOINT_SHAPE.test(trimmed)) {
     throw new Error(ENDPOINT_NOT_VALID);
   }
-  let url: URL;
+  // The shape already means https and a host; the parser adds what a regular
+  // expression does not say, such as a port above 65535.
   try {
-    url = new URL(trimmed);
+    new URL(trimmed);
   } catch {
-    throw new Error(ENDPOINT_NOT_VALID);
-  }
-  if (url.protocol !== 'https:' || url.hostname === '') {
     throw new Error(ENDPOINT_NOT_VALID);
   }
   const base = trimmed.replace(/\/+$/, '');

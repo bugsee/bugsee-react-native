@@ -115,11 +115,7 @@ const withBugsee = (config, props) => {
             autoLaunchToken: token,
             existing: (name) => config_plugins_1.AndroidConfig.Manifest.getMainApplicationMetaDataValue(cfg.modResults, name) ?? undefined,
         });
-        const found = config_plugins_1.AndroidConfig.Manifest.getMainApplication(cfg.modResults);
-        if (!found && !token && Object.keys(edit.set).length === 0) {
-            return cfg;
-        }
-        const mainApplication = found ?? config_plugins_1.AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults);
+        const mainApplication = config_plugins_1.AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults);
         for (const name of edit.remove) {
             config_plugins_1.AndroidConfig.Manifest.removeMetaDataItemFromMainApplication(mainApplication, name);
         }

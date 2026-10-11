@@ -295,12 +295,24 @@ describe('withBugsee through the Expo mod compiler', () => {
     const SDK_META = 'android:name="com.bugsee.option.$$ENDPOINT"';
     const MARKER_META = 'android:name="com.bugsee.reactnative.sdk-endpoint"';
 
+    it('writes nothing for it when it is unset', async () => {
+      await prebuild({ appToken: ANDROID_TOKEN });
+      expect(read('infoPlist')).not.toContain('BugseeReactNativeEndpoint');
+      expect(read('manifest')).not.toContain('com.bugsee.reactnative');
+      expect(read('properties')).not.toContain('plugin.endpoint');
+    });
+
     it('writes it for both platforms\' uploads and their runtime', async () => {
-      await prebuild({ appToken: { ios: IOS_TOKEN, android: ANDROID_TOKEN }, endpoint: `${ENDPOINT}/` });
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        await prebuild({ appToken: { ios: IOS_TOKEN, android: ANDROID_TOKEN }, endpoint: `${ENDPOINT}/`, autoLaunch: true });
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
       expect(read('properties')).toBe(`app_token=${ANDROID_TOKEN}\nplugin.ndk.enabled=true\nplugin.endpoint=${ENDPOINT}\n`);
       expect(read('manifest')).toContain(`<meta-data ${RN_META} android:value="${ENDPOINT}"/>`);
-      // No auto-launch: the SDK's own manifest option is not written.
-      expect(read('manifest')).not.toContain(SDK_META);
+      expect(read('manifest')).toContain(`<meta-data ${SDK_META} android:value="${ENDPOINT}"/>`);
       expect(read('pbxproj')).toContain(`export BUGSEE_ENDPOINT='${ENDPOINT}'`);
       expect(read('scheme')).toContain(`export BUGSEE_ENDPOINT='${ENDPOINT}'&#10;`);
       expect(read('infoPlist')).toMatch(
