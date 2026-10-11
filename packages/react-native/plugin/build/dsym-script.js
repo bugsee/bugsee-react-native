@@ -9,7 +9,7 @@
 // the Expo plugin baked in comes first; the environment and credentials.json
 // follow it.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DSYM_POST_ACTION_SCRIPT = exports.TOKEN_GUARD = exports.RESOLVE_BUGSEE_CLI_PACKAGE = void 0;
+exports.DSYM_POST_ACTION_SCRIPT = exports.CLI_OUTPUT_FILTER = exports.TOKEN_GUARD = exports.RESOLVE_BUGSEE_CLI_PACKAGE = void 0;
 exports.resolveNativeCliPackageSource = resolveNativeCliPackageSource;
 exports.dsymPostActionScript = dsymPostActionScript;
 const locateBugseeCliPackage = [
@@ -59,6 +59,25 @@ exports.TOKEN_GUARD = [
     'esac',
 ];
 /**
+ * Relays bugsee-cli output with Xcode's `error:` diagnostics turned into
+ * `warning: bugsee: ...`, and returns the CLI's exit status. A failed upload
+ * must never read as a build error. Post-action output is not parsed for
+ * diagnostics, but every place that relays the CLI does this the same way
+ * (scripts/hermes-sourcemaps.js `diagnosticSafe`, and the bare example's
+ * scheme, which tests this shared text).
+ */
+exports.CLI_OUTPUT_FILTER = [
+    '# An "error:" line reads as a build error to Xcode; a failed upload is a warning.',
+    'run_cli() {',
+    '  CLI_OUT=$("$@" 2>&1)',
+    '  CLI_RC=$?',
+    '  if [ -n "$CLI_OUT" ]; then',
+    '    printf \'%s\\n\' "$CLI_OUT" | /usr/bin/sed -E \'s/^(.*: )?([Ff]atal [Ee]rror|[Ee]rror): (.*)$/warning: bugsee: \\3/\'',
+    '  fi',
+    '  return $CLI_RC',
+    '}',
+];
+/**
  * The Archive post-action script. `bakedToken` is the plugin's iOS token,
  * written into the script so an Archive from the Xcode GUI, which does not
  * inherit a shell environment, still has one. `bakedEndpoint`, the plugin's
@@ -77,6 +96,7 @@ function dsymPostActionScript(bakedToken, bakedEndpoint) {
         '  TOKEN=$(/usr/bin/plutil -extract ios raw -o - "$CREDS" 2>/dev/null || true)',
         'fi',
         ...exports.TOKEN_GUARD,
+        ...exports.CLI_OUTPUT_FILTER,
         'if [ -n "$TOKEN" ]; then',
         '  export BUGSEE_APP_TOKEN="$TOKEN"',
         'fi',
@@ -119,13 +139,13 @@ function dsymPostActionScript(bakedToken, bakedEndpoint) {
         '  if [ -n "$NATIVE_PKG" ]; then',
         '    NATIVE_BIN="$(dirname "$NATIVE_PKG")/bin/bugsee-cli"',
         '    if [ -x "$NATIVE_BIN" ]; then',
-        '      "$NATIVE_BIN" xcode post-action',
+        '      run_cli "$NATIVE_BIN" xcode post-action',
         '      exit $?',
         '    fi',
         '  fi',
         `  CLI_JS=${nodePrint(resolveBugseeCliJsSource)}`,
         '  if [ -n "$CLI_JS" ]; then',
-        '    "$NODE_BINARY" "$CLI_JS" xcode post-action',
+        '    run_cli "$NODE_BINARY" "$CLI_JS" xcode post-action',
         '    exit $?',
         '  fi',
         'fi',

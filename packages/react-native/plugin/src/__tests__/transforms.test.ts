@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 
 import { rewriteBundlePhase, rewriteProjectBundlePhase } from '../bundle-phase';
 import type { XcodeProjectLike } from '../bundle-phase';
-import { DSYM_POST_ACTION_SCRIPT, TOKEN_GUARD, dsymPostActionScript } from '../dsym-script';
+import { CLI_OUTPUT_FILTER, DSYM_POST_ACTION_SCRIPT, TOKEN_GUARD, dsymPostActionScript } from '../dsym-script';
 import {
   CANNOT_EDIT,
   CHANGED_SYMBOL_BLOCK_NOTE,
@@ -691,7 +691,7 @@ describe('Archive post-action token guard', () => {
   });
 
   it('is the same guard text the bare example scheme carries', () => {
-    expect(DSYM_POST_ACTION_SCRIPT).toContain(`${TOKEN_GUARD.join('\n')}\nif [ -n "$TOKEN" ]; then\n  export BUGSEE_APP_TOKEN="$TOKEN"`);
+    expect(DSYM_POST_ACTION_SCRIPT).toContain(`${TOKEN_GUARD.join('\n')}\n${CLI_OUTPUT_FILTER.join('\n')}\nif [ -n "$TOKEN" ]; then\n  export BUGSEE_APP_TOKEN="$TOKEN"`);
   });
 });
 

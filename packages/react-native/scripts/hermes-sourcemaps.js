@@ -32,6 +32,24 @@ function say(line) {
   process.stderr.write(`bugsee: ${line}\n`);
 }
 
+// Xcode reads a build-phase line shaped `error: ...` (optionally after a
+// `file:line: ` prefix) as a build error and fails the Archive, whatever the
+// script's exit status. bugsee-cli prints `error: upload failed: ...`, so its
+// output is relayed as `warning: bugsee: ...`: the failure stays visible and
+// the customer's build goes on. Mirrors CLI_OUTPUT_FILTER in
+// plugin/src/dsym-script.ts, which does the same in sh.
+const XCODE_ERROR_LINE = /^(?:.*: )?(?:[Ff]atal [Ee]rror|[Ee]rror): (.*)$/;
+
+function diagnosticSafe(text) {
+  return String(text)
+    .split('\n')
+    .map((line) => {
+      const match = XCODE_ERROR_LINE.exec(line);
+      return match ? `warning: bugsee: ${match[1]}` : line;
+    })
+    .join('\n');
+}
+
 function spawn(file, args, options) {
   return require('node:child_process').spawnSync(file, args, { encoding: 'utf8', ...options });
 }
@@ -379,8 +397,8 @@ function uploadComposedSourceMap({
     env,
     timeout: UPLOAD_TIMEOUT_MS,
   });
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.stdout) process.stdout.write(diagnosticSafe(result.stdout));
+  if (result.stderr) process.stderr.write(diagnosticSafe(result.stderr));
   if (result.error && !result.signal) {
     say(`source map upload failed (bugsee-cli did not start: ${result.error.code}); the app build continues`);
     return { status: 'failed', exitCode: null };
@@ -476,6 +494,7 @@ module.exports = {
   readDebugId,
   resolveUploadSettings,
   retargetSourceMappingUrl,
+  diagnosticSafe,
   uploadArgv,
   uploadComposedSourceMap,
   uploadDisabled,

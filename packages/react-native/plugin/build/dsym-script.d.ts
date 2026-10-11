@@ -13,6 +13,15 @@ export declare function resolveNativeCliPackageSource(packageJson: string): stri
  */
 export declare const TOKEN_GUARD: readonly string[];
 /**
+ * Relays bugsee-cli output with Xcode's `error:` diagnostics turned into
+ * `warning: bugsee: ...`, and returns the CLI's exit status. A failed upload
+ * must never read as a build error. Post-action output is not parsed for
+ * diagnostics, but every place that relays the CLI does this the same way
+ * (scripts/hermes-sourcemaps.js `diagnosticSafe`, and the bare example's
+ * scheme, which tests this shared text).
+ */
+export declare const CLI_OUTPUT_FILTER: readonly string[];
+/**
  * The Archive post-action script. `bakedToken` is the plugin's iOS token,
  * written into the script so an Archive from the Xcode GUI, which does not
  * inherit a shell environment, still has one. `bakedEndpoint`, the plugin's

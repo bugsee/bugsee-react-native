@@ -7,6 +7,7 @@ const path = require('node:path');
 
 const {
   UPLOAD_ARGV,
+  diagnosticSafe,
   main,
   resolveUploadSettings,
   uploadArgv,
@@ -207,6 +208,43 @@ describe('source map upload', () => {
     } finally {
       await stopStub(stub);
     }
+  });
+
+  // F12: Xcode parses `error:` lines in the bundle phase as build errors, so a
+  // failed upload would fail the Archive although the hook exits 0.
+  it('relays a failed upload as warnings, never as an Xcode error line', () => {
+    const spawn = jest.spyOn(cp, 'spawnSync').mockReturnValue({
+      status: 1,
+      stdout: 'error: from stdout\n',
+      stderr: 'error: upload failed: symbol metadata POST: connection refused\n/x/y.js:1:2: error: nested\n',
+    });
+    try {
+      const result = uploadComposedSourceMap({
+        composedMapPath: mapPath,
+        token: TOKEN,
+        endpoint: 'http://127.0.0.1:1',
+        appVersion: '1',
+        appBuild: '1',
+        cliPath: '/cli.js',
+        nodePath: '/node',
+      });
+      expect(result.status).toBe('failed');
+      const text = output.text();
+      expect(text).toContain('warning: bugsee: upload failed: symbol metadata POST: connection refused\n');
+      expect(text).toContain('warning: bugsee: from stdout\n');
+      expect(text).toContain('warning: bugsee: nested\n');
+      expect(text).not.toMatch(/^(.*: )?(fatal )?error:/im);
+    } finally {
+      spawn.mockRestore();
+    }
+  });
+
+  it('diagnosticSafe rewrites Xcode error lines only', () => {
+    expect(diagnosticSafe('error: a\nfatal error: b\n  x: error: c\nwarning: d\nan error: e\nok\n')).toBe(
+      'warning: bugsee: a\nwarning: bugsee: b\nwarning: bugsee: c\nwarning: d\nan error: e\nok\n',
+    );
+    expect(diagnosticSafe('no newline')).toBe('no newline');
+    expect(diagnosticSafe('')).toBe('');
   });
 
   it('skips with one line when no token is configured', () => {
