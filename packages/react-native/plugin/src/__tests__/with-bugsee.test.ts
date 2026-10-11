@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 
@@ -7,6 +7,8 @@ import { compileModsAsync } from '@expo/config-plugins';
 import type { ExpoConfig } from '@expo/config-types';
 
 import withBugsee, { APP_GRADLE_NOT_GROOVY, gradleNotGroovy, platformToken } from '../index';
+import { ENDPOINT_HAS_VERSION, ENDPOINT_NOT_VALID } from '../endpoint';
+import { SDK_ENDPOINT_KEPT } from '../manifest';
 import type { BugseePluginProps } from '../index';
 import { CANNOT_EDIT } from '../gradle';
 import type * as NativeVersions from '../native-versions';
@@ -45,7 +47,12 @@ const FILES = {
   manifest: 'android/app/src/main/AndroidManifest.xml',
   pbxproj: 'ios/HelloWorld.xcodeproj/project.pbxproj',
   scheme: 'ios/HelloWorld.xcodeproj/xcshareddata/xcschemes/HelloWorld.xcscheme',
+  infoPlist: 'ios/HelloWorld/Info.plist',
 };
+
+// The dead loopback endpoint the e2e uses, and one more synthetic host.
+const ENDPOINT = 'https://127.0.0.1:9';
+const OTHER_ENDPOINT = 'https://bugsee.example.com:8443/api';
 
 function baseConfig(): ExpoConfig {
   return {
@@ -281,6 +288,103 @@ describe('withBugsee through the Expo mod compiler', () => {
     // No settings, root, app, properties or manifest edit happened.
     expect(snapshot(projectRoot)).toEqual(broken);
     expect(readdirSync(join(projectRoot, 'android'))).not.toContain('bugsee.properties');
+  });
+
+  describe('the endpoint option (F6)', () => {
+    const RN_META = 'android:name="com.bugsee.reactnative.endpoint"';
+    const SDK_META = 'android:name="com.bugsee.option.$$ENDPOINT"';
+    const MARKER_META = 'android:name="com.bugsee.reactnative.sdk-endpoint"';
+
+    it('writes it for both platforms\' uploads and their runtime', async () => {
+      await prebuild({ appToken: { ios: IOS_TOKEN, android: ANDROID_TOKEN }, endpoint: `${ENDPOINT}/` });
+      expect(read('properties')).toBe(`app_token=${ANDROID_TOKEN}\nplugin.ndk.enabled=true\nplugin.endpoint=${ENDPOINT}\n`);
+      expect(read('manifest')).toContain(`<meta-data ${RN_META} android:value="${ENDPOINT}"/>`);
+      // No auto-launch: the SDK's own manifest option is not written.
+      expect(read('manifest')).not.toContain(SDK_META);
+      expect(read('pbxproj')).toContain(`export BUGSEE_ENDPOINT='${ENDPOINT}'`);
+      expect(read('scheme')).toContain(`export BUGSEE_ENDPOINT='${ENDPOINT}'&#10;`);
+      expect(read('infoPlist')).toMatch(
+        new RegExp(`<key>BugseeReactNativeEndpoint</key>\\s*<string>${ENDPOINT.replace(/\./g, '\\.')}/v2</string>`),
+      );
+    });
+
+    it('is written with the placeholder token too, which itself is not', async () => {
+      await prebuild({ appToken: PLACEHOLDER, endpoint: ENDPOINT });
+      expect(read('properties')).toBe(`plugin.endpoint=${ENDPOINT}\n`);
+      expect(read('manifest')).toContain(`<meta-data ${RN_META} android:value="${ENDPOINT}"/>`);
+      expect(read('infoPlist')).toContain(`<string>${ENDPOINT}/v2</string>`);
+    });
+
+    it('leaves the bundle phase alone when source maps do not upload, and still bakes the post-action', async () => {
+      await prebuild({ endpoint: ENDPOINT, uploadSourcemaps: false });
+      expect(read('pbxproj')).not.toContain('BUGSEE_ENDPOINT');
+      expect(read('scheme')).toContain(`export BUGSEE_ENDPOINT='${ENDPOINT}'`);
+    });
+
+    it('is replaced by a new value and removed again, byte for byte', async () => {
+      await prebuild({ appToken: ANDROID_TOKEN });
+      const without = snapshot(projectRoot);
+      await prebuild({ appToken: ANDROID_TOKEN, endpoint: ENDPOINT });
+      await prebuild({ appToken: ANDROID_TOKEN, endpoint: ENDPOINT });
+      const once = snapshot(projectRoot);
+      await prebuild({ appToken: ANDROID_TOKEN, endpoint: OTHER_ENDPOINT });
+      for (const file of ['properties', 'manifest', 'pbxproj', 'scheme', 'infoPlist'] as const) {
+        expect(read(file)).not.toContain(ENDPOINT);
+      }
+      expect(read('manifest').split(RN_META)).toHaveLength(2);
+      expect(read('pbxproj').match(/export BUGSEE_ENDPOINT=/g)).toHaveLength(1);
+      // One baked line; the credentials.json fallback's `export BUGSEE_ENDPOINT="$ENDPOINT"` is the other.
+      expect(read('scheme').match(/export BUGSEE_ENDPOINT='/g)).toHaveLength(1);
+      expect(read('infoPlist')).toContain(`<string>${OTHER_ENDPOINT}/v2</string>`);
+      await prebuild({ appToken: ANDROID_TOKEN, endpoint: ENDPOINT });
+      expect(snapshot(projectRoot)).toEqual(once);
+      await prebuild({ appToken: ANDROID_TOKEN });
+      expect(snapshot(projectRoot)).toEqual(without);
+    });
+
+    it('is the auto-launched SDK\'s endpoint with autoLaunch, marked as this plugin\'s, and removed with it', async () => {
+      await prebuild({ appToken: ANDROID_TOKEN, endpoint: ENDPOINT });
+      const noAuto = snapshot(projectRoot);
+      await prebuild({ appToken: ANDROID_TOKEN, endpoint: ENDPOINT, autoLaunch: true });
+      const manifest = read('manifest');
+      expect(manifest).toContain(`<meta-data ${SDK_META} android:value="${ENDPOINT}"/>`);
+      expect(manifest).toContain(`<meta-data ${MARKER_META} android:value="${ENDPOINT}"/>`);
+      await prebuild({ appToken: ANDROID_TOKEN, endpoint: OTHER_ENDPOINT, autoLaunch: true });
+      expect(read('manifest')).toContain(`<meta-data ${SDK_META} android:value="${OTHER_ENDPOINT}"/>`);
+      expect(read('manifest').split(SDK_META)).toHaveLength(2);
+      await prebuild({ appToken: ANDROID_TOKEN, endpoint: ENDPOINT });
+      // The token meta-data autoLaunch wrote stays, as it always has; every endpoint item is back as before.
+      const back = snapshot(projectRoot);
+      expect(back[FILES.manifest]).not.toContain(SDK_META);
+      expect(back[FILES.manifest]).not.toContain(MARKER_META);
+      expect({ ...back, [FILES.manifest]: '' }).toEqual({ ...noAuto, [FILES.manifest]: '' });
+    });
+
+    it('never touches an SDK endpoint the app wrote itself', async () => {
+      const path = join(projectRoot, FILES.manifest);
+      const own = '<meta-data android:name="com.bugsee.option.$$ENDPOINT" android:value="https://own.example.com"/>';
+      writeFileSync(path, readFileSync(path, 'utf8').replace(/(<application\b[^>]*>)/, (open: string) => `${open}\n    ${own}`));
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        await prebuild({ appToken: ANDROID_TOKEN, endpoint: ENDPOINT, autoLaunch: true }, ['android']);
+        expect(warn).toHaveBeenCalledWith(SDK_ENDPOINT_KEPT);
+      } finally {
+        warn.mockRestore();
+      }
+      const manifest = read('manifest');
+      expect(manifest).toContain(`<meta-data ${SDK_META} android:value="https://own.example.com"/>`);
+      expect(manifest).not.toContain(MARKER_META);
+      expect(manifest).toContain(`<meta-data ${RN_META} android:value="${ENDPOINT}"/>`);
+      await prebuild({ appToken: ANDROID_TOKEN }, ['android']);
+      expect(read('manifest')).toContain(`<meta-data ${SDK_META} android:value="https://own.example.com"/>`);
+      expect(read('manifest')).not.toContain(RN_META);
+    });
+
+    it('is refused at config time when it is not a plain https base', () => {
+      expect(() => withBugsee(baseConfig(), { endpoint: 'http://bugsee.example.com' })).toThrow(ENDPOINT_NOT_VALID);
+      expect(() => withBugsee(baseConfig(), { endpoint: "https://x.example.com/'; rm -rf /" })).toThrow(ENDPOINT_NOT_VALID);
+      expect(() => withBugsee(baseConfig(), { endpoint: 'https://bugsee.example.com/v2' })).toThrow(ENDPOINT_HAS_VERSION);
+    });
   });
 
   it('fails loudly without an iOS project or a shared scheme', async () => {

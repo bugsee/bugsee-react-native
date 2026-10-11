@@ -90,6 +90,39 @@ maps, and Archives upload their dSYMs, whenever a real token is set.
 A committed `ios/` (`project.pbxproj` and the shared scheme) or
 `android/bugsee.properties` carries the token.
 
+With the config plugin, no upload runs with a missing token or the placeholder token
+(`00000000-0000-4000-8000-000000000000`, the version and variant digits
+aside): the source-map upload, the Archive dSYM post-action and the Bugsee
+Gradle plugin's mapping, symbol and build uploads each skip, with one line in
+the build log (for the post-action: `warning: bugsee: dSYM upload skipped: the
+app token is the placeholder`), and the build or Archive carries on. For
+Android the plugin simply leaves the placeholder out of `bugsee.properties`.
+
+### Self-hosted, staging or regional endpoint
+
+```json
+["@bugsee/react-native", { "appToken": "<token>", "endpoint": "https://bugsee.example.com" }]
+```
+
+`endpoint` is the API base: `https://`, a host, an optional port and path, and
+no credentials, query, fragment or `/v2` (each reader adds the API version
+itself). Anything else fails the prebuild. Unset, the default, everything stays
+on Bugsee's production API. Set, it reaches every upload and the runtime:
+
+- Android: `plugin.endpoint` in `android/bugsee.properties`, for the Gradle
+  plugin's uploads and the source-map upload; `com.bugsee.reactnative.endpoint`
+  application meta-data for the SDK.
+- iOS: `BUGSEE_ENDPOINT` in the bundle phase (source maps) and in the Archive
+  dSYM post-action; `BugseeReactNativeEndpoint` in `Info.plist` for the SDK.
+- Runtime: `Bugsee.launch()` and `relaunch()` use it whenever their options
+  carry no `endpoint`; an `endpoint` you pass yourself wins.
+  `getLaunchOptions()` reads it back. With `autoLaunch` it is also written as
+  the auto-launched SDK's `com.bugsee.option.$$ENDPOINT`, unless your manifest
+  already has one, which is then left as it is.
+
+Each of these is the plugin's own, so a later prebuild with a new value
+replaces it, and one without `endpoint` removes it again.
+
 The plugin's Gradle edits never remove or change a line of your own code, on a
 clean or a `--no-clean` prebuild, however often it runs: it adds its own
 marked lines, replaces only those, and rewrites exactly one of yours,
@@ -321,7 +354,11 @@ and a failed upload warns without failing the build. Debug builds skip it.
 
 Native iOS frames come from the dSYMs. The config plugin adds an Archive
 post-action that uploads them with `bugsee-cli xcode post-action`; a bare app
-adds the same post-action to its scheme's Archive action.
+adds the same post-action to its scheme's Archive action (the example app's
+scheme, `examples/bare/ios/BareExample.xcodeproj`, is the reference). Keep its
+token check: without a real token the post-action must stop, exit 0, before
+it runs `bugsee-cli`, which would otherwise register the build and send the
+placeholder to your endpoint, or to production when none is set.
 
 ## Troubleshooting
 

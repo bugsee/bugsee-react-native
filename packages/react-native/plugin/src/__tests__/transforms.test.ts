@@ -1,13 +1,13 @@
 // Exact outputs of the plugin's text transforms on small inputs, edge cases
 // included. The broader tests assert on fragments; these pin every byte.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { rewriteBundlePhase, rewriteProjectBundlePhase } from '../bundle-phase';
 import type { XcodeProjectLike } from '../bundle-phase';
-import { DSYM_POST_ACTION_SCRIPT, dsymPostActionScript } from '../dsym-script';
+import { DSYM_POST_ACTION_SCRIPT, TOKEN_GUARD, dsymPostActionScript } from '../dsym-script';
 import {
   CANNOT_EDIT,
   CHANGED_SYMBOL_BLOCK_NOTE,
@@ -583,7 +583,8 @@ describe('Archive post-action script', () => {
       const run = () =>
         spawnSync('/bin/sh', ['-c', DSYM_POST_ACTION_SCRIPT], {
           encoding: 'utf8',
-          env: { PATH: '/usr/bin:/bin', BUGSEE_ENDPOINT: 'http://127.0.0.1:9', PROJECT_DIR: join(dir, 'ios'), NODE_BINARY: process.execPath },
+          // A real-shaped token: without one the script stops before resolving any CLI.
+          env: { PATH: '/usr/bin:/bin', BUGSEE_APP_TOKEN: 'tok-ios', BUGSEE_ENDPOINT: 'http://127.0.0.1:9', PROJECT_DIR: join(dir, 'ios'), NODE_BINARY: process.execPath },
         });
       expect(run().status).toBe(9);
 
@@ -613,7 +614,7 @@ describe('Archive post-action script', () => {
       writeFileSync(join(dir, 'ios/.xcode.env'), `export NODE_BINARY=${process.execPath}\n`);
       const result = spawnSync('/bin/sh', ['-c', DSYM_POST_ACTION_SCRIPT], {
         encoding: 'utf8',
-        env: { PATH: '/usr/bin:/bin', BUGSEE_ENDPOINT: 'http://127.0.0.1:9', PROJECT_DIR: join(dir, 'ios') },
+        env: { PATH: '/usr/bin:/bin', BUGSEE_APP_TOKEN: 'tok-ios', BUGSEE_ENDPOINT: 'http://127.0.0.1:9', PROJECT_DIR: join(dir, 'ios') },
       });
       // Node was found: the failure is the missing CLI, not a missing node.
       expect(result.status).toBe(1);
@@ -621,6 +622,76 @@ describe('Archive post-action script', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// F1 (campaign STAGING lane): the Expo post-action had no placeholder check,
+// so `xcode post-action` registered a build and uploaded dSYMs with the
+// placeholder, to the configured endpoint or to production.
+describe('Archive post-action token guard', () => {
+  const PLACEHOLDER = '00000000-0000-4000-8000-000000000000';
+  const SKIP_PLACEHOLDER = 'warning: bugsee: dSYM upload skipped: the app token is the placeholder\n';
+  const SKIP_NONE = 'warning: bugsee: dSYM upload skipped: no app token is configured\n';
+
+  /** A scratch app whose native and JS bugsee-cli both record argv and env. */
+  function run(script: string, env: Record<string, string>) {
+    const dir = mkdtempSync(join(tmpdir(), 'bugsee-dsym-guard-'));
+    try {
+      const seen = join(dir, 'cli-invoked');
+      const write = (file: string, text: string): void => {
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, text);
+      };
+      write(join(dir, 'node_modules/@bugsee/react-native/package.json'), '{"name":"@bugsee/react-native"}');
+      const cliDir = join(dir, 'node_modules/@bugsee/cli');
+      write(join(cliDir, 'package.json'), JSON.stringify({ name: '@bugsee/cli', bin: { 'bugsee-cli': 'bin/cli.js' } }));
+      write(
+        join(cliDir, 'bin/cli.js'),
+        `require('fs').writeFileSync(${JSON.stringify(seen)}, 'js ' + process.argv.slice(2).join(' ') + ' token=' + process.env.BUGSEE_APP_TOKEN);\n`,
+      );
+      for (const name of ['@bugsee/cli-darwin-arm64', '@bugsee/cli-darwin-x64']) {
+        const nativeDir = join(cliDir, 'node_modules', name);
+        write(join(nativeDir, 'package.json'), JSON.stringify({ name }));
+        write(join(nativeDir, 'bin/bugsee-cli'), `#!/bin/sh\nprintf 'native %s token=%s' "$*" "$BUGSEE_APP_TOKEN" > '${seen}'\n`);
+        chmodSync(join(nativeDir, 'bin/bugsee-cli'), 0o755);
+      }
+      mkdirSync(join(dir, 'ios'));
+      const result = spawnSync('/bin/sh', ['-c', script], {
+        encoding: 'utf8',
+        env: { PATH: '/usr/bin:/bin', BUGSEE_ENDPOINT: 'http://127.0.0.1:9', PROJECT_DIR: join(dir, 'ios'), NODE_BINARY: process.execPath, ...env },
+      });
+      return { ...result, invoked: existsSync(seen) ? readFileSync(seen, 'utf8') : null };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it.each([
+    ['a baked placeholder', dsymPostActionScript(PLACEHOLDER), {}, SKIP_PLACEHOLDER],
+    ['a baked placeholder, even with a real token in the environment', dsymPostActionScript(PLACEHOLDER), { BUGSEE_APP_TOKEN: 'tok-env' }, SKIP_PLACEHOLDER],
+    ['the placeholder in BUGSEE_APP_TOKEN', DSYM_POST_ACTION_SCRIPT, { BUGSEE_APP_TOKEN: PLACEHOLDER }, SKIP_PLACEHOLDER],
+    ['the placeholder in BUGSEE_TOKEN_IOS', DSYM_POST_ACTION_SCRIPT, { BUGSEE_TOKEN_IOS: PLACEHOLDER }, SKIP_PLACEHOLDER],
+    ['the placeholder without dashes, upper case variant digits', DSYM_POST_ACTION_SCRIPT, { BUGSEE_APP_TOKEN: '000000000000F000C000000000000000' }, SKIP_PLACEHOLDER],
+    ['the placeholder with a trailing newline', DSYM_POST_ACTION_SCRIPT, { BUGSEE_APP_TOKEN: `${PLACEHOLDER}\r\n` }, SKIP_PLACEHOLDER],
+    ['an empty token', DSYM_POST_ACTION_SCRIPT, { BUGSEE_APP_TOKEN: '' }, SKIP_NONE],
+    ['no token at all', DSYM_POST_ACTION_SCRIPT, {}, SKIP_NONE],
+  ])('%s: exit 0, one warning, no bugsee-cli', (_name, script, env, message) => {
+    const result = run(script, env);
+    expect(result.invoked).toBeNull();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(message);
+    expect(result.stderr).toBe('');
+  });
+
+  it('runs bugsee-cli for a real token, and for one digit off the placeholder', () => {
+    expect(run(dsymPostActionScript('tok-baked'), {}).invoked).toMatch(/^native xcode post-action token=tok-baked$/);
+    const near = '00000000-0000-4000-8000-000000000010';
+    expect(run(DSYM_POST_ACTION_SCRIPT, { BUGSEE_APP_TOKEN: near }).invoked).toBe(`native xcode post-action token=${near}`);
+    expect(run(DSYM_POST_ACTION_SCRIPT, { BUGSEE_APP_TOKEN: `1${PLACEHOLDER.slice(1)}` }).invoked).toMatch(/^native /);
+  });
+
+  it('is the same guard text the bare example scheme carries', () => {
+    expect(DSYM_POST_ACTION_SCRIPT).toContain(`${TOKEN_GUARD.join('\n')}\nif [ -n "$TOKEN" ]; then\n  export BUGSEE_APP_TOKEN="$TOKEN"`);
   });
 });
 

@@ -4,11 +4,12 @@
 // resolved from that root, @bugsee/cli from the wrapper directory (a nested
 // install is not visible from the app root), and the native optional
 // dependency from the CLI directory. Otherwise the JS entry comes from the
-// CLI package bin field. Tokens are exported only when non-empty. A token the
-// Expo plugin baked in comes first; the environment and credentials.json
+// CLI package bin field. Without a real token (none, or the placeholder) the
+// script stops, exit 0, before any of that (TOKEN_GUARD). A token or endpoint
+// the Expo plugin baked in comes first; the environment and credentials.json
 // follow it.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DSYM_POST_ACTION_SCRIPT = exports.RESOLVE_BUGSEE_CLI_PACKAGE = void 0;
+exports.DSYM_POST_ACTION_SCRIPT = exports.TOKEN_GUARD = exports.RESOLVE_BUGSEE_CLI_PACKAGE = void 0;
 exports.resolveNativeCliPackageSource = resolveNativeCliPackageSource;
 exports.dsymPostActionScript = dsymPostActionScript;
 const locateBugseeCliPackage = [
@@ -35,13 +36,39 @@ function tokenSource(bakedToken) {
     return [`TOKEN='${bakedToken}'`, 'if [ -z "$TOKEN" ]; then', '  TOKEN="$BUGSEE_APP_TOKEN"', 'fi'];
 }
 /**
+ * Stops the post-action, with exit 0 and one warning, when there is no real
+ * app token. `xcode post-action` registers the build and uploads dSYMs to the
+ * configured endpoint, or to the CLI's own default, production, when none is
+ * set; the placeholder token must reach neither. The rule is
+ * `isPlaceholderToken` (properties.ts) in POSIX sh: every dash goes first, and
+ * whitespace too, because the CLI trims the token before it builds the URL.
+ * The character lists are spelled out: a bracket range can follow the locale.
+ * Shared with the bare example's scheme (scripts/__tests__/dsym-scheme-post-action.test.ts).
+ */
+exports.TOKEN_GUARD = [
+    'TOKEN_CHECK=$(printf \'%s\' "$TOKEN" | /usr/bin/tr -d \' \\t\\r\\n-\')',
+    'if [ -z "$TOKEN_CHECK" ]; then',
+    '  echo "warning: bugsee: dSYM upload skipped: no app token is configured"',
+    '  exit 0',
+    'fi',
+    'case "$TOKEN_CHECK" in',
+    '  000000000000[0123456789abcdefABCDEF]000[0123456789abcdefABCDEF]000000000000000)',
+    '    echo "warning: bugsee: dSYM upload skipped: the app token is the placeholder"',
+    '    exit 0',
+    '    ;;',
+    'esac',
+];
+/**
  * The Archive post-action script. `bakedToken` is the plugin's iOS token,
  * written into the script so an Archive from the Xcode GUI, which does not
- * inherit a shell environment, still has one.
+ * inherit a shell environment, still has one. `bakedEndpoint`, the plugin's
+ * validated `endpoint` option, is exported the same way, ahead of the
+ * environment and credentials.json; without it the CLI keeps its default.
  */
-function dsymPostActionScript(bakedToken) {
+function dsymPostActionScript(bakedToken, bakedEndpoint) {
     return [
         'CREDS="${PROJECT_DIR}/../credentials.json"',
+        ...(bakedEndpoint ? [`export BUGSEE_ENDPOINT='${bakedEndpoint}'`] : []),
         ...tokenSource(bakedToken),
         'if [ -z "$TOKEN" ]; then',
         '  TOKEN="$BUGSEE_TOKEN_IOS"',
@@ -49,6 +76,7 @@ function dsymPostActionScript(bakedToken) {
         'if [ -z "$TOKEN" ] && [ -f "$CREDS" ]; then',
         '  TOKEN=$(/usr/bin/plutil -extract ios raw -o - "$CREDS" 2>/dev/null || true)',
         'fi',
+        ...exports.TOKEN_GUARD,
         'if [ -n "$TOKEN" ]; then',
         '  export BUGSEE_APP_TOKEN="$TOKEN"',
         'fi',

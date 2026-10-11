@@ -347,11 +347,14 @@ function uploadComposedSourceMap({
     say('source map upload skipped: Debug configuration (set BUGSEE_UPLOAD_DEBUG_SOURCEMAPS=true to upload)');
     return { status: 'skipped', reason: 'debug' };
   }
-  if (!token) {
+  // Checked trimmed: bugsee-cli trims the token before it builds the URL, so
+  // a padded placeholder would otherwise reach the endpoint.
+  const tokenCheck = typeof token === 'string' ? token.trim() : '';
+  if (!tokenCheck) {
     say('source map upload skipped: no app token is configured');
     return { status: 'skipped', reason: 'no-token' };
   }
-  if (PLACEHOLDER_TOKEN.test(token.replace(/-/g, ''))) {
+  if (PLACEHOLDER_TOKEN.test(tokenCheck.replace(/-/g, ''))) {
     say('source map upload skipped: the app token is the placeholder');
     return { status: 'skipped', reason: 'placeholder' };
   }

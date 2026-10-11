@@ -124,6 +124,27 @@ describe('source map upload', () => {
       );
     });
 
+    it('does not touch the network for a placeholder padded with whitespace, or a blank token', () => {
+      for (const [token, reason] of [
+        [` ${PLACEHOLDER}\n`, 'placeholder'],
+        [' \t\n', 'no-token'],
+      ]) {
+        const result = uploadComposedSourceMap({
+          composedMapPath: mapPath,
+          token,
+          endpoint: `http://127.0.0.1:${stub.port}`,
+          appVersion: '1',
+          appBuild: '1',
+        });
+        expect(result).toEqual({ status: 'skipped', reason });
+      }
+      expect(readLog(logPath)).toEqual([]);
+      expect(output.text()).toBe(
+        'bugsee: source map upload skipped: the app token is the placeholder\n' +
+          'bugsee: source map upload skipped: no app token is configured\n',
+      );
+    });
+
     it('does not touch the network when the upload is off', () => {
       const result = uploadComposedSourceMap({
         composedMapPath: mapPath,

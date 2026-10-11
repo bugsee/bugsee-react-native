@@ -9,6 +9,17 @@ fi
 if [ -z "$TOKEN" ] && [ -f "$CREDS" ]; then
   TOKEN=$(/usr/bin/plutil -extract ios raw -o - "$CREDS" 2>/dev/null || true)
 fi
+TOKEN_CHECK=$(printf '%s' "$TOKEN" | /usr/bin/tr -d ' \t\r\n-')
+if [ -z "$TOKEN_CHECK" ]; then
+  echo "warning: bugsee: dSYM upload skipped: no app token is configured"
+  exit 0
+fi
+case "$TOKEN_CHECK" in
+  000000000000[0123456789abcdefABCDEF]000[0123456789abcdefABCDEF]000000000000000)
+    echo "warning: bugsee: dSYM upload skipped: the app token is the placeholder"
+    exit 0
+    ;;
+esac
 if [ -n "$TOKEN" ]; then
   export BUGSEE_APP_TOKEN="$TOKEN"
 fi
