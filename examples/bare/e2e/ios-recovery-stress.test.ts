@@ -35,7 +35,7 @@ import { dirname, join } from 'node:path';
 import { terminateIosApp } from './bundles';
 import { iosTarget } from './device';
 import { parseIterations, parseList } from './flow-config';
-import { IOS_SDK_LINE, ON_IOS, awaitBundles, bridgeLine, clearBundles, describeDevice, listBundles, must, report, startDeviceLog, startRun, stopDeviceLog } from './harness';
+import { IOS_SDK_LINE, ON_IOS, UNHANDLED_COMPLETED, awaitBundles, bridgeLine, clearBundles, completedBy, describeDevice, listBundles, must, report, startDeviceLog, startRun, stopDeviceLog } from './harness';
 import { crashQueue, holdsBuildRecord, holdsReport, prefsState, wipeAllButPreferences } from './ios-container';
 import { type DeviceLog, deviceTerminationSignal } from './scenario';
 
@@ -114,7 +114,8 @@ describeStress(`iOS crash recovery stress on the iPhone (N-17): ${ITERATIONS} it
       row.crashNonce = crash.scenario.nonce;
       if (kind === 'jsfatal') {
         const sent = must(await log!.waitFor(bridgeLine('exception unhandled sent'), 30_000, crash.launched.index), 'the fatal stored', crash.start);
-        must(await log!.waitFor(bridgeLine('exception unhandled completed'), 15_000, sent.index), 'the fatal completed', crash.start);
+        const completed = must(await log!.waitFor(UNHANDLED_COMPLETED, 15_000, sent.index), 'the fatal completed', crash.start);
+        row.fatalCompletedBy = completedBy(completed);
         must(await log!.waitFor(/BUGSEE_E2E exc app-handler fatal=true/, 10_000, sent.index), "RN's fatal handler", crash.start);
         await terminateIosApp();
         row.stop = 'terminateIosApp (SIGTERM)';

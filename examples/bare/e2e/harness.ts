@@ -177,6 +177,18 @@ export function bridgeLine(rest: string): RegExp {
   return new RegExp(ON_IOS ? `\\] BugseeRN ${rest}` : `BugseeRN\\s*:\\s*${rest}`);
 }
 
+/**
+ * The wrapper's `exception unhandled completed by=sdk|deadline` line: `sdk`
+ * when the SDK finished storing the JS fatal, `deadline` when the wrapper's
+ * own 1.5 s deadline fired first (iOS; Android always says `sdk`).
+ */
+export const UNHANDLED_COMPLETED = bridgeLine('exception unhandled completed by=(sdk|deadline)\\b');
+
+/** `sdk`, `deadline`, or `unknown` for a line without the field. */
+export function completedBy(line: LogLine): string {
+  return /exception unhandled completed by=(sdk|deadline)\b/.exec(line.text)?.[1] ?? 'unknown';
+}
+
 export function escape(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

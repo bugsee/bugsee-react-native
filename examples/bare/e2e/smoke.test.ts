@@ -38,11 +38,13 @@ import {
   awaitBundles,
   bridgeLine,
   clearBundles,
+  completedBy,
   describeDevice,
   must,
   report,
   startRun,
   stopApp,
+  UNHANDLED_COMPLETED,
 } from './harness';
 import { COLOUR_TOLERANCE, colourOf, colourPixels } from './media';
 import { beginRetainingSuite, endRetainingSuite } from './observe';
@@ -366,15 +368,18 @@ describeDevice(`the smoke set on ${TARGET_NAME}`, () => {
   describeSmoke('S7', 'a JS fatal, recovered at the next launch', () => {
     let nonce: string;
     let crashes: PulledBundle[];
+    let completedByValue = 'unknown';
 
     beforeAll(async () => {
       const run = await runTo('smoke-fatal', 'fatal throwing');
       nonce = run.scenario.nonce;
-      must(
-        await log.waitFor(bridgeLine('exception unhandled completed'), 30_000, run.launched.index),
-        'the JS fatal stored (exception unhandled completed)',
+      const completed = must(
+        await log.waitFor(UNHANDLED_COMPLETED, 30_000, run.launched.index),
+        'the JS fatal stored (exception unhandled completed by=sdk|deadline)',
         run.start,
       );
+      completedByValue = completedBy(completed);
+      report('S7 exception unhandled completed', `by=${completedByValue}`);
       await stopApp();
       // The next launch files what the last one stored (iOS), or finds it
       // already filed (Android).
@@ -389,6 +394,12 @@ describeDevice(`the smoke set on ${TARGET_NAME}`, () => {
     });
 
     it('S7 is one unhandled crash named ReactNativeWebException', () => {
+      if (crashes.length !== 1 && completedByValue === 'deadline') {
+        throw new Error(
+          `S7 found ${crashes.length} crash reports, and the wrapper logged "exception unhandled completed by=deadline": ` +
+            'its own 1.5 s deadline fired, not the SDK finishing the store (F-2), so the fatal may never have been stored.',
+        );
+      }
       expect(crashes).toHaveLength(1);
       const crash = crashOf(crashes[0]!)!;
       expect(String((crash.exception as { name?: unknown }).name)).toMatch(/ReactNativeWebException$/);

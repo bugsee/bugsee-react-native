@@ -51,8 +51,12 @@ describeIphone(`a native signal crash recovered on ${TARGET_NAME}`, () => {
 
   afterAll(() => endRetainingSuite(log));
 
-  async function crashAndRecover(kind: 'segv' | 'abort'): Promise<KindOutcome> {
-    const cached = outcomes.get(kind);
+  async function crashAndRecover(
+    kind: 'segv' | 'abort',
+    recoverScenario: 'native-crash-recover' | 'native-crash-recover-late' = 'native-crash-recover',
+  ): Promise<KindOutcome> {
+    const key = `${kind}/${recoverScenario}`;
+    const cached = outcomes.get(key);
     if (cached !== undefined) {
       return cached;
     }
@@ -76,7 +80,7 @@ describeIphone(`a native signal crash recovered on ${TARGET_NAME}`, () => {
     report(`${kind} crash queue before the relaunch`, await iosCrashQueueFiles());
     report(`${kind} died`, { pid, signal, consoleEnd: crash.launch!.output.slice(-3).map(line => line.text.trim()) });
 
-    const recover = await startRun('native-crash-recover');
+    const recover = await startRun(recoverScenario);
     const bundles = await awaitBundles(1, 90_000);
     // Let a late handler edit land before reading the bundle again.
     await new Promise(resolve => setTimeout(resolve, 5_000));
@@ -88,7 +92,7 @@ describeIphone(`a native signal crash recovered on ${TARGET_NAME}`, () => {
       report(`${kind} crash capture`, JSON.stringify(crashOf(bundle) ?? {}).slice(0, 1500));
     }
     const outcome = { crash, signal, stillRunning, recover, crashes, handlerLines };
-    outcomes.set(kind, outcome);
+    outcomes.set(key, outcome);
     return outcome;
   }
 
@@ -118,8 +122,25 @@ describeIphone(`a native signal crash recovered on ${TARGET_NAME}`, () => {
     assertRecovered(await crashAndRecover('segv'), SIGNALS.segv.name);
   });
 
+  // The handler above finishes within a few ms of the dispatch. Natural
+  // timing decides this case on a given host: 0 of 84 labels lost in one
+  // session, 16 of 20 in another on the same iPhone XS (campaign-xs-triage).
+  // https://github.com/bugsee/bugsee-cocoa/issues/220
   it("the recovery handler's labels reach the segv crash report", async () => {
     assertLabelled(await crashAndRecover('segv'));
+  });
+
+  // Known SDK bug, pinned (bugsee-cocoa #220, 7.0.0-beta5 c015f6ba2): a
+  // recovered report is exported from a copy re-loaded off disk a few ms after
+  // the handlers are dispatched, and the late-completion re-persist misses
+  // it. A handler that waits 20 ms before `setLabels` loses the labels, 20 of
+  // 20 on the XS, with the completion far inside the deadline. The labels
+  // assertion is the correct behaviour; this passes (it.failing) while the
+  // bug stands and fails once the SDK keeps the edit, which is the cue to
+  // make it a plain `it`.
+  // Filed: https://github.com/bugsee/bugsee-cocoa/issues/220
+  it.failing("a recovery handler that waits 20 ms: its labels reach the segv crash report (bugsee-cocoa #220)", async () => {
+    assertLabelled(await crashAndRecover('segv', 'native-crash-recover-late'));
   });
 
   it("crashNative('abort') kills the app with SIGABRT", async () => {

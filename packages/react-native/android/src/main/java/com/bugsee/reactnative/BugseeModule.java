@@ -525,7 +525,8 @@ public class BugseeModule extends NativeBugseeSpec
                 ExceptionBridge.logUnhandled(PROD_EXCEPTION_SDK, payloadJson);
                 Log.i(TAG, "exception unhandled sent bytes="
                         + (payloadJson == null ? 0 : payloadJson.length()));
-                Log.i(TAG, "exception unhandled completed");
+                // No wrapper deadline on Android: the SDK call returned.
+                Log.i(TAG, "exception unhandled completed by=sdk");
             } finally {
                 promise.resolve(null);
             }
