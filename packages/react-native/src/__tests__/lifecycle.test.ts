@@ -62,6 +62,22 @@ describe('launch', () => {
     expect(native.launch).not.toHaveBeenCalled();
   });
 
+  // The native modules reject a blank token with E_TOKEN (implementation plan,
+  // Task 1.3). The JS check runs first on both platforms, so it must carry
+  // the same code and message, or a caller matching on `.code` sees nothing.
+  it.each(['', '   ', undefined, null, 42])(
+    'rejects the unusable token %p with code E_TOKEN and the native message',
+    async (token) => {
+      const rejection = Bugsee.launch(token as unknown as string);
+      await expect(rejection).rejects.toBeInstanceOf(Error);
+      await expect(rejection).rejects.toMatchObject({
+        code: 'E_TOKEN',
+        message: 'Bugsee.launch requires a non-empty app token',
+      });
+      expect(native.launch).not.toHaveBeenCalled();
+    },
+  );
+
   it('surfaces a native rejection to the caller', async () => {
     native.launch.mockRejectedValue(new Error('boom'));
     await expect(Bugsee.launch('tok')).rejects.toThrow('boom');
