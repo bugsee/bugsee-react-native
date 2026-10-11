@@ -21,7 +21,7 @@
  * endpoint (no airplane mode). NSLog text is contiguous:
  * `BugseeRN exception handled sent bytes=` /
  * `BugseeRN exception unhandled sent bytes=` /
- * `BugseeRN exception unhandled completed`.
+ * `BugseeRN exception unhandled completed by=sdk|deadline`.
  *
  * Markers, from scenarios/exceptions.tsx:
  *   BUGSEE_E2E exc handled-sent / rejection-sent / prelaunch-sent nonce=<n>
@@ -67,6 +67,7 @@ import {
   type Run,
   awaitBundles,
   bridgeLine,
+  UNHANDLED_COMPLETED,
   clearBundles,
   listBundles,
   TARGET_NAME,
@@ -467,7 +468,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       );
       completed = must(
         await log.waitFor(
-          bridgeLine('exception unhandled completed'),
+          UNHANDLED_COMPLETED,
           10_000,
           sent.index,
         ),
@@ -1025,7 +1026,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       );
       completed = must(
         await log.waitFor(
-          bridgeLine('exception unhandled completed'),
+          UNHANDLED_COMPLETED,
           10_000,
           sent.index,
         ),
@@ -1195,7 +1196,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       );
       must(
         await log.waitFor(
-          bridgeLine('exception unhandled completed'),
+          UNHANDLED_COMPLETED,
           15_000,
           sent.index,
         ),

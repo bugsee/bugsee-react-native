@@ -17,6 +17,9 @@
 #import <BugseeRNSupport/BGSRNMainThread.h>
 #import <BugseeRNSupport/BGSRNWrapper.h>
 #import <BugseeRNSupport/BGSRNWrapperChannelHolder.h>
+#include <atomic>
+#include <memory>
+
 #import <BugseeRNSupport/BGSRNStatusMapper.h>
 #import <BugseeRNSupport/BGSRNSecureRectangles.h>
 #import <BugseeRNSupport/BGSRNReactRootOriginTracker.h>
@@ -1363,14 +1366,20 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   BGSRNRunOnMain(^{
     NSUInteger bytes = [payloadJson lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
     NSLog(@"BugseeRN exception unhandled sent bytes=%lu", (unsigned long)bytes);
+    // `by=sdk` when the SDK's completion settled this, `by=deadline` when the
+    // wrapper's own deadline did. Observability only: it changes no timing.
+    auto sdkCompleted = std::make_shared<std::atomic<bool>>(false);
     dispatch_block_t done =
         BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs, dispatch_get_main_queue(), ^{
-          NSLog(@"BugseeRN exception unhandled completed");
+          NSLog(@"BugseeRN exception unhandled completed by=%s", sdkCompleted->load() ? "sdk" : "deadline");
           resolve(nil);
         });
     [Bugsee logUnhandledException:BGSRNReactNativeExceptionName
                            reason:payloadJson
-                       completion:done];
+                       completion:^{
+                         sdkCompleted->store(true);
+                         done();
+                       }];
   });
 }
 

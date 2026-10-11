@@ -14,7 +14,7 @@
  */
 import { type PulledBundle, crashOf } from './bundles';
 import { iosTarget } from './device';
-import { ON_IOS, type Run, TARGET_NAME, awaitBundles, bridgeLine, describeDevice, must, report, startRun, stopApp } from './harness';
+import { ON_IOS, type Run, TARGET_NAME, UNHANDLED_COMPLETED, awaitBundles, describeDevice, must, report, startRun, stopApp } from './harness';
 import { beginRetainingSuite, endRetainingSuite } from './observe';
 import { type DeviceLog } from './scenario';
 
@@ -51,7 +51,7 @@ describeDevice(`testJsCrash() on ${TARGET_NAME}`, () => {
       // Stored first: the bridge says when the SDK has the fatal on disk
       // (exceptions.test.ts exc-fatal), and only then is the app stopped.
       must(
-        await log.waitFor(bridgeLine('exception unhandled completed'), 20_000, run.launched.index),
+        await log.waitFor(UNHANDLED_COMPLETED, 20_000, run.launched.index),
         'the JS fatal stored (exception unhandled completed)',
         run.start,
       );

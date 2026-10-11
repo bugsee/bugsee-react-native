@@ -25,6 +25,7 @@ export const NATIVE_SCENARIOS = [
   'native-crash-abort',
   'native-crash-observe',
   'native-crash-recover',
+  'native-crash-recover-late',
 ] as const;
 
 export type NativeScenario = (typeof NATIVE_SCENARIOS)[number];
@@ -48,6 +49,9 @@ function needsHandler(scenario: NativeScenario): boolean {
   return isCrashScenario(scenario) || scenario === 'native-crash-observe';
 }
 
+/** `native-crash-recover-late`: the handler's edit lands this long after the dispatch (bugsee-cocoa #220). */
+const LATE_RECOVER_DELAY_MS = 20;
+
 /**
  * `native-crash-recover` (iOS signal crash, ios-native-crash.test.ts): the
  * relaunch's handler labels the recovered crash with this run's nonce in
@@ -55,10 +59,14 @@ function needsHandler(scenario: NativeScenario): boolean {
  * offers, then says so. The labels in the crash bundle are what the test
  * asserts: the edits a recovery handler makes must reach the report.
  */
-function recoverHandler(nonce: string): BugseeReportHandler {
+function recoverHandler(nonce: string, delayMs = 0): BugseeReportHandler {
   const label = async (phase: string, report: BugseeReport) => {
     mark(`recover ${phase} type=${report.type} id=${report.id} nonce=${nonce}`);
     if (report.type === 'crash') {
+      if (delayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        mark(`recover ${phase} delayed ${delayMs}ms id=${report.id} nonce=${nonce}`);
+      }
       await report.setLabels(['e2e-recovered', nonce]);
       mark(`recover ${phase} labels-set id=${report.id} nonce=${nonce}`);
     }
@@ -113,6 +121,11 @@ export function installNativeHandler(scenario: NativeScenario, nonce = ''): void
     mark(`recover handler installed nonce=${nonce}`);
     return;
   }
+  if (scenario === 'native-crash-recover-late') {
+    Bugsee.setReportHandler(recoverHandler(nonce, LATE_RECOVER_DELAY_MS));
+    mark(`recover handler installed nonce=${nonce} delay=${LATE_RECOVER_DELAY_MS}ms`);
+    return;
+  }
   if (!needsHandler(scenario)) {
     return;
   }
@@ -125,7 +138,11 @@ export function runNativeScenario(scenario: NativeScenario, nonce: string): void
     runSmoke(nonce).catch((error: unknown) => mark(`smoke threw ${nameOf(error)}`));
     return;
   }
-  if (scenario === 'native-crash-observe' || scenario === 'native-crash-recover') {
+  if (
+    scenario === 'native-crash-observe' ||
+    scenario === 'native-crash-recover' ||
+    scenario === 'native-crash-recover-late'
+  ) {
     return;
   }
   if (isCrashScenario(scenario)) {
