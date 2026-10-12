@@ -114,6 +114,9 @@ crash sent at the next launch; see below). It shows how Bugsee looks on a
 realistic flow: card fields are blacked out, and every screen has a **Report a
 problem** button.
 
+The **Report handler** preset you pick on Reports is saved and installed before
+every launch, so it also runs on a crash recovered at the next start.
+
 Crash buttons ask for confirmation. A crash report is sent when Bugsee launches
 at the next start: turn on Setup → Auto-launch first (or tap Home → Launch after
 reopening), then reopen the app.

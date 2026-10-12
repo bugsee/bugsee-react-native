@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Platform } from 'react-native';
 import Bugsee, { Status } from '@bugsee/react-native';
 import type { LifecycleEvent } from '@bugsee/react-native';
-import { DEFAULT_CONFIG, loadConfig, saveConfig } from './config';
+import { DEFAULT_CONFIG, loadConfig, saveConfig, setConfigPatcher } from './config';
 import type { SavedConfig } from './config';
-import { buildLaunchOptions, launchWith } from './launch';
+import { launchWith, relaunchWith } from './launch';
 import { SessionContext } from './SessionContext';
 import type { Session } from './SessionContext';
 import { isAppToken } from './token';
@@ -57,6 +56,7 @@ export function SessionProvider({ children }: { children?: ReactNode }) {
     setConfigState(c);
     await saveConfig(c);
   }, []);
+  useEffect(() => setConfigPatcher((p) => setConfig({ ...configRef.current, ...p })), [setConfig]);
 
   const run = useCallback(async (fn: () => Promise<boolean>) => {
     try { return await fn(); } finally { await refreshStatus(); }
@@ -70,7 +70,7 @@ export function SessionProvider({ children }: { children?: ReactNode }) {
     return ok;
   }), [run, setConfig, push]);
   const relaunch = useCallback(
-    () => run(() => Bugsee.relaunch(buildLaunchOptions(configRef.current, Platform.OS as 'ios' | 'android'))),
+    () => run(() => relaunchWith(configRef.current)),
     [run],
   );
   const stop = useCallback(() => run(() => Bugsee.stop()), [run]);

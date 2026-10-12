@@ -45,3 +45,11 @@ test('keeps valid nested values, drops invalid ones, returns fresh copies', asyn
   expect(e).not.toBe(DEFAULT_CONFIG);
   expect(e.common).not.toBe(DEFAULT_CONFIG.common);
 });
+test.each([['labels'], ['attachFile'], ['drop'], ['none']])('keeps a saved report handler %s', async (h) => {
+  await AsyncStorage.setItem(CONFIG_KEY, JSON.stringify({ version: 1, token: 't', reportHandler: h }));
+  expect((await loadConfig()).reportHandler).toBe(h);
+});
+test.each([['bogus'], [5], [null]])('normalises a malformed report handler %j to none', async (h) => {
+  await AsyncStorage.setItem(CONFIG_KEY, JSON.stringify({ version: 1, token: 't', reportHandler: h }));
+  expect((await loadConfig()).reportHandler).toBe('none');
+});

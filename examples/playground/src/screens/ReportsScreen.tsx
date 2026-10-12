@@ -2,7 +2,9 @@ import { useEffect } from 'react';
 import Bugsee, { IssueSeverity } from '@bugsee/react-native';
 import type { BugseeCreatedReport } from '@bugsee/react-native';
 import * as Feedback from '@bugsee/react-native-feedback';
-import { REPORT_HANDLER_PRESETS } from '../reportHandlers';
+import { installReportHandler } from '../reportHandlers';
+import { patchConfig } from '../session/config';
+import type { ReportHandlerChoice } from '../session/config';
 import { ActionButton } from '../ui/ActionButton';
 import type { Action } from '../ui/action';
 import { useLog } from '../ui/ResultLog';
@@ -118,6 +120,13 @@ const createdActions: Action[] = [
   },
 ];
 
+/** Installs the preset now and saves it, so the next launch installs it before the SDK recovers a crash. */
+const chooseHandler = async (choice: ReportHandlerChoice) => {
+  installReportHandler(choice);
+  await patchConfig({ reportHandler: choice });
+  return `${choice} (saved; installed before every launch)`;
+};
+
 const handlerActions: Action[] = [
   {
     id: 'handler-labels',
@@ -125,28 +134,28 @@ const handlerActions: Action[] = [
     call: 'Bugsee.setReportHandler(REPORT_HANDLER_PRESETS.labels)',
     expect: 'The next report carries label from-handler, including a crash recovered at the next launch',
     knownIssue: 'cocoa-220',
-    run: () => Bugsee.setReportHandler(REPORT_HANDLER_PRESETS.labels),
+    run: () => chooseHandler('labels'),
   },
   {
     id: 'handler-attach',
     label: 'Handler: attach file',
     call: 'Bugsee.setReportHandler(REPORT_HANDLER_PRESETS.attachFile)',
-    expect: 'handler.txt attached',
-    run: () => Bugsee.setReportHandler(REPORT_HANDLER_PRESETS.attachFile),
+    expect: 'handler.txt attached, including to a crash recovered at the next launch',
+    run: () => chooseHandler('attachFile'),
   },
   {
     id: 'handler-drop',
     label: 'Redact (no drop API in 7.x)',
     call: 'Bugsee.setReportHandler(REPORT_HANDLER_PRESETS.drop)',
     expect: 'Summary [dropped by handler], attributes cleared',
-    run: () => Bugsee.setReportHandler(REPORT_HANDLER_PRESETS.drop),
+    run: () => chooseHandler('drop'),
   },
   {
     id: 'handler-clear',
     label: 'Handler: clear',
     call: 'Bugsee.setReportHandler(null)',
-    expect: 'Reports are no longer modified',
-    run: () => Bugsee.setReportHandler(null),
+    expect: 'Reports are no longer modified, from the next launch on too',
+    run: () => chooseHandler('none'),
   },
 ];
 

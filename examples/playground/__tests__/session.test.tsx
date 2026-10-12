@@ -2,7 +2,8 @@ import { act, render, screen, waitFor } from '@testing-library/react-native';
 import { Text } from 'react-native';
 import Bugsee from '@bugsee/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../src/session/config';
+import { DEFAULT_CONFIG, loadConfig, patchConfig, saveConfig } from '../src/session/config';
+import { REPORT_HANDLER_PRESETS } from '../src/reportHandlers';
 import { SessionProvider } from '../src/session/SessionProvider';
 import { useSession } from '../src/session/SessionContext';
 
@@ -95,4 +96,27 @@ test('everLaunched is persisted only after a successful launch', async () => {
   await act(async () => { expect(await latest.launch()).toBe(true); });
   expect((await loadConfig()).everLaunched).toBe(true);
   expect(latest.config.everLaunched).toBe(true);
+});
+
+test('auto-launch installs the saved report handler before launch', async () => {
+  await saveConfig({ ...DEFAULT_CONFIG, autoLaunch: true, token: VALID, everLaunched: true, reportHandler: 'labels' });
+  await render(<SessionProvider><Probe /></SessionProvider>);
+  await waitFor(() => expect(probe().startsWith('true')).toBe(true));
+  expect(B.setReportHandler).toHaveBeenCalledWith(REPORT_HANDLER_PRESETS.labels);
+  expect(B.setReportHandler.mock.invocationCallOrder[0]).toBeLessThan(B.launch.mock.invocationCallOrder[0]);
+});
+
+test('Home launch and relaunch install the saved handler first; patchConfig goes through the provider', async () => {
+  await saveConfig({ ...DEFAULT_CONFIG, token: VALID });
+  await render(<SessionProvider><Probe /></SessionProvider>);
+  await waitFor(() => expect(probe().startsWith('true')).toBe(true));
+  await act(async () => { await patchConfig({ reportHandler: 'drop' }); });
+  expect(latest.config.reportHandler).toBe('drop');
+  expect((await loadConfig()).reportHandler).toBe('drop');
+  await act(async () => { await latest.launch(); });
+  expect(B.setReportHandler).toHaveBeenLastCalledWith(REPORT_HANDLER_PRESETS.drop);
+  expect(B.setReportHandler.mock.invocationCallOrder.at(-1)!).toBeLessThan(B.launch.mock.invocationCallOrder[0]);
+  B.setReportHandler.mockClear();
+  await act(async () => { await latest.relaunch(); });
+  expect(B.setReportHandler.mock.invocationCallOrder[0]).toBeLessThan(B.relaunch.mock.invocationCallOrder[0]);
 });

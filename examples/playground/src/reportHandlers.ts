@@ -1,4 +1,6 @@
+import Bugsee from '@bugsee/react-native';
 import type { BugseeReportHandler } from '@bugsee/react-native';
+import type { ReportHandlerChoice } from './session/config';
 
 export const HANDLER_ATTACHMENT = 'handler.txt';
 
@@ -27,3 +29,15 @@ export const REPORT_HANDLER_PRESETS: Record<'labels' | 'attachFile' | 'drop', Bu
     },
   },
 };
+
+/** The handler for a saved choice; `null` for 'none'. */
+export const reportHandlerFor = (choice: ReportHandlerChoice): BugseeReportHandler | null =>
+  choice === 'none' ? null : REPORT_HANDLER_PRESETS[choice];
+
+/**
+ * Installs the saved handler. Called before every launch: handlers live only in JS memory, and one set after
+ * launch() misses the reports the SDK recovers at that launch (a crash from the previous run).
+ */
+export function installReportHandler(choice: ReportHandlerChoice): void {
+  Bugsee.setReportHandler(reportHandlerFor(choice));
+}

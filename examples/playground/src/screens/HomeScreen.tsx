@@ -3,7 +3,7 @@ import { Platform, Pressable, StyleSheet, Text } from 'react-native';
 import Bugsee, { Status } from '@bugsee/react-native';
 import { useRouter } from 'expo-router';
 import { loadConfig } from '../session/config';
-import { launchWith, buildLaunchOptions } from '../session/launch';
+import { launchWith, relaunchWith } from '../session/launch';
 import { useSession } from '../session/SessionContext';
 import { ActionButton, describeError } from '../ui/ActionButton';
 import type { Action } from '../ui/action';
@@ -25,7 +25,7 @@ export const homeActions: Action[] = [
     label: 'Relaunch with saved options',
     call: 'Bugsee.relaunch(options)',
     expect: 'Lifecycle shows a stop and a new launch; new options in effect',
-    run: async () => Bugsee.relaunch(buildLaunchOptions(await loadConfig(), Platform.OS as 'ios' | 'android')),
+    run: async () => relaunchWith(await loadConfig()),
   },
   {
     id: 'stop',
