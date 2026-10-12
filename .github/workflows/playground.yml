@@ -83,7 +83,8 @@ jobs:
   ios:
     name: playground ios simulator build
     timeout-minutes: 60
-    runs-on: macos-15
+    # Expo 57's expo-modules-jsi does not compile with Xcode 26.3, the newest on macos-15.
+    runs-on: macos-26
     env:
       # expo-modules-jsi (Expo SDK 57) declares `swift-tools-version: 6.2` in apple/Package.swift, and its
       # "Build ExpoModulesJSI xcframework" phase builds that package: Swift 6.2 ships with Xcode 26.0.
