@@ -30,6 +30,7 @@ import {
 } from './gradle';
 import { endpointMetaData, manifestAutoLaunchToken } from './manifest';
 import { loadNativeVersions } from './native-versions';
+import { insertSymbolicatePrebuilt, removeSymbolicatePrebuilt } from './podfile';
 import { bugseePropertiesText } from './properties';
 import { insertDsymPostAction, removeDsymPostAction } from './scheme';
 
@@ -65,6 +66,14 @@ export interface BugseePluginProps {
    * `uploadSourcemaps`.
    */
   uploadSymbols?: boolean;
+  /**
+   * Defaults off. `true` makes `pod install` download React Native's dSYMs
+   * (RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1, written as a marked line at the
+   * top of ios/Podfile), so React frames in iOS crashes symbolicate. It costs
+   * an extra download at pod install, and a failure there can fail the
+   * install. Off removes the line again; React frames then stay raw addresses.
+   */
+  symbolicateReactNativeFrameworks?: boolean;
   /**
    * Defaults on. Writes `plugin.ndk.enabled=true` for a real token and adds
    * `com.bugsee:bugsee-android-ndk`; the Bugsee Gradle plugin then uploads
@@ -178,6 +187,7 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   const iosToken = platformToken(options.appToken, 'ios');
   const uploadSourcemaps = options.uploadSourcemaps !== false;
   const uploadSymbols = options.uploadSymbols !== false;
+  const symbolicateReactNative = options.symbolicateReactNativeFrameworks === true;
   const endpoint = pluginEndpoint(options.endpoint);
   const versions = loadNativeVersions(__dirname);
   const edits: GradleEdits = {
@@ -281,6 +291,21 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
         if (next !== xml) {
           await writeFile(schemePath, next);
         }
+      }
+      // The React dSYMs the post-action uploads exist only when pod install
+      // downloads them; see podfile.ts.
+      const podfilePath = join(cfg.modRequest.platformProjectRoot, 'Podfile');
+      let podfile: string | undefined;
+      try {
+        podfile = await readFile(podfilePath, 'utf8');
+      } catch {
+        podfile = undefined;
+      }
+      if (podfile !== undefined) {
+        await writeFile(
+          podfilePath,
+          symbolicateReactNative ? insertSymbolicatePrebuilt(podfile) : removeSymbolicatePrebuilt(podfile),
+        );
       }
       return cfg;
     },

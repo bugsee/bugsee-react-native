@@ -180,6 +180,7 @@ tasks.matching { task ->
             }
             cmd.addAll([
                 "--platform", "android",
+                "--project-root", bundleTask.root.get().asFile.absolutePath,
                 "--properties", bugseeProperties.absolutePath,
                 "--upload-sourcemaps", bugseeUploadSourcemaps,
                 // Not Elvis: versionCode 0 is a valid code.

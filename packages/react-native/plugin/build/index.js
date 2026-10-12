@@ -14,6 +14,7 @@ const endpoint_1 = require("./endpoint");
 const gradle_1 = require("./gradle");
 const manifest_1 = require("./manifest");
 const native_versions_1 = require("./native-versions");
+const podfile_1 = require("./podfile");
 const properties_1 = require("./properties");
 const scheme_1 = require("./scheme");
 /** The Info.plist key the iOS native module reads `endpoint` from. */
@@ -71,6 +72,7 @@ const withBugsee = (config, props) => {
     const iosToken = platformToken(options.appToken, 'ios');
     const uploadSourcemaps = options.uploadSourcemaps !== false;
     const uploadSymbols = options.uploadSymbols !== false;
+    const symbolicateReactNative = options.symbolicateReactNativeFrameworks === true;
     const endpoint = (0, endpoint_1.pluginEndpoint)(options.endpoint);
     const versions = (0, native_versions_1.loadNativeVersions)(__dirname);
     const edits = {
@@ -159,6 +161,19 @@ const withBugsee = (config, props) => {
                 if (next !== xml) {
                     await (0, promises_1.writeFile)(schemePath, next);
                 }
+            }
+            // The React dSYMs the post-action uploads exist only when pod install
+            // downloads them; see podfile.ts.
+            const podfilePath = (0, node_path_1.join)(cfg.modRequest.platformProjectRoot, 'Podfile');
+            let podfile;
+            try {
+                podfile = await (0, promises_1.readFile)(podfilePath, 'utf8');
+            }
+            catch {
+                podfile = undefined;
+            }
+            if (podfile !== undefined) {
+                await (0, promises_1.writeFile)(podfilePath, symbolicateReactNative ? (0, podfile_1.insertSymbolicatePrebuilt)(podfile) : (0, podfile_1.removeSymbolicatePrebuilt)(podfile));
             }
             return cfg;
         },

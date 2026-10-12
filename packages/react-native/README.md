@@ -360,6 +360,46 @@ token check: without a real token the post-action must stop, exit 0, before
 it runs `bugsee-cli`, which would otherwise register the build and send the
 placeholder to your endpoint, or to production when none is set.
 
+### React Native framework dSYMs (iOS)
+
+React Native's prebuilt `React.xcframework` ships without dSYMs, so after an
+Archive the `React` frames in a crash stay raw addresses (`React 0x10271dbc4`)
+while your own and Bugsee's frames symbolicate. **Leaving this off means React
+Native frames on iOS show as raw addresses.** React Native downloads the dSYMs
+only when `pod install` runs with `RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1`:
+
+```sh
+cd ios && RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1 pod install
+```
+
+With it set, the Archive's `dSYMs/` folder includes React's dSYMs and the
+post-action uploads them with the rest. A bare app has to export it wherever
+it runs `pod install`, including CI. With the Expo config plugin it is opt-in:
+
+```json
+["@bugsee/react-native", { "appToken": "…", "symbolicateReactNativeFrameworks": true }]
+```
+
+`expo prebuild` then adds `ENV['RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS'] ||= '1'`
+to the top of `ios/Podfile` (Expo's Podfile reads only a fixed set of
+`Podfile.properties.json` keys, so a property cannot do it), and a later
+prebuild without the option removes the line again. A value you export
+yourself, such as `0`, wins.
+
+The trade-off: `pod install` makes an extra download (React Native's dSYM
+tarballs). React Native fetches them in the same step as the prebuilt
+framework itself, so a failed download drops the prebuilt React for that
+install, and a failure while unpacking the dSYMs aborts `pod install`. That is
+why the plugin leaves it off unless you ask. Apps that build React Native from
+source already get its dSYMs.
+
+Uploaded source maps list project files relative to the project root
+(`/scenarios/staging.ts`), as Expo's do. The bundle phase and the Gradle hook
+rewrite absolute `sources` before upload: under the project root they become
+`/path/from/root`, and outside it (linked workspace packages in a monorepo)
+`../path/from/root`. Entries that are already relative are left as they are. The map on disk is not changed and symbolication does not depend on
+the strings.
+
 ## Troubleshooting
 
 **`fmt`: "call to consteval function … is not a constant expression" (iOS,

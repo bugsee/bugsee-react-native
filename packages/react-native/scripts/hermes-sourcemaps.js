@@ -13,6 +13,16 @@
  * upload runs only when it is switched on and a real app token is configured;
  * otherwise one line says why it skipped. A failed upload warns and the build
  * continues. The token reaches the CLI through its environment, never argv.
+ *
+ * Before upload, `sources` that are absolute paths under the project root are
+ * rewritten to root-relative ones with a leading slash (`/scenarios/a.ts`),
+ * the shape Expo's maps already have, so the dashboard never shows the build
+ * machine's directory layout. Absolute paths outside the root (workspace
+ * packages in a monorepo) become `../`-relative to it; entries that are
+ * already relative, and paths on another Windows drive, are left as they are.
+ * The rewrite goes to a
+ * temporary copy; the map on disk is untouched. Symbolication reads the map's
+ * `mappings` and the debug id, never the `sources` strings.
  */
 
 const fs = require('node:fs');
@@ -331,6 +341,40 @@ function resolveUploadSettings({ platform, propertiesPath, credentialsPath, env 
   };
 }
 
+function isAbsoluteSource(source) {
+  return path.posix.isAbsolute(source) || path.win32.isAbsolute(source);
+}
+
+/**
+ * Root-relative form of one `sources` entry, or the entry itself when it is
+ * not an absolute path (or has no relative form).
+ */
+function relativizeSource(source, projectRoot) {
+  if (typeof source !== 'string' || !isAbsoluteSource(source)) return source;
+  const flavor = /^(?:[A-Za-z]:|\\\\)/.test(source) ? path.win32 : path.posix;
+  const relative = flavor.relative(flavor.resolve(projectRoot), flavor.resolve(source));
+  // Another drive on Windows: there is no relative form.
+  if (!relative || flavor.isAbsolute(relative)) return source;
+  const parts = relative.split(/[\\/]/);
+  // Inside the root: `/scenarios/a.ts`, as Expo writes it. Outside (a linked
+  // workspace package): `../packages/x/src/a.ts`, still free of the machine's
+  // absolute layout.
+  return parts[0] === '..' ? parts.join('/') : `/${parts.join('/')}`;
+}
+
+/** Returns the map text with `sources` made project-relative, or the text itself if nothing changed. */
+function relativizeSourceMap(mapText, projectRoot) {
+  const map = JSON.parse(mapText);
+  if (!Array.isArray(map.sources) || !projectRoot) return mapText;
+  let changed = false;
+  map.sources = map.sources.map((source) => {
+    const next = relativizeSource(source, projectRoot);
+    if (next !== source) changed = true;
+    return next;
+  });
+  return changed ? JSON.stringify(map) : mapText;
+}
+
 const PLACEHOLDER_TOKEN = /^0{12}[0-9a-f]0{3}[0-9a-f]0{15}$/i;
 
 function readMapDebugId(mapPath) {
@@ -356,6 +400,7 @@ function uploadComposedSourceMap({
   appBuild,
   cliPath,
   nodePath,
+  projectRoot,
 }) {
   if (!enabled) {
     say('source map upload skipped: uploadSourcemaps is off');
@@ -393,10 +438,31 @@ function uploadComposedSourceMap({
   }
   const env = { ...process.env, BUGSEE_APP_TOKEN: token };
   if (endpoint) env.BUGSEE_ENDPOINT = endpoint;
-  const result = spawn(nodePath || process.execPath, [cli, ...uploadArgv(composedMapPath, appVersion, appBuild)], {
-    env,
-    timeout: UPLOAD_TIMEOUT_MS,
-  });
+  let stage = null;
+  let uploadPath = composedMapPath;
+  try {
+    const original = fs.readFileSync(composedMapPath, 'utf8');
+    const rewritten = relativizeSourceMap(original, projectRoot);
+    if (rewritten !== original) {
+      stage = fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-upload-'));
+      uploadPath = path.join(stage, path.basename(composedMapPath));
+      fs.writeFileSync(uploadPath, rewritten);
+    }
+  } catch (err) {
+    say(`could not make source map paths project-relative (${err.message}); uploading the map as it is`);
+    if (stage) remove(stage);
+    stage = null;
+    uploadPath = composedMapPath;
+  }
+  let result;
+  try {
+    result = spawn(nodePath || process.execPath, [cli, ...uploadArgv(uploadPath, appVersion, appBuild)], {
+      env,
+      timeout: UPLOAD_TIMEOUT_MS,
+    });
+  } finally {
+    if (stage) remove(stage);
+  }
   if (result.stdout) process.stdout.write(diagnosticSafe(result.stdout));
   if (result.stderr) process.stderr.write(diagnosticSafe(result.stderr));
   if (result.error && !result.signal) {
@@ -428,6 +494,7 @@ function uploadFromArgs(args) {
     endpoint: settings.endpoint,
     appVersion: args['app-version'],
     appBuild: args['app-build'],
+    projectRoot: args['project-root'],
   });
 }
 
@@ -492,6 +559,8 @@ module.exports = {
   main,
   preserveDirFor,
   readDebugId,
+  relativizeSource,
+  relativizeSourceMap,
   resolveUploadSettings,
   retargetSourceMappingUrl,
   diagnosticSafe,

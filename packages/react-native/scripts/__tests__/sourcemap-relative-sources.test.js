@@ -1,0 +1,138 @@
+'use strict';
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { relativizeSource, relativizeSourceMap, uploadComposedSourceMap } = require('../hermes-sourcemaps');
+
+// Synthetic, UUID-shaped, never a real app.
+const TOKEN = '3f2a9c1e-0000-4abc-8def-5ca1ab1e0002';
+const ROOT = '/build/machine/app';
+
+describe('relativizeSource', () => {
+  it('makes an absolute path under the root project-relative with a leading slash', () => {
+    expect(relativizeSource(`${ROOT}/scenarios/staging.ts`, ROOT)).toBe('/scenarios/staging.ts');
+    expect(relativizeSource(`${ROOT}/node_modules/react-native/index.js`, `${ROOT}/`)).toBe(
+      '/node_modules/react-native/index.js',
+    );
+  });
+
+  it('keeps entries that are already relative', () => {
+    expect(relativizeSource('src/app.js', ROOT)).toBe('src/app.js');
+    expect(relativizeSource('./app.js', ROOT)).toBe('./app.js');
+    expect(relativizeSource('webpack://x/app.js', ROOT)).toBe('webpack://x/app.js');
+  });
+
+  it('makes absolute paths outside the root ../-relative, including siblings that share a prefix', () => {
+    expect(relativizeSource('/build/machine/packages/x/a.js', ROOT)).toBe('../packages/x/a.js');
+    expect(relativizeSource(`${ROOT}-other/lib.js`, ROOT)).toBe('../app-other/lib.js');
+    expect(relativizeSource('/elsewhere/lib.js', ROOT)).toBe('../../../elsewhere/lib.js');
+  });
+
+  it('does not mistake a colon inside a POSIX path for a drive', () => {
+    expect(relativizeSource(`${ROOT}/a:b/c.ts`, ROOT)).toBe('/a:b/c.ts');
+  });
+
+  it('handles UNC paths', () => {
+    expect(relativizeSource('\\\\host\\share\\app\\a.ts', '\\\\host\\share\\app')).toBe('/a.ts');
+  });
+
+  it('handles Windows paths', () => {
+    expect(relativizeSource('C:\\proj\\app\\src\\a.ts', 'C:\\proj\\app')).toBe('/src/a.ts');
+    expect(relativizeSource('D:\\other\\a.ts', 'C:\\proj\\app')).toBe('D:\\other\\a.ts');
+  });
+
+  it('passes non-strings through', () => {
+    expect(relativizeSource(null, ROOT)).toBeNull();
+  });
+});
+
+describe('relativizeSourceMap', () => {
+  it('returns the text itself when nothing changes, there is no root or no sources', () => {
+    const text = JSON.stringify({ version: 3, sources: ['a.js', 'rel/b.js'], mappings: '' });
+    expect(relativizeSourceMap(text, ROOT)).toBe(text);
+    const absolute = JSON.stringify({ version: 3, sources: [`${ROOT}/a.js`] });
+    expect(relativizeSourceMap(absolute, '')).toBe(absolute);
+    expect(relativizeSourceMap(absolute, undefined)).toBe(absolute);
+    const none = JSON.stringify({ version: 3 });
+    expect(relativizeSourceMap(none, ROOT)).toBe(none);
+  });
+
+  it('rewrites sources and keeps every other field', () => {
+    const map = {
+      version: 3,
+      sources: [`${ROOT}/a.ts`, 'b.ts', '/build/machine/c.ts'],
+      names: ['n'],
+      mappings: 'AAAA;CCCC',
+      debug_id: 'id',
+      debugId: 'id',
+    };
+    expect(JSON.parse(relativizeSourceMap(JSON.stringify(map), ROOT))).toEqual({
+      ...map,
+      sources: ['/a.ts', 'b.ts', '../c.ts'],
+    });
+  });
+});
+
+describe('uploadComposedSourceMap with a project root', () => {
+  let dir;
+  let captured;
+  let cli;
+  let stderr;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-relsrc-'));
+    captured = path.join(dir, 'captured.json');
+    cli = path.join(dir, 'fake-cli.js');
+    // Copies the map argument (the last one) so the test can read what was uploaded.
+    fs.writeFileSync(
+      cli,
+      `const fs = require('fs'); const p = process.argv[process.argv.length - 1];
+fs.writeFileSync(${JSON.stringify(captured)}, JSON.stringify({ p, text: fs.readFileSync(p, 'utf8') }));`,
+    );
+    stderr = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stderr.mockRestore();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function upload(sources, projectRoot) {
+    const mapPath = path.join(dir, 'main.jsbundle.composed.map');
+    const original = JSON.stringify({ version: 3, sources, names: [], mappings: 'AAAA', debug_id: 'd', debugId: 'd' });
+    fs.writeFileSync(mapPath, original);
+    const result = uploadComposedSourceMap({
+      composedMapPath: mapPath,
+      token: TOKEN,
+      appVersion: '1',
+      appBuild: '1',
+      cliPath: cli,
+      projectRoot,
+    });
+    return { result, original, mapPath, seen: JSON.parse(fs.readFileSync(captured, 'utf8')) };
+  }
+
+  it('uploads project-relative sources under the same file name and leaves the map on disk alone', () => {
+    const { result, original, mapPath, seen } = upload([`${ROOT}/scenarios/staging.ts`, 'rel.ts'], ROOT);
+    expect(result.status).toBe('uploaded');
+    expect(JSON.parse(seen.text).sources).toEqual(['/scenarios/staging.ts', 'rel.ts']);
+    expect(JSON.parse(seen.text).mappings).toBe('AAAA');
+    expect(JSON.parse(seen.text).debug_id).toBe('d');
+    expect(path.basename(seen.p)).toBe('main.jsbundle.composed.map');
+    expect(seen.p).not.toBe(mapPath);
+    expect(fs.readFileSync(mapPath, 'utf8')).toBe(original);
+    expect(fs.existsSync(seen.p)).toBe(false);
+  });
+
+  it('uploads the original file when nothing needs rewriting', () => {
+    const { seen, mapPath } = upload(['rel.ts'], ROOT);
+    expect(seen.p).toBe(mapPath);
+  });
+
+  it('uploads the original file when no root is given', () => {
+    const { seen, mapPath } = upload([`${ROOT}/a.ts`], undefined);
+    expect(seen.p).toBe(mapPath);
+  });
+});

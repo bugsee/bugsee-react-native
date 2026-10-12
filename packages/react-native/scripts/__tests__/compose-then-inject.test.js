@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { parseComposeArgv, run } = require('../compose-then-inject');
+const { parseComposeArgv, projectRootFrom, run } = require('../compose-then-inject');
 const { readLog, startStub, stopStub } = require('./fixtures/stub');
 const { useScratchCwd } = require('./fixtures/scratch-cwd');
 
@@ -98,6 +98,13 @@ fs.writeFileSync(out, JSON.stringify({ version: 3, mappings: 'CCCC' }));
       output: 'out.map',
     });
     expect(parseComposeArgv(['p.map'])).toEqual({ packager: 'p.map', compiler: undefined, output: undefined });
+  });
+
+  it('takes the project root from PROJECT_ROOT, else the parent of the ios folder', () => {
+    expect(projectRootFrom({ PROJECT_ROOT: '/p', SRCROOT: '/p/ios' })).toBe('/p');
+    expect(projectRootFrom({ SRCROOT: '/p/ios' })).toBe('/p');
+    expect(projectRootFrom({ PROJECT_DIR: '/q/ios' })).toBe('/q');
+    expect(projectRootFrom({})).toBeUndefined();
   });
 
   it('composes, injects, recompiles with the default Hermes args and stamps the composed map', () => {

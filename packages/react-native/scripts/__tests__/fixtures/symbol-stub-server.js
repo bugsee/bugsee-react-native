@@ -90,15 +90,17 @@ const server = http.createServer((req, res) => {
       entry.bytes = body.length;
       entry.entries = zipEntries(body).map(({ name, method, content }) => {
         let debugId = null;
+        let sources = null;
         if (content) {
           try {
             const map = JSON.parse(content.toString('utf8'));
             debugId = map.debug_id ?? null;
+            sources = map.sources ?? null;
           } catch {
             debugId = null;
           }
         }
-        return { name, method, debugId };
+        return { name, method, debugId, sources };
       });
       record(entry);
       res.writeHead(200);

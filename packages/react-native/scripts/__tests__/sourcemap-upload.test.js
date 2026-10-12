@@ -184,6 +184,39 @@ describe('source map upload', () => {
       expect(log[0].json).toMatchObject({ uuid: DEBUG_ID, version: '2.0', build: '7' });
       expect(output.text()).not.toContain(TOKEN);
     });
+
+    it('main upload makes absolute sources project-relative with --project-root', () => {
+      fs.writeFileSync(
+        mapPath,
+        JSON.stringify({
+          version: 3,
+          sources: [`${dir}/src/App.tsx`, 'rel.ts'],
+          names: [],
+          mappings: 'AAAA',
+          debug_id: DEBUG_ID,
+          debugId: DEBUG_ID,
+        }),
+      );
+      const properties = path.join(dir, 'bugsee.properties');
+      fs.writeFileSync(properties, `app_token=${TOKEN}\nplugin.endpoint=http://127.0.0.1:${stub.port}\n`);
+      main([
+        'upload',
+        '--composed',
+        mapPath,
+        '--platform',
+        'android',
+        '--properties',
+        properties,
+        '--app-version',
+        '2.0',
+        '--app-build',
+        '7',
+        '--project-root',
+        dir,
+      ]);
+      const put = readLog(logPath).find((entry) => entry.method === 'PUT');
+      expect(put.entries[0].sources).toEqual(['/src/App.tsx', 'rel.ts']);
+    });
   });
 
   it('warns and returns when the server refuses, without throwing', async () => {

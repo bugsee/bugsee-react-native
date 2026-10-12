@@ -33,6 +33,7 @@ abstract class FakeBundle extends DefaultTask {
     @Internal abstract DirectoryProperty getJsSourceMapsDir()
     @Internal abstract DirectoryProperty getJsIntermediateSourceMapsDir()
     @Internal abstract DirectoryProperty getReactNativeDir()
+    @Internal abstract DirectoryProperty getRoot()
     @Internal abstract ListProperty<String> getNodeExecutableAndArgs()
     @Internal abstract Property<Boolean> getHermesEnabled()
     @Internal abstract ListProperty<String> getHermesFlags()
@@ -85,6 +86,7 @@ def bundle = { String variant, boolean hermes, String bundleDir = null, String h
         t.jsSourceMapsDir.set(layout.buildDirectory.dir("generated/sourcemaps/react/\${variant}"))
         t.jsIntermediateSourceMapsDir.set(layout.buildDirectory.dir("intermediates/sourcemaps/react/\${variant}"))
         t.reactNativeDir.set(layout.projectDirectory.dir('rn'))
+        t.root.set(layout.projectDirectory)
         t.nodeExecutableAndArgs.set([findProperty('nodePath').toString()])
         t.hermesEnabled.set(hermes)
         t.hermesFlags.set(['-O', '-output-source-map'])
@@ -240,6 +242,7 @@ function argOf(argv, name) {
     expect(free.filter((_, i) => free[i - 1] === '--hermes-arg')).toEqual(['-O', '-output-source-map']);
     expect(argOf(free, '--upload-sourcemaps')).toBe('false');
     expect(argOf(free, '--platform')).toBe('android');
+    expect(argOf(free, '--project-root')).toBe(dir);
     expect(argOf(free, '--properties')).toBe(path.join(dir, 'bugsee.properties'));
     expect(fs.readdirSync(preserve('freeRelease'))).toEqual([]);
     expect(fs.readdirSync(assets('freeRelease'))).toEqual(['index.android.bundle']);
