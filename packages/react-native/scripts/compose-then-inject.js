@@ -34,6 +34,13 @@ function parseComposeArgv(argv) {
   return { packager: positional[0], compiler: positional[1], output };
 }
 
+/** React Native's own default: PROJECT_ROOT, else the parent of the ios folder. */
+function projectRootFrom(env) {
+  if (env.PROJECT_ROOT) return env.PROJECT_ROOT;
+  const ios = env.SRCROOT || env.PROJECT_DIR;
+  return ios ? require('node:path').resolve(ios, '..') : undefined;
+}
+
 function fail(message) {
   process.stderr.write(`${message}\n`);
   return 1;
@@ -93,12 +100,13 @@ function run(argv, env) {
       endpoint: settings.endpoint,
       appVersion: env.MARKETING_VERSION,
       appBuild: env.CURRENT_PROJECT_VERSION,
+      projectRoot: projectRootFrom(env),
     });
   }
   return 0;
 }
 
-module.exports = { parseComposeArgv, run };
+module.exports = { parseComposeArgv, projectRootFrom, run };
 
 if (require.main === module) {
   process.exitCode = run(process.argv.slice(2), process.env);

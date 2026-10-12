@@ -208,6 +208,7 @@ describe('withBugsee through the Expo mod compiler', () => {
     );
     expect(app.match(/bugsee-upload-symbols-off:/g)).toHaveLength(1);
     expect(read('scheme')).not.toContain('xcode post-action');
+    expect(readFileSync(join(projectRoot, 'ios/Podfile'), 'utf8')).not.toContain('RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS');
     // The source-map upload is its own option.
     expect(read('gradleProperties')).not.toContain('bugseeUploadSourcemaps');
 
@@ -216,6 +217,18 @@ describe('withBugsee through the Expo mod compiler', () => {
 
     await prebuild({ appToken: ANDROID_TOKEN });
     expect(snapshot(projectRoot)).toEqual(first);
+  });
+
+  it('asks pod install for React dSYMs, once, at the top of the Podfile', async () => {
+    const podfilePath = join(projectRoot, 'ios/Podfile');
+    const original = readFileSync(podfilePath, 'utf8');
+    await prebuild({ appToken: ANDROID_TOKEN });
+    const first = readFileSync(podfilePath, 'utf8');
+    expect(first.split('\n')[1]).toBe("ENV['RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS'] ||= '1'");
+    expect(first.match(/RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS/g)).toHaveLength(1);
+    expect(first.endsWith(original)).toBe(true);
+    await prebuild({ appToken: ANDROID_TOKEN });
+    expect(readFileSync(podfilePath, 'utf8')).toBe(first);
   });
 
   it('drops the NDK pieces with nativeCrashReporting false', async () => {

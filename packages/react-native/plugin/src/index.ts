@@ -30,6 +30,7 @@ import {
 } from './gradle';
 import { endpointMetaData, manifestAutoLaunchToken } from './manifest';
 import { loadNativeVersions } from './native-versions';
+import { insertSymbolicatePrebuilt, removeSymbolicatePrebuilt } from './podfile';
 import { bugseePropertiesText } from './properties';
 import { insertDsymPostAction, removeDsymPostAction } from './scheme';
 
@@ -280,6 +281,21 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
         const next = uploadSymbols ? insertDsymPostAction(xml, script) : removeDsymPostAction(xml);
         if (next !== xml) {
           await writeFile(schemePath, next);
+        }
+      }
+      // The React dSYMs the post-action uploads exist only when pod install
+      // downloads them; see podfile.ts.
+      const podfilePath = join(cfg.modRequest.platformProjectRoot, 'Podfile');
+      let podfile: string | undefined;
+      try {
+        podfile = await readFile(podfilePath, 'utf8');
+      } catch {
+        podfile = undefined;
+      }
+      if (podfile !== undefined) {
+        const next = uploadSymbols ? insertSymbolicatePrebuilt(podfile) : removeSymbolicatePrebuilt(podfile);
+        if (next !== podfile) {
+          await writeFile(podfilePath, next);
         }
       }
       return cfg;

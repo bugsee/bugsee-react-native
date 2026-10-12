@@ -360,6 +360,34 @@ token check: without a real token the post-action must stop, exit 0, before
 it runs `bugsee-cli`, which would otherwise register the build and send the
 placeholder to your endpoint, or to production when none is set.
 
+### React Native framework dSYMs (iOS)
+
+React Native's prebuilt `React.xcframework` ships without dSYMs, so after an
+Archive the `React` frames in a crash stay raw addresses (`React 0x10271dbc4`)
+while your own and Bugsee's frames symbolicate. React Native downloads the
+dSYMs only when `pod install` runs with `RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1`
+(React Native 0.81 and later, which ships the prebuilt framework):
+
+```sh
+cd ios && RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1 pod install
+```
+
+With it set, the Archive's `dSYMs/` folder includes React's dSYMs and the
+post-action uploads them with the rest. A bare app has to export it wherever
+it runs `pod install`, including CI. The Expo config plugin does it for you:
+`expo prebuild` adds `ENV['RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS'] ||= '1'` to the
+top of `ios/Podfile` (not through `Podfile.properties.json`, because Expo's
+Podfile reads only a fixed set of keys from it), and removes it again with
+`uploadSymbols: false`. A value you export yourself, such as `0`, wins. Apps
+that build React Native from source already get its dSYMs.
+
+Uploaded source maps list project files relative to the project root
+(`/scenarios/staging.ts`), as Expo's do. The bundle phase and the Gradle hook
+rewrite absolute `sources` before upload: under the project root they become
+`/path/from/root`, and outside it (linked workspace packages in a monorepo)
+`../path/from/root`. Entries that are already relative are left as they are. The map on disk is not changed and symbolication does not depend on
+the strings.
+
 ## Troubleshooting
 
 **`fmt`: "call to consteval function … is not a constant expression" (iOS,

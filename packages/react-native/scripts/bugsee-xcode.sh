@@ -78,5 +78,6 @@ if [[ "${USE_HERMES:-true}" == "false" && -f "$BUGSEE_BYTECODE_BUNDLE" && -f "$S
     --configuration "${CONFIGURATION:-}" \
     --credentials "$BUGSEE_CREDENTIALS_FILE" \
     --app-version "${MARKETING_VERSION:-}" \
-    --app-build "${CURRENT_PROJECT_VERSION:-}"
+    --app-build "${CURRENT_PROJECT_VERSION:-}" \
+    --project-root "${PROJECT_ROOT:-$SRCROOT/..}"
 fi
