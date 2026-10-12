@@ -2202,24 +2202,27 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     return;
   }
   BGSRNRunOnMain(^{
-    // One check with the mark. `clear` between an open test and the SDK call
-    // would still `-init` a `BugseeExtendedReport`. NO means `clear` already
-    // dropped this token and freed the slot. YES means `clear` from here on
-    // keeps the slot until `fulfil`, and that fulfil does not publish.
-    if (![registry beginCreate:reservation]) {
-      NSLog(@"BugseeRN created report - reservation ended");
-      resolve(nil);
-      return;
-    }
     // WORKAROUND for bugsee-cocoa#227: held while the SDK is Launching
     // (BGSRNLaunchHold), which would complete it with nil. The promise
-    // settles when the replayed call completes, and the slot stays reserved
-    // until then.
+    // settles when the replayed call completes. `beginCreate:` stays right
+    // before the SDK call, not before the hold: until it runs, `invalidate`'s
+    // `clear` can still drop this reservation and free the slot for the next
+    // runtime, and the replay then resolves nil without `-init`ing a report.
     [BGSRNLaunchHold.shared submit:@"created report" call:^(BGSRNGatedRun run) {
       if (run == BGSRNGatedRunDrop) {
-        // As the SDK settles a dropped call: its completion with nil.
+        // As the SDK settles a dropped call: its completion with nil. Frees
+        // the slot, or does nothing when `clear` already dropped the token.
         [registry fulfil:nil reservation:reservation];
         NSLog(@"BugseeRN created report dropped: the SDK did not launch");
+        resolve(nil);
+        return;
+      }
+      // One check with the mark. `clear` between an open test and the SDK call
+      // would still `-init` a `BugseeExtendedReport`. NO means `clear` already
+      // dropped this token and freed the slot. YES means `clear` from here on
+      // keeps the slot until `fulfil`, and that fulfil does not publish.
+      if (![registry beginCreate:reservation]) {
+        NSLog(@"BugseeRN created report - reservation ended");
         resolve(nil);
         return;
       }

@@ -100,15 +100,20 @@ describeIosDevice(`reports right after launch() on ${TARGET_NAME}`, () => {
     }
   });
 
-  // A run whose calls land after Launched (`status=2`, seen 1 in 3 on the XS
-  // without the hold) proves nothing about the window: it fails here as
+  // The window proof: `status=1` right after both calls, or (with the hold)
+  // both calls logged `held until launched` -- a held call is replayed, so
+  // `getStatus()` can already read 2. A run with neither (seen about 1 in 3
+  // on the XS) proves nothing about the window and fails here as
   // inconclusive rather than passing the cases below for the wrong reason.
   it('makes both calls while the SDK is Launching (else the run is inconclusive)', () => {
-    expect(sentText).toMatch(/early sent launched=true status=1 /);
-    // Before the poll logs Launched, too.
-    expect(log.all(/BUGSEE_E2E early sent /, run.start)[0]!.index).toBeLessThan(
-      run.launched.index,
-    );
+    const statusLaunching = /early sent launched=true status=1 /.test(sentText);
+    const heldBoth =
+      log.all(bridgeLine('exception handled bytes=\\d+ held until launched'), run.start).length === 1 &&
+      log.all(bridgeLine('upload held until launched'), run.start).length === 1;
+    // The whole object on failure: which proof was missing, and the marker.
+    expect({ sentText, statusLaunching, heldBoth, inWindow: statusLaunching || heldBoth }).toMatchObject({
+      inWindow: true,
+    });
   });
 
   it('files the handled exception', () => {
