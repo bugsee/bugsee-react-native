@@ -28,6 +28,13 @@
 #                           credentials are its own (campaign-config.json), so
 #                           write-credentials is skipped and BUGSEE_TOKEN_IOS
 #                           is not needed.
+#   IOS_IPA                 a prebuilt .ipa (e.g. from `xcodebuild -exportArchive`)
+#                           to install instead of building: no pod install, no
+#                           xcodebuild. Device only; needs IOS_CONFIGURATION
+#                           stated (what the IPA was built as) and is
+#                           cocoapods-delivery only in name. The embed
+#                           assertion runs on the IPA's Payload/*.app, and the
+#                           iPhone passes the same identity check as a build.
 #   IOS_LAUNCH              1: after installing, launch the app with its
 #                           console attached for IOS_LAUNCH_SECONDS (default
 #                           40) and print the BUGSEE_E2E / Bugsee lines; exit
@@ -44,6 +51,11 @@
 #                           on that port if nothing answers there, and the
 #                           wait defaults to 180 s.
 #
+# Every device run first passes the harness's fail-closed identity check
+# (e2e/device.ts verifyIosDevice: on the allowlist, and `devicectl list
+# devices` shows it as the allowlisted model and UDID) before anything touches
+# the iPhone.
+#
 # The SwiftPM delivery path is the other configuration; see README.md.
 set -euo pipefail
 
@@ -59,7 +71,8 @@ case "$TARGET" in device|simulator) ;; *) echo "IOS_TARGET must be device or sim
 DEVICE="${IOS_DEVICE_ID:-345BA7FE-2C29-5722-892A-BFCB1FD34D0C}"
 SIMULATOR="${IOS_SIMULATOR_ID:-6FA9B3E8-26C7-4232-AA2C-537D9DF32957}"
 if [[ "$TARGET" == device ]]; then
-  : "${IOS_DEVELOPMENT_TEAM:?set IOS_DEVELOPMENT_TEAM to your Apple Developer team id}"
+  # A prebuilt IPA is already signed; only a build needs the team.
+  [[ -n "${IOS_IPA:-}" ]] || : "${IOS_DEVELOPMENT_TEAM:?set IOS_DEVELOPMENT_TEAM to your Apple Developer team id}"
   # The same fail-closed allowlist the e2e uses: never another iPhone.
   node -e '
     const id = process.argv[1].trim().toUpperCase();
@@ -69,9 +82,21 @@ if [[ "$TARGET" == device ]]; then
       console.error(`IOS_DEVICE_ID=${id} is not on the e2e/device.ts allowlist`);
       process.exit(1);
     }' "$DEVICE" "$EXAMPLE_DIR/e2e/device.ts"
+  # Then the harness's own check: the device is connected and really is the
+  # allowlisted model and UDID. Fails closed.
+  IOS_DEVICE_ID="$DEVICE" node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON "$EXAMPLE_DIR/e2e/cli-verify-ios-device.ts"
+fi
+IPA="${IOS_IPA:-}"
+if [[ -n "$IPA" ]]; then
+  [[ "$TARGET" == device ]] || { echo "IOS_IPA installs on a device only (IOS_TARGET=device)" >&2; exit 2; }
+  [[ "$DELIVERY" == cocoapods ]] || { echo "IOS_IPA does not build, so IOS_DELIVERY=spm does not apply" >&2; exit 2; }
+  [[ -n "${IOS_CONFIGURATION:-}" ]] || { echo "IOS_IPA needs IOS_CONFIGURATION (Debug or Release): what the IPA was built as" >&2; exit 2; }
+  [[ -f "$IPA" ]] || { echo "IOS_IPA=$IPA: no such file" >&2; exit 2; }
+  IPA="$(cd "$(dirname "$IPA")" && pwd)/$(basename "$IPA")"
 fi
 # Debug by default; Release for the gated E2E_RELEASE=1 device cases (Task 7.5b).
 CONFIGURATION="${IOS_CONFIGURATION:-Debug}"
+case "$CONFIGURATION" in Debug|Release) ;; *) echo "IOS_CONFIGURATION must be Debug or Release" >&2; exit 2 ;; esac
 SCHEME="$(basename "$(ls -d "$APP_DIR"/ios/*.xcodeproj | head -1)" .xcodeproj)"
 SDK=iphoneos
 [[ "$TARGET" == simulator ]] && SDK=iphonesimulator
@@ -79,7 +104,16 @@ BUILD_DIR="ios/build"
 [[ "$DELIVERY" == spm ]] && BUILD_DIR="ios/build-spm"
 APP="$APP_DIR/$BUILD_DIR/Build/Products/${CONFIGURATION}-${SDK}/${SCHEME}.app"
 
-if [[ "$APP_DIR" == "$EXAMPLE_DIR" ]]; then
+if [[ -n "$IPA" ]]; then
+  # The IPA's app, for the embed assertion and its bundle id; nothing is built,
+  # so no credentials are written (the IPA carries the ones it was built with).
+  IPA_DIR="$(mktemp -d -t run-ios-ipa)"
+  trap 'rm -rf "$IPA_DIR"' EXIT
+  unzip -q "$IPA" -d "$IPA_DIR"
+  APPS=("$IPA_DIR"/Payload/*.app)
+  [[ ${#APPS[@]} -eq 1 && -d "${APPS[0]}" ]] || { echo "IOS_IPA=$IPA: expected exactly one Payload/*.app" >&2; exit 1; }
+  APP="${APPS[0]}"
+elif [[ "$APP_DIR" == "$EXAMPLE_DIR" ]]; then
   node scripts/write-credentials.mjs
 fi
 
@@ -103,7 +137,9 @@ restore_cocoapods() {
   exit "$status"
 }
 
-if [[ "$DELIVERY" == spm ]]; then
+if [[ -n "$IPA" ]]; then
+  echo "--- installing the prebuilt $IPA ($CONFIGURATION); no build"
+elif [[ "$DELIVERY" == spm ]]; then
   if git -C "$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     # The restore is a git checkout of ios/, so refuse to start over edits
     # it would throw away.
@@ -121,23 +157,25 @@ else
   (cd "$APP_DIR/ios" && pod install)
 fi
 
-PROJECT_ARGS=(-workspace "$APP_DIR/ios/$SCHEME.xcworkspace")
-[[ -d "$APP_DIR/ios/$SCHEME.xcworkspace" ]] || PROJECT_ARGS=(-project "$APP_DIR/ios/$SCHEME.xcodeproj")
-DESTINATION="id=$DEVICE"
-SIGNING=(DEVELOPMENT_TEAM="${IOS_DEVELOPMENT_TEAM:-}" CODE_SIGN_STYLE=Automatic -allowProvisioningUpdates)
-if [[ "$TARGET" == simulator ]]; then
-  DESTINATION="id=$SIMULATOR"
-  SIGNING=()
-fi
+if [[ -z "$IPA" ]]; then
+  PROJECT_ARGS=(-workspace "$APP_DIR/ios/$SCHEME.xcworkspace")
+  [[ -d "$APP_DIR/ios/$SCHEME.xcworkspace" ]] || PROJECT_ARGS=(-project "$APP_DIR/ios/$SCHEME.xcodeproj")
+  DESTINATION="id=$DEVICE"
+  SIGNING=(DEVELOPMENT_TEAM="${IOS_DEVELOPMENT_TEAM:-}" CODE_SIGN_STYLE=Automatic -allowProvisioningUpdates)
+  if [[ "$TARGET" == simulator ]]; then
+    DESTINATION="id=$SIMULATOR"
+    SIGNING=()
+  fi
 
-xcodebuild \
-  "${PROJECT_ARGS[@]}" \
-  -scheme "$SCHEME" \
-  -configuration "$CONFIGURATION" \
-  -destination "$DESTINATION" \
-  -derivedDataPath "$APP_DIR/$BUILD_DIR" \
-  ${SIGNING[@]+"${SIGNING[@]}"} \
-  build
+  xcodebuild \
+    "${PROJECT_ARGS[@]}" \
+    -scheme "$SCHEME" \
+    -configuration "$CONFIGURATION" \
+    -destination "$DESTINATION" \
+    -derivedDataPath "$APP_DIR/$BUILD_DIR" \
+    ${SIGNING[@]+"${SIGNING[@]}"} \
+    build
+fi
 
 # Before installing, not after: an app that builds without the framework is the
 # false pass this whole phase exists to rule out.
@@ -163,7 +201,8 @@ if [[ "$TARGET" == simulator ]]; then
   echo
   echo "Installed on simulator $SIMULATOR ($DELIVERY). Now: E2E_PLATFORM=ios E2E_IOS_TARGET=simulator yarn e2e"
 else
-  xcrun devicectl device install app --device "$DEVICE" "$APP"
+  # A prebuilt IPA installs as itself: its signature is the export's.
+  xcrun devicectl device install app --device "$DEVICE" "${IPA:-$APP}"
   echo
   echo "Installed on $DEVICE ($DELIVERY). Now: E2E_PLATFORM=ios E2E_IOS_TARGET=device yarn e2e"
 fi

@@ -27,6 +27,7 @@ import {
 import { LUMA_BRIGHT_MIN, LUMA_DARK_MAX, imageSize, regionLuma } from './media';
 import { beginRetainingSuite, captureGenerationFiles, endRetainingSuite } from './observe';
 import { type DeviceLog, type LogLine } from './scenario';
+import { type CaptureSpan, type CaptureTransaction, performanceTransactions } from '../../../scripts/performance-capture';
 import { type Rect, markerRect, markerScreen, regionOnImage } from './screen';
 
 jest.setTimeout(6 * 60_000);
@@ -275,23 +276,23 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       await stopApp();
     });
 
-    function span(description: string): Record<string, unknown> | undefined {
-      let found: Record<string, unknown> | undefined;
-      const walk = (node: unknown): void => {
-        if (found !== undefined || node === null || typeof node !== 'object') return;
-        if (Array.isArray(node)) {
-          node.forEach(walk);
-          return;
-        }
-        const record = node as Record<string, unknown>;
-        if (record.description === description) {
-          found = record;
-          return;
-        }
-        Object.values(record).forEach(walk);
-      };
-      walk(JSON.parse(capture === '' ? '{}' : capture) as unknown);
-      return found;
+    // Read through performanceTransactions, as span-lifecycle and apm do:
+    // iOS and Android up to 7.3.0 write the legacy `transactions` layout,
+    // Android 7.3.1 OTLP (bugsee-android #207), where a span's description is
+    // its `bugsee.description` attribute and its status `bugsee.span.status`.
+    function transactions(): CaptureTransaction[] {
+      return performanceTransactions(capture === '' ? '{"transactions":[]}' : capture);
+    }
+
+    function span(description: string): CaptureSpan | undefined {
+      return transactions()
+        .flatMap(t => t.spans ?? [])
+        .find(s => s.description === description);
+    }
+
+    function transaction(): CaptureTransaction | undefined {
+      const found = transactions().filter(t => t.name === `api-txn-${run.scenario.nonce}`);
+      return found.length === 1 ? found[0] : undefined;
     }
 
     it('[API-17c] startSpan with no transaction is a no-op that does not throw', () => {
@@ -316,22 +317,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       const child = span(`child-${run.scenario.nonce}`);
       // The transaction carries its name (not a description); its own span is
       // the root of its `spans` (no parentSpanId), as span-lifecycle.test.ts reads it.
-      let transaction: { name?: unknown; spans?: Array<Record<string, unknown>> } | undefined;
-      const walk = (node: unknown): void => {
-        if (transaction !== undefined || node === null || typeof node !== 'object') return;
-        if (Array.isArray(node)) {
-          node.forEach(walk);
-          return;
-        }
-        const record = node as { name?: unknown; spans?: Array<Record<string, unknown>> };
-        if (record.name === `api-txn-${run.scenario.nonce}` && Array.isArray(record.spans)) {
-          transaction = record;
-          return;
-        }
-        Object.values(record).forEach(walk);
-      };
-      walk(JSON.parse(capture === '' ? '{}' : capture) as unknown);
-      const root = transaction?.spans?.find(s => s.parentSpanId === undefined);
+      const root = transaction()?.spans?.find(s => s.parentSpanId === undefined);
       report('child span', child);
       report('transaction root', { spanId: root?.spanId, childParent: child?.parentSpanId });
       expect(child).toBeDefined();
@@ -361,8 +347,12 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
     });
 
     it('[API-19c] span attributes keep string, number and boolean values', () => {
-      const transaction = span(`api-txn-${run.scenario.nonce}`) ?? (JSON.parse(capture) as Record<string, unknown>);
-      const text = JSON.stringify(transaction);
+      // The whole transaction: the legacy layout keeps the attributes on it,
+      // OTLP on its root span (typed values, flattened by the reader).
+      const found = transaction();
+      report('transaction attributes', found?.spans?.find(s => s.parentSpanId === undefined)?.attributes);
+      expect(found).toBeDefined();
+      const text = JSON.stringify(found);
       expect(text).toContain(`str-${run.scenario.nonce}`);
       expect(text).toMatch(/"n":42\b/);
       expect(text).toMatch(/"b":true\b/);
@@ -495,7 +485,12 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
     });
   });
 
-  it('[API-41c] deleteCollectedDataOnDevice(false) after stop resolves and reports what it kept', async () => {
+  /**
+   * Android 7.3.1 deletes every capture generation for `false` too (3/3 on
+   * WOD_LX1: 49 parts -> 0, the bundle kept), against its javadoc and ours.
+   * https://github.com/bugsee/bugsee-android/issues/250
+   */
+  (ON_ANDROID ? it.failing : it)('[API-41c] deleteCollectedDataOnDevice(false) after stop resolves and reports what it kept', async () => {
     await clearBundles();
     const run = await startRun('api-delete-false');
     const uploaded = await apiMarker(log!, 'delete uploaded', run.scenario.nonce, 30_000, run.start);

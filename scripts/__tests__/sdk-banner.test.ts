@@ -1,4 +1,4 @@
-import { checkAndroidBanner } from '../sdk-banner';
+import { androidBannerOf, checkAndroidBanner, logcatPid } from '../sdk-banner';
 import type { NativeVersions } from '../native-versions';
 
 const snapshotCommit = '234dcddfcb972da008eeeb0e3ad8757e27ba3e50';
@@ -104,5 +104,41 @@ describe('checkAndroidBanner', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.reason).toMatch(/not a Bugsee Android SDK banner/);
+  });
+});
+
+describe('the banner of one process', () => {
+  const ours = '1760240000.123  4321  4321 D Bugsee  : Bugsee Android SDK 7.3.1 [0aa9ae1ff]';
+  const foreign = '1760240000.456  9876  9890 D Bugsee  : Bugsee Android SDK 7.3.0-SNAPSHOT [1234567]';
+
+  it('reads the pid of a logcat -v epoch line', () => {
+    expect(logcatPid(ours)).toBe('4321');
+    expect(logcatPid(foreign)).toBe('9876');
+  });
+
+  it('has no pid for a line in another shape', () => {
+    expect(logcatPid('Bugsee Android SDK 7.3.1 [0aa9ae1ff]')).toBeUndefined();
+    expect(logcatPid('--------- beginning of main')).toBeUndefined();
+    expect(logcatPid('10-12 10:00:00.123  4321  4321 D Bugsee  : x')).toBeUndefined();
+  });
+
+  it("matches our process's banner and not another app's", () => {
+    expect(androidBannerOf('4321').test(ours)).toBe(true);
+    expect(androidBannerOf('9876').test(ours)).toBe(false);
+    expect(androidBannerOf('9876').test(foreign)).toBe(true);
+  });
+
+  it('matches the pid exactly, not as a prefix or in the thread column', () => {
+    expect(androidBannerOf('432').test(ours)).toBe(false);
+    expect(androidBannerOf('9890').test(foreign)).toBe(false);
+  });
+
+  it('matches only a banner line of that process', () => {
+    expect(androidBannerOf('4321').test('1760240000.123  4321  4321 D ReactNativeJS: BUGSEE_E2E scenario=x')).toBe(false);
+  });
+
+  it('refuses something that is not a pid', () => {
+    expect(() => androidBannerOf('')).toThrow(/not a pid/);
+    expect(() => androidBannerOf('.*')).toThrow(/not a pid/);
   });
 });

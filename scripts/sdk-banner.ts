@@ -46,3 +46,23 @@ export function checkAndroidBanner(
 
   return { ok: true };
 }
+
+/**
+ * The pid of a `logcat -v epoch` line (`<sec>.<ms> <pid> <tid> <level> <tag>: ...`),
+ * or undefined for a line in any other shape.
+ */
+export function logcatPid(line: string): string | undefined {
+  return /^\s*\d+\.\d+\s+(\d+)\s+\d+\s+[VDIWEFS]\s/.exec(line)?.[1];
+}
+
+/**
+ * The banner printed by process `pid` only, in `logcat -v epoch` form. Any
+ * other app on the device that embeds the SDK prints the same banner with its
+ * own version; matching it would check that app's build, not ours.
+ */
+export function androidBannerOf(pid: string): RegExp {
+  if (!/^\d+$/.test(pid)) {
+    throw new Error(`not a pid: ${JSON.stringify(pid)}`);
+  }
+  return new RegExp(`^\\s*\\d+\\.\\d+\\s+${pid}\\s+\\d+\\s+[VDIWEFS]\\s.*${BANNER.source}`);
+}

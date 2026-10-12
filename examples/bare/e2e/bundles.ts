@@ -327,9 +327,35 @@ export function attachmentsOf(bundle: PulledBundle): BundleAttachment[] {
   return attachments;
 }
 
-/** Switches airplane mode and asserts the device reports the new state. */
+/**
+ * Switches airplane mode and asserts the device reports the new state.
+ *
+ * `cmd connectivity airplane-mode` exists from API 28. Below that (the API 24
+ * emulator of the minimum-API sweep) the setting is written and its broadcast
+ * sent by hand, which only a root adbd (an emulator image) may do: a refused
+ * broadcast throws instead of leaving a setting that says airplane while the
+ * radios stay on.
+ */
 export async function airplane(on: boolean): Promise<void> {
   const verb = on ? 'enable' : 'disable';
+  const api = Number((await adb('shell', 'getprop', 'ro.build.version.sdk')).trim());
+  if (!Number.isInteger(api) || api <= 0) {
+    throw new Error(`airplane-mode ${verb}: unreadable API level`);
+  }
+  if (api < 28) {
+    await adb('shell', 'settings', 'put', 'global', 'airplane_mode_on', on ? '1' : '0');
+    const sent = await adbStatus(
+      'shell', 'am', 'broadcast', '-a', 'android.intent.action.AIRPLANE_MODE', '--ez', 'state', on ? 'true' : 'false',
+    );
+    if (sent.code !== 0 || !/Broadcast completed/.test(sent.output) || /Exception/.test(sent.output)) {
+      throw new Error(`airplane-mode ${verb} on API ${api}: the AIRPLANE_MODE broadcast was refused (needs a root adbd):\n${sent.output}`);
+    }
+    const legacy = (await adb('shell', 'settings', 'get', 'global', 'airplane_mode_on')).trim();
+    if (legacy !== (on ? '1' : '0')) {
+      throw new Error(`airplane-mode ${verb} did not take: airplane_mode_on is "${legacy}"`);
+    }
+    return;
+  }
   const set = await adbStatus('shell', 'cmd', 'connectivity', 'airplane-mode', verb);
   if (set.code !== 0) {
     throw new Error(`airplane-mode ${verb} was refused (exit ${set.code}):\n${set.output}`);

@@ -18,8 +18,8 @@
  * needs a build without dev support -- a debug build routes the exception to
  * DevSupportManager (a red box) and the process lives: `./gradlew
  * :app:assembleRelease -PbugseeE2eDebuggable=true` (the flag keeps `run-as`
- * working), and `-t terminating` to run just that case. All six pass on that
- * build too. `E2E_LOGCAT_DUMP=<file>` saves the whole captured log.
+ * working), with `E2E_RELEASE=1` (without it case 6 skips), and `-t terminating`
+ * to run just that case. All six pass on that build too. `E2E_LOGCAT_DUMP=<file>` saves the whole captured log.
  *
  * iOS preconditions: the Debug app is installed on the booted simulator
  * (IOS_SIMULATOR_ID) with Metro running, or on the iPhone (IOS_DEVICE_ID),
@@ -53,6 +53,7 @@ import { ANDROID_PACKAGE, IOS_EXECUTABLE, IOS_PID_TID, iosTarget } from './devic
 import {
   ON_ANDROID,
   ON_IOS,
+  RELEASE,
   type Run,
   awaitBundles,
   clearBundles,
@@ -77,7 +78,19 @@ import {
   resetScenario,
 } from './scenario';
 
-const itAndroid = ON_ANDROID ? it : it.skip;
+/**
+ * Case 6 needs a JS bundle without __DEV__ (see the top of this file): on a
+ * Debug build the red box keeps the process alive and the case cannot run.
+ * So it runs under `E2E_RELEASE=1` only, and a Debug run skips it and says so
+ * instead of failing by construction. A Debug build installed under
+ * `E2E_RELEASE=1` still throws in the case.
+ */
+const TERMINATING_NEEDS_RELEASE =
+  'case 6 (terminating) needs a Release build and E2E_RELEASE=1: a Debug build routes the crash to the red box and the process lives';
+const itAndroidRelease = ON_ANDROID && RELEASE ? it : it.skip;
+if (ON_ANDROID && !RELEASE) {
+  console.log(`skipped without E2E_RELEASE=1: ${TERMINATING_NEEDS_RELEASE}`);
+}
 /**
  * Case 6 on iOS needs a crash reporter, and the simulator slice of the iOS SDK
  * has none: 7.0.0-beta3's and 7.0.0-beta4's `ios-arm64_x86_64-simulator` binaries carry no
@@ -457,14 +470,14 @@ describeDevice(`report handler on ${TARGET_NAME}`, () => {
     expect(bundle.manifest.attrs[`cut-${nonce}`]).toBe(`c-${nonce}-\uFFFD`);
   });
 
-  itAndroid('terminating: an uncaught Java exception never reaches JS; onAfter does, next launch', async () => {
+  itAndroidRelease('terminating: an uncaught Java exception never reaches JS; onAfter does, next launch', async () => {
     await clearBundles();
     const crash = await startRun('rh-crash');
     // A debug build's red box catches the exception before it can kill the
     // process, which would make every assertion below vacuous.
     if (crash.dev) {
       throw new Error(
-        'case 6 needs a JS bundle without __DEV__: build with ' +
+        'case 6 needs a JS bundle without __DEV__, but E2E_RELEASE=1 ran it on a Debug build: build with ' +
           '`./gradlew :app:assembleRelease -PbugseeE2eDebuggable=true` and install it.',
       );
     }
