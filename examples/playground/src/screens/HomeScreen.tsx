@@ -25,6 +25,7 @@ export const homeActions: Action[] = [
   { id: 'delete-false-android', label: 'Delete processed data only', call: 'Bugsee.deleteCollectedDataOnDevice(false)', expect: 'false while launched; true after Stop; intermediate capture kept', run: () => Bugsee.deleteCollectedDataOnDevice(false), platforms: ['android'], knownIssue: 'android-250' },
 ];
 const statusName = (s: number) => Object.entries(Status).find(([, v]) => v === s)?.[0] ?? String(s);
+const launchOptionsAction = homeActions.find((a) => a.id === 'launch-options')!;
 const SESSION_IDS = new Set(['launch', 'relaunch', 'stop']);
 const restActions = homeActions.filter((a) => !SESSION_IDS.has(a.id));
 
@@ -49,6 +50,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const [opts, setOpts] = useState<unknown>(undefined);
   const [optsError, setOptsError] = useState<string | null>(null);
+  const [autoError, setAutoError] = useState<string | null>(null);
   const refresh = async () => {
     try { setOpts(await Bugsee.getLaunchOptions()); setOptsError(null); } catch (e) { setOptsError(describeError(e)); }
   };
@@ -70,7 +72,8 @@ export default function HomeScreen() {
       <Section title="Launch options">
         <Pressable accessibilityRole="button" onPress={refresh} style={styles.box}>
           <Text style={styles.label}>Refresh launch options</Text>
-          <Text style={styles.call}>Bugsee.getLaunchOptions()</Text>
+          <Text style={styles.call}>{launchOptionsAction.call}</Text>
+          <Text style={styles.expect}>{`Expect: ${launchOptionsAction.expect}`}</Text>
         </Pressable>
         {optsError ? <Text style={styles.error}>{optsError}</Text> : null}
         {opts !== undefined ? <Text style={styles.mono}>{JSON.stringify(opts, null, 2)}</Text> : null}
@@ -79,7 +82,11 @@ export default function HomeScreen() {
         {restActions.filter((a) => a.id.startsWith('delete-')).map((a) => <ActionButton key={a.id} action={a} />)}
       </Section>
       <Section title="Auto-launch">
-        <Toggle label="Auto-launch on app start" value={session.config.autoLaunch} onChange={(v) => { void session.setConfig({ ...session.config, autoLaunch: v }); }} />
+        <Toggle label="Auto-launch on app start" value={session.config.autoLaunch} onChange={(v) => {
+          setAutoError(null);
+          session.setConfig({ ...session.config, autoLaunch: v }).catch((e) => setAutoError(describeError(e)));
+        }} />
+        {autoError ? <Text style={styles.error}>{`Could not save: ${autoError}`}</Text> : null}
       </Section>
       <Section title="Demo shop">
         <Pressable accessibilityRole="button" onPress={() => router.push('/shop/sign-in')} style={styles.box}>

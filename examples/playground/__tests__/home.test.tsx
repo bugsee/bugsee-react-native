@@ -25,8 +25,8 @@ test('shows the status name', async () => {
 });
 test('lists lifecycle entries newest first', async () => {
   await render(ui(session()));
-  expect(screen.getByText('10:00:05 stopped')).toBeTruthy();
-  expect(screen.getByText('10:00:00 launched')).toBeTruthy();
+  const texts = screen.getAllByText(/^10:00:0\d /).map((n) => n.props.children);
+  expect(texts).toEqual(['10:00:05 stopped', '10:00:00 launched']);
 });
 test('refreshing launch options shows pretty JSON', async () => {
   (Bugsee.getLaunchOptions as jest.Mock).mockResolvedValueOnce({ a: 1 });
@@ -52,4 +52,18 @@ test('Launch, Relaunch and Stop use the session', async () => {
   await fireEvent.press(screen.getByTestId('session-relaunch'));
   await fireEvent.press(screen.getByTestId('session-stop'));
   expect(s.launch).toHaveBeenCalled(); expect(s.relaunch).toHaveBeenCalled(); expect(s.stop).toHaveBeenCalled();
+});
+test('the refresh button shows its Expect line', async () => {
+  await render(ui(session()));
+  expect(screen.getByText('Expect: The options the SDK reports in effect')).toBeTruthy();
+});
+test('a rejecting session function is logged', async () => {
+  await render(ui(session({ launch: jest.fn(async () => { throw new Error('boom'); }) })));
+  await fireEvent.press(screen.getByTestId('session-launch'));
+  expect(await screen.findByText(/✗ Error: boom/)).toBeTruthy();
+});
+test('a failing setConfig shows the error instead of rejecting unhandled', async () => {
+  await render(ui(session({ setConfig: jest.fn(async () => { throw new Error('disk full'); }) })));
+  await fireEvent(screen.getByLabelText('Auto-launch on app start'), 'valueChange', true);
+  expect(await screen.findByText(/Could not save: Error: disk full/)).toBeTruthy();
 });
