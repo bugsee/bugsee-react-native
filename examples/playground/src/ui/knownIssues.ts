@@ -44,5 +44,10 @@ export const KNOWN_ISSUES = {
     title: 'upload() source type shows as unknown',
     platform: 'ios',
   },
+  'android-245': {
+    url: 'https://github.com/bugsee/bugsee-android/issues/245',
+    title: 'Feedback greeting not shown',
+    platform: 'android',
+  },
 } as const satisfies Record<string, { url: string; title: string; platform: 'ios' | 'android' }>;
 export type KnownIssueId = keyof typeof KNOWN_ISSUES;

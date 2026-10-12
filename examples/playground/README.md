@@ -146,7 +146,7 @@ choose Product → Archive.
 
   (That is a placeholder. Use your own token.)
 
-A value in `bugsee.config.json` wins over the environment.
+Order of precedence: the config file wins; then `BUGSEE_APP_TOKEN` (both platforms); then `BUGSEE_TOKEN_IOS` (iOS only, used when `BUGSEE_APP_TOKEN` is unset).
 
 **No token, or a placeholder token.** Uploads skip with one warning line, and
 the build still succeeds. The app runs, but crashes show raw frames.
@@ -177,5 +177,6 @@ The app shows a note next to each affected button.
 | Android | [`logException` labels and `includeVideo` ignored](https://github.com/bugsee/bugsee-android/issues/247) |
 | Android | [Blackout before launch is a no-op](https://github.com/bugsee/bugsee-android/issues/248) |
 | iOS | [`upload()` source type shows as unknown](https://github.com/bugsee/bugsee-cocoa/issues/223) |
+| Android | [Feedback greeting not shown](https://github.com/bugsee/bugsee-android/issues/245) |
 
 For manual test sessions, see [VALIDATION.md](./VALIDATION.md).

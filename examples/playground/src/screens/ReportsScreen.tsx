@@ -204,6 +204,7 @@ const feedbackActions: Action[] = [
     label: 'Set greeting',
     call: "Feedback.setGreeting('Hi from the playground!')",
     expect: 'The chat opens with this greeting',
+    knownIssue: 'android-245',
     run: () => Feedback.setGreeting('Hi from the playground!'),
   },
   {
