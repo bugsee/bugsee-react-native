@@ -1,3 +1,4 @@
+jest.unmock('../modules/playground-native');
 jest.mock('expo-modules-core', () => ({
   requireOptionalNativeModule: () => null,
   requireNativeView: () => { throw new Error('no view'); },
