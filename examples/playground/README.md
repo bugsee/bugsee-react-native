@@ -51,17 +51,28 @@ On first start the Setup screen opens.
 2. **Scan QR** accepts only a code that contains exactly `BGSAPT:<token>`.
    The dashboard QR code is coming to the dashboard. Until then, any QR code
    generator works: encode the text `BGSAPT:<token>`.
-3. **Endpoint** stays empty for Bugsee cloud ("Leave empty for Bugsee cloud").
-   Fill it only for a self-hosted or regional install.
+3. **Endpoint**: empty launches against the build's default, which is Bugsee
+   cloud unless `bugsee.config.json` sets `endpoint`. When it does, Setup
+   pre-fills the field with that value and shows "From bugsee.config.json".
+   Change it only for a different self-hosted or regional install.
 4. Adjust **Common options** or **Advanced options** if you like. Advanced
    lists every launch option key (shown without the `com.bugsee.option.`
    prefix) and sets it through `setCustomOption`.
 5. Tap **Launch**.
 
-You can come back with the **Setup** link in the header of any tab.
+You can come back with the **Setup** link in the header of any tab. Tapping
+**Launch** there while Bugsee runs stops it and launches it again, so a changed
+token or options take effect (Home's lifecycle log shows "Relaunched with the
+new options").
 
-If you built with a token in `bugsee.config.json`, Setup pre-fills it. It warns
-you when the token you launch with is not the one the symbols were uploaded for.
+**Auto-launch** (Setup → Auto-launch, or Home) is off by default. Turn it on to
+launch Bugsee at every app start with the saved settings; it is needed to send
+crash reports at the next start.
+
+If you built with a token in `bugsee.config.json`, Setup shows only its first 8
+characters as a hint ("Build-time token configured: …"); paste the full token.
+It warns you when the token you launch with is not the one the symbols were
+uploaded for.
 
 ## Your first report
 
@@ -86,12 +97,13 @@ you when the token you launch with is not the one the symbols were uploaded for.
 **Demo shop** (Home → Demo shop → **Try the demo shop**). A small shop with a
 product list, sign in, product detail and checkout. The checkout **Pay** button
 has three outcomes: **Success**, **Declined** (a handled error) and **Bug** (a
-crash you recover at the next launch). It shows how Bugsee looks on a
+crash sent at the next launch; see below). It shows how Bugsee looks on a
 realistic flow: card fields are blacked out, and every screen has a **Report a
 problem** button.
 
-Crash buttons ask for confirmation. After a crash, reopen the app to send the
-report.
+Crash buttons ask for confirmation. A crash report is sent when Bugsee launches
+at the next start: turn on Setup → Auto-launch first (or tap Home → Launch after
+reopening), then reopen the app.
 
 ## See symbolicated crashes
 
@@ -110,7 +122,8 @@ build configuration, not from the Setup screen.
 
 - `appToken`: one token per platform. A single string is used for both.
 - `endpoint`: optional. Only for self-hosted or regional installs, an https URL
-  with no `/v2`. Leave it out for Bugsee cloud.
+  with no `/v2`. Leave it out for Bugsee cloud. It is built into the app as the
+  default endpoint (an empty Setup field launches against it), and Setup shows it.
 - `symbolicateReactNativeFrameworks`: optional, off by default. When `true`,
   `pod install` downloads React Native's dSYMs, so React frames in iOS crashes
   are symbolicated too. It adds a download.

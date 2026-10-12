@@ -421,7 +421,7 @@ then run `pod install` again:
 
 ## Examples
 
-[`examples/playground`](../../examples/playground) is a sample app with a button for every SDK API, a demo shop and a manual validation map.
+[`examples/playground`](https://github.com/bugsee/bugsee-react-native/tree/main/examples/playground) is a sample app with a button for every SDK API, a demo shop and a manual validation map.
 
 ## Licence
 
