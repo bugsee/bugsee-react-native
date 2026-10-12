@@ -100,7 +100,10 @@ describeIosDevice(`reports right after launch() on ${TARGET_NAME}`, () => {
     }
   });
 
-  it('makes both calls while the SDK is Launching', () => {
+  // A run whose calls land after Launched (`status=2`, seen 1 in 3 on the XS
+  // without the hold) proves nothing about the window: it fails here as
+  // inconclusive rather than passing the cases below for the wrong reason.
+  it('makes both calls while the SDK is Launching (else the run is inconclusive)', () => {
     expect(sentText).toMatch(/early sent launched=true status=1 /);
     // Before the poll logs Launched, too.
     expect(log.all(/BUGSEE_E2E early sent /, run.start)[0]!.index).toBeLessThan(
