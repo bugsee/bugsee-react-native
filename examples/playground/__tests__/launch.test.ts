@@ -17,7 +17,7 @@ test('common options map to SDK keys', () => {
   expect(o['com.bugsee.option.config.max-data-size']).toBe(50);
 });
 test('advanced overrides are typed and win over common', () => {
-  const c = { ...DEFAULT_CONFIG, advanced: { 'com.bugsee.option.capture.video': 'true', 'com.bugsee.option.config.notify-flush-delay': '3' } };
+  const c = { ...DEFAULT_CONFIG, common: { ...DEFAULT_CONFIG.common, video: false }, advanced: { 'com.bugsee.option.capture.video': 'true', 'com.bugsee.option.config.notify-flush-delay': '3' } };
   const o = buildLaunchOptions(c, 'ios');
   expect(o['com.bugsee.option.capture.video']).toBe(true);
   expect(o['com.bugsee.option.config.notify-flush-delay']).toBe(3);
