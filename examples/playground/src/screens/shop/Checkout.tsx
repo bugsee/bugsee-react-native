@@ -5,6 +5,7 @@ import { cart, pay, stepSpan } from '../../shop/flow';
 import type { PayOutcome } from '../../shop/flow';
 import { CapturedNote } from '../../ui/CapturedNote';
 import { Screen } from '../../ui/Screen';
+import { PLACEHOLDER_COLOR } from '../../ui/placeholder';
 
 const OUTCOMES: { id: PayOutcome; label: string }[] = [
   { id: 'success', label: 'Success' },
@@ -38,14 +39,31 @@ export default function Checkout() {
       <BugseeSecure>
         <TextInput
           style={styles.input}
+          placeholderTextColor={PLACEHOLDER_COLOR}
           placeholder="Card number"
           keyboardType="number-pad"
           accessibilityLabel="Card number"
         />
-        <TextInput style={styles.input} placeholder="Expiry (MM/YY)" accessibilityLabel="Expiry" />
-        <TextInput style={styles.input} placeholder="CVV" keyboardType="number-pad" accessibilityLabel="CVV" />
+        <TextInput
+          style={styles.input}
+          placeholderTextColor={PLACEHOLDER_COLOR}
+          placeholder="Expiry (MM/YY)"
+          accessibilityLabel="Expiry"
+        />
+        <TextInput
+          style={styles.input}
+          placeholderTextColor={PLACEHOLDER_COLOR}
+          placeholder="CVV"
+          keyboardType="number-pad"
+          accessibilityLabel="CVV"
+        />
       </BugseeSecure>
-      <TextInput style={styles.input} placeholder="Shipping address" accessibilityLabel="Shipping address" />
+      <TextInput
+        style={styles.input}
+        placeholderTextColor={PLACEHOLDER_COLOR}
+        placeholder="Shipping address"
+        accessibilityLabel="Shipping address"
+      />
       <View style={styles.segments}>
         {OUTCOMES.map((o) => (
           <Pressable

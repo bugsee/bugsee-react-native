@@ -172,3 +172,14 @@ test('product detail shows Product not found with a back button when the id is i
   expect(mockBack).toHaveBeenCalled();
   spy.mockRestore();
 });
+
+test('every shop TextInput sets the shared placeholder colour (readable whatever the system theme)', async () => {
+  const { PLACEHOLDER_COLOR } = jest.requireActual('../src/ui/placeholder');
+  for (const Ui of [SignIn, Checkout]) {
+    const view = await render(<Ui />);
+    const inputs = view.getAllByPlaceholderText(/.+/);
+    expect(inputs.length).toBeGreaterThan(0);
+    for (const i of inputs) expect(i.props.placeholderTextColor).toBe(PLACEHOLDER_COLOR);
+    await view.unmount();
+  }
+});

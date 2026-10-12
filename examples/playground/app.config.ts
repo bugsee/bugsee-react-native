@@ -8,6 +8,8 @@ const config: ExpoConfig = {
   slug: 'bugsee-playground',
   version: '1.0.0',
   orientation: 'portrait',
+  // Light only: the screens use fixed light colours, so dark mode made placeholders unreadable.
+  userInterfaceStyle: 'light',
   scheme: 'bugsee-playground',
   ios: { bundleIdentifier: 'com.bugsee.playground', supportsTablet: false },
   android: { package: 'com.bugsee.playground' },

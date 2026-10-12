@@ -4,7 +4,7 @@ import Bugsee from '@bugsee/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEFAULT_CONFIG, loadConfig, patchConfig, saveConfig } from '../src/session/config';
 import { REPORT_HANDLER_PRESETS } from '../src/reportHandlers';
-import { SessionProvider } from '../src/session/SessionProvider';
+import { localClock, SessionProvider } from '../src/session/SessionProvider';
 import { useSession } from '../src/session/SessionContext';
 
 const VALID = '00000000-0000-4000-8000-000000000001';
@@ -119,4 +119,22 @@ test('Home launch and relaunch install the saved handler first; patchConfig goes
   B.setReportHandler.mockClear();
   await act(async () => { await latest.relaunch(); });
   expect(B.setReportHandler.mock.invocationCallOrder[0]).toBeLessThan(B.relaunch.mock.invocationCallOrder[0]);
+});
+
+test('localClock is local HH:MM:SS.mmm, not UTC', () => {
+  expect(localClock(new Date(2026, 9, 12, 7, 5, 3, 9))).toBe('07:05:03.009');
+  expect(localClock(new Date(2026, 9, 12, 23, 59, 59, 999))).toBe('23:59:59.999');
+});
+
+test('lifecycle lines carry the local time', async () => {
+  await saveConfig({ ...DEFAULT_CONFIG });
+  await render(<SessionProvider><Probe /></SessionProvider>);
+  await waitFor(() => expect(probe().startsWith('true')).toBe(true));
+  jest.useFakeTimers({ now: new Date(2026, 9, 12, 7, 5, 3, 9) });
+  try {
+    await act(async () => { latest.note('hello'); });
+  } finally {
+    jest.useRealTimers();
+  }
+  expect(latest.lifecycle.at(-1)).toEqual({ at: '07:05:03.009', event: 'hello' });
 });

@@ -11,6 +11,7 @@ import { KnownIssue } from '../ui/KnownIssue';
 import { Screen } from '../ui/Screen';
 import { Section } from '../ui/Section';
 import { Toggle } from '../ui/Toggle';
+import { PLACEHOLDER_COLOR } from '../ui/placeholder';
 
 const ENDPOINT_RE = /^https:\/\/[^\s/?#@]+(:\d+)?(\/[^\s?#]*)?$/;
 export const isValidEndpoint = (e: string) =>
@@ -122,6 +123,7 @@ export default function SetupScreen() {
       <Section title={`App token for ${platform === 'ios' ? 'iOS' : 'Android'}`}>
         <TextInput
           style={styles.input}
+          placeholderTextColor={PLACEHOLDER_COLOR}
           placeholder="App token"
           autoCapitalize="none"
           autoCorrect={false}
@@ -144,6 +146,7 @@ export default function SetupScreen() {
       <Section title="Endpoint">
         <TextInput
           style={styles.input}
+          placeholderTextColor={PLACEHOLDER_COLOR}
           placeholder="Leave empty for the build's default (Bugsee cloud unless bugsee.config.json sets one)"
           autoCapitalize="none"
           autoCorrect={false}
@@ -178,6 +181,7 @@ export default function SetupScreen() {
         <TextInput
           style={styles.input}
           keyboardType="numeric"
+          placeholderTextColor={PLACEHOLDER_COLOR}
           placeholder="unset"
           value={durationText}
           onChangeText={setDurationText}
@@ -188,6 +192,7 @@ export default function SetupScreen() {
         <TextInput
           style={styles.input}
           keyboardType="numeric"
+          placeholderTextColor={PLACEHOLDER_COLOR}
           placeholder="unset"
           value={maxText}
           onChangeText={setMaxText}

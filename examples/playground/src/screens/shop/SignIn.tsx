@@ -6,6 +6,7 @@ import { DEMO, postJson } from '../../demoApi';
 import { stepSpan } from '../../shop/flow';
 import { CapturedNote } from '../../ui/CapturedNote';
 import { Screen } from '../../ui/Screen';
+import { PLACEHOLDER_COLOR } from '../../ui/placeholder';
 
 export default function SignIn() {
   const router = useRouter();
@@ -38,6 +39,7 @@ export default function SignIn() {
         style={styles.input}
         value={email}
         onChangeText={setEmail}
+        placeholderTextColor={PLACEHOLDER_COLOR}
         placeholder="Email"
         autoCapitalize="none"
         keyboardType="email-address"
@@ -47,6 +49,7 @@ export default function SignIn() {
         style={styles.input}
         value={password}
         onChangeText={setPassword}
+        placeholderTextColor={PLACEHOLDER_COLOR}
         placeholder="Password"
         secureTextEntry
         accessibilityLabel="Password"

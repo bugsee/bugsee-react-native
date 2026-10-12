@@ -1,9 +1,18 @@
-import { resolveBugseeConfig } from '../config/bugseeConfig';
+import { PLACEHOLDER_TOKEN, resolveBugseeConfig } from '../config/bugseeConfig';
 
 const IOS = '1a2b3c4d-0000-4000-8000-000000000001';
 const AND = '9f8e7d6c-0000-4000-8000-000000000002';
 
 describe('resolveBugseeConfig', () => {
+  it('passes the all-zero placeholder to the plugin but shows no prefix hint for it', () => {
+    const r = resolveBugseeConfig({ env: { BUGSEE_APP_TOKEN: PLACEHOLDER_TOKEN } });
+    expect(r.pluginProps.appToken).toEqual({ ios: PLACEHOLDER_TOKEN, android: PLACEHOLDER_TOKEN });
+    expect(r.extra.bugseeTokenPrefix).toEqual({});
+    const mixed = resolveBugseeConfig({ file: { appToken: { ios: PLACEHOLDER_TOKEN, android: AND } }, env: {} });
+    expect(mixed.extra.bugseeTokenPrefix).toEqual({ android: '9f8e7d6c' });
+    const upper = resolveBugseeConfig({ file: { appToken: PLACEHOLDER_TOKEN.toUpperCase() }, env: {} });
+    expect(upper.extra.bugseeTokenPrefix).toEqual({});
+  });
   it('passes per-platform tokens and exposes only 8-char prefixes in extra', () => {
     const r = resolveBugseeConfig({ file: { appToken: { ios: IOS, android: AND } }, env: {} });
     expect(r.pluginProps.appToken).toEqual({ ios: IOS, android: AND });

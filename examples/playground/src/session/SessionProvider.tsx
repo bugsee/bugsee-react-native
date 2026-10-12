@@ -12,6 +12,10 @@ import { isAppToken } from './token';
 const MAX_LIFECYCLE = 100;
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** One lifecycle log line: the event name, plus the report id for the events that carry one. */
+const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+/** Local wall-clock time, HH:MM:SS.mmm, as the tester's device shows it (not UTC). */
+export const localClock = (d: Date) =>
+  `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
 export const describeLifecycleEvent = (e: LifecycleEvent) => (e.reportId ? `${e.name} (${e.reportId})` : e.name);
 
 export function SessionProvider({ children }: { children?: ReactNode }) {
@@ -24,7 +28,7 @@ export function SessionProvider({ children }: { children?: ReactNode }) {
   const configRef = useRef(config);
 
   const push = useCallback((event: string) => {
-    setLifecycle((p) => [...p, { at: new Date().toISOString().slice(11, 23), event }].slice(-MAX_LIFECYCLE));
+    setLifecycle((p) => [...p, { at: localClock(new Date()), event }].slice(-MAX_LIFECYCLE));
   }, []);
   const refreshStatus = useCallback(async () => {
     try { setStatus(await Bugsee.getStatus()); } catch { /* keep the previous status */ }

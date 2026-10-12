@@ -9,6 +9,7 @@ import type { Action } from '../ui/action';
 import { Screen } from '../ui/Screen';
 import { Section } from '../ui/Section';
 import { Toggle } from '../ui/Toggle';
+import { PLACEHOLDER_COLOR } from '../ui/placeholder';
 
 // Actions are module-level, so the red overlay lives in a tiny subscribable store
 // that the screen listens to; the setSecureRectangles actions update it.
@@ -118,11 +119,21 @@ export default function PrivacyScreen() {
           <Text style={styles.note}>Expect: a black rectangle over the box in the video while enabled</Text>
         </Section>
         <Section title="Secure TextInput">
-          <TextInput style={styles.input} placeholder="Password" secureTextEntry />
+          <TextInput
+            style={styles.input}
+            placeholderTextColor={PLACEHOLDER_COLOR}
+            placeholder="Password"
+            secureTextEntry
+          />
           <BugseeSecure>
-            <TextInput style={styles.input} placeholder="Card number" keyboardType="number-pad" />
+            <TextInput
+              style={styles.input}
+              placeholderTextColor={PLACEHOLDER_COLOR}
+              placeholder="Card number"
+              keyboardType="number-pad"
+            />
           </BugseeSecure>
-          <TextInput style={styles.input} placeholder="Plain field" />
+          <TextInput style={styles.input} placeholderTextColor={PLACEHOLDER_COLOR} placeholder="Plain field" />
           <Text style={styles.note}>Expect: password and card hidden in video; plain field visible</Text>
         </Section>
         <Section title="Manual rectangles">

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ADVANCED_KEYS } from './advanced';
+import { PLACEHOLDER_COLOR } from '../ui/placeholder';
 
 const PREFIX = 'com.bugsee.option.';
 const short = (k: string) => (k.startsWith(PREFIX) ? k.slice(PREFIX.length) : k);
@@ -30,6 +31,7 @@ export function AdvancedEditor({
         <View>
           <TextInput
             style={styles.input}
+            placeholderTextColor={PLACEHOLDER_COLOR}
             placeholder="Filter options"
             autoCapitalize="none"
             autoCorrect={false}
@@ -41,6 +43,7 @@ export function AdvancedEditor({
               <Text style={styles.key}>{short(k)}</Text>
               <TextInput
                 style={[styles.input, styles.value]}
+                placeholderTextColor={PLACEHOLDER_COLOR}
                 placeholder="unset"
                 autoCapitalize="none"
                 autoCorrect={false}
