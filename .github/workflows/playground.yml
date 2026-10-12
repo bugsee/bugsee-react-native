@@ -84,8 +84,24 @@ jobs:
     name: playground ios simulator build
     timeout-minutes: 60
     runs-on: macos-15
+    env:
+      # expo-modules-jsi (Expo SDK 57) declares `swift-tools-version: 6.2` in apple/Package.swift, and its
+      # "Build ExpoModulesJSI xcframework" phase builds that package: Swift 6.2 ships with Xcode 26.0.
+      MIN_XCODE: '26.0'
     steps:
       - uses: actions/checkout@v4
+      # The runner's default Xcode can be older than Expo 57 needs; pick the newest one installed.
+      - name: Select the newest installed Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          version=$(xcodebuild -version | awk '/^Xcode /{print $2}')
+          if [ "$(printf '%s\n%s\n' "$MIN_XCODE" "$version" | sort -V | head -1)" != "$MIN_XCODE" ]; then
+            msg="Newest installed Xcode is $version ($xcode); Expo SDK 57 needs $MIN_XCODE+ (Swift 6.2)."
+            echo "::error title=Xcode too old::$msg"
+            exit 1
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: '22.18'
@@ -95,9 +111,26 @@ jobs:
       # .xcworkspace.
       - working-directory: examples/playground
         run: CI=1 npx expo prebuild -p ios
+      # The full log is kept in a file: on failure, print every `error:` line plus the last 80 lines.
       - working-directory: examples/playground/ios
         run: |
           set -o pipefail
-          xcodebuild -workspace BugseePlayground.xcworkspace -scheme BugseePlayground \
+          log="$RUNNER_TEMP/xcodebuild.log"
+          if ! xcodebuild -workspace BugseePlayground.xcworkspace -scheme BugseePlayground \
             -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO build | tail -20
+            CODE_SIGNING_ALLOWED=NO build > "$log" 2>&1; then
+            echo "::group::error: lines"
+            grep -n 'error:' "$log" || echo "(no error: lines)"
+            echo "::endgroup::"
+            echo "::group::last 80 lines"
+            tail -80 "$log"
+            echo "::endgroup::"
+            exit 1
+          fi
+          tail -5 "$log"
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playground-ios-xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
