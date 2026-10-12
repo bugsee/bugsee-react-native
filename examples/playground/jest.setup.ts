@@ -27,8 +27,10 @@ jest.mock('expo-router', () => {
   const React = jest.requireActual('react');
   const { Text } = jest.requireActual('react-native');
   const passThrough = ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children);
-  const withScreen = () => Object.assign(passThrough, { Screen: () => null });
+  const withScreen = () => Object.assign(({ children }: { children?: React.ReactNode }) => passThrough({ children }), { Screen: () => null });
   return {
+    useLocalSearchParams: () => ({}),
+    Slot: passThrough,
     useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
     Link: Text,
     Stack: withScreen(),

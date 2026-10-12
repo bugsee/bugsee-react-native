@@ -5,15 +5,18 @@ import { useLog } from './ResultLog';
 
 export function describe(value: unknown): string {
   if (value === undefined) return 'undefined';
-  try { return JSON.stringify(value) ?? String(value); } catch { return String(value); }
+  try { return JSON.stringify(value) ?? String(value); } catch { /* fall through */ }
+  try { return String(value); } catch { return '[unprintable]'; }
 }
 export function describeError(e: unknown): string {
   if (e instanceof Error) {
     const code = (e as { code?: unknown }).code;
-    return `${e.name}${typeof code === 'string' ? ` [${code}]` : ''}: ${e.message}`;
+    try { return `${e.name}${typeof code === 'string' ? ` [${code}]` : ''}: ${e.message}`; } catch { return '[unprintable]'; }
   }
   return describe(e);
 }
+
+const describeResult = (v: unknown) => (v instanceof Error ? describeError(v) : describe(v));
 
 export function ActionButton({ action }: { action: Action }) {
   const log = useLog();
@@ -22,8 +25,9 @@ export function ActionButton({ action }: { action: Action }) {
     log(`▶ ${action.label}`);
     try {
       const r = action.run();
-      if (r instanceof Promise) r.then((v) => log(`→ ${describe(v)}`), (e) => log(`✗ ${describeError(e)}`));
-      else log(`→ ${describe(r)}`);
+      if (typeof (r as { then?: unknown } | null | undefined)?.then === 'function') {
+        Promise.resolve(r).then((v) => log(`→ ${describeResult(v)}`), (e) => log(`✗ ${describeError(e)}`));
+      } else log(`→ ${describeResult(r)}`);
     } catch (e) {
       log(`✗ ${describeError(e)}`);
     }

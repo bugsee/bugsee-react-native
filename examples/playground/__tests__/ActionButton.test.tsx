@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert, Platform } from 'react-native';
-import { ActionButton } from '../src/ui/ActionButton';
+import { ActionButton, describe, describeError } from '../src/ui/ActionButton';
 import { Screen } from '../src/ui/Screen';
 const base = { id: 'a', label: 'Do it', call: 'Bugsee.log("x")', expect: 'A line in the log' };
 test('shows label, call and Expect', async () => {
@@ -33,4 +33,23 @@ test('hidden on other platforms', async () => {
   expect(Platform.OS).toBe('ios'); // jest-expo default platform
   await render(<Screen title="T"><ActionButton action={{ ...base, run: () => 0, platforms: ['android'] }} /></Screen>);
   expect(screen.queryByText('Do it')).toBeNull();
+});
+test('logs a rejection from a non-Promise thenable', async () => {
+  const run = () => ({ then: (_res: unknown, rej: (e: unknown) => void) => rej(new Error('x')) });
+  await render(<Screen title="T"><ActionButton action={{ ...base, run }} /></Screen>);
+  await fireEvent.press(screen.getByText('Do it'));
+  await waitFor(() => expect(screen.getByText('✗ Error: x', { exact: false })).toBeTruthy());
+});
+test('a resolved Error is logged through describeError', async () => {
+  await render(<Screen title="T"><ActionButton action={{ ...base, run: () => Promise.resolve(new RangeError('r')) }} /></Screen>);
+  await fireEvent.press(screen.getByText('Do it'));
+  await waitFor(() => expect(screen.getByText('→ RangeError: r', { exact: false })).toBeTruthy());
+});
+test('describe and describeError never throw', () => {
+  const circ: Record<string, unknown> = Object.create(null);
+  circ.self = circ;
+  const bad = { toString() { throw new Error('no'); }, toJSON() { throw new Error('no'); } };
+  expect(describe(circ)).toBe('[unprintable]');
+  expect(describe(bad)).toBe('[unprintable]');
+  expect(describeError(circ)).toBe('[unprintable]');
 });

@@ -22,18 +22,24 @@ function makeSpan(): Record<string, unknown> {
   return span;
 }
 
+// Mirrors packages/react-native/src/index.ts: only these return promises; everything else is synchronous.
 const resolves: Record<string, unknown> = {
   launch: true, relaunch: true, stop: true, isBlackout: true, deleteCollectedDataOnDevice: true,
   getStatus: 2, getLaunchOptions: {}, getAllAttributes: {},
+  createReport: undefined, setAttribute: undefined, getAttribute: undefined, clearAttribute: undefined,
+  clearAllAttributes: undefined, getUserIdentifier: undefined, attach: undefined, logUnhandledException: undefined,
 };
 
 function makeBugsee(): Record<string, jest.Mock> & { appearance: Record<string, unknown> } {
   const b: Record<string, unknown> = {};
-  for (const m of METHODS) b[m] = jest.fn(async () => resolves[m]);
+  for (const m of METHODS) {
+    b[m] = m in resolves ? jest.fn(async () => resolves[m]) : jest.fn();
+  }
   for (const m of ['onLifecycleEvent', 'onStatusChange']) b[m] = jest.fn(() => ({ remove: jest.fn() }));
   b.testJsCrash = jest.fn();
   b.startTransaction = jest.fn(() => makeSpan());
   b.startSpan = jest.fn(() => makeSpan());
+  b.getActiveSpan = jest.fn(() => makeSpan());
   b.createReport = jest.fn(async () => ({
     read: jest.fn(), update: jest.fn(), addFileAttachment: jest.fn(), addDataAttachment: jest.fn(),
     upload: jest.fn(async () => true),

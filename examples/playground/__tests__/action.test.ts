@@ -14,3 +14,6 @@ test.each([
 test('unknown call shapes throw so a typo cannot pass the mapping test', () => {
   expect(() => callTarget('Bugse.log()')).toThrow();
 });
+test.each(['Promise.reject(new Error())', 'new Promise(() => {})'])('bare %s throws (only the global form maps)', (c) => {
+  expect(() => callTarget(c)).toThrow();
+});
