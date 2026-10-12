@@ -25,3 +25,12 @@ test('postJson sends JSON and parses the reply, null when not JSON', async () =>
   global.fetch = jest.fn().mockResolvedValue({ status: 500, text: async () => 'oops' }) as never;
   expect(await postJson('https://x', {})).toEqual({ status: 500, json: null });
 });
+test('flaky attempt throws DemoHttpError even when the request rejects (offline)', async () => {
+  global.fetch = jest.fn().mockRejectedValue(new TypeError('Network request failed')) as never;
+  await expect(fetchProducts({ flaky: true, attempt: 2 })).rejects.toBeInstanceOf(DemoHttpError);
+  expect((await fetchProducts({ flaky: true, attempt: 1 })).source).toBe('mock');
+});
+test('falls back to the mock when products is not an array', async () => {
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ message: 'x' }) }) as never;
+  expect((await fetchProducts()).source).toBe('mock');
+});

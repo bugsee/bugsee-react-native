@@ -22,15 +22,19 @@ export class DemoHttpError extends Error {
 export async function fetchProducts(
   opts: { flaky?: boolean; attempt?: number } = {},
 ): Promise<{ products: Product[]; source: 'network' | 'mock' }> {
-  const url = opts.flaky && (opts.attempt ?? 0) % 3 === 2 ? DEMO.STATUS(500) : DEMO.PRODUCTS;
+  const flakyHit = !!opts.flaky && (opts.attempt ?? 0) % 3 === 2;
+  const url = flakyHit ? DEMO.STATUS(500) : DEMO.PRODUCTS;
+  const mock = { products: MOCK_PRODUCTS, source: 'mock' as const };
   try {
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (url !== DEMO.PRODUCTS) throw new DemoHttpError(500);
-    if (!r.ok) return { products: MOCK_PRODUCTS, source: 'mock' };
-    return { products: (await r.json()).products, source: 'network' };
+    if (flakyHit) throw new DemoHttpError(500);
+    if (!r.ok) return mock;
+    const products = (await r.json()).products;
+    return Array.isArray(products) ? { products, source: 'network' } : mock;
   } catch (e) {
     if (e instanceof DemoHttpError) throw e;
-    return { products: MOCK_PRODUCTS, source: 'mock' };
+    if (flakyHit) throw new DemoHttpError(500);
+    return mock;
   }
 }
 

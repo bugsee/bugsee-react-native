@@ -10,17 +10,18 @@ const xhr = (method: string, body?: string) => new Promise<number>((resolve, rej
   x.timeout = 10000;
   x.onload = () => resolve(x.status);
   x.onerror = () => reject(new Error('XHR failed'));
+  x.onabort = () => reject(new Error('XHR aborted'));
   x.ontimeout = () => reject(new Error('XHR timed out'));
   x.send(body);
 });
 
 export const networkActions: Action[] = [
   { id: 'net-get', label: 'GET (fetch)', call: 'fetch(ECHO)', expect: GET_EXPECT, run: async () => (await fetch(DEMO.ECHO)).status },
-  { id: 'net-post-json', label: 'POST JSON', call: "fetch(ECHO, { method: 'POST', body: JSON.stringify({ hello: 'world' }) })", expect: 'Request body {"hello":"world"} with a JSON content type', run: async () => (await fetch(DEMO.ECHO, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hello: 'world' }) })).status },
-  { id: 'net-post-form', label: 'POST form', call: "fetch(ECHO, { method: 'POST', body: new URLSearchParams(...) })", expect: 'Request body a=1&b=two with content type application/x-www-form-urlencoded', run: async () => (await fetch(DEMO.ECHO, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'a=1&b=two' })).status },
+  { id: 'net-post-json', label: 'POST JSON', call: "fetch(ECHO, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hello: 'world' }) })", expect: 'Request body {"hello":"world"} with a JSON content type', run: async () => (await fetch(DEMO.ECHO, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hello: 'world' }) })).status },
+  { id: 'net-post-form', label: 'POST form', call: "fetch(ECHO, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'a=1&b=two' })", expect: 'Request body a=1&b=two with content type application/x-www-form-urlencoded', run: async () => (await fetch(DEMO.ECHO, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'a=1&b=two' })).status },
   { id: 'net-post-binary', label: 'POST binary (256 bytes)', call: "fetch(ECHO, { method: 'POST', body: new Uint8Array(256) })", expect: 'A request with a 256-byte binary body (body shown as binary or omitted)', run: async () => (await fetch(DEMO.ECHO, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: Uint8Array.from({ length: 256 }, (_, i) => i) as never })).status },
   { id: 'net-large', label: 'GET large (200 KB)', call: 'fetch(BYTES(200000))', expect: 'A completed GET whose response body is truncated or marked large in the report', run: async () => (await fetch(DEMO.BYTES(200000))).status },
-  { id: 'net-no-ctype', label: 'POST without Content-Type', call: "fetch(ECHO, { method: 'POST', body: 'raw text' })", expect: 'A POST with body "raw text" and no Content-Type request header', run: async () => (await fetch(DEMO.ECHO, { method: 'POST', body: 'raw text' })).status },
+  { id: 'net-no-ctype', label: 'POST without Content-Type', call: "fetch(ECHO, { method: 'POST', body: <ArrayBuffer of 'raw text'> })", expect: 'a POST whose request has no Content-Type header; its body is captured per the capture.network.body-without-type option', run: async () => (await fetch(DEMO.ECHO, { method: 'POST', body: Uint8Array.from('raw text', (c) => c.charCodeAt(0)).buffer as never })).status },
   { id: 'net-404', label: 'GET 404', call: 'fetch(STATUS(404))', expect: 'A request with responseCode 404 flagged as failed', run: async () => (await fetch(DEMO.STATUS(404))).status },
   { id: 'net-503', label: 'GET 503', call: 'fetch(STATUS(503))', expect: 'A request with responseCode 503 flagged as failed', run: async () => (await fetch(DEMO.STATUS(503))).status },
   {
