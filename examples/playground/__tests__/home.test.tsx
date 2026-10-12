@@ -11,6 +11,7 @@ jest.mock('expo-router', () => ({ useRouter: () => mockRouter }));
 function session(over: Partial<Session> = {}): Session {
   return {
     ready: true, config: { ...DEFAULT_CONFIG, common: { ...DEFAULT_CONFIG.common } }, setConfig: jest.fn(async () => {}), status: 2,
+    note: jest.fn(),
     lifecycle: [{ at: '10:00:00', event: 'launched' }, { at: '10:00:05', event: 'stopped' }],
     launch: jest.fn(async () => true), relaunch: jest.fn(async () => true), stop: jest.fn(async () => true),
     pendingToken: null, setPendingToken: jest.fn(), ...over,
@@ -66,4 +67,8 @@ test('a failing setConfig shows the error instead of rejecting unhandled', async
   await render(ui(session({ setConfig: jest.fn(async () => { throw new Error('disk full'); }) })));
   await fireEvent(screen.getByLabelText('Auto-launch on app start'), 'valueChange', true);
   expect(await screen.findByText(/Could not save: Error: disk full/)).toBeTruthy();
+});
+test('explains under the auto-launch toggle why it matters for crashes', async () => {
+  await render(ui(session()));
+  expect(screen.getByText('Needed to send crash reports at the next start')).toBeTruthy();
 });

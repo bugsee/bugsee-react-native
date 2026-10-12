@@ -92,6 +92,7 @@ export const homeActions: Action[] = [
     knownIssue: 'android-250',
   },
 ];
+export const AUTO_LAUNCH_HINT = 'Needed to send crash reports at the next start';
 const statusName = (s: number) => Object.entries(Status).find(([, v]) => v === s)?.[0] ?? String(s);
 const launchOptionsAction = homeActions.find((a) => a.id === 'launch-options')!;
 const SESSION_IDS = new Set(['launch', 'relaunch', 'stop']);
@@ -174,6 +175,7 @@ export default function HomeScreen() {
             session.setConfig({ ...session.config, autoLaunch: v }).catch((e) => setAutoError(describeError(e)));
           }}
         />
+        <Text style={styles.expect}>{AUTO_LAUNCH_HINT}</Text>
         {autoError ? <Text style={styles.error}>{`Could not save: ${autoError}`}</Text> : null}
       </Section>
       <Section title="Demo shop">

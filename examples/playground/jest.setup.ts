@@ -31,7 +31,7 @@ jest.mock('expo-router', () => {
   return {
     useLocalSearchParams: () => ({}),
     Slot: passThrough,
-    useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+    useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: () => false }),
     Link: Text,
     Stack: withScreen(),
     Tabs: withScreen(),

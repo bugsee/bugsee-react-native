@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import Bugsee from '@bugsee/react-native';
 import { Alert } from 'react-native';
+import { PlaygroundNative } from '../modules/playground-native';
 import ErrorsScreen, { errorsActions } from '../src/screens/ErrorsScreen';
 import { callTarget } from '../src/ui/action';
 
@@ -25,7 +26,9 @@ test('a crash action confirms, then crashes after 300 ms', async () => {
   await render(<ErrorsScreen />);
   await fireEvent.press(screen.getByText('JS crash'));
   expect(alert).toHaveBeenCalled();
-  expect(alert.mock.calls[0][1]).toBe('The app will crash. Reopen it to send the report.');
+  expect(alert.mock.calls[0][1]).toBe(
+    'The app will crash. Turn on Setup → Auto-launch first (or tap Home → Launch after reopening) to send the report.',
+  );
   const buttons = alert.mock.calls[0][2] as { text: string; onPress?: () => void }[];
   await act(async () => { buttons.find((b) => b.text === 'Crash')?.onPress?.(); });
   expect(Bugsee.testJsCrash).not.toHaveBeenCalled();
@@ -34,3 +37,18 @@ test('a crash action confirms, then crashes after 300 ms', async () => {
   alert.mockRestore();
   jest.useRealTimers();
 });
+test.each(errorsActions.filter((a) => a.call.startsWith('PlaygroundNative.crash')).map((a) => [a.id, a] as const))(
+  '%s throws "native module unavailable" in the tap, without scheduling, when the module is missing',
+  (_id, action) => {
+    jest.useFakeTimers();
+    const native = PlaygroundNative as unknown as { available: boolean };
+    native.available = false;
+    try {
+      expect(() => action.run()).toThrow('native module unavailable');
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      native.available = true;
+      jest.useRealTimers();
+    }
+  },
+);

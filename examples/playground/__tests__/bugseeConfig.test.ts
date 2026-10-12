@@ -13,6 +13,7 @@ describe('resolveBugseeConfig', () => {
   it('omits endpoint when the file has none', () => {
     const r = resolveBugseeConfig({ file: { appToken: IOS }, env: {} });
     expect('endpoint' in r.pluginProps).toBe(false);
+    expect('bugseeEndpoint' in r.extra).toBe(false);
   });
   it('passes endpoint and symbolicateReactNativeFrameworks through', () => {
     const r = resolveBugseeConfig({
@@ -21,6 +22,7 @@ describe('resolveBugseeConfig', () => {
     });
     expect(r.pluginProps.endpoint).toBe('https://bugsee.example.com');
     expect(r.pluginProps.symbolicateReactNativeFrameworks).toBe(true);
+    expect(r.extra.bugseeEndpoint).toBe('https://bugsee.example.com');
   });
   it('falls back to BUGSEE_APP_TOKEN, then BUGSEE_TOKEN_IOS for iOS', () => {
     expect(resolveBugseeConfig({ env: { BUGSEE_APP_TOKEN: AND } }).pluginProps.appToken).toEqual({ ios: AND, android: AND });

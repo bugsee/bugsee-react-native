@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput } from 'react-native';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
-import { LogLevel } from '@bugsee/react-native';
+import { LogLevel, Status } from '@bugsee/react-native';
 import { AdvancedEditor } from '../options/AdvancedEditor';
 import type { CommonOptions } from '../options/common';
 import { useSession } from '../session/SessionContext';
 import { isAppToken, tokenPrefix } from '../session/token';
+import { KnownIssue } from '../ui/KnownIssue';
 import { Screen } from '../ui/Screen';
 import { Section } from '../ui/Section';
 import { Toggle } from '../ui/Toggle';
@@ -34,13 +35,19 @@ const LEVELS = [
 const wholeOk = (s: string) => s.trim() === '' || /^\d+$/.test(s.trim());
 const whole = (s: string) => (s.trim() === '' ? undefined : Number(s.trim()));
 const text = (n?: number) => (n === undefined ? '' : String(n));
+type Extra = { bugseeTokenPrefix?: Record<string, string>; bugseeEndpoint?: string } | undefined;
+export const RELAUNCHED = 'Relaunched with the new options';
 
 export default function SetupScreen() {
   const session = useSession();
   const router = useRouter();
   const platform = Platform.OS as 'ios' | 'android';
+  const extra = Constants.expoConfig?.extra as Extra;
+  const buildEndpoint = extra?.bugseeEndpoint;
+  // An empty saved endpoint launches against the build's own (bugsee.config.json), so show that value.
+  const initialEndpoint = (saved: string) => (saved === '' && buildEndpoint ? buildEndpoint : saved);
   const [token, setToken] = useState(session.config.token);
-  const [endpoint, setEndpoint] = useState(session.config.endpoint);
+  const [endpoint, setEndpoint] = useState(initialEndpoint(session.config.endpoint));
   const [common, setCommon] = useState<CommonOptions>(session.config.common);
   const [advanced, setAdvanced] = useState(session.config.advanced);
   const [autoLaunch, setAutoLaunch] = useState(session.config.autoLaunch);
@@ -54,7 +61,7 @@ export default function SetupScreen() {
     // The saved config arrives asynchronously; adopt it once, when the session becomes ready.
     if (!session.ready) return;
     setToken(session.config.token);
-    setEndpoint(session.config.endpoint);
+    setEndpoint(initialEndpoint(session.config.endpoint));
     setCommon(session.config.common);
     setAdvanced(session.config.advanced);
     setAutoLaunch(session.config.autoLaunch);
@@ -69,7 +76,6 @@ export default function SetupScreen() {
     }
   }, [pendingToken, setPendingToken]);
 
-  const extra = Constants.expoConfig?.extra as { bugseeTokenPrefix?: Record<string, string> } | undefined;
   const buildPrefix = extra?.bugseeTokenPrefix?.[platform];
   const tokenOk = isAppToken(token);
   const endpointOk = isValidEndpoint(endpoint.trim());
@@ -91,10 +97,17 @@ export default function SetupScreen() {
         common: edited,
         advanced,
         autoLaunch,
-        everLaunched: true,
       });
-      if (await session.launch()) router.replace('/(tabs)');
-      else setLaunchError('Bugsee did not launch (already running, or the token was rejected). See Home → lifecycle.');
+      // A running SDK ignores launch(), so stop it first: the new token and options then take effect.
+      const running = session.status === Status.Launched || session.status === Status.Launching;
+      if (running) await session.stop();
+      if (await session.launch()) {
+        if (running) session.note(RELAUNCHED);
+        if (router.canGoBack()) router.back();
+        else router.replace('/(tabs)');
+      } else {
+        setLaunchError('Bugsee did not launch (already running, or the token was rejected). See Home → lifecycle.');
+      }
     } catch (e) {
       setLaunchError(`Launch failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -131,7 +144,7 @@ export default function SetupScreen() {
       <Section title="Endpoint">
         <TextInput
           style={styles.input}
-          placeholder="Leave empty for Bugsee cloud"
+          placeholder="Leave empty for the build's default (Bugsee cloud unless bugsee.config.json sets one)"
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
@@ -139,10 +152,16 @@ export default function SetupScreen() {
           onChangeText={setEndpoint}
         />
         {endpointOk ? null : <Text style={styles.error}>Must be an https URL (no /v2)</Text>}
+        {buildEndpoint && endpoint.trim() === buildEndpoint ? (
+          <Text style={styles.hint}>From bugsee.config.json</Text>
+        ) : null}
       </Section>
       <Section title="Common options">
         {BOOLS.map(([k, label]) => (
-          <Toggle key={k} label={label} value={common[k]} onChange={(v) => setC(k, v)} />
+          <Fragment key={k}>
+            <Toggle label={label} value={common[k]} onChange={(v) => setC(k, v)} />
+            {k === 'video' ? <KnownIssue id="cocoa-196" /> : null}
+          </Fragment>
         ))}
         <Text style={styles.label}>Log level</Text>
         <Text style={styles.chips}>
@@ -181,6 +200,7 @@ export default function SetupScreen() {
       </Section>
       <Section title="Auto-launch">
         <Toggle label="Launch on next app start" value={autoLaunch} onChange={setAutoLaunch} />
+        <Text style={styles.hint}>Needed to send crash reports at the next start</Text>
       </Section>
       <Pressable
         accessibilityRole="button"

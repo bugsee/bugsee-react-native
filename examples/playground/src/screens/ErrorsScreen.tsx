@@ -1,17 +1,25 @@
 import { useState } from 'react';
 import { Button, Platform, Text } from 'react-native';
 import Bugsee, { ErrorBoundary } from '@bugsee/react-native';
-import { PlaygroundNative } from '../../modules/playground-native';
+import { NATIVE_UNAVAILABLE, PlaygroundNative } from '../../modules/playground-native';
 import { ActionButton } from '../ui/ActionButton';
 import type { Action } from '../ui/action';
 import { afterTap } from '../ui/afterTap';
 import { Screen } from '../ui/Screen';
 import { Section } from '../ui/Section';
 
-const CRASH_CONFIRM = 'The app will crash. Reopen it to send the report.';
+// Crash reports are sent when the SDK launches at the next start, and auto-launch is off by default.
+const CRASH_CONFIRM =
+  'The app will crash. Turn on Setup → Auto-launch first (or tap Home → Launch after reopening) to send the report.';
 const reopen = (kind: string) =>
   `Reopen the app: a crash report with a symbolicated ${kind} stack (Release build with symbols uploaded)`;
 const jni = Platform.OS === 'android' ? ' (JNI)' : '';
+
+/** Throws now, inside the tap, so ActionButton logs it, rather than later inside the afterTap timer. */
+const afterTapNative = (fn: () => void) => {
+  if (!PlaygroundNative.available) throw new Error(NATIVE_UNAVAILABLE);
+  afterTap(fn);
+};
 
 type CrashKind = 'segv' | 'abort' | 'exception' | 'backgroundThread';
 const nativeCrash = (kind: CrashKind, label: string): Action => ({
@@ -20,7 +28,7 @@ const nativeCrash = (kind: CrashKind, label: string): Action => ({
   call: `PlaygroundNative.crash('${kind}')`,
   confirm: CRASH_CONFIRM,
   expect: reopen('native'),
-  run: () => afterTap(() => PlaygroundNative.crash(kind)),
+  run: () => afterTapNative(() => PlaygroundNative.crash(kind)),
 });
 const ndkCrash = (kind: 'segv' | 'abort'): Action => ({
   id: `crash-ndk-${kind}`,
@@ -29,7 +37,7 @@ const ndkCrash = (kind: 'segv' | 'abort'): Action => ({
   confirm: CRASH_CONFIRM,
   platforms: ['android'],
   expect: reopen('NDK'),
-  run: () => afterTap(() => PlaygroundNative.crashNdk(kind)),
+  run: () => afterTapNative(() => PlaygroundNative.crashNdk(kind)),
 });
 
 export const errorsActions: Action[] = [

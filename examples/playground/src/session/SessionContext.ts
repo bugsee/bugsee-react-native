@@ -8,6 +8,8 @@ export interface Session {
   setConfig(c: SavedConfig): Promise<void>;
   status: Status;
   lifecycle: { at: string; event: string }[];
+  /** Adds a playground note (not an SDK event) to the lifecycle log. */
+  note(event: string): void;
   launch(): Promise<boolean>;
   relaunch(): Promise<boolean>;
   stop(): Promise<boolean>;

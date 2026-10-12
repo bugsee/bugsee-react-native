@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Platform } from 'react-native';
 import Bugsee, { Status } from '@bugsee/react-native';
+import type { LifecycleEvent } from '@bugsee/react-native';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from './config';
 import type { SavedConfig } from './config';
 import { buildLaunchOptions, launchWith } from './launch';
@@ -11,6 +12,8 @@ import { isAppToken } from './token';
 
 const MAX_LIFECYCLE = 100;
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** One lifecycle log line: the event name, plus the report id for the events that carry one. */
+export const describeLifecycleEvent = (e: LifecycleEvent) => (e.reportId ? `${e.name} (${e.reportId})` : e.name);
 
 export function SessionProvider({ children }: { children?: ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -36,7 +39,10 @@ export function SessionProvider({ children }: { children?: ReactNode }) {
       if (!alive) return;
       configRef.current = loaded;
       setConfigState(loaded);
-      subs.push(Bugsee.onLifecycleEvent((e) => push(String(e))), Bugsee.onStatusChange((s) => setStatus(s)));
+      subs.push(
+        Bugsee.onLifecycleEvent((e) => push(describeLifecycleEvent(e))),
+        Bugsee.onStatusChange((s) => setStatus(s)),
+      );
       if (loaded.autoLaunch && isAppToken(loaded.token)) {
         try { await launchWith(loaded); } catch (e) { push(`launch failed: ${msg(e)}`); }
       }
@@ -57,8 +63,11 @@ export function SessionProvider({ children }: { children?: ReactNode }) {
   }, [refreshStatus]);
 
   const launch = useCallback(() => run(async () => {
-    if (!configRef.current.everLaunched) await setConfig({ ...configRef.current, everLaunched: true });
-    try { return await launchWith(configRef.current); } catch (e) { push(`launch failed: ${msg(e)}`); throw e; }
+    let ok: boolean;
+    try { ok = await launchWith(configRef.current); } catch (e) { push(`launch failed: ${msg(e)}`); throw e; }
+    // Persisted only after a successful launch, so a failed first launch shows Setup again on restart.
+    if (ok && !configRef.current.everLaunched) await setConfig({ ...configRef.current, everLaunched: true });
+    return ok;
   }), [run, setConfig, push]);
   const relaunch = useCallback(
     () => run(() => Bugsee.relaunch(buildLaunchOptions(configRef.current, Platform.OS as 'ios' | 'android'))),
@@ -67,8 +76,10 @@ export function SessionProvider({ children }: { children?: ReactNode }) {
   const stop = useCallback(() => run(() => Bugsee.stop()), [run]);
 
   const value = useMemo<Session>(
-    () => ({ ready, config, setConfig, status, lifecycle, launch, relaunch, stop, pendingToken, setPendingToken }),
-    [ready, config, setConfig, status, lifecycle, launch, relaunch, stop, pendingToken],
+    () => ({
+      ready, config, setConfig, status, lifecycle, note: push, launch, relaunch, stop, pendingToken, setPendingToken,
+    }),
+    [ready, config, setConfig, status, lifecycle, push, launch, relaunch, stop, pendingToken],
   );
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

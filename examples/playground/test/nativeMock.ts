@@ -12,5 +12,6 @@ module.exports = {
     log: jest.fn(),
     request: jest.fn(async () => ({ status: 200, body: '{}' })),
   },
+  NATIVE_UNAVAILABLE: 'native module unavailable (Expo Go or a missing dev build)',
   NativeSecureField: () => React.createElement(View),
 };

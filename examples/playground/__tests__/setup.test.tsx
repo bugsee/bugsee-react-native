@@ -1,13 +1,14 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Platform } from 'react-native';
+import { Status } from '@bugsee/react-native';
 import { SessionContext } from '../src/session/SessionContext';
 import type { Session } from '../src/session/SessionContext';
 import { DEFAULT_CONFIG } from '../src/session/config';
-import SetupScreen from '../src/screens/SetupScreen';
+import SetupScreen, { RELAUNCHED } from '../src/screens/SetupScreen';
 import { ADVANCED_KEYS } from '../src/options/advanced';
 import ScanScreen from '../src/screens/ScanScreen';
 
-const mockRouter = { push: jest.fn(), replace: jest.fn(), back: jest.fn() };
+const mockRouter = { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn(() => false) };
 jest.mock('expo-router', () => ({ useRouter: () => mockRouter }));
 let mockExtra: Record<string, unknown> = {};
 jest.mock('expo-constants', () => ({ __esModule: true, default: { get expoConfig() { return { extra: mockExtra }; } } }));
@@ -20,14 +21,16 @@ jest.mock('expo-camera', () => {
   };
 });
 
-const VALID = '3f2a9c1e-5b7d-4e68-8a10-2c9d4b6e7f01';
+const VALID = '00000000-0000-4000-8000-000000000001';
 function session(over: Partial<Session> = {}): Session {
   return {
-    ready: true, config: { ...DEFAULT_CONFIG, common: { ...DEFAULT_CONFIG.common } }, setConfig: jest.fn(async () => {}), status: 0, lifecycle: [],
+    ready: true, config: { ...DEFAULT_CONFIG, common: { ...DEFAULT_CONFIG.common } }, setConfig: jest.fn(async () => {}), status: 0,
+    lifecycle: [], note: jest.fn(),
     launch: jest.fn(async () => true), relaunch: jest.fn(async () => true), stop: jest.fn(async () => true),
     pendingToken: null, setPendingToken: jest.fn(), ...over,
   };
 }
+const PLACEHOLDER = "Leave empty for the build's default (Bugsee cloud unless bugsee.config.json sets one)";
 const withSession = (s: Session, ui = <SetupScreen />) => <SessionContext.Provider value={s}>{ui}</SessionContext.Provider>;
 
 beforeEach(() => { jest.clearAllMocks(); mockExtra = {}; });
@@ -45,22 +48,74 @@ test('valid token + Launch saves, launches and navigates', async () => {
   await fireEvent.changeText(screen.getByPlaceholderText('App token'), VALID);
   await fireEvent.press(screen.getByRole('button', { name: 'Launch' }));
   await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith('/(tabs)'));
-  expect(s.setConfig).toHaveBeenCalledWith(expect.objectContaining({ token: VALID, everLaunched: true }));
+  // everLaunched is the session's to set, after a successful launch (m3).
+  expect(s.setConfig).toHaveBeenCalledWith(expect.objectContaining({ token: VALID, everLaunched: false }));
   expect(s.launch).toHaveBeenCalledTimes(1);
+  expect(s.stop).not.toHaveBeenCalled();
+  expect(s.note).not.toHaveBeenCalled();
+});
+
+test('goes back instead of stacking a second tabs navigator when it can', async () => {
+  mockRouter.canGoBack.mockReturnValueOnce(true);
+  await render(withSession(session()));
+  await fireEvent.changeText(screen.getByPlaceholderText('App token'), VALID);
+  await fireEvent.press(screen.getByRole('button', { name: 'Launch' }));
+  await waitFor(() => expect(mockRouter.back).toHaveBeenCalledTimes(1));
+  expect(mockRouter.replace).not.toHaveBeenCalled();
+});
+
+test.each([Status.Launched, Status.Launching])(
+  'with Bugsee running (status %s) Launch stops, then launches',
+  async (st) => {
+    const order: string[] = [];
+    const s = session({
+      status: st,
+      stop: jest.fn(async () => { order.push('stop'); return true; }),
+      launch: jest.fn(async () => { order.push('launch'); return true; }),
+    });
+    await render(withSession(s));
+    await fireEvent.changeText(screen.getByPlaceholderText('App token'), VALID);
+    await fireEvent.press(screen.getByRole('button', { name: 'Launch' }));
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith('/(tabs)'));
+    expect(order).toEqual(['stop', 'launch']);
+    expect(s.note).toHaveBeenCalledWith(RELAUNCHED);
+  },
+);
+
+test('shows the cocoa-196 known issue under Capture video (iOS)', async () => {
+  await render(withSession(session()));
+  expect(screen.getByText('⚠ Known issue: capture.video=false still records')).toBeTruthy();
+});
+
+test('pre-fills the endpoint from bugsee.config.json when none is saved', async () => {
+  mockExtra = { bugseeEndpoint: 'https://bugsee.example.com' };
+  await render(withSession(session()));
+  const ep = screen.getByPlaceholderText(PLACEHOLDER);
+  expect(ep.props.value).toBe('https://bugsee.example.com');
+  expect(screen.getByText('From bugsee.config.json')).toBeTruthy();
+  await fireEvent.changeText(ep, 'https://other.example.com');
+  expect(screen.queryByText('From bugsee.config.json')).toBeNull();
+});
+
+test('a saved endpoint wins over bugsee.config.json', async () => {
+  mockExtra = { bugseeEndpoint: 'https://bugsee.example.com' };
+  await render(withSession(session({ config: { ...DEFAULT_CONFIG, endpoint: 'https://saved.example.com' } })));
+  expect(screen.getByPlaceholderText(PLACEHOLDER).props.value).toBe('https://saved.example.com');
+  expect(screen.queryByText('From bugsee.config.json')).toBeNull();
 });
 
 test('warns when the build-time prefix differs from the typed token', async () => {
   mockExtra = { bugseeTokenPrefix: { [Platform.OS]: '1a2b3c4d' } };
   await render(withSession(session()));
   expect(screen.getByText('Build-time token configured: 1a2b3c4d…; paste the full token')).toBeTruthy();
-  await fireEvent.changeText(screen.getByPlaceholderText('App token'), '9f8e7d6c-5b7d-4e68-8a10-2c9d4b6e7f01');
+  await fireEvent.changeText(screen.getByPlaceholderText('App token'), VALID);
   expect(screen.getByText(/Symbols were uploaded for app 1a2b3c4d…/)).toBeTruthy();
-  expect(screen.getByText(/launching with 9f8e…/)).toBeTruthy();
+  expect(screen.getByText(/launching with 0000…/)).toBeTruthy();
 });
 
 test('endpoint is empty by default with a placeholder, and rejects http', async () => {
   await render(withSession(session()));
-  const ep = screen.getByPlaceholderText('Leave empty for Bugsee cloud');
+  const ep = screen.getByPlaceholderText(PLACEHOLDER);
   expect(ep.props.value).toBe('');
   await fireEvent.changeText(screen.getByPlaceholderText('App token'), VALID);
   await fireEvent.changeText(ep, 'http://x');

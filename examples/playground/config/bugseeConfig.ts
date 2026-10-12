@@ -6,7 +6,8 @@ type Tokens = { ios?: string; android?: string };
 
 export interface ResolvedBugseeConfig {
   pluginProps: { appToken?: Tokens; endpoint?: string; symbolicateReactNativeFrameworks?: boolean };
-  extra: { bugseeTokenPrefix: Tokens };
+  /** `bugseeEndpoint` is the build's endpoint (not a secret): Setup shows what an empty field launches against. */
+  extra: { bugseeTokenPrefix: Tokens; bugseeEndpoint?: string };
 }
 
 export function readBugseeConfigFile(dir: string): unknown {
@@ -47,5 +48,7 @@ export function resolveBugseeConfig(input: {
   const prefix: Tokens = {};
   if (tokens.ios) prefix.ios = tokens.ios.slice(0, 8);
   if (tokens.android) prefix.android = tokens.android.slice(0, 8);
-  return { pluginProps, extra: { bugseeTokenPrefix: prefix } };
+  const extra: ResolvedBugseeConfig['extra'] = { bugseeTokenPrefix: prefix };
+  if (pluginProps.endpoint) extra.bugseeEndpoint = pluginProps.endpoint;
+  return { pluginProps, extra };
 }

@@ -15,7 +15,8 @@ interface NativeShape {
 }
 
 const native = requireOptionalNativeModule<NativeShape>('PlaygroundNative');
-const UNAVAILABLE = 'native module unavailable (Expo Go or a missing dev build)';
+export const NATIVE_UNAVAILABLE = 'native module unavailable (Expo Go or a missing dev build)';
+const UNAVAILABLE = NATIVE_UNAVAILABLE;
 const fail = (): never => { throw new Error(UNAVAILABLE); };
 
 export const PlaygroundNative = {
