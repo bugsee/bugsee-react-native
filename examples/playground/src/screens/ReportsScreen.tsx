@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import Bugsee, { IssueSeverity } from '@bugsee/react-native';
 import type { BugseeCreatedReport } from '@bugsee/react-native';
 import * as Feedback from '@bugsee/react-native-feedback';
+import { File, Paths } from 'expo-file-system';
 import { installReportHandler } from '../reportHandlers';
 import { patchConfig } from '../session/config';
 import type { ReportHandlerChoice } from '../session/config';
@@ -85,6 +86,19 @@ const createdActions: Action[] = [
     expect: 'note.txt is attached to the uploaded report',
     run: () =>
       current().addDataAttachment(base64('hello from the playground'), { name: 'note.txt', mimeType: 'text/plain' }),
+  },
+  {
+    id: 'created-attach-file',
+    label: 'Report: attach a file',
+    call: "report.addFileAttachment(path, { name: 'note-file.txt', mimeType: 'text/plain' })",
+    expect: 'note-file.txt (written to the cache directory first) is attached to the uploaded report',
+    run: () => {
+      const report = current();
+      const file = new File(Paths.cache, 'note-file.txt');
+      file.write('A file from the playground cache directory');
+      // A file:// URI is accepted; the SDK copies the file when it is added.
+      return report.addFileAttachment(file.uri, { name: 'note-file.txt', mimeType: 'text/plain' });
+    },
   },
   {
     id: 'created-attach-png',

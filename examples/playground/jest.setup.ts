@@ -15,6 +15,17 @@ jest.mock('@bugsee/react-native', () => jest.requireActual('./test/bugseeMock'))
 jest.mock('@bugsee/react-native-feedback', () => jest.requireActual('./test/feedbackMock'));
 jest.mock('./modules/playground-native', () => jest.requireActual('./test/nativeMock'));
 
+// expo-file-system's File/Paths are native (JSI) objects; the created-report file action only needs write + uri.
+jest.mock('expo-file-system', () => {
+  class File {
+    uri: string;
+    write = jest.fn();
+    constructor(...parts: (string | { uri: string })[]) {
+      this.uri = parts.map((p) => (typeof p === 'string' ? p : p.uri.replace(/\/$/, ''))).join('/');
+    }
+  }
+  return { File, Paths: { cache: { uri: 'file:///cache/' } } };
+});
 jest.mock('expo-camera', () => {
   const { View } = jest.requireActual('react-native');
   return { CameraView: View, useCameraPermissions: () => [{ granted: true }, jest.fn()] };

@@ -101,3 +101,15 @@ test('feedback listener logs to the screen and stops after unmount', async () =>
   await view.unmount();
   expect(() => listener.onNewMessageSent({ text: 'late' })).not.toThrow();
 });
+
+test('attach a file writes to the cache directory, then adds it by its file:// URI', async () => {
+  const create = Bugsee.createReport as jest.Mock;
+  create.mockClear();
+  await reportsActions.find((a) => a.id === 'created-create')!.run();
+  const report = (await create.mock.results[0].value) as { addFileAttachment: jest.Mock };
+  await reportsActions.find((a) => a.id === 'created-attach-file')!.run();
+  expect(report.addFileAttachment).toHaveBeenCalledWith('file:///cache/note-file.txt', {
+    name: 'note-file.txt',
+    mimeType: 'text/plain',
+  });
+});

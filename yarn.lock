@@ -6006,6 +6006,7 @@ __metadata:
     expo: "npm:~57.0.26"
     expo-camera: "npm:~57.0.6"
     expo-constants: "npm:~57.0.21"
+    expo-file-system: "npm:~57.0.7"
     expo-linking: "npm:~57.0.12"
     expo-modules-core: "npm:~57.0.21"
     expo-router: "npm:~57.0.25"
