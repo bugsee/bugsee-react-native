@@ -163,7 +163,13 @@ describe('exception handlers', () => {
     expect(previous).toHaveBeenCalledWith(error, true);
   });
 
-  it('the previous handler waits for the report, at most 1500 ms', async () => {
+  // Android's cap is longer: its SDK may spend about 1.75 s before the
+  // payload is safe, and a fatal's process dies soon after the wait
+  // (https://github.com/bugsee/bugsee-android/issues/251).
+  it.each([
+    ['android', 5000],
+    ['ios', 1500],
+  ])('the previous handler waits for the report, on %s at most %d ms', async (os, cap) => {
     jest.useFakeTimers();
     try {
       const {
@@ -174,6 +180,7 @@ describe('exception handlers', () => {
         getHandler,
         env,
       } = load();
+      (require('react-native') as { Platform: { OS: string } }).Platform.OS = os;
       let resolveReport!: () => void;
       reportUnhandled.mockImplementation(
         () =>
@@ -190,7 +197,7 @@ describe('exception handlers', () => {
       await flush();
       expect(previous).not.toHaveBeenCalled();
 
-      jest.advanceTimersByTime(1499);
+      jest.advanceTimersByTime(cap - 1);
       await flush();
       expect(previous).not.toHaveBeenCalled();
 

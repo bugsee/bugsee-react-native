@@ -15,7 +15,7 @@ import {
   markReported,
   reportHandled,
   reportUnhandled,
-  UNHANDLED_REPORT_WAIT_MS,
+  unhandledReportWaitMs,
 } from './report';
 
 declare const __DEV__: boolean;
@@ -180,7 +180,7 @@ function installErrorUtils(env: HandlerEnv): void {
         if (isFatal === true) {
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
           const timeout = new Promise<void>((resolve) => {
-            timeoutId = setTimeout(resolve, UNHANDLED_REPORT_WAIT_MS);
+            timeoutId = setTimeout(resolve, unhandledReportWaitMs());
           });
           void Promise.race([
             Promise.resolve(reportUnhandled(error)).then(

@@ -10,9 +10,15 @@ describe('the TurboModule name', () => {
   // codegenConfig.ios.modulesProvider maps Bugsee -> BugseeModule. Rename the
   // module here and that mapping silently stops applying.
   it('is exactly "Bugsee", matching codegenConfig.ios.modulesProvider', () => {
-    jest.isolateModules(() => {
-      require('../NativeBugsee');
-    });
+    // Bridgeless, as on a New Architecture app; the legacy case is architecture.test.ts.
+    (globalThis as Record<string, unknown>).RN$Bridgeless = true;
+    try {
+      jest.isolateModules(() => {
+        require('../NativeBugsee');
+      });
+    } finally {
+      delete (globalThis as Record<string, unknown>).RN$Bridgeless;
+    }
     expect(getEnforcing).toHaveBeenCalledWith('Bugsee');
   });
 });
