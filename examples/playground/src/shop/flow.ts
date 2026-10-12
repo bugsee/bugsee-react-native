@@ -44,6 +44,7 @@ export function finishFlow(status: SpanStatus): void {
   }
   tx.finish(status);
   tx = null;
+  bugPending = false;
 }
 
 const PASSWORD = /("password"\s*:\s*)"(?:[^"\\]|\\.)*"/g;
@@ -76,6 +77,8 @@ export async function pay(
     if (outcome === 'bug') {
       bugPending = true;
       afterTap(() => {
+        // The crash is being attempted now; the pending window is over even if the app survives it.
+        bugPending = false;
         const current: { total: number } | undefined = undefined;
         String((current as unknown as { total: number }).total);
       });

@@ -149,3 +149,17 @@ test('leaveShop keeps the transaction open while a Bug crash is pending', async 
     jest.useRealTimers();
   }
 });
+
+test('after the Bug crash was attempted, leaveShop cancels as usual', async () => {
+  jest.useFakeTimers();
+  try {
+    startCheckoutFlow();
+    const tx = bugsee.startTransaction.mock.results[0].value;
+    await pay('bug', undefined);
+    expect(() => jest.advanceTimersByTime(300)).toThrow(TypeError);
+    leaveShop();
+    expect(tx.finish).toHaveBeenCalledWith(SpanStatus.Cancelled);
+  } finally {
+    jest.useRealTimers();
+  }
+});
