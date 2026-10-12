@@ -12,14 +12,22 @@ export default function SignIn() {
   const [email, setEmail] = useState('shopper@example.com');
   const [password, setPassword] = useState('hunter2');
   const [remember, setRemember] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
     const s = stepSpan('sign-in');
-    await postJson(DEMO.ECHO, { email, password });
-    if (remember) {
-      Bugsee.setUserIdentifier(email);
+    setError(null);
+    try {
+      await postJson(DEMO.ECHO, { email, password });
+      if (remember) {
+        Bugsee.setUserIdentifier(email);
+      }
+      s.finish(SpanStatus.OK);
+    } catch (e) {
+      s.finish(SpanStatus.Error);
+      setError(`Sign in failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
     }
-    s.finish(SpanStatus.OK);
     router.push('/shop/products');
   };
 
@@ -47,6 +55,7 @@ export default function SignIn() {
         <Switch value={remember} onValueChange={setRemember} accessibilityLabel="Remember me" />
       </View>
       <Button title="Sign in" onPress={submit} />
+      {error ? <Text style={styles.error}>{error}</Text> : null}
       <CapturedNote
         lines={[
           'Password masked in video with no extra code',
@@ -59,5 +68,6 @@ export default function SignIn() {
 }
 const styles = StyleSheet.create({
   input: { borderWidth: 1, borderColor: '#bbb', borderRadius: 6, padding: 10, marginBottom: 10 },
+  error: { color: '#b91c1c', marginTop: 8 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
 });

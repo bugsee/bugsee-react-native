@@ -12,17 +12,25 @@ const OUTCOMES: { id: PayOutcome; label: string }[] = [
   { id: 'bug', label: 'Bug' },
 ];
 
+const MESSAGES = { ok: 'Order placed', declined: 'Payment declined', bug: 'Processing…' };
+
 export default function Checkout() {
   const [outcome, setOutcome] = useState<PayOutcome>('success');
   const [toast, setToast] = useState<string | null>(null);
 
   const submit = async () => {
     const s = stepSpan('checkout');
-    const result = await pay(outcome, cart);
-    s.finish();
-    const message = result === 'ok' ? 'Order placed' : 'Payment declined';
-    setToast(message);
-    Alert.alert('Checkout', message);
+    setToast(null);
+    try {
+      const result = await pay(outcome, cart, s);
+      const message = MESSAGES[result];
+      setToast(message);
+      if (result !== 'bug') {
+        Alert.alert('Checkout', message);
+      }
+    } catch (e) {
+      setToast(`Payment failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   return (

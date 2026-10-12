@@ -1,4 +1,4 @@
-import Bugsee from '@bugsee/react-native';
+import Bugsee, { SpanStatus } from '@bugsee/react-native';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
@@ -23,18 +23,22 @@ export default function Products() {
     attempts.current += 1;
     setAttempt(attempts.current);
     const s = stepSpan('products');
+    setError(null);
+    let status: SpanStatus = SpanStatus.OK;
     try {
       const r = await fetchProducts({ flaky, attempt: n });
       setProducts(r.products);
       setSource(r.source);
-      setError(null);
     } catch (e) {
+      status = SpanStatus.Error;
       if (e instanceof DemoHttpError) {
         setError(`Could not load products (HTTP ${e.status})`);
         Bugsee.logException(e, { labels: ['shop', 'products'] });
+      } else {
+        setError(`Could not load products: ${e instanceof Error ? e.message : String(e)}`);
       }
     } finally {
-      s.finish();
+      s.finish(status);
     }
   }, [flaky]);
 

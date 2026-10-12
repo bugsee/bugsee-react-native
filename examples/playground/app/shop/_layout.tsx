@@ -2,7 +2,7 @@ import Bugsee from '@bugsee/react-native';
 import { Stack } from 'expo-router';
 import { useEffect } from 'react';
 import { Pressable, Text } from 'react-native';
-import { SHOP_NETWORK_FILTER, startCheckoutFlow } from '../../src/shop/flow';
+import { leaveShop, SHOP_NETWORK_FILTER, startCheckoutFlow } from '../../src/shop/flow';
 
 function ReportButton({ screen }: { screen: string }) {
   return (
@@ -21,7 +21,10 @@ export default function ShopLayout() {
   useEffect(() => {
     Bugsee.setNetworkFilter(SHOP_NETWORK_FILTER);
     startCheckoutFlow();
-    return () => Bugsee.setNetworkFilter(null);
+    return () => {
+      Bugsee.setNetworkFilter(null);
+      leaveShop();
+    };
   }, []);
   return (
     <Stack>

@@ -1,6 +1,15 @@
 import Bugsee, { SpanStatus } from '@bugsee/react-native';
 import type { NetworkFilterEvent } from '@bugsee/react-native';
-import { cart, addToCart, finishFlow, pay, resetCart, SHOP_NETWORK_FILTER, startCheckoutFlow } from '../src/shop/flow';
+import {
+  addToCart,
+  cart,
+  finishFlow,
+  leaveShop,
+  pay,
+  resetCart,
+  SHOP_NETWORK_FILTER,
+  startCheckoutFlow,
+} from '../src/shop/flow';
 
 const bugsee = Bugsee as unknown as Record<string, jest.Mock>;
 const event = (body?: string | null): NetworkFilterEvent => ({
@@ -75,9 +84,68 @@ test('pay(bug) throws a TypeError from a timer', async () => {
   jest.useFakeTimers();
   try {
     startCheckoutFlow();
-    await pay('bug', undefined);
+    expect(await pay('bug', undefined)).toBe('bug');
     expect(() => jest.advanceTimersByTime(300)).toThrow(TypeError);
   } finally {
+    jest.useRealTimers();
+  }
+});
+
+test.each([
+  ['escaped quotes', '{"password":"a\\"b","x":1}', '{"password":"***","x":1}'],
+  ['spaces around the colon', '{"password" : "pw"}', '{"password" : "***"}'],
+  ['no password', '{"email":"a@b.co"}', '{"email":"a@b.co"}'],
+])('filter handles %s', (_n, body, expected) => {
+  expect((SHOP_NETWORK_FILTER(event(body)) as NetworkFilterEvent).body).toBe(expected);
+});
+
+test('the step span finishes before the transaction', async () => {
+  startCheckoutFlow();
+  const tx = bugsee.startTransaction.mock.results[0].value;
+  const span = tx.startChildSpan('shop.step', 'checkout');
+  await pay('success', { total: 1 }, span);
+  expect(span.finish).toHaveBeenCalledWith(SpanStatus.OK);
+  expect(span.finish.mock.invocationCallOrder[0]).toBeLessThan(tx.finish.mock.invocationCallOrder[0]);
+});
+
+test('declined finishes the step with Error before the transaction', async () => {
+  startCheckoutFlow();
+  const tx = bugsee.startTransaction.mock.results[0].value;
+  const span = tx.startChildSpan('shop.step', 'checkout');
+  await pay('declined', { total: 1 }, span);
+  expect(span.finish).toHaveBeenCalledWith(SpanStatus.Error);
+  expect(span.finish.mock.invocationCallOrder[0]).toBeLessThan(tx.finish.mock.invocationCallOrder[0]);
+});
+
+test('a rejecting request finishes the step and transaction with Error and rethrows', async () => {
+  startCheckoutFlow();
+  const tx = bugsee.startTransaction.mock.results[0].value;
+  const span = tx.startChildSpan('shop.step', 'checkout');
+  global.fetch = jest.fn(async () => { throw new Error('offline'); }) as never;
+  await expect(pay('success', { total: 1 }, span)).rejects.toThrow('offline');
+  expect(span.finish).toHaveBeenCalledWith(SpanStatus.Error);
+  expect(tx.finish).toHaveBeenCalledWith(SpanStatus.Error);
+});
+
+test('leaveShop cancels the open transaction and empties the cart', () => {
+  startCheckoutFlow();
+  const tx = bugsee.startTransaction.mock.results[0].value;
+  addToCart(3);
+  leaveShop();
+  expect(tx.finish).toHaveBeenCalledWith(SpanStatus.Cancelled);
+  expect(cart.items).toBe(0);
+});
+
+test('leaveShop keeps the transaction open while a Bug crash is pending', async () => {
+  jest.useFakeTimers();
+  try {
+    startCheckoutFlow();
+    const tx = bugsee.startTransaction.mock.results[0].value;
+    await pay('bug', undefined);
+    leaveShop();
+    expect(tx.finish).not.toHaveBeenCalled();
+  } finally {
+    jest.clearAllTimers();
     jest.useRealTimers();
   }
 });

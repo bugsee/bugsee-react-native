@@ -1,3 +1,4 @@
+import { SpanStatus } from '@bugsee/react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Button, Image, StyleSheet, Text } from 'react-native';
@@ -17,7 +18,8 @@ export default function ProductDetail() {
     const s = stepSpan('detail');
     fetchProducts()
       .then((r) => setProduct(r.products.find((p) => String(p.id) === id) ?? null))
-      .finally(() => s.finish());
+      .then(() => s.finish(SpanStatus.OK))
+      .catch(() => s.finish(SpanStatus.Error));
   }, [id]);
 
   const add = () => {

@@ -4,9 +4,11 @@ import { DEMO, postJson } from '../demoApi';
 import { afterTap } from '../ui/afterTap';
 
 export type ShopStep = 'sign-in' | 'products' | 'detail' | 'checkout';
+export type PayResult = 'ok' | 'declined' | 'bug';
 export type PayOutcome = 'success' | 'declined' | 'bug';
 
 let tx: BugseeTransaction | null = null;
+let bugPending = false;
 
 /** The cart lives at module level so every shop screen shares it. */
 export const cart = { items: 0, total: 0 };
@@ -26,10 +28,12 @@ export function startCheckoutFlow(): void {
   if (tx) {
     return;
   }
+  bugPending = false;
   tx = Bugsee.startTransaction('checkout', 'shop.flow');
 }
 
 export function stepSpan(name: ShopStep): BugseeSpan {
+  // Deliberate: after a flow finished (or was cancelled) the next step starts a fresh transaction.
   startCheckoutFlow();
   return tx!.startChildSpan('shop.step', name);
 }
@@ -55,26 +59,50 @@ export const SHOP_NETWORK_FILTER: NetworkFilter = (event) => {
 export async function pay(
   outcome: PayOutcome,
   order: { total: number } | undefined,
-): Promise<'ok' | 'declined'> {
-  if (outcome === 'declined') {
-    await fetch(DEMO.STATUS(402));
-    Bugsee.logException(new Error('Payment declined'), {
-      labels: ['checkout', 'payment'],
-      domain: 'payment',
-    });
-    finishFlow(SpanStatus.Error);
+  step?: BugseeSpan,
+): Promise<'ok' | 'declined' | 'bug'> {
+  try {
+    if (outcome === 'declined') {
+      await fetch(DEMO.STATUS(402));
+      Bugsee.logException(new Error('Payment declined'), {
+        labels: ['checkout', 'payment'],
+        domain: 'payment',
+      });
+      step?.finish(SpanStatus.Error);
+      finishFlow(SpanStatus.Error);
+      resetCart();
+      return 'declined';
+    }
+    if (outcome === 'bug') {
+      bugPending = true;
+      afterTap(() => {
+        const current: { total: number } | undefined = undefined;
+        String((current as unknown as { total: number }).total);
+      });
+      step?.finish(SpanStatus.OK);
+      return 'bug';
+    }
+    await postJson(DEMO.ECHO, { total: order?.total ?? 0 });
+    step?.finish(SpanStatus.OK);
+    finishFlow(SpanStatus.OK);
     resetCart();
-    return 'declined';
-  }
-  if (outcome === 'bug') {
-    afterTap(() => {
-      const current: { total: number } | undefined = undefined;
-      String((current as unknown as { total: number }).total);
-    });
     return 'ok';
+  } catch (e) {
+    step?.finish(SpanStatus.Error);
+    finishFlow(SpanStatus.Error);
+    throw e;
   }
-  await postJson(DEMO.ECHO, { total: order?.total ?? 0 });
-  finishFlow(SpanStatus.OK);
+}
+
+/**
+ * Called when the shop layout unmounts: cancels the open transaction and empties the cart.
+ * A pending Bug outcome is the exception: the transaction stays open on purpose, so the
+ * crash that is about to happen captures the whole flow.
+ */
+export function leaveShop(): void {
   resetCart();
-  return 'ok';
+  if (bugPending) {
+    return;
+  }
+  finishFlow(SpanStatus.Cancelled);
 }
