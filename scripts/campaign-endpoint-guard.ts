@@ -25,18 +25,12 @@ export const DEAD_ENDPOINT = 'https://127.0.0.1:9';
 export const STAGING_ENV = 'BUGSEE_STAGING_ENDPOINT';
 
 /**
- * The configured staging endpoint: `BUGSEE_STAGING_ENDPOINT`, trimmed, or
- * `fallback` (the untracked credentials.json `endpoint`, where a caller reads
- * that file anyway). `undefined` when neither is set: the guard then fails
- * closed. Never defaults to anything.
+ * The configured staging endpoint: `BUGSEE_STAGING_ENDPOINT`, trimmed.
+ * `undefined` when unset or blank: the guard then fails closed. Environment
+ * only, never a credentials file: a file cannot vouch for its own endpoint.
  */
-export function stagingEndpointOf(env: string | undefined, fallback?: unknown): string | undefined {
-  for (const value of [env, fallback]) {
-    if (typeof value === 'string' && value.trim() !== '') {
-      return value.trim();
-    }
-  }
-  return undefined;
+export function stagingEndpointOf(env: string | undefined): string | undefined {
+  return env === undefined || env.trim() === '' ? undefined : env.trim();
 }
 
 const NO_STAGING = `staging mode with no staging endpoint configured: set ${STAGING_ENV}`;

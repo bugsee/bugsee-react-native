@@ -126,14 +126,12 @@ describe('checkLaunch', () => {
 });
 
 describe('stagingEndpointOf', () => {
-  it('prefers the environment, trimmed, then the fallback', () => {
-    expect(stagingEndpointOf(` ${STAGING_ENDPOINT} `, 'https://other.invalid')).toBe(STAGING_ENDPOINT);
-    expect(stagingEndpointOf(undefined, STAGING_ENDPOINT)).toBe(STAGING_ENDPOINT);
-    expect(stagingEndpointOf('  ', STAGING_ENDPOINT)).toBe(STAGING_ENDPOINT);
+  it('trims the environment value', () => {
+    expect(stagingEndpointOf(` ${STAGING_ENDPOINT} `)).toBe(STAGING_ENDPOINT);
   });
 
-  it.each([[undefined, undefined], ['', ''], [undefined, 5], [undefined, null]])('nothing configured (%p, %p) is undefined', (env, fallback) => {
-    expect(stagingEndpointOf(env, fallback)).toBeUndefined();
+  it.each([[undefined], [''], ['  ']])('%p is nothing configured', env => {
+    expect(stagingEndpointOf(env)).toBeUndefined();
   });
 });
 
