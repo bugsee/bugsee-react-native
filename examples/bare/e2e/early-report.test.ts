@@ -47,8 +47,11 @@ const describeIosDevice = debugOnly(
 
 jest.setTimeout(20 * 60_000);
 
-/** Cold launches tried before the window counts as never reached. */
-const MAX_WINDOW_ATTEMPTS = 6;
+/**
+ * Cold launches tried before the window counts as never reached. Misses come
+ * in streaks (5 in a row once on the XS, about 3.5 s per attempt), so 10.
+ */
+const MAX_WINDOW_ATTEMPTS = 10;
 
 /** The JS payload's `reason`, which the bridge sends as the exception reason. */
 function payloadReason(bundle: PulledBundle): string | undefined {
