@@ -8,7 +8,7 @@ describe('findInternalHosts', () => {
     expect(findInternalHosts(`https://${host}/v2 and ${host.toUpperCase()}:443`)).toEqual([]);
   });
 
-  it.each([['staging'], ['apidev'], ['xapi'], ['my-api'], ['a.b']])('flags %s.bugsee.com with its line', sub => {
+  it.each([['staging'], ['apidev'], ['xapi'], ['my-api'], ['a.b']])('flags the internal host %s with its line', sub => {
     expect(findInternalHosts(`ok\nurl: https://${sub}.bugsee.com/x`)).toEqual([{ line: 2, host: `${sub}.bugsee.com` }]);
   });
 
