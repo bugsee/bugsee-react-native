@@ -172,10 +172,7 @@ const withBugsee = (config, props) => {
                 podfile = undefined;
             }
             if (podfile !== undefined) {
-                const next = uploadSymbols ? (0, podfile_1.insertSymbolicatePrebuilt)(podfile) : (0, podfile_1.removeSymbolicatePrebuilt)(podfile);
-                if (next !== podfile) {
-                    await (0, promises_1.writeFile)(podfilePath, next);
-                }
+                await (0, promises_1.writeFile)(podfilePath, uploadSymbols ? (0, podfile_1.insertSymbolicatePrebuilt)(podfile) : (0, podfile_1.removeSymbolicatePrebuilt)(podfile));
             }
             return cfg;
         },

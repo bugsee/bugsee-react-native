@@ -30,6 +30,14 @@ describe('relativizeSource', () => {
     expect(relativizeSource('/elsewhere/lib.js', ROOT)).toBe('../../../elsewhere/lib.js');
   });
 
+  it('does not mistake a colon inside a POSIX path for a drive', () => {
+    expect(relativizeSource(`${ROOT}/a:b/c.ts`, ROOT)).toBe('/a:b/c.ts');
+  });
+
+  it('handles UNC paths', () => {
+    expect(relativizeSource('\\\\host\\share\\app\\a.ts', '\\\\host\\share\\app')).toBe('/a.ts');
+  });
+
   it('handles Windows paths', () => {
     expect(relativizeSource('C:\\proj\\app\\src\\a.ts', 'C:\\proj\\app')).toBe('/src/a.ts');
     expect(relativizeSource('D:\\other\\a.ts', 'C:\\proj\\app')).toBe('D:\\other\\a.ts');
@@ -41,11 +49,14 @@ describe('relativizeSource', () => {
 });
 
 describe('relativizeSourceMap', () => {
-  it('returns null when nothing changes or there is no root', () => {
+  it('returns the text itself when nothing changes, there is no root or no sources', () => {
     const text = JSON.stringify({ version: 3, sources: ['a.js', 'rel/b.js'], mappings: '' });
-    expect(relativizeSourceMap(text, ROOT)).toBeNull();
-    expect(relativizeSourceMap(JSON.stringify({ version: 3, sources: [`${ROOT}/a.js`] }), '')).toBeNull();
-    expect(relativizeSourceMap(JSON.stringify({ version: 3 }), ROOT)).toBeNull();
+    expect(relativizeSourceMap(text, ROOT)).toBe(text);
+    const absolute = JSON.stringify({ version: 3, sources: [`${ROOT}/a.js`] });
+    expect(relativizeSourceMap(absolute, '')).toBe(absolute);
+    expect(relativizeSourceMap(absolute, undefined)).toBe(absolute);
+    const none = JSON.stringify({ version: 3 });
+    expect(relativizeSourceMap(none, ROOT)).toBe(none);
   });
 
   it('rewrites sources and keeps every other field', () => {

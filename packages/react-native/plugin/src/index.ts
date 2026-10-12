@@ -293,10 +293,10 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
         podfile = undefined;
       }
       if (podfile !== undefined) {
-        const next = uploadSymbols ? insertSymbolicatePrebuilt(podfile) : removeSymbolicatePrebuilt(podfile);
-        if (next !== podfile) {
-          await writeFile(podfilePath, next);
-        }
+        await writeFile(
+          podfilePath,
+          uploadSymbols ? insertSymbolicatePrebuilt(podfile) : removeSymbolicatePrebuilt(podfile),
+        );
       }
       return cfg;
     },

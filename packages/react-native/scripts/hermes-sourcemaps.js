@@ -351,7 +351,7 @@ function isAbsoluteSource(source) {
  */
 function relativizeSource(source, projectRoot) {
   if (typeof source !== 'string' || !isAbsoluteSource(source)) return source;
-  const flavor = /^[A-Za-z]:[\\/]|^\\\\/.test(source) || /^[A-Za-z]:[\\/]/.test(projectRoot) ? path.win32 : path.posix;
+  const flavor = /^(?:[A-Za-z]:|\\\\)/.test(source) ? path.win32 : path.posix;
   const relative = flavor.relative(flavor.resolve(projectRoot), flavor.resolve(source));
   // Another drive on Windows: there is no relative form.
   if (!relative || flavor.isAbsolute(relative)) return source;
@@ -362,17 +362,17 @@ function relativizeSource(source, projectRoot) {
   return parts[0] === '..' ? parts.join('/') : `/${parts.join('/')}`;
 }
 
-/** Returns the map text with `sources` made project-relative, or null if nothing changed. */
+/** Returns the map text with `sources` made project-relative, or the text itself if nothing changed. */
 function relativizeSourceMap(mapText, projectRoot) {
   const map = JSON.parse(mapText);
-  if (!Array.isArray(map.sources) || !projectRoot) return null;
+  if (!Array.isArray(map.sources) || !projectRoot) return mapText;
   let changed = false;
   map.sources = map.sources.map((source) => {
     const next = relativizeSource(source, projectRoot);
     if (next !== source) changed = true;
     return next;
   });
-  return changed ? JSON.stringify(map) : null;
+  return changed ? JSON.stringify(map) : mapText;
 }
 
 const PLACEHOLDER_TOKEN = /^0{12}[0-9a-f]0{3}[0-9a-f]0{15}$/i;
@@ -440,20 +440,19 @@ function uploadComposedSourceMap({
   if (endpoint) env.BUGSEE_ENDPOINT = endpoint;
   let stage = null;
   let uploadPath = composedMapPath;
-  if (projectRoot) {
-    try {
-      const rewritten = relativizeSourceMap(fs.readFileSync(composedMapPath, 'utf8'), projectRoot);
-      if (rewritten !== null) {
-        stage = fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-upload-'));
-        uploadPath = path.join(stage, path.basename(composedMapPath));
-        fs.writeFileSync(uploadPath, rewritten);
-      }
-    } catch (err) {
-      say(`could not make source map paths project-relative (${err.message}); uploading the map as it is`);
-      if (stage) remove(stage);
-      stage = null;
-      uploadPath = composedMapPath;
+  try {
+    const original = fs.readFileSync(composedMapPath, 'utf8');
+    const rewritten = relativizeSourceMap(original, projectRoot);
+    if (rewritten !== original) {
+      stage = fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-upload-'));
+      uploadPath = path.join(stage, path.basename(composedMapPath));
+      fs.writeFileSync(uploadPath, rewritten);
     }
+  } catch (err) {
+    say(`could not make source map paths project-relative (${err.message}); uploading the map as it is`);
+    if (stage) remove(stage);
+    stage = null;
+    uploadPath = composedMapPath;
   }
   let result;
   try {
