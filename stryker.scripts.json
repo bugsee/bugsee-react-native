@@ -8,6 +8,7 @@
     "configFile": "package.json",
     "config": {
       "roots": ["<rootDir>/scripts"],
+      "testEnvironment": "./scripts/stryker-skip-aware-environment.js",
       "testMatch": [
         "<rootDir>/scripts/__tests__/**/*.test.ts"
       ],
