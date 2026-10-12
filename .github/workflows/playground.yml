@@ -77,8 +77,19 @@ jobs:
       - run: yarn install --immutable
       - working-directory: examples/playground
         run: CI=1 npx expo prebuild -p android --no-install
+      - name: Runner disk and memory
+        run: |
+          df -h
+          free -m
+      # CI only proves the build compiles and links, so build one ABI (the
+      # NDK module is still compiled). Edited in gradle.properties as well as
+      # passed with -P, because -P alone was seen not to narrow the build.
       - working-directory: examples/playground/android
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: |
+          sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=x86_64/' gradle.properties
+          sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g/' gradle.properties
+          grep -E '^(reactNativeArchitectures|org.gradle.jvmargs)=' gradle.properties
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace -PreactNativeArchitectures=x86_64 -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
 
   ios:
     name: playground ios simulator build
