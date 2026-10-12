@@ -52,7 +52,7 @@ const reportActions: Action[] = [
     id: 'view-hierarchy',
     label: 'Capture view hierarchy',
     call: 'Bugsee.captureViewHierarchy()',
-    expect: 'The next report carries a view hierarchy (iOS: the RN tree)',
+    expect: 'The next report carries the React Native view tree (Bugsee.wrap in app/_layout.tsx)',
     run: () => Bugsee.captureViewHierarchy(),
   },
 ];

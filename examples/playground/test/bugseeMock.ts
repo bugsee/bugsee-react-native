@@ -44,6 +44,8 @@ function makeBugsee(): Record<string, jest.Mock> & { appearance: Record<string, 
     read: jest.fn(), update: jest.fn(), addFileAttachment: jest.fn(), addDataAttachment: jest.fn(),
     upload: jest.fn(async () => true),
   }));
+  // Pass-through, like the real wrap renders Root unchanged: render tests of the root layout keep working.
+  b.wrap = jest.fn((Root: unknown) => Root);
   b.appearance = {};
   return b as never;
 }

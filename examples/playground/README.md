@@ -82,6 +82,19 @@ uploaded for.
 4. Open the report in your Bugsee dashboard. It carries the summary and
    description from the dialog.
 
+## Wrap the root component
+
+Copy this line into your own app. `Bugsee.wrap` lets Bugsee capture the React
+Native view tree; without it the view hierarchy in every report is empty. With
+Expo Router, wrap the root layout (`app/_layout.tsx`):
+
+```tsx
+export default Bugsee.wrap(RootLayout);
+```
+
+Without Expo Router, wrap the component you register:
+`AppRegistry.registerComponent(appName, () => Bugsee.wrap(App))`.
+
 ## Tour
 
 | Tab | What is there |
