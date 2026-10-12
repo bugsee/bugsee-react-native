@@ -156,6 +156,7 @@ const handlerActions: Action[] = [
     label: 'Handler: attach file',
     call: 'Bugsee.setReportHandler(REPORT_HANDLER_PRESETS.attachFile)',
     expect: 'handler.txt attached, including to a crash recovered at the next launch',
+    knownIssue: 'cocoa-220',
     run: () => chooseHandler('attachFile'),
   },
   {

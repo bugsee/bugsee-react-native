@@ -209,5 +209,6 @@ The app shows a note next to each affected button.
 | Android | [Blackout before launch is a no-op](https://github.com/bugsee/bugsee-android/issues/248) |
 | iOS | [`upload()` source type shows as unknown](https://github.com/bugsee/bugsee-cocoa/issues/223) |
 | Android | [Feedback greeting not shown](https://github.com/bugsee/bugsee-android/issues/245) |
+| iOS | [`span.setName` renames the transaction instead of setting the operation (fixed after 7.0.0-beta5)](https://github.com/bugsee/bugsee-cocoa/issues/199) |
 
 For manual test sessions, see [VALIDATION.md](./VALIDATION.md).

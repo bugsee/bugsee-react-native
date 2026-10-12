@@ -59,6 +59,7 @@ export const perfActions: Action[] = [
     call: "Bugsee.startTransaction('rename-me', 'ui.action')",
     expect:
       "Transaction 'rename-me' whose operation is now 'renamed', ending with status Error (setName sets the operation; pass the status to finish(), a bare finish() ends OK)",
+    knownIssue: 'cocoa-199',
     run: () => {
       const tx = Bugsee.startTransaction('rename-me', 'ui.action');
       tx.setName('renamed');

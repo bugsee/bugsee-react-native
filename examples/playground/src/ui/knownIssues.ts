@@ -49,5 +49,10 @@ export const KNOWN_ISSUES = {
     title: 'Feedback greeting not shown',
     platform: 'android',
   },
+  'cocoa-199': {
+    url: 'https://github.com/bugsee/bugsee-cocoa/issues/199',
+    title: 'span.setName renames the transaction instead of setting the operation (fixed after 7.0.0-beta5)',
+    platform: 'ios',
+  },
 } as const satisfies Record<string, { url: string; title: string; platform: 'ios' | 'android' }>;
 export type KnownIssueId = keyof typeof KNOWN_ISSUES;

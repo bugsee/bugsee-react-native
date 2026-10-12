@@ -60,6 +60,18 @@ test('valid token + Launch saves, launches and navigates', async () => {
   expect(s.note).not.toHaveBeenCalled();
 });
 
+test('the auto-launch toggle persists at once and Launch keeps it', async () => {
+  const s = session();
+  await render(withSession(s));
+  await fireEvent(screen.getByLabelText('Launch on next app start'), 'valueChange', !s.config.autoLaunch);
+  expect(s.setConfig).toHaveBeenCalledWith(expect.objectContaining({ autoLaunch: !s.config.autoLaunch }));
+  expect(s.launch).not.toHaveBeenCalled();
+  await fireEvent.changeText(screen.getByPlaceholderText('App token'), VALID);
+  await fireEvent.press(screen.getByRole('button', { name: 'Launch' }));
+  await waitFor(() => expect(s.launch).toHaveBeenCalled());
+  expect(s.setConfig).toHaveBeenLastCalledWith(expect.objectContaining({ autoLaunch: !s.config.autoLaunch }));
+});
+
 test('goes back instead of stacking a second tabs navigator when it can', async () => {
   mockRouter.canGoBack.mockReturnValueOnce(true);
   await render(withSession(session()));

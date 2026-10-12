@@ -10,6 +10,7 @@ import { isAppToken, tokenPrefix } from '../session/token';
 import { KnownIssue } from '../ui/KnownIssue';
 import { Screen } from '../ui/Screen';
 import { Section } from '../ui/Section';
+import { describeError } from '../ui/ActionButton';
 import { Toggle } from '../ui/Toggle';
 import { PLACEHOLDER_COLOR } from '../ui/placeholder';
 
@@ -56,6 +57,7 @@ export default function SetupScreen() {
   const [maxText, setMaxText] = useState(text(session.config.common.maxDataSize));
   const [busy, setBusy] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [autoError, setAutoError] = useState<string | null>(null);
   const inFlight = useRef(false);
 
   useEffect(() => {
@@ -204,7 +206,20 @@ export default function SetupScreen() {
         <AdvancedEditor values={advanced} onChange={setAdvanced} />
       </Section>
       <Section title="Auto-launch">
-        <Toggle label="Launch on next app start" value={autoLaunch} onChange={setAutoLaunch} />
+        <Toggle
+          label="Launch on next app start"
+          value={autoLaunch}
+          onChange={(v) => {
+            // Persisted at once, like Home's toggle; the local value follows so a later Launch save keeps it.
+            setAutoError(null);
+            setAutoLaunch(v);
+            session.setConfig({ ...session.config, autoLaunch: v }).catch((e) => {
+              setAutoLaunch(!v);
+              setAutoError(describeError(e));
+            });
+          }}
+        />
+        {autoError ? <Text style={styles.error}>{`Could not save: ${autoError}`}</Text> : null}
         <Text style={styles.hint}>Needed to send crash reports at the next start</Text>
       </Section>
       <Pressable
