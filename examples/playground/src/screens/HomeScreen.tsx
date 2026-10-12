@@ -17,7 +17,7 @@ export const homeActions: Action[] = [
     id: 'launch',
     label: 'Launch',
     call: 'Bugsee.launch(token, options)',
-    expect: 'Status goes Launching → Launched; resolves true',
+    expect: 'Status goes Launching → Launched; resolves true; false if Bugsee is already running (use Relaunch)',
     run: async () => launchWith(await loadConfig()),
   },
   {

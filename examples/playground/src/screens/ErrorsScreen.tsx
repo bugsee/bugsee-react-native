@@ -5,6 +5,7 @@ import { NATIVE_UNAVAILABLE, PlaygroundNative } from '../../modules/playground-n
 import { ActionButton } from '../ui/ActionButton';
 import type { Action } from '../ui/action';
 import { afterTap } from '../ui/afterTap';
+import { KnownIssue } from '../ui/KnownIssue';
 import { Screen } from '../ui/Screen';
 import { Section } from '../ui/Section';
 
@@ -170,6 +171,7 @@ function BoundaryDemo() {
         <Bomb armed={armed} />
       </ErrorBoundary>
       <Button title="Throw inside ErrorBoundary" onPress={() => setArmed(true)} />
+      <KnownIssue id="android-247" />
     </>
   );
 }
