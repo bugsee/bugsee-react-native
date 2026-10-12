@@ -7,9 +7,14 @@
  * and `launch()` resolves before Launched. The bridge holds those calls and
  * replays them on Launched (`BGSRNLaunchHold`, a workaround until #227 is
  * fixed). Scenario `early-report` (scenarios/early-report.ts) launches, makes
- * both calls with nothing in between, then reads the status: `status=1` proves
- * the calls landed in the Launching window, so a pass is not a call that
- * merely came late.
+ * both calls with nothing in between, then reads the status.
+ *
+ * An attempt counts only when both calls landed in the Launching window:
+ * `status=1` right after them, or both logged `held until launched`. About
+ * 1 cold launch in 3 on the XS reaches Launched first, so the test repeats
+ * the cold launch (wipe, stop, launch) until one lands in the window, at
+ * most MAX_WINDOW_ATTEMPTS times, logs how many it took, and asserts on that
+ * attempt. Only when none lands does it fail, saying so.
  *
  * iPhone only (`E2E_IOS_TARGET=device`, Debug, `DEAD_ENDPOINT` retention): the
  * simulator SDK compiles `logException` out. Without the hold both bundles are
@@ -40,7 +45,10 @@ const describeIosDevice = debugOnly(
   'Debug case (asserts a __DEV__ bundle)',
 );
 
-jest.setTimeout(10 * 60_000);
+jest.setTimeout(20 * 60_000);
+
+/** Cold launches tried before the window counts as never reached. */
+const MAX_WINDOW_ATTEMPTS = 6;
 
 /** The JS payload's `reason`, which the bridge sends as the exception reason. */
 function payloadReason(bundle: PulledBundle): string | undefined {
@@ -54,25 +62,62 @@ function payloadReason(bundle: PulledBundle): string | undefined {
 
 describeIosDevice(`reports right after launch() on ${TARGET_NAME}`, () => {
   let log: DeviceLog;
-  let run: Run;
+  let run: Run | undefined;
   let nonce: string;
-  let sentText: string;
-  let bundles: PulledBundle[];
+  let attempts = 0;
+  const missed: string[] = [];
+  let bundles: PulledBundle[] = [];
 
+  /**
+   * Whether this attempt's two calls landed while the SDK was Launching:
+   * `status=1` right after both, or (with the hold) both calls logged
+   * `held until launched` -- a held call is replayed, so `getStatus()` can
+   * already read 2.
+   */
+  function inWindow(attempt: Run, sentText: string): boolean {
+    const statusLaunching = /early sent launched=true status=1 /.test(sentText);
+    const heldBoth =
+      log.all(bridgeLine('exception handled bytes=\\d+ held until launched'), attempt.start).length === 1 &&
+      log.all(bridgeLine('upload held until launched'), attempt.start).length === 1;
+    return statusLaunching || heldBoth;
+  }
+
+  // About 1 cold launch in 3 on the XS reaches Launched before the JS
+  // continuation reaches native, and such a run proves nothing about the
+  // window. So the cycle -- wipe and stop the app, cold-launch the scenario --
+  // repeats until an attempt lands in the window, at most
+  // MAX_WINDOW_ATTEMPTS times, and the cases below assert on that attempt.
   beforeAll(async () => {
     log = IosConsole.start();
     useLog(log, 'G2');
-    await clearBundles();
-    run = await startRun('early-report');
-    nonce = run.scenario.nonce;
-    report('banner', run.banner.text.trim());
-    expect(run.dev).toBe(true);
-    sentText = must(
-      await log.waitFor(new RegExp(`BUGSEE_E2E early sent .*nonce=${nonce}`), 30_000, run.start),
-      'the early-sent marker',
-      run.start,
-    ).text;
-    report('early sent', sentText.trim());
+    while (attempts < MAX_WINDOW_ATTEMPTS) {
+      attempts += 1;
+      await clearBundles();
+      const attempt = await startRun('early-report');
+      report(`attempt ${attempts} banner`, attempt.banner.text.trim());
+      expect(attempt.dev).toBe(true);
+      const sentText = must(
+        await log.waitFor(
+          new RegExp(`BUGSEE_E2E early sent .*nonce=${attempt.scenario.nonce}`),
+          30_000,
+          attempt.start,
+        ),
+        'the early-sent marker',
+        attempt.start,
+      ).text.trim();
+      if (inWindow(attempt, sentText)) {
+        run = attempt;
+        nonce = attempt.scenario.nonce;
+        report('early sent', sentText);
+        break;
+      }
+      missed.push(sentText);
+      report(`attempt ${attempts} missed the Launching window`, sentText);
+    }
+    report('attempts to land in the Launching window', { attempts, inWindow: run !== undefined });
+    if (run === undefined) {
+      return;
+    }
     bundles = await awaitBundles(2, 60_000);
     report(
       'bundles',
@@ -100,39 +145,40 @@ describeIosDevice(`reports right after launch() on ${TARGET_NAME}`, () => {
     }
   });
 
-  // The window proof: `status=1` right after both calls, or (with the hold)
-  // both calls logged `held until launched` -- a held call is replayed, so
-  // `getStatus()` can already read 2. A run with neither (seen about 1 in 3
-  // on the XS) proves nothing about the window and fails here as
-  // inconclusive rather than passing the cases below for the wrong reason.
-  it('makes both calls while the SDK is Launching (else the run is inconclusive)', () => {
-    const statusLaunching = /early sent launched=true status=1 /.test(sentText);
-    const heldBoth =
-      log.all(bridgeLine('exception handled bytes=\\d+ held until launched'), run.start).length === 1 &&
-      log.all(bridgeLine('upload held until launched'), run.start).length === 1;
-    // The whole object on failure: which proof was missing, and the marker.
-    expect({ sentText, statusLaunching, heldBoth, inWindow: statusLaunching || heldBoth }).toMatchObject({
-      inWindow: true,
-    });
+  /** The in-window attempt, or the clear reason there is none. */
+  function windowRun(): Run {
+    if (run === undefined) {
+      throw new Error(
+        `none of ${attempts} cold launches made both calls while the SDK was Launching ` +
+          `(Launched always came first), so nothing here is proven:\n${missed.join('\n')}`,
+      );
+    }
+    return run;
+  }
+
+  it('lands an attempt in the Launching window', () => {
+    expect(windowRun().scenario.nonce).toBe(nonce);
   });
 
   it('files the handled exception', () => {
+    windowRun();
     const found = bundles.filter(b => payloadReason(b) === `early-exc-${nonce}`);
     expect(found).toHaveLength(1);
   });
 
   it('files the upload', () => {
+    windowRun();
     const found = bundles.filter(b => b.request.summary === `early-up-${nonce}`);
     expect(found).toHaveLength(1);
   });
 
   it('logs held until launched, then sent, for the exception', () => {
-    const held = log.all(bridgeLine('exception handled bytes=\\d+ held until launched'), run.start);
-    const sent = log.all(bridgeLine('exception handled sent bytes='), run.start);
+    const held = log.all(bridgeLine('exception handled bytes=\\d+ held until launched'), windowRun().start);
+    const sent = log.all(bridgeLine('exception handled sent bytes='), windowRun().start);
     expect(held).toHaveLength(1);
     expect(sent).toHaveLength(1);
     expect(held[0]!.index).toBeLessThan(sent[0]!.index);
-    expect(log.all(bridgeLine('upload held until launched'), run.start)).toHaveLength(1);
-    expect(log.all(bridgeLine('upload sent'), run.start)).toHaveLength(1);
+    expect(log.all(bridgeLine('upload held until launched'), windowRun().start)).toHaveLength(1);
+    expect(log.all(bridgeLine('upload sent'), windowRun().start)).toHaveLength(1);
   });
 });
