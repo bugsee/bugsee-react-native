@@ -21,7 +21,7 @@ writes two gitignored files:
 ```sh
 export BUGSEE_TOKEN_IOS=…
 export BUGSEE_TOKEN_ANDROID=…
-export BUGSEE_ENDPOINT=https://apidev.bugsee.com
+export BUGSEE_ENDPOINT=…   # your staging endpoint (set BUGSEE_STAGING_ENDPOINT)
 yarn credentials
 ```
 

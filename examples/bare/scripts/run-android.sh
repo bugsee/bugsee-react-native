@@ -6,7 +6,7 @@
 # by write-credentials.mjs; nothing here is ever committed.
 #
 #   BUGSEE_TOKEN_ANDROID   required
-#   BUGSEE_ENDPOINT        optional, e.g. https://apidev.bugsee.com
+#   BUGSEE_ENDPOINT        optional; for staging, your staging endpoint (set BUGSEE_STAGING_ENDPOINT)
 #   ANDROID_SERIAL         defaults to the WOD_LX1 Phase 1 was verified on
 set -euo pipefail
 

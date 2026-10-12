@@ -10,7 +10,7 @@
     "test": "jest",
     "test:release": "BUGSEE_RELEASE=1 yarn test",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.example.json",
-    "lint": "eslint .",
+    "lint": "eslint . && node scripts/cli-check-no-internal-hosts.ts",
     "mutate": "yarn mutate:src && yarn mutate:scripts",
     "assert:ios-embed": "node scripts/cli-assert-framework-embedded.ts",
     "mutate:src": "stryker run stryker.src.json",

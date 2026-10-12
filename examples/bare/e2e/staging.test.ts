@@ -4,7 +4,7 @@
  * Two ways to run it, and only these:
  *
  *   E2E_STAGING=1        the STAGING lane: a real staging token, endpoint
- *                        exactly https://apidev.bugsee.com (the N-30 guard
+ *                        exactly BUGSEE_STAGING_ENDPOINT (the N-30 guard
  *                        checks every launch), the network ON. Every report
  *                        must be delivered: `AfterReportUploaded`, and nothing
  *                        left on the device. The controller then finds each
