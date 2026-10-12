@@ -77,13 +77,14 @@ test('a successful upload clears the handle', async () => {
   expect(await screen.findByText(/Call Bugsee.createReport\(\) first/)).toBeTruthy();
   expect(created.read).not.toHaveBeenCalled();
 });
-test('a failed upload keeps the handle for a retry', async () => {
+test('a failed upload still clears the handle', async () => {
   await render(<ReportsScreen />);
   const created = await createReport();
   created.upload.mockResolvedValueOnce(false);
   await press('Report: upload');
   await press('Report: read');
-  expect(created.read).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText(/Call Bugsee.createReport\(\) first/)).toBeTruthy();
+  expect(created.read).not.toHaveBeenCalled();
 });
 test('appearance assignments reach the Bugsee appearance object', async () => {
   await render(<ReportsScreen />);

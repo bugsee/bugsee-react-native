@@ -100,7 +100,7 @@ export const errorsActions: Action[] = [
     id: 'unhandled-rejection',
     label: 'Unhandled promise rejection',
     call: 'global Promise rejection (no catch)',
-    expect: 'A crash report from the rejection tracker',
+    expect: 'A handled error report (an unhandled rejection is reported as a handled error, not a crash)',
     run: () => {
       void Promise.reject(new Error('Playground unhandled rejection'));
     },

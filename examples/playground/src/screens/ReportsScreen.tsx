@@ -125,11 +125,12 @@ const createdActions: Action[] = [
     id: 'created-upload',
     label: 'Report: upload',
     call: 'report.upload()',
-    expect: 'Resolves true and clears the handle; false keeps it for a retry',
+    expect: 'Resolves the native result; the handle is dead either way — call Bugsee.createReport() again for another report',
     run: async () => {
-      const uploaded = await current().upload();
-      if (uploaded) created = null;
-      return uploaded;
+      // The SDK kills the handle before the native call, whatever the result.
+      const report = current();
+      created = null;
+      return report.upload();
     },
   },
 ];
