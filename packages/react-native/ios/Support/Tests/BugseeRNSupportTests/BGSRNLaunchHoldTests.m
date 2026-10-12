@@ -44,7 +44,8 @@
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
     [turned fulfill];
   });
-  [self waitForExpectations:@[ turned ] timeout:seconds + 5];
+  // Generous: a loaded CI runner can starve main for seconds; this wait only pumps main and asserts nothing about timing.
+  [self waitForExpectations:@[ turned ] timeout:seconds + 30];
 }
 
 - (void)testTheSharedHoldHasTheDocumentedBounds {
@@ -173,19 +174,26 @@
 
 /// A deadline armed for a batch that Launched already released does nothing
 /// to the next batch, which gets its own.
+///
+/// Timeline, D = the deadline, scaled up so a main-queue stall of a few
+/// seconds on a loaded runner cannot reorder it (only the ordering matters):
+///   t=0     batch a submitted, released at once; its timer is due at D
+///   t=1.3   batch b submitted; its timer is due at 1.3 + D = 3.3
+///   t=2.6   first assertion: a's old timer (2.0) has fired, b's (3.3) has not
+///   t=4.1   second assertion: b's timer has fired
 - (void)testAnOldDeadlineDoesNotTouchALaterBatch {
-  BGSRNLaunchHold *hold = [self holdWithCapacity:8 deadlineMs:150];
+  BGSRNLaunchHold *hold = [self holdWithCapacity:8 deadlineMs:2000];
   [hold submit:@"a" call:[self recorder:@"a"]];
   _status = BugseeStatusLaunched;
   [hold lifecycleEvent:@"com.bugsee.lifecycle.Launched"];
   _status = BugseeStatusLaunching;
-  [self spinMain:0.1];
+  [self spinMain:1.3];
   [hold submit:@"b" call:[self recorder:@"b"]];
   // The first batch's deadline passes here; the second's has not.
-  [self spinMain:0.1];
+  [self spinMain:1.3];
   XCTAssertEqualObjects(_runs, @[ @"a:replay" ]);
   XCTAssertEqual(hold.heldCount, 1u);
-  [self spinMain:0.2];
+  [self spinMain:1.5];
   XCTAssertEqualObjects(_runs, (@[ @"a:replay", @"b:drop" ]));
 }
 
