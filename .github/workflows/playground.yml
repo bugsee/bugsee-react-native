@@ -9,7 +9,19 @@ on:
       - 'packages/**'
       - '.github/workflows/playground.yml'
       - 'yarn.lock'
+      - 'native-versions.json'
+      - 'package.json'
+      - 'eslint.config.mjs'
+      - 'tsconfig*.json'
+      - 'scripts/cli-check-no-internal-hosts.ts'
+      - 'scripts/check-no-internal-hosts.ts'
+      - 'settings.gradle'
+      - 'gradle.properties'
+      - 'gradle/**'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: playground-${{ github.ref }}
@@ -24,6 +36,7 @@ env:
 jobs:
   js:
     name: playground typecheck, lint, tests, host check
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +52,7 @@ jobs:
 
   android:
     name: playground android build
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +82,7 @@ jobs:
 
   ios:
     name: playground ios simulator build
+    timeout-minutes: 60
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
