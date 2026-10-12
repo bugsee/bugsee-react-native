@@ -48,13 +48,30 @@ export function finishFlow(status: SpanStatus): void {
 }
 
 const PASSWORD = /("password"\s*:\s*)"(?:[^"\\]|\\.)*"/g;
+/**
+ * The same field one JSON level down, inside a JSON string: an echo service (httpbin `/anything`) returns the
+ * request body as `"data": "{\"email\":…,\"password\":\"hunter2\"}"`. Inside the value, `\\\"` and `\\\\` are
+ * the escaped quote and backslash of the inner JSON, `\X` is any other escape, and `\"` ends the value.
+ */
+const ESCAPED_PASSWORD = /(\\"password\\"\s*:\s*)\\"(?:\\\\\\"|\\\\\\\\|\\[^"]|[^"\\])*\\"/g;
 
-/** Redacts `"password":"..."` inside a JSON string body; everything else is passed through. */
+/** Redacts the password value in a JSON body, and in a JSON body echoed back inside another JSON string. */
+export const redactPasswords = (body: string): string =>
+  body.replace(PASSWORD, '$1"***"').replace(ESCAPED_PASSWORD, '$1\\"***\\"');
+
+/**
+ * Redacts the password in `body`, the only body field NetworkFilterEvent has (each event stage carries its own
+ * body there, the request's or the echoed response's); everything else is passed through.
+ *
+ * On Android SDK 7.3.1+ a request body can arrive later, in a supplement event with `override: true`
+ * (packages/react-native/src/network/filter.ts). It is filtered the same way here; confirm at the device smoke
+ * pass that the sign-in body reaches the report redacted on Android.
+ */
 export const SHOP_NETWORK_FILTER: NetworkFilter = (event) => {
   if (typeof event.body !== 'string') {
     return event;
   }
-  return { ...event, body: event.body.replace(PASSWORD, '$1"***"') };
+  return { ...event, body: redactPasswords(event.body) };
 };
 
 export async function pay(

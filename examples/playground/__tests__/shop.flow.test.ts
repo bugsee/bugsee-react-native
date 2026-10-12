@@ -7,6 +7,7 @@ import {
   leaveShop,
   pay,
   resetCart,
+  redactPasswords,
   SHOP_NETWORK_FILTER,
   startCheckoutFlow,
 } from '../src/shop/flow';
@@ -162,4 +163,29 @@ test('after the Bug crash was attempted, leaveShop cancels as usual', async () =
   } finally {
     jest.useRealTimers();
   }
+});
+
+// httpbin /anything echoes the request body as a JSON string inside its response JSON.
+test.each([
+  ['an escaped echo', '{"data":"{\\"email\\":\\"a@b.co\\",\\"password\\":\\"hunter2\\"}"}'],
+  ['an escaped echo with spaces', '{"data": "{\\"email\\": \\"a@b.co\\", \\"password\\" : \\"hunter2\\"}"}'],
+  ['an escaped quote inside the password', '{"data":"{\\"password\\":\\"hun\\\\\\"ter2\\"}"}'],
+  ['an escaped backslash ending the password', '{"data":"{\\"password\\":\\"hunter2\\\\\\\\\\"}"}'],
+])('filter redacts the password in %s', (_n, body) => {
+  const out = (SHOP_NETWORK_FILTER(event(body)) as NetworkFilterEvent).body as string;
+  expect(out).not.toMatch(/hunter2|ter2/);
+  expect(out).toContain('\\"***\\"');
+  // Still the same JSON shape: the echoed body parses, and so does the string inside it.
+  const inner = JSON.parse((JSON.parse(out) as { data: string }).data) as Record<string, string>;
+  expect(inner.password).toBe('***');
+});
+
+test('a full httpbin echo keeps the email and redacts both password copies', () => {
+  const sent = JSON.stringify({ email: 'a@b.co', password: 'hunter2' });
+  const echo = JSON.stringify({ data: sent, json: JSON.parse(sent), url: 'https://httpbin.org/anything' }, null, 2);
+  const out = redactPasswords(echo);
+  expect(out).not.toContain('hunter2');
+  const parsed = JSON.parse(out) as { data: string; json: Record<string, string> };
+  expect(parsed.json).toEqual({ email: 'a@b.co', password: '***' });
+  expect(JSON.parse(parsed.data)).toEqual({ email: 'a@b.co', password: '***' });
 });

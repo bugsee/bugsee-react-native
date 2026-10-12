@@ -3,6 +3,13 @@ import { PlaygroundNative } from '../../../modules/playground-native';
 import { DEMO } from '../../demoApi';
 import type { Action } from '../../ui/action';
 
+/**
+ * Replaces the value of every Authorization header, whatever its casing (RN's fetch lower-cases header names),
+ * and keeps every other header and its casing.
+ */
+export const redactAuthorization = (headers: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(headers).map(([k, v]) => [k, k.toLowerCase() === 'authorization' ? '***' : v]));
+
 const GET_EXPECT = 'A completed request with its status, headers and body in network capture';
 const xhr = (method: string, body?: string) =>
   new Promise<number>((resolve, reject) => {
@@ -55,7 +62,7 @@ export const networkActions: Action[] = [
   {
     id: 'net-post-binary',
     label: 'POST binary (256 bytes)',
-    call: "fetch(ECHO, { method: 'POST', body: new Uint8Array(256) })",
+    call: "fetch(ECHO, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(256) })",
     expect: 'A request with a 256-byte binary body (body shown as binary or omitted)',
     run: async () =>
       (
@@ -172,12 +179,12 @@ export const networkActions: Action[] = [
   {
     id: 'nf-redact',
     label: 'Network filter: redact Authorization',
-    call: "Bugsee.setNetworkFilter((e) => ({ ...e, headers: …Authorization: '***' }))",
+    call: "Bugsee.setNetworkFilter((e) => ({ ...e, headers: …authorization (any case): '***' }))",
     expect: 'Later requests show Authorization: *** in their headers',
     run: () =>
       Bugsee.setNetworkFilter((e) => ({
         ...e,
-        headers: e.headers ? { ...e.headers, Authorization: '***' } : e.headers,
+        headers: e.headers ? redactAuthorization(e.headers) : e.headers,
       })),
   },
   {

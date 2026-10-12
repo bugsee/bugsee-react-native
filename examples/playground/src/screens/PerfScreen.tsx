@@ -39,6 +39,20 @@ export const perfActions: Action[] = [
     run: () => Bugsee.getActiveSpan(),
   },
   {
+    id: 'active-span-in-transaction',
+    label: 'Get active span inside a transaction',
+    call: "Bugsee.getActiveSpan() inside Bugsee.startTransaction('active-span', 'ui.action')",
+    expect: "returns the transaction's span",
+    run: () => {
+      const tx = Bugsee.startTransaction('active-span', 'ui.action');
+      try {
+        return Bugsee.getActiveSpan();
+      } finally {
+        tx.finish();
+      }
+    },
+  },
+  {
     id: 'rename-status',
     label: 'Rename and set status',
     call: "Bugsee.startTransaction('rename-me', 'ui.action')",

@@ -34,6 +34,7 @@ export default function CaptureScreen() {
         ))}
       </Section>
       <Section title="Network filters and events">
+        <Text style={styles.note}>The demo shop installs its own filter while open and clears it on exit.</Text>
         {group(['nf-', 'net-add-event']).map((a) => (
           <ActionButton key={a.id} action={a} />
         ))}
