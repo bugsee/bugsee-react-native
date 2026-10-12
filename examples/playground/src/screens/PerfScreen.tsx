@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Text } from 'react-native';
 import Bugsee, { SpanStatus } from '@bugsee/react-native';
-import type { BugseeSpan } from '@bugsee/react-native';
+import type { BugseeSpan, BugseeTransaction } from '@bugsee/react-native';
 import { fetchProducts } from '../demoApi';
 import { runFakeCheckout } from '../fakeCheckout';
 import { ActionButton } from '../ui/ActionButton';
@@ -9,10 +9,11 @@ import type { Action } from '../ui/action';
 import { Screen } from '../ui/Screen';
 import { Section } from '../ui/Section';
 
-// Slow render: the action stores the open span and notifies the screen, which renders 3000 rows
-// and finishes the span in an effect after commit.
-let pendingRender: BugseeSpan | null = null;
-let onSlowRender: ((span: BugseeSpan) => void) | null = null;
+// Slow render: the action opens a transaction and a ui.render child span (a span with no active transaction is
+// a no-op), then notifies the screen, which renders 3000 rows and finishes both in an effect after commit.
+type SlowRender = { tx: BugseeTransaction; span: BugseeSpan };
+let pendingRender: SlowRender | null = null;
+let onSlowRender: ((r: SlowRender) => void) | null = null;
 
 export const perfActions: Action[] = [
   {
@@ -83,20 +84,22 @@ export const perfActions: Action[] = [
   {
     id: 'slow-render',
     label: 'Slow render (3000 rows)',
-    call: "Bugsee.startSpan('ui.render', 'slow list')",
-    expect: 'A ui.render span covering the 3000-row render',
+    call: "Bugsee.startTransaction('slow-render', 'ui.render') with a child span 'slow list'",
+    expect: 'A slow-render transaction whose ui.render child span covers the 3000-row render',
     run: () => {
-      const span = Bugsee.startSpan('ui.render', 'slow list');
-      if (onSlowRender) onSlowRender(span);
-      else pendingRender = span;
+      const tx = Bugsee.startTransaction('slow-render', 'ui.render');
+      const r = { tx, span: tx.startChildSpan('ui.render', 'slow list') };
+      if (onSlowRender) onSlowRender(r);
+      else pendingRender = r;
     },
   },
 ];
 
-function SlowList({ span }: { span: BugseeSpan }) {
+function SlowList({ render: { tx, span } }: { render: SlowRender }) {
   useEffect(() => {
     span.finish(SpanStatus.OK);
-  }, [span]);
+    tx.finish(SpanStatus.OK);
+  }, [tx, span]);
   return (
     <>
       {Array.from({ length: 3000 }, (_, i) => (
@@ -107,8 +110,8 @@ function SlowList({ span }: { span: BugseeSpan }) {
 }
 
 export default function PerfScreen() {
-  const [run, setRun] = useState<{ n: number; span: BugseeSpan } | null>(null);
-  const show = (span: BugseeSpan) => setRun((r) => ({ n: (r?.n ?? 0) + 1, span }));
+  const [run, setRun] = useState<{ n: number; render: SlowRender } | null>(null);
+  const show = (render: SlowRender) => setRun((r) => ({ n: (r?.n ?? 0) + 1, render }));
   useEffect(() => {
     onSlowRender = show;
     if (pendingRender) {
@@ -128,7 +131,7 @@ export default function PerfScreen() {
       </Section>
       {run && (
         <Section title="Slow list">
-          <SlowList key={run.n} span={run.span} />
+          <SlowList key={run.n} render={run.render} />
         </Section>
       )}
     </Screen>

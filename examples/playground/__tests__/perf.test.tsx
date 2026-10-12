@@ -13,11 +13,15 @@ test('renders labels and pressing an action calls its mock', async () => {
   await fireEvent.press(screen.getByText('Get active span'));
   expect(Bugsee.getActiveSpan).toHaveBeenCalled();
 });
-test('slow render finishes the span after commit', async () => {
+test('slow render runs a child span inside a transaction and finishes both after commit', async () => {
   await render(<PerfScreen />);
   await fireEvent.press(screen.getByText('Slow render (3000 rows)'));
-  const span = (Bugsee.startSpan as jest.Mock).mock.results.at(-1)!.value;
-  expect(Bugsee.startSpan).toHaveBeenCalledWith('ui.render', 'slow list');
+  expect(Bugsee.startTransaction).toHaveBeenCalledWith('slow-render', 'ui.render');
+  const tx = (Bugsee.startTransaction as jest.Mock).mock.results.at(-1)!.value;
+  expect(tx.startChildSpan).toHaveBeenCalledWith('ui.render', 'slow list');
+  const span = tx.startChildSpan.mock.results[0].value;
   expect(await screen.findByText('Row 2999')).toBeTruthy();
   expect(span.finish).toHaveBeenCalled();
+  expect(tx.finish).toHaveBeenCalled();
+  expect(span.finish.mock.invocationCallOrder[0]).toBeLessThan(tx.finish.mock.invocationCallOrder[0]);
 });
