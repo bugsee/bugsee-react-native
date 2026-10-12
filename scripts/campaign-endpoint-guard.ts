@@ -5,7 +5,8 @@
  *   offline  (the default) the placeholder token and the dead loopback
  *            endpoint `https://127.0.0.1:9`: nothing leaves the device.
  *   staging  (`E2E_STAGING=1`, lane STAGING only) a real token and exactly
- *            `https://apidev.bugsee.com`.
+ *            the endpoint configured in `BUGSEE_STAGING_ENDPOINT` (the host is
+ *            not kept in this public repo). Nothing configured: refused.
  * Production -- `api.bugsee.com` in any spelling, or any other Bugsee host --
  * is refused in both, and so is anything the guard cannot read.
  *
@@ -19,7 +20,26 @@
 export type CampaignMode = 'offline' | 'staging';
 
 export const DEAD_ENDPOINT = 'https://127.0.0.1:9';
-export const STAGING_ENDPOINT = 'https://apidev.bugsee.com';
+
+/** The environment variable that names the staging endpoint. */
+export const STAGING_ENV = 'BUGSEE_STAGING_ENDPOINT';
+
+/**
+ * The configured staging endpoint: `BUGSEE_STAGING_ENDPOINT`, trimmed, or
+ * `fallback` (the untracked credentials.json `endpoint`, where a caller reads
+ * that file anyway). `undefined` when neither is set: the guard then fails
+ * closed. Never defaults to anything.
+ */
+export function stagingEndpointOf(env: string | undefined, fallback?: unknown): string | undefined {
+  for (const value of [env, fallback]) {
+    if (typeof value === 'string' && value.trim() !== '') {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+const NO_STAGING = `staging mode with no staging endpoint configured: set ${STAGING_ENV}`;
 
 /** `E2E_STAGING`: unset or `0` is offline, `1` is staging; anything else throws. */
 export function parseCampaignMode(raw: string | undefined): CampaignMode {
@@ -58,7 +78,7 @@ export function namesProduction(text: string): boolean {
   return [text, decoded].some(form => PRODUCTION.test(form));
 }
 
-/** `api.bugsee.com` not preceded by a host character: `apidev.` and `xapi.` are other hosts. */
+/** `api.bugsee.com` not preceded by a host character: sibling hosts such as `xapi.` are other hosts. */
 const PRODUCTION = /(^|[^a-z0-9.-])api\.bugsee\.com(?![a-z0-9-])/i;
 
 /** The endpoint as `launch()` was given it, and whether its token is the placeholder. */
@@ -72,7 +92,7 @@ export interface LaunchFacts {
  * Whether a launch may go ahead in `mode`. `default` (the SDK's own
  * endpoint, which is production) is refused in both modes.
  */
-export function checkLaunch(mode: CampaignMode, facts: LaunchFacts): GuardResult {
+export function checkLaunch(mode: CampaignMode, facts: LaunchFacts, staging?: string): GuardResult {
   const endpoint = facts.endpoint.trim();
   if (endpoint === 'default' || endpoint === '') {
     return fail("the SDK's default endpoint (production) was left in place");
@@ -89,8 +109,11 @@ export function checkLaunch(mode: CampaignMode, facts: LaunchFacts): GuardResult
     }
     return PASS;
   }
-  if (endpoint !== STAGING_ENDPOINT) {
-    return fail(`staging mode launches only against exactly ${STAGING_ENDPOINT}`);
+  if (staging === undefined || staging === '') {
+    return fail(NO_STAGING);
+  }
+  if (endpoint !== staging) {
+    return fail('staging mode launches only against exactly the configured staging endpoint');
   }
   if (facts.token !== 'set') {
     return fail('staging mode with the placeholder token: nothing would reach staging');
@@ -123,11 +146,16 @@ export interface CredentialFacts {
 /**
  * Pre-build check of an app's credential files. Offline: every token is the
  * placeholder (or empty), and no endpoint other than none or the dead one.
- * Staging: the endpoint is exactly the staging one, wherever one is given.
+ * Staging: the endpoint is exactly `staging`, wherever one is given. `staging`
+ * must come from outside the files checked (the environment): the files'
+ * own endpoint cannot vouch for itself.
  * Production is refused anywhere in either file.
  */
-export function checkCredentials(mode: CampaignMode, facts: CredentialFacts): GuardResult {
+export function checkCredentials(mode: CampaignMode, facts: CredentialFacts, staging?: string): GuardResult {
   const json = facts.json ?? {};
+  if (mode === 'staging' && (staging === undefined || staging === '')) {
+    return fail(NO_STAGING);
+  }
   const tokens: Array<[string, unknown]> = [
     ['credentials.json ios', json.ios],
     ['credentials.json android', json.android],
@@ -159,9 +187,9 @@ export function checkCredentials(mode: CampaignMode, facts: CredentialFacts): Gu
     if (endpoint === '') {
       continue;
     }
-    const allowed = mode === 'offline' ? DEAD_ENDPOINT : STAGING_ENDPOINT;
+    const allowed = mode === 'offline' ? DEAD_ENDPOINT : staging!;
     if (endpoint !== allowed) {
-      return fail(`${where} is not ${allowed}`);
+      return fail(`${where} is not ${mode === 'offline' ? DEAD_ENDPOINT : 'the configured staging endpoint'}`);
     }
   }
   const real = tokens.filter(([, value]) => typeof value === 'string' && value !== '' && !isPlaceholderToken(value));
@@ -173,7 +201,7 @@ export function checkCredentials(mode: CampaignMode, facts: CredentialFacts): Gu
       return fail('staging mode with no real token');
     }
     if (typeof json.endpoint !== 'string' || json.endpoint.trim() === '') {
-      return fail(`staging mode with no credentials.json endpoint: the SDK default is production; set ${STAGING_ENDPOINT}`);
+      return fail(`staging mode with no credentials.json endpoint: the SDK default is production; set it to your staging endpoint`);
     }
     const propertiesToken = real.some(([where]) => where.startsWith('bugsee.properties'));
     const propertiesEndpoint = endpoints.some(

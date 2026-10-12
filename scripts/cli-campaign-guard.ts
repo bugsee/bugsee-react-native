@@ -1,7 +1,8 @@
 /**
  * Campaign endpoint guard, pre-build (plan N-30): refuses an app whose
  * credential files would send anything anywhere but the dead endpoint
- * (offline) or exactly https://apidev.bugsee.com (`E2E_STAGING=1`).
+ * (offline) or exactly the endpoint in BUGSEE_STAGING_ENDPOINT (`E2E_STAGING=1`;
+ * unset: refused).
  *
  *   node scripts/cli-campaign-guard.ts [--app-dir <dir>]   (default examples/bare)
  *
@@ -11,7 +12,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { checkCredentials, parseCampaignMode } from './campaign-endpoint-guard.ts';
+import { checkCredentials, parseCampaignMode, stagingEndpointOf } from './campaign-endpoint-guard.ts';
 
 const args = process.argv.slice(2);
 let appDir = join(import.meta.dirname, '..', 'examples', 'bare');
@@ -42,7 +43,7 @@ if (json === undefined && properties === undefined) {
   console.error(`campaign guard: REFUSED (${mode}): no credentials.json or android/bugsee.properties in ${appDir}`);
   process.exit(1);
 }
-const verdict = checkCredentials(mode, { json, properties });
+const verdict = checkCredentials(mode, { json, properties }, stagingEndpointOf(process.env.BUGSEE_STAGING_ENDPOINT));
 if (!verdict.ok) {
   console.error(`campaign guard: REFUSED (${mode}) ${appDir}: ${verdict.reason}`);
   process.exit(1);

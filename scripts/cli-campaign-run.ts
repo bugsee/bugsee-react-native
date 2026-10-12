@@ -22,7 +22,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { checkCredentials, parseCampaignMode } from './campaign-endpoint-guard.ts';
+import { checkCredentials, parseCampaignMode, stagingEndpointOf } from './campaign-endpoint-guard.ts';
 import { TARGETS, type Target } from './campaign-evidence.ts';
 
 const repo = join(import.meta.dirname, '..');
@@ -80,7 +80,7 @@ const jsonText = read(join(appDir, 'credentials.json'));
 const verdict = checkCredentials(mode, {
   json: jsonText === undefined ? undefined : (JSON.parse(jsonText) as Record<string, unknown>),
   properties: read(join(appDir, 'android', 'bugsee.properties')),
-});
+}, stagingEndpointOf(process.env.BUGSEE_STAGING_ENDPOINT));
 if (!verdict.ok) {
   console.error(`campaign guard: REFUSED (${mode}) ${appDir}: ${verdict.reason}`);
   process.exit(4);

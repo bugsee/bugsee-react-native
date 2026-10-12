@@ -91,7 +91,7 @@ describe('secretsOf', () => {
     const secrets = secretsOf([
       {
         origin: 'staging',
-        json: JSON.stringify({ ios: REAL, android: ` ${REAL.toUpperCase()} `, endpoint: 'https://apidev.bugsee.com', token: 'short' }),
+        json: JSON.stringify({ ios: REAL, android: ` ${REAL.toUpperCase()} `, endpoint: 'https://staging.bugsee.invalid', token: 'short' }),
         properties: `# c\napp_token = ${'a'.repeat(20)}\nplugin.appToken: ${'b'.repeat(20)}\nother=${'c'.repeat(20)}\n`,
       },
     ]);

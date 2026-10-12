@@ -8,10 +8,10 @@
  * own module registry): a suite calls `useLog` once its log exists, and every
  * helper here reads that log.
  */
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { checkLaunch, launchFactsOf, parseCampaignMode } from '../../../scripts/campaign-endpoint-guard';
+import { checkLaunch, launchFactsOf, parseCampaignMode, stagingEndpointOf } from '../../../scripts/campaign-endpoint-guard';
 import { parseNoWipe } from './flow-config';
 import { androidBannerOf, checkAndroidBanner, logcatPid } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
@@ -49,10 +49,24 @@ export const describeDevice = ON_ANDROID || ON_IOS ? describe : describe.skip;
 
 /**
  * `E2E_STAGING=1` is the STAGING lane (a real token, exactly
- * https://apidev.bugsee.com); anything else is offline (the placeholder token
+ * the endpoint in BUGSEE_STAGING_ENDPOINT); anything else is offline (the placeholder token
  * and the dead endpoint). Every launch is checked against it (`checkRun`).
  */
 export const CAMPAIGN_MODE = parseCampaignMode(process.env.E2E_STAGING);
+
+/**
+ * The staging endpoint: BUGSEE_STAGING_ENDPOINT, else the untracked
+ * examples/bare/credentials.json `endpoint`. Undefined fails the guard closed.
+ */
+function configuredStaging(): string | undefined {
+  let fromFile: unknown;
+  try {
+    fromFile = (JSON.parse(readFileSync(join(BARE_DIR, 'credentials.json'), 'utf8')) as { endpoint?: unknown }).endpoint;
+  } catch {
+    fromFile = undefined;
+  }
+  return stagingEndpointOf(process.env.BUGSEE_STAGING_ENDPOINT, fromFile);
+}
 
 /** examples/bare, the default app under test (device.ts `APP_DIR`). */
 const BARE_DIR = join(__dirname, '..');
@@ -218,7 +232,7 @@ async function checkRun(ran: LogLine, start: number): Promise<void> {
   const verdict =
     facts === undefined
       ? { ok: false, reason: "the app's launch line names no token kind and endpoint" }
-      : checkLaunch(CAMPAIGN_MODE, facts);
+      : checkLaunch(CAMPAIGN_MODE, facts, configuredStaging());
   if (!verdict.ok) {
     await stopApp().catch(() => {});
     throw new Error(`campaign endpoint guard (N-30, ${CAMPAIGN_MODE} mode) refused this launch: ${verdict.reason}. The app was stopped.`);

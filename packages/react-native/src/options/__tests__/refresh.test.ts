@@ -78,9 +78,9 @@ describe('reading back what the SDK reports', () => {
   it('works through the endpoint accessor too', () => {
     const options = new IOSLaunchOptions();
     BugseeLaunchOptions.refreshFrom(options, {
-      endpoint: 'https://apidev.bugsee.com/v2',
+      endpoint: 'https://staging.bugsee.invalid/v2',
     });
-    expect(options.endpoint).toBe('https://apidev.bugsee.com/v2');
+    expect(options.endpoint).toBe('https://staging.bugsee.invalid/v2');
   });
 
   it('ignores a null report, which is what a bridge sends for "nothing"', () => {

@@ -1,6 +1,6 @@
 import {
   DEAD_ENDPOINT,
-  STAGING_ENDPOINT,
+  stagingEndpointOf,
   checkCredentials,
   checkLaunch,
   isPlaceholderToken,
@@ -13,6 +13,9 @@ import {
  * Campaign N-30: nothing reaches a device but the dead endpoint (offline) or
  * exactly the staging endpoint (E2E_STAGING=1); production never.
  */
+/** A fake reserved host: the real staging host is not kept in this public repo. */
+const STAGING_ENDPOINT = 'https://staging.bugsee.invalid';
+const PRODUCTION_HOST = 'api.bugsee.com';
 const PLACEHOLDER = '00000000-0000-4000-8000-000000000000';
 const REAL = '1f2e3d4c-5b6a-4789-8abc-def012345678';
 
@@ -39,7 +42,7 @@ describe('namesProduction', () => {
     ['https://api.bugsee.com.'],
     ['https://api.bugsee.com:443/x'],
     ['http://api.bugsee.com'],
-    ['endpoint=https%3A%2F%2Fapi.bugsee.com'],
+    [`endpoint=https%3A%2F%2F${PRODUCTION_HOST}`],
     ['{"endpoint":"https://api.bugsee.com"}'],
     ['x api.bugsee.com'],
   ])('finds %p', text => {
@@ -47,9 +50,9 @@ describe('namesProduction', () => {
   });
 
   it.each([
-    ['https://apidev.bugsee.com'],
-    ['https://xapi.bugsee.com'],
-    ['https://my-api.bugsee.com'],
+    ['https://sibling.example.invalid'],
+    [`https://x${PRODUCTION_HOST}`],
+    [`https://my-${PRODUCTION_HOST}`],
     ['https://127.0.0.1:9'],
     ['https://api.bugsee.company'],
     ['https://api.bugsee.com-other.example'],
@@ -73,7 +76,7 @@ describe('checkLaunch', () => {
   });
 
   it('offline: another endpoint is refused', () => {
-    expect(checkLaunch('offline', { token: 'placeholder', endpoint: STAGING_ENDPOINT })).toEqual({
+    expect(checkLaunch('offline', { token: 'placeholder', endpoint: STAGING_ENDPOINT }, STAGING_ENDPOINT)).toEqual({
       ok: false,
       reason: `offline mode launches only against ${DEAD_ENDPOINT}`,
     });
@@ -100,25 +103,55 @@ describe('checkLaunch', () => {
   });
 
   it('staging: a real token against exactly the staging endpoint is allowed (surrounding space ignored)', () => {
-    expect(checkLaunch('staging', { token: 'set', endpoint: STAGING_ENDPOINT })).toEqual({ ok: true, reason: 'ok' });
-    expect(checkLaunch('staging', { token: 'set', endpoint: ` ${STAGING_ENDPOINT} ` }).ok).toBe(true);
+    expect(checkLaunch('staging', { token: 'set', endpoint: STAGING_ENDPOINT }, STAGING_ENDPOINT)).toEqual({ ok: true, reason: 'ok' });
+    expect(checkLaunch('staging', { token: 'set', endpoint: ` ${STAGING_ENDPOINT} ` }, STAGING_ENDPOINT).ok).toBe(true);
   });
 
-  it.each([['https://apidev.bugsee.com/'], ['https://apidev.bugsee.com/v2'], ['http://apidev.bugsee.com'], [DEAD_ENDPOINT]])(
+  it.each([['https://staging.bugsee.invalid/'], ['https://staging.bugsee.invalid/v2'], ['http://staging.bugsee.invalid'], [DEAD_ENDPOINT]])(
     'staging: %p is not exactly the staging endpoint',
     endpoint => {
-      expect(checkLaunch('staging', { token: 'set', endpoint })).toEqual({
+      expect(checkLaunch('staging', { token: 'set', endpoint }, STAGING_ENDPOINT)).toEqual({
         ok: false,
-        reason: `staging mode launches only against exactly ${STAGING_ENDPOINT}`,
+        reason: 'staging mode launches only against exactly the configured staging endpoint',
       });
     },
   );
 
   it('staging: the placeholder token is refused', () => {
-    expect(checkLaunch('staging', { token: 'placeholder', endpoint: STAGING_ENDPOINT })).toEqual({
+    expect(checkLaunch('staging', { token: 'placeholder', endpoint: STAGING_ENDPOINT }, STAGING_ENDPOINT)).toEqual({
       ok: false,
       reason: 'staging mode with the placeholder token: nothing would reach staging',
     });
+  });
+});
+
+describe('stagingEndpointOf', () => {
+  it('prefers the environment, trimmed, then the fallback', () => {
+    expect(stagingEndpointOf(` ${STAGING_ENDPOINT} `, 'https://other.invalid')).toBe(STAGING_ENDPOINT);
+    expect(stagingEndpointOf(undefined, STAGING_ENDPOINT)).toBe(STAGING_ENDPOINT);
+    expect(stagingEndpointOf('  ', STAGING_ENDPOINT)).toBe(STAGING_ENDPOINT);
+  });
+
+  it.each([[undefined, undefined], ['', ''], [undefined, 5], [undefined, null]])('nothing configured (%p, %p) is undefined', (env, fallback) => {
+    expect(stagingEndpointOf(env, fallback)).toBeUndefined();
+  });
+});
+
+describe('the staging mode fails closed with no staging endpoint configured', () => {
+  const reason = 'staging mode with no staging endpoint configured: set BUGSEE_STAGING_ENDPOINT';
+
+  it.each([[undefined], ['']])('checkLaunch with %p', staging => {
+    expect(checkLaunch('staging', { token: 'set', endpoint: STAGING_ENDPOINT }, staging)).toEqual({ ok: false, reason });
+  });
+
+  it.each([[undefined], ['']])('checkCredentials with %p', staging => {
+    expect(checkCredentials('staging', { json: { ios: REAL, endpoint: STAGING_ENDPOINT } }, staging)).toEqual({ ok: false, reason });
+  });
+
+  it('a configured value never admits production or another host', () => {
+    expect(checkLaunch('staging', { token: 'set', endpoint: 'https://api.bugsee.com' }, STAGING_ENDPOINT).ok).toBe(false);
+    expect(checkLaunch('staging', { token: 'set', endpoint: 'https://other.invalid' }, STAGING_ENDPOINT).ok).toBe(false);
+    expect(checkCredentials('staging', { json: { ios: REAL, endpoint: 'https://other.invalid' } }, STAGING_ENDPOINT).ok).toBe(false);
   });
 });
 
@@ -192,7 +225,7 @@ describe('checkCredentials', () => {
   });
 
   it('production anywhere in either file is refused', () => {
-    expect(checkCredentials('staging', { json: { ios: REAL, endpoint: 'https://api.bugsee.com' } }).reason).toBe(
+    expect(checkCredentials('staging', { json: { ios: REAL, endpoint: 'https://api.bugsee.com' } }, STAGING_ENDPOINT).reason).toBe(
       'a credential file names the production API',
     );
     expect(checkCredentials('offline', { properties: '# note: api.bugsee.com\n' }).reason).toBe(
@@ -213,12 +246,14 @@ describe('checkCredentials', () => {
       checkCredentials('staging', {
         json: { ios: REAL, android: REAL, endpoint: STAGING_ENDPOINT },
         properties: `app_token=${REAL}\nplugin.endpoint=${STAGING_ENDPOINT}\n`,
-      }),
+      },
+      STAGING_ENDPOINT,
+    ),
     ).toEqual({ ok: true, reason: 'ok' });
   });
 
   it('staging: the placeholder only is refused', () => {
-    expect(checkCredentials('staging', { json: { ios: PLACEHOLDER, endpoint: STAGING_ENDPOINT } })).toEqual({
+    expect(checkCredentials('staging', { json: { ios: PLACEHOLDER, endpoint: STAGING_ENDPOINT } }, STAGING_ENDPOINT)).toEqual({
       ok: false,
       reason: 'staging mode with no real token',
     });
@@ -226,27 +261,29 @@ describe('checkCredentials', () => {
 
   it('staging: no credentials.json endpoint is refused (the SDK default is production)', () => {
     for (const endpoint of [undefined, '', '  ']) {
-      expect(checkCredentials('staging', { json: { ios: REAL, endpoint } }).reason).toBe(
-        `staging mode with no credentials.json endpoint: the SDK default is production; set ${STAGING_ENDPOINT}`,
+      expect(checkCredentials('staging', { json: { ios: REAL, endpoint } }, STAGING_ENDPOINT).reason).toBe(
+        `staging mode with no credentials.json endpoint: the SDK default is production; set it to your staging endpoint`,
       );
     }
   });
 
   it('staging: another endpoint is refused', () => {
-    expect(checkCredentials('staging', { json: { ios: REAL, endpoint: DEAD_ENDPOINT } }).reason).toBe(
-      `credentials.json endpoint is not ${STAGING_ENDPOINT}`,
+    expect(checkCredentials('staging', { json: { ios: REAL, endpoint: DEAD_ENDPOINT } }, STAGING_ENDPOINT).reason).toBe(
+      'credentials.json endpoint is not the configured staging endpoint',
     );
   });
 
   it('staging: a real Gradle-plugin token with no plugin endpoint is refused', () => {
     expect(
-      checkCredentials('staging', { json: { ios: REAL, endpoint: STAGING_ENDPOINT }, properties: `app_token=${REAL}\n` }).reason,
+      checkCredentials('staging', { json: { ios: REAL, endpoint: STAGING_ENDPOINT }, properties: `app_token=${REAL}\n` }, STAGING_ENDPOINT).reason,
     ).toBe('bugsee.properties has a real app_token but no plugin.endpoint: the Gradle plugin would upload to production');
     expect(
       checkCredentials('staging', {
         json: { ios: REAL, endpoint: STAGING_ENDPOINT },
         properties: `app_token=${PLACEHOLDER}\n`,
-      }).ok,
+      },
+      STAGING_ENDPOINT,
+    ).ok,
     ).toBe(true);
   });
 });
@@ -278,7 +315,9 @@ describe('checkCredentials, at its edges', () => {
       checkCredentials('staging', {
         json: { ios: REAL, endpoint: STAGING_ENDPOINT },
         properties: `app_token=${REAL}\nplugin.endpoint=   \n`,
-      }).reason,
+      },
+      STAGING_ENDPOINT,
+    ).reason,
     ).toBe('bugsee.properties has a real app_token but no plugin.endpoint: the Gradle plugin would upload to production');
   });
 
