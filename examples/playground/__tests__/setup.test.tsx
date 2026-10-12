@@ -33,6 +33,11 @@ function session(over: Partial<Session> = {}): Session {
 const PLACEHOLDER = "Leave empty for the build's default (Bugsee cloud unless bugsee.config.json sets one)";
 const withSession = (s: Session, ui = <SetupScreen />) => <SessionContext.Provider value={s}>{ui}</SessionContext.Provider>;
 
+// Pays the one-time cold render cost (module init, the long Advanced list) here, not inside the first test.
+beforeAll(async () => {
+  const view = await render(withSession(session()));
+  await view.unmount();
+}, 30000);
 beforeEach(() => { jest.clearAllMocks(); mockExtra = {}; });
 
 test('a non-UUID token shows an error and disables Launch', async () => {

@@ -141,7 +141,9 @@ test('layout sets the filter and starts the flow; unmount clears and cancels', a
 });
 
 test('product detail reads the catalog Products loaded, without a refetch', async () => {
-  const twelve = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, title: `Item ${i + 1}`, price: 1, description: 'd' }));
+  const twelve = Array.from({ length: 12 }, (_, i) => ({
+    id: i + 1, title: `Item ${i + 1}`, price: 1, description: 'd',
+  }));
   demoApi.rememberCatalog(twelve);
   mockParams.id = '9';
   const spy = jest.spyOn(demoApi, 'fetchProducts');
