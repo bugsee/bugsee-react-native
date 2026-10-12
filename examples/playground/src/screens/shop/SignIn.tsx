@@ -11,7 +11,8 @@ export default function SignIn() {
   const router = useRouter();
   const [email, setEmail] = useState('shopper@example.com');
   const [password, setPassword] = useState('hunter2');
-  const [remember, setRemember] = useState(false);
+  // On by default: this screen is the setUserIdentifier demo, and VALIDATION M-C4 expects the user id.
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
@@ -60,7 +61,7 @@ export default function SignIn() {
         lines={[
           'Password masked in video with no extra code',
           'Request body shows "password":"***"',
-          'User id set if Remember me',
+          'User id set while Remember me is on (the default)',
         ]}
       />
     </Screen>

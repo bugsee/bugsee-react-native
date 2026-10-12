@@ -119,7 +119,9 @@ every launch, so it also runs on a crash recovered at the next start.
 
 Crash buttons ask for confirmation. A crash report is sent when Bugsee launches
 at the next start: turn on Setup → Auto-launch first (or tap Home → Launch after
-reopening), then reopen the app.
+reopening), then reopen the app. A JS crash may leave the process running in a
+Release build: force-quit the app (swipe it away), then open it again;
+backgrounding and returning does not restart it.
 
 ## See symbolicated crashes
 

@@ -16,6 +16,9 @@ has symbols uploaded (see [README.md](./README.md)).
   Bugsee not launched, so tap Home → **Launch** first. The option then applies from the start.
 - **Reopen after a crash**: crash reports are sent when Bugsee launches at the next start.
   Turn on auto-launch before crashing (as above), or tap Home → **Launch** after reopening.
+  A JS crash (the shop **Bug**, **JS crash**) may not end the process in a Release build:
+  the app can stay on screen or seem to vanish while still running. Force-quit it (swipe it
+  away in the app switcher), then open it again. Backgrounding and returning is not a restart.
 - Platform: A = Android, B = iOS, C = both. Keys marked (Android) or (iOS) exist
   only on that platform.
 - Known issues are listed in the README. A row names the one it touches.
@@ -38,7 +41,7 @@ has symbols uploaded (see [README.md](./README.md)).
 | M-C1 | Android / iOS | Reports → Feedback | **Set feedback listener**, **Show feedback UI**, send `campaign <nonce>`. Reply from the dashboard. Then **Clear feedback listener** and reply again | The feedback log shows the sent and received messages. After clearing, no new lines | Feedback in your Bugsee instance | |
 | M-C2 | iOS | Reports → Report | Airplane Mode on, tap **Upload report (no UI)**, Airplane Mode off (and once more during the upload) | Exactly one issue arrives | Issues: one new report | cocoa-223: the trigger shows as unknown |
 | M-C3 | Android / iOS (data SIM only) | Setup → Common options | Turn **Upload on Wi-Fi only** on, launch, Wi-Fi off, Reports → **Upload report (no UI)**. Wait 2 min. Wi-Fi on | Nothing arrives while Wi-Fi is off. It arrives after Wi-Fi is on | Issues | |
-| M-C4 | Android / iOS | Home → Demo shop → Checkout | Run the shop to Checkout, choose **Bug**, tap **Pay**, reopen the app (see **Reopen after a crash** above). Open the crash | The video plays. Console lines and network events are listed. The RN view tree renders. Attributes (`cart_items`) and the user id are shown. The JS stack is symbolicated | Issues → the crash | |
+| M-C4 | Android / iOS | Home → Demo shop → Checkout | Sign in with **Remember me** on (the default), run the shop to Checkout, choose **Bug**, tap **Pay**, force-quit and reopen the app (see **Reopen after a crash** above). Open the crash | The video plays. Console lines and network events are listed. The RN view tree renders. Attributes (`cart_items`) and the user id are shown. The JS stack is symbolicated | Issues → the crash | |
 | M-C5 | iOS | Xcode | `npx expo prebuild -p ios`, open `ios/BugseePlayground.xcworkspace`, Product → Archive. Then Organizer → Generate Privacy Report | The Report navigator shows the dSYM upload post-action. The privacy report has Bugsee's entries | Symbols in your Bugsee instance | |
 | S-1 | Android / iOS | Every tab | Open Home, Capture, Privacy, Errors, Reports, Data, Perf | Each tab renders | | |
 | S-2 | Android / iOS | Home → Demo shop | Walk through sign in, products, product detail, checkout with **Success** | The flow completes | Performance: the `checkout` transaction | |

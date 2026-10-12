@@ -37,11 +37,20 @@ beforeEach(() => {
   })) as never;
 });
 
-test('sign-in renders and submits', async () => {
+test('sign-in sets the user id with Remember me on by default', async () => {
   await render(<SignIn />);
-  await fireEvent(screen.getByLabelText('Remember me'), 'valueChange', true);
+  expect(screen.getByLabelText('Remember me').props.value).toBe(true);
   await fireEvent.press(screen.getByText('Sign in'));
   await waitFor(() => expect(bugsee.setUserIdentifier).toHaveBeenCalledWith('shopper@example.com'));
+});
+
+test('sign-in with Remember me off sets no user id', async () => {
+  await render(<SignIn />);
+  await fireEvent(screen.getByLabelText('Remember me'), 'valueChange', false);
+  await fireEvent.press(screen.getByText('Sign in'));
+  const span = bugsee.startTransaction.mock.results[0].value.startChildSpan.mock.results[0].value;
+  await waitFor(() => expect(span.finish).toHaveBeenCalledWith(SpanStatus.OK));
+  expect(bugsee.setUserIdentifier).not.toHaveBeenCalled();
 });
 
 test('products lists items and records the view event', async () => {
