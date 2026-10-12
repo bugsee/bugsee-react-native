@@ -23,7 +23,8 @@
  * `network-filter` is scenarios/network-filter.ts,
  * `add-network-event` is scenarios/add-network-event.ts,
  * `feedback` is scenarios/feedback.ts, `apm` is scenarios/apm.ts, and
- * `cov-*` / `opt-<case>` are scenarios/coverage.ts.
+ * `cov-*` / `opt-<case>` are scenarios/coverage.ts. `early-report` is
+ * scenarios/early-report.ts (it owns the launch).
  */
 import { useEffect, useState } from 'react';
 import {
@@ -115,6 +116,7 @@ import {
 } from './scenarios/add-network-event';
 import { isFeedbackScenario, runFeedbackScenario } from './scenarios/feedback';
 import { isApmScenario, runApmScenario } from './scenarios/apm';
+import { isEarlyReportScenario, runEarlyReportScenario } from './scenarios/early-report';
 import { isAppearanceScenario, runAppearanceScenario } from './scenarios/appearance';
 import {
   isCoverageScenario,
@@ -471,6 +473,19 @@ export default function App() {
         } catch (apiCause) {
           console.log(`BUGSEE_E2E api pre-launch threw ${String(apiCause)}`);
         }
+      }
+      // G2 / bugsee-cocoa#227: reports right after launch() resolves, before
+      // Launched. The scenario owns the launch; the status poll above still
+      // logs status=2.
+      if (isEarlyReportScenario(choice.scenario)) {
+        try {
+          await runEarlyReportScenario(choice.nonce, () =>
+            Bugsee.launch(token, launchOptions(endpoint, choice.scenario)),
+          );
+        } catch (earlyCause) {
+          console.log(`BUGSEE_E2E early threw ${String(earlyCause)}`);
+        }
+        return;
       }
       try {
         const launched = await Bugsee.launch(token, launchOptions(endpoint, choice.scenario));

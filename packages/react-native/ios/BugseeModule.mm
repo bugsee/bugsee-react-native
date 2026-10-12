@@ -43,6 +43,7 @@
 #import <BugseeRNSupport/BGSRNSpanHandles.h>
 #import <BugseeRNSupport/BGSRNErrorMessage.h>
 #import <BugseeRNSupport/BGSRNPluginEndpoint.h>
+#import <BugseeRNSupport/BGSRNLaunchHold.h>
 #else
 #import "BGSRNMainThread.h"
 #import "BGSRNWrapper.h"
@@ -70,6 +71,7 @@
 #import "BGSRNSpanHandles.h"
 #import "BGSRNErrorMessage.h"
 #import "BGSRNPluginEndpoint.h"
+#import "BGSRNLaunchHold.h"
 #endif
 
 /// Forward-declared: the wrapper's pull path refreshes the origins before the
@@ -106,6 +108,11 @@ static BGSRNReactRootOriginTracker *BGSRNSecureOriginTracker(void);
 /// than stringified — a JS caller reading `reportId` should get the id or
 /// nothing, never a description of some future payload shape.
 - (void)onLifecycleEvent:(NSString *)eventType data:(id)data {
+  // WORKAROUND for bugsee-cocoa#227 (BGSRNLaunchHold): Launched releases the
+  // report calls held while the SDK was Launching; Stopping/Stopped drop them.
+  // Before the bus, and independent of it: the bus drops events while no JS
+  // is attached, and the hold must not.
+  [BGSRNLaunchHold.shared lifecycleEvent:eventType];
   NSString *reportId = [data isKindOfClass:NSString.class] ? (NSString *)data : nil;
   [BGSRNEventBus.shared emitLifecycle:eventType reportId:reportId];
 }
@@ -1230,6 +1237,12 @@ RCT_EXPORT_MODULE(Bugsee)
   BGSRNSetWrapper((id<BugseeWrapper>)[BGSRNWrapper wrapperWithIdentity:identity], NO);
 }
 
+/// The SDK's status now, Stopped when it was never launched.
+static BugseeStatus BGSRNCurrentStatus(void) {
+  Bugsee *instance = [Bugsee sharedInstance];
+  return instance != nil ? instance.status : BugseeStatusStopped;
+}
+
 /// The launch options with the Expo plugin's `endpoint` option, from this
 /// app's Info.plist, when JS passed no endpoint (BGSRNPluginEndpoint).
 static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
@@ -1343,12 +1356,29 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     if (optionsJson != nil && opts == nil) {
       NSLog(@"BugseeRN exception options unparseable: %@", BGSRNErrorMessage(error));
     }
-    [Bugsee logException:BGSRNReactNativeExceptionName
-                  reason:payloadJson
-                 options:opts
-              completion:nil];
-    NSUInteger bytes = [payloadJson lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-    NSLog(@"BugseeRN exception handled sent bytes=%lu", (unsigned long)bytes);
+    const NSUInteger bytes = [payloadJson lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    // WORKAROUND for bugsee-cocoa#227: held while the SDK is Launching, which
+    // would drop it silently (BGSRNLaunchHold).
+    NSString *label = [NSString stringWithFormat:@"exception handled bytes=%lu", (unsigned long)bytes];
+    [BGSRNLaunchHold.shared submit:label call:^(BGSRNGatedRun run) {
+      if (run == BGSRNGatedRunDrop) {
+        NSLog(@"BugseeRN exception handled dropped bytes=%lu: the SDK did not launch", (unsigned long)bytes);
+        return;
+      }
+      const BugseeStatus status = BGSRNCurrentStatus();
+      [Bugsee logException:BGSRNReactNativeExceptionName
+                    reason:payloadJson
+                   options:opts
+                completion:nil];
+      // "sent" only for a call the SDK accepts: it drops one made when it is
+      // not Launched (before launch(), or after stop()).
+      if (status == BugseeStatusLaunched) {
+        NSLog(@"BugseeRN exception handled sent bytes=%lu", (unsigned long)bytes);
+      } else {
+        NSLog(@"BugseeRN exception handled dropped bytes=%lu status=%ld: the SDK is not launched",
+              (unsigned long)bytes, (long)BGSRNStatusToWire(status));
+      }
+    }];
   });
 }
 
@@ -1386,7 +1416,8 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// JS has already checked both strings, the severity range and the labels.
 /// Severity 0 is resolved here: the requested value, else the launch option
 /// `BugseeOptionReportingDefaultBugPriority`, else High. On main, like every
-/// other SDK entry point. Does nothing before launch -- the SDK returns.
+/// other SDK entry point. Does nothing before launch() -- the SDK returns;
+/// held while the SDK is Launching (bugsee-cocoa#227, BGSRNLaunchHold).
 /// The report it creates is a LIVE one, so its handlers run on main too,
 /// after this returns.
 - (void)upload:(NSString *)summary
@@ -1394,11 +1425,23 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
        severity:(double)severity
          labels:(NSArray *)labels {
   BGSRNRunOnMain(^{
-    [Bugsee uploadWithSummary:summary
-                  description:description
-                     severity:(BugseeSeverityLevel)BGSRNUploadSeverity((NSInteger)severity,
-                                                                       [Bugsee getLaunchOptions])
-                       labels:BGSRNStringArray(labels)];
+    // WORKAROUND for bugsee-cocoa#227: held while the SDK is Launching
+    // (BGSRNLaunchHold). Severity is resolved at replay, against the options
+    // the launch actually applied.
+    [BGSRNLaunchHold.shared submit:@"upload" call:^(BGSRNGatedRun run) {
+      if (run == BGSRNGatedRunDrop) {
+        NSLog(@"BugseeRN upload dropped: the SDK did not launch");
+        return;
+      }
+      [Bugsee uploadWithSummary:summary
+                    description:description
+                       severity:(BugseeSeverityLevel)BGSRNUploadSeverity((NSInteger)severity,
+                                                                         [Bugsee getLaunchOptions])
+                         labels:BGSRNStringArray(labels)];
+      if (run == BGSRNGatedRunReplay) {
+        NSLog(@"BugseeRN upload sent");
+      }
+    }];
   });
 }
 
@@ -1406,21 +1449,33 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// dialog. Otherwise an omitted summary or description stays `nil`: beta3
 /// writes the field only when the pointer is non-nil, and `@""` would
 /// pre-fill an empty string. A 0 severity is left for the SDK to skip.
-/// On main. Does nothing before launch. The dialog runs
+/// On main. Does nothing before launch(); held while Launching
+/// (bugsee-cocoa#227, BGSRNLaunchHold). The dialog runs
 /// `onBeforeReportCreated` before it opens.
 - (void)showReportDialog:(NSString *)summary
              description:(NSString *)description
                 severity:(double)severity
                   labels:(NSArray *)labels {
   BGSRNRunOnMain(^{
-    if (summary == nil && description == nil && severity == 0.0 && labels == nil) {
-      [Bugsee showReportDialog];
-      return;
-    }
-    [Bugsee showReportDialogWithSummary:summary
-                            description:description
-                               severity:(BugseeSeverityLevel)severity
-                                 labels:BGSRNStringArray(labels)];
+    // WORKAROUND for bugsee-cocoa#227: held while the SDK is Launching
+    // (BGSRNLaunchHold).
+    [BGSRNLaunchHold.shared submit:@"report dialog" call:^(BGSRNGatedRun run) {
+      if (run == BGSRNGatedRunDrop) {
+        NSLog(@"BugseeRN report dialog dropped: the SDK did not launch");
+        return;
+      }
+      if (run == BGSRNGatedRunReplay) {
+        NSLog(@"BugseeRN report dialog sent");
+      }
+      if (summary == nil && description == nil && severity == 0.0 && labels == nil) {
+        [Bugsee showReportDialog];
+        return;
+      }
+      [Bugsee showReportDialogWithSummary:summary
+                              description:description
+                                 severity:(BugseeSeverityLevel)severity
+                                   labels:BGSRNStringArray(labels)];
+    }];
   });
 }
 
@@ -2147,34 +2202,50 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     return;
   }
   BGSRNRunOnMain(^{
-    // One check with the mark. `clear` between an open test and the SDK call
-    // would still `-init` a `BugseeExtendedReport`. NO means `clear` already
-    // dropped this token and freed the slot. YES means `clear` from here on
-    // keeps the slot until `fulfil`, and that fulfil does not publish.
-    if (![registry beginCreate:reservation]) {
-      NSLog(@"BugseeRN created report - reservation ended");
-      resolve(nil);
-      return;
-    }
-    @try {
-      // Captured above, before the hop. `invalidate` clears the registry
-      // without cancelling this completion. Once `beginCreate:` has run, that
-      // clear keeps the slot and this fulfil must not mint a handle.
-      // The completion runs on every path, with nil when the SDK is not launched.
-      [Bugsee createReportWithCompletion:^(BugseeExtendedReport *report) {
-        NSString *handle = [registry fulfil:report reservation:reservation];
-        if (handle == nil) {
-          NSLog(@"BugseeRN created report - none");
-          resolve(nil);
-        } else {
-          NSLog(@"BugseeRN created report %@ created", handle);
-          resolve(handle);
-        }
-      }];
-    } @catch (NSException *exception) {
-      [registry fulfil:nil reservation:reservation];
-      BGSRNRejectException(reject, @"createReport", exception);
-    }
+    // WORKAROUND for bugsee-cocoa#227: held while the SDK is Launching
+    // (BGSRNLaunchHold), which would complete it with nil. The promise
+    // settles when the replayed call completes. `beginCreate:` stays right
+    // before the SDK call, not before the hold: until it runs, `invalidate`'s
+    // `clear` can still drop this reservation and free the slot for the next
+    // runtime, and the replay then resolves nil without `-init`ing a report.
+    [BGSRNLaunchHold.shared submit:@"created report" call:^(BGSRNGatedRun run) {
+      if (run == BGSRNGatedRunDrop) {
+        // As the SDK settles a dropped call: its completion with nil. Frees
+        // the slot, or does nothing when `clear` already dropped the token.
+        [registry fulfil:nil reservation:reservation];
+        NSLog(@"BugseeRN created report dropped: the SDK did not launch");
+        resolve(nil);
+        return;
+      }
+      // One check with the mark. `clear` between an open test and the SDK call
+      // would still `-init` a `BugseeExtendedReport`. NO means `clear` already
+      // dropped this token and freed the slot. YES means `clear` from here on
+      // keeps the slot until `fulfil`, and that fulfil does not publish.
+      if (![registry beginCreate:reservation]) {
+        NSLog(@"BugseeRN created report - reservation ended");
+        resolve(nil);
+        return;
+      }
+      @try {
+        // Captured above, before the hop. `invalidate` clears the registry
+        // without cancelling this completion. Once `beginCreate:` has run, that
+        // clear keeps the slot and this fulfil must not mint a handle.
+        // The completion runs on every path, with nil when the SDK is not launched.
+        [Bugsee createReportWithCompletion:^(BugseeExtendedReport *report) {
+          NSString *handle = [registry fulfil:report reservation:reservation];
+          if (handle == nil) {
+            NSLog(@"BugseeRN created report - none");
+            resolve(nil);
+          } else {
+            NSLog(@"BugseeRN created report %@ created", handle);
+            resolve(handle);
+          }
+        }];
+      } @catch (NSException *exception) {
+        [registry fulfil:nil reservation:reservation];
+        BGSRNRejectException(reject, @"createReport", exception);
+      }
+    }];
   });
 }
 
