@@ -84,6 +84,9 @@ export default tseslint.config(
       globals: {
         console: 'readonly', process: 'readonly', fetch: 'readonly',
         setTimeout: 'readonly', clearTimeout: 'readonly',
+        XMLHttpRequest: 'readonly', WebSocket: 'readonly', AbortController: 'readonly',
+        URLSearchParams: 'readonly', btoa: 'readonly', setInterval: 'readonly',
+        clearInterval: 'readonly', globalThis: 'readonly',
         __dirname: 'readonly', require: 'readonly', module: 'writable',
       },
     },

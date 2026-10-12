@@ -16,5 +16,5 @@
     "allowImportingTsExtensions": true
   },
   "include": ["examples/*/**/*.ts", "examples/*/**/*.tsx", "examples/*/*.d.ts"],
-  "exclude": ["**/node_modules/**", "**/build/**", "**/Pods/**"]
+  "exclude": ["examples/playground/**", "**/node_modules/**", "**/build/**", "**/Pods/**"]
 }
