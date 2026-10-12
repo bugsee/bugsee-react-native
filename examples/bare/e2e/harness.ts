@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 import { checkLaunch, launchFactsOf, parseCampaignMode } from '../../../scripts/campaign-endpoint-guard';
 import { parseNoWipe } from './flow-config';
-import { checkAndroidBanner } from '../../../scripts/sdk-banner';
+import { androidBannerOf, checkAndroidBanner, logcatPid } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
 import {
   DEAD_ENDPOINT,
@@ -264,6 +264,8 @@ export interface RunOptions {
    * Still checked exactly: a launch of any other version throws.
    */
   readonly iosSdkVersion?: string;
+  /** Android: the same, for an upgrade test's previous build; also checked exactly. */
+  readonly androidSdkVersion?: string;
 }
 
 export async function startRun(name: string, options: RunOptions = {}): Promise<Run> {
@@ -298,12 +300,26 @@ export async function startRun(name: string, options: RunOptions = {}): Promise<
   );
   // The guard first: the launch line precedes the native start.
   await checkRun(ran, start);
+  // Our process's banner only: another app on the device that embeds the SDK
+  // prints the same line with its own version (campaign SIM+AND, T3). The
+  // scenario line names this run's nonce, so its pid is ours.
+  const pid = logcatPid(ran.text);
+  if (pid === undefined) {
+    throw new Error(`no pid in the scenario line ${JSON.stringify(ran.text)}: logcat is not in -v epoch form`);
+  }
   const banner = must(
-    await log().waitFor(/Bugsee Android SDK \S+ \[[0-9a-f]+\]/, 15_000, start),
-    'the SDK build banner',
+    await log().waitFor(androidBannerOf(pid), 15_000, start),
+    `the SDK build banner of the app's process (pid ${pid})`,
     start,
   );
-  const bannerCheck = checkAndroidBanner(banner.text, readNativeVersions());
+  const pinned = readNativeVersions();
+  const bannerCheck = checkAndroidBanner(
+    banner.text,
+    options.androidSdkVersion === undefined
+      ? pinned
+      : // The previous build's own version; the pin's snapshot commit is not its.
+        { ...pinned, android: { ...pinned.android, sdk: options.androidSdkVersion, snapshotCommit: undefined } },
+  );
   if (!bannerCheck.ok) {
     throw new Error(`SDK build banner does not match the pin: ${bannerCheck.reason}`);
   }

@@ -4,6 +4,8 @@
 import type { CodegenTypes, TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
 
+import { requireNewArchitecture } from './architecture';
+
 /**
  * The native surface. Codegen turns this into the Java and ObjC++ specs.
  *
@@ -34,5 +36,9 @@ export interface Spec extends TurboModule {
   readonly onNewMessagesReceived: CodegenTypes.EventEmitter<{ messagesJson: string }>;
   readonly onNewMessageSent: CodegenTypes.EventEmitter<{ message: string }>;
 }
+
+// Before the lookup: on the legacy architecture getEnforcing does not throw,
+// it returns a bridge module without the event emitters (architecture.ts).
+requireNewArchitecture();
 
 export default TurboModuleRegistry.getEnforcing<Spec>('BugseeFeedbackModule');

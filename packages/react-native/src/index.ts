@@ -719,8 +719,8 @@ class Bugsee {
   }
 
   /**
-   * Reports `error` as a crash; resolves once the SDK has it (at most 1.5 s).
-   * iOS surfaces it at the next launch.
+   * Reports `error` as a crash; resolves once the SDK has it (at most 1.5 s
+   * on iOS, 5 s on Android). iOS surfaces it at the next launch.
    */
   logUnhandledException(error: unknown): Promise<void> {
     if (!markReported(error)) {
@@ -809,9 +809,10 @@ class Bugsee {
    *
    * `includingIntermediate` crosses unchanged: `true` also deletes
    * intermediate capture data (snapshots, partial bundles); `false` deletes
-   * only fully processed data. The SDK must be stopped for the deletion to
-   * succeed. While launched, both platforms refuse it and this resolves
-   * `false`.
+   * only fully processed data. Android 7.3.1 also deletes the rolling
+   * capture with `false` (https://github.com/bugsee/bugsee-android/issues/250).
+   * The SDK must be stopped for the deletion to succeed. While launched, both
+   * platforms refuse it and this resolves `false`.
    */
   deleteCollectedDataOnDevice(includingIntermediate: boolean): Promise<boolean> {
     return NativeBugsee.deleteCollectedDataOnDevice(includingIntermediate);

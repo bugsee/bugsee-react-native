@@ -14,7 +14,24 @@ import { currentDebugIds } from './debugIds';
 import { buildExceptionPayload } from './payload';
 import { encodeExceptionOptions, type ExceptionOptions } from './options';
 
+/** How long JS waits for native to take an unhandled exception: iOS. */
 export const UNHANDLED_REPORT_WAIT_MS = 1500;
+/**
+ * The same on Android. Android's native call has no deadline of its own and
+ * resolves the moment the SDK returns (median about 1.15 s on a mid-range
+ * phone), so this only bounds a hung SDK. It must not be shorter than the
+ * SDK's own worst case: 7.3.1 persists the exception payload only after the
+ * report's view-hierarchy step, which alone may take 1000 + 500 + 250 ms, and
+ * a fatal's process dies soon after this wait ends. At 1500 ms 1 natural JS
+ * fatal in 10 lost its payload (`crash` absent `export_failed`;
+ * https://github.com/bugsee/bugsee-android/issues/251).
+ */
+export const UNHANDLED_REPORT_WAIT_MS_ANDROID = 5000;
+
+/** {@link UNHANDLED_REPORT_WAIT_MS_ANDROID} on Android, else {@link UNHANDLED_REPORT_WAIT_MS}. */
+export function unhandledReportWaitMs(): number {
+  return Platform.OS === 'android' ? UNHANDLED_REPORT_WAIT_MS_ANDROID : UNHANDLED_REPORT_WAIT_MS;
+}
 export const EXCEPTION_MAX_AGGREGATE = 10;
 
 const reported = new WeakSet<object>();
@@ -112,7 +129,7 @@ function warnUnhandledNativeFailureOnce(): void {
 
 /**
  * Reports `error` as unhandled. Resolves when native resolves or after
- * {@link UNHANDLED_REPORT_WAIT_MS}, whichever is first; never rejects.
+ * {@link unhandledReportWaitMs}, whichever is first; never rejects.
  *
  * Callers claim the value with {@link markReported} first (same shared
  * WeakSet as {@link reportHandled}).
@@ -138,7 +155,7 @@ export async function reportUnhandled(
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<void>((resolve) => {
-    timeoutId = setTimeout(resolve, UNHANDLED_REPORT_WAIT_MS);
+    timeoutId = setTimeout(resolve, unhandledReportWaitMs());
   });
 
   try {

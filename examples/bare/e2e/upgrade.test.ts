@@ -15,8 +15,8 @@
  *                            same application id -> 7.x (Android only)
  *   E2E_UPGRADE_FROM   the previous build: an .apk (Android) or .app (iOS)
  *   E2E_UPGRADE_TO     the build under test, same form
- *   E2E_UPGRADE_FROM_SDK  iOS: the SDK version the previous build launches
- *                      (U-01: 7.0.0-beta4); default the pin
+ *   E2E_UPGRADE_FROM_SDK  the SDK version the previous build launches (U-01:
+ *                      iOS 7.0.0-beta4, Android 7.3.0); default the pin
  *
  * U-01 / U-02 seed with scenarios every campaign build has: `attributes`
  * (attributes and a user id, then an upload that stays on the device: a
@@ -57,6 +57,8 @@ const PATH = parseUpgradePath(process.env.E2E_UPGRADE_PATH);
 const FROM = process.env.E2E_UPGRADE_FROM ?? '';
 const TO = process.env.E2E_UPGRADE_TO ?? '';
 const FROM_SDK = process.env.E2E_UPGRADE_FROM_SDK;
+/** The previous build's launches check this version instead of the pin, on either platform. */
+const FROM_SDK_RUN = { iosSdkVersion: FROM_SDK, androidSdkVersion: FROM_SDK };
 /**
  * Android and the iPhone. Not the simulator: its SDK slice has no crash
  * reporter (ios-native-crash.test.ts), so the crash half cannot run there.
@@ -140,7 +142,7 @@ describeUpgrade(`${PATH ?? 'upgrade'} over the previous build's data on ${TARGET
       await installKeepingData(FROM, ON_IOS);
       await clearBundles();
       report('previous build', await buildInfo(FROM));
-      const fromSdk = { iosSdkVersion: FROM_SDK };
+      const fromSdk = FROM_SDK_RUN;
 
       // 2. Seed: attributes, a user id and a pending report.
       const seed = await startRun('attributes', fromSdk);
@@ -232,7 +234,7 @@ describeUpgrade(`${PATH ?? 'upgrade'} over the previous build's data on ${TARGET
     beforeAll(async () => {
       await installKeepingData(FROM, ON_IOS);
       await clearBundles();
-      const seed = await startRun('attributes', { iosSdkVersion: FROM_SDK });
+      const seed = await startRun('attributes', FROM_SDK_RUN);
       const done = must(await log!.waitFor(/BUGSEE_E2E attr done /, 60_000, seed.start), 'the attributes seed finishing', seed.start);
       seedAll = JSON.parse(/BUGSEE_E2E attr all (.*)$/.exec(must(log!.all(/BUGSEE_E2E attr all /, seed.start, done.index + 1).at(-1), 'the seeded attributes', seed.start).text)![1]!);
       await installKeepingData(TO, ON_IOS);

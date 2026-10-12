@@ -6,6 +6,8 @@
 import type { CodegenTypes, TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
 
+import { requireNewArchitecture } from './architecture';
+
 /**
  * The native surface. Codegen turns this into the C++/Java/ObjC++ spec both
  * bridges implement, so a change here is a change to three files.
@@ -597,5 +599,9 @@ export interface Spec extends TurboModule {
    */
   deleteCollectedDataOnDevice(includingIntermediate: boolean): Promise<boolean>;
 }
+
+// Before the lookup: on the legacy architecture getEnforcing does not throw,
+// it returns a bridge module without the event emitters (architecture.ts).
+requireNewArchitecture();
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Bugsee');

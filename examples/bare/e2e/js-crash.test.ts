@@ -14,7 +14,19 @@
  */
 import { type PulledBundle, crashOf } from './bundles';
 import { iosTarget } from './device';
-import { ON_IOS, type Run, TARGET_NAME, UNHANDLED_COMPLETED, awaitBundles, describeDevice, must, report, startRun, stopApp } from './harness';
+import {
+  ON_IOS,
+  type Run,
+  TARGET_NAME,
+  UNHANDLED_COMPLETED,
+  awaitBundles,
+  debugOnly,
+  describeDevice,
+  must,
+  report,
+  startRun,
+  stopApp,
+} from './harness';
 import { beginRetainingSuite, endRetainingSuite } from './observe';
 import { type DeviceLog } from './scenario';
 
@@ -31,7 +43,18 @@ const itDevice = ON_IOS && iosTarget() === 'simulator' ? it.skip : it;
  */
 const itSeverity = ON_IOS ? (iosTarget() === 'simulator' ? it.skip : it.failing) : it;
 
-describeDevice(`testJsCrash() on ${TARGET_NAME}`, () => {
+/**
+ * The Android half waits for the crash filed in-process, which only a Debug
+ * build does: the red box keeps the process alive. A Release JS fatal kills
+ * the process and is filed at the next launch, the path the exceptions suite's
+ * "gated E2E_RELEASE=1" block covers on Android. iOS relaunches here, so it
+ * runs in both configurations.
+ */
+const ANDROID_DEBUG_ONLY =
+  'Android files the JS fatal in-process only under the Debug red box; a Release fatal kills the process and is filed at the next launch, which exceptions.test.ts "gated E2E_RELEASE=1" covers';
+const describeJsCrash = ON_IOS ? describeDevice : debugOnly(describeDevice, ANDROID_DEBUG_ONLY);
+
+describeJsCrash(`testJsCrash() on ${TARGET_NAME}`, () => {
   let log: DeviceLog | undefined;
   let run: Run;
   let crashes: PulledBundle[] = [];

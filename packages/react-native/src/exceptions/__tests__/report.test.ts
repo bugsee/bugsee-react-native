@@ -209,12 +209,17 @@ describe('report', () => {
     expect(settled).toBe(true);
   });
 
-  it('reportUnhandled resolves after 1500 ms when native never does', async () => {
+  it.each([
+    ['android', 5000],
+    ['ios', 1500],
+  ])('reportUnhandled on %s resolves after %d ms when native never does', async (os, cap) => {
     jest.useFakeTimers();
     try {
       const { reportUnhandled: report, UNHANDLED_REPORT_WAIT_MS: wait, native } =
         load();
+      (require('react-native') as { Platform: { OS: string } }).Platform.OS = os;
       expect(wait).toBe(1500);
+      expect((require('../report') as Report).UNHANDLED_REPORT_WAIT_MS_ANDROID).toBe(5000);
       native.logUnhandledException.mockReturnValue(new Promise(() => {}));
       let settled = false;
       const p = report(new Error('hang')).then(() => {
@@ -222,7 +227,7 @@ describe('report', () => {
       });
       await Promise.resolve();
       expect(settled).toBe(false);
-      jest.advanceTimersByTime(1499);
+      jest.advanceTimersByTime(cap - 1);
       await Promise.resolve();
       expect(settled).toBe(false);
       jest.advanceTimersByTime(1);
@@ -231,6 +236,16 @@ describe('report', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it.each([
+    ['android', 5000],
+    ['ios', 1500],
+    ['windows', 1500],
+  ])('the unhandled wait on %s is %d ms (bugsee-android#251)', (os, cap) => {
+    load();
+    (require('react-native') as { Platform: { OS: string } }).Platform.OS = os;
+    expect((require('../report') as Report).unhandledReportWaitMs()).toBe(cap);
   });
 
   it('reportUnhandled resolves, and warns once, when native rejects or throws', async () => {
