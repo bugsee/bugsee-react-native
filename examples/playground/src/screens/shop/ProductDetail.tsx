@@ -2,7 +2,7 @@ import { SpanStatus } from '@bugsee/react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Button, Image, StyleSheet, Text } from 'react-native';
-import { fetchProducts } from '../../demoApi';
+import { findProduct } from '../../demoApi';
 import type { Product } from '../../demoApi';
 import { addToCart, cart, stepSpan } from '../../shop/flow';
 import { CapturedNote } from '../../ui/CapturedNote';
@@ -12,15 +12,32 @@ export default function ProductDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [product, setProduct] = useState<Product | null>(null);
+  const [missing, setMissing] = useState(false);
   const [added, setAdded] = useState(0);
 
   useEffect(() => {
     const s = stepSpan('detail');
-    fetchProducts()
-      .then((r) => setProduct(r.products.find((p) => String(p.id) === id) ?? null))
-      .then(() => s.finish(SpanStatus.OK))
-      .catch(() => s.finish(SpanStatus.Error));
+    setMissing(false);
+    findProduct(String(id))
+      .then((p) => {
+        setProduct(p);
+        setMissing(!p);
+        s.finish(p ? SpanStatus.OK : SpanStatus.Error);
+      })
+      .catch(() => {
+        setMissing(true);
+        s.finish(SpanStatus.Error);
+      });
   }, [id]);
+
+  if (missing) {
+    return (
+      <Screen title="Product">
+        <Text style={styles.title}>Product not found</Text>
+        <Button title="Back to products" onPress={() => router.back()} />
+      </Screen>
+    );
+  }
 
   const add = () => {
     if (product) {

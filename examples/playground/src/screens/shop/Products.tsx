@@ -2,7 +2,7 @@ import Bugsee, { SpanStatus } from '@bugsee/react-native';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { DemoHttpError, fetchProducts } from '../../demoApi';
+import { DemoHttpError, fetchProducts, rememberCatalog } from '../../demoApi';
 import type { Product } from '../../demoApi';
 import { stepSpan } from '../../shop/flow';
 import { CapturedNote } from '../../ui/CapturedNote';
@@ -27,6 +27,7 @@ export default function Products() {
     let status: SpanStatus = SpanStatus.OK;
     try {
       const r = await fetchProducts({ flaky, attempt: n });
+      rememberCatalog(r.products);
       setProducts(r.products);
       setSource(r.source);
     } catch (e) {

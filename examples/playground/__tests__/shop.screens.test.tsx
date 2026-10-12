@@ -9,12 +9,14 @@ import Products from '../src/screens/shop/Products';
 import ShopLayout from '../app/shop/_layout';
 import SignIn from '../src/screens/shop/SignIn';
 
+const mockParams = { id: '1' };
+const mockBack = jest.fn();
 jest.mock('expo-router', () => {
   const Stack = Object.assign(({ children }: { children?: unknown }) => children ?? null, { Screen: () => null });
   return {
     Stack,
-    useLocalSearchParams: () => ({ id: '1' }),
-    useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+    useLocalSearchParams: () => mockParams,
+    useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: mockBack }),
   };
 });
 
@@ -23,6 +25,8 @@ const productsBody = { products: [{ id: 1, title: 'Widget', price: 9.5, descript
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockParams.id = '1';
+  demoApi.forgetCatalog();
   finishFlow(SpanStatus.OK);
   resetCart();
   global.fetch = jest.fn(async () => ({
@@ -125,4 +129,37 @@ test('layout sets the filter and starts the flow; unmount clears and cancels', a
   await view.unmount();
   expect(bugsee.setNetworkFilter).toHaveBeenLastCalledWith(null);
   expect(tx.finish).toHaveBeenCalledWith(SpanStatus.Cancelled);
+});
+
+test('product detail reads the catalog Products loaded, without a refetch', async () => {
+  const twelve = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, title: `Item ${i + 1}`, price: 1, description: 'd' }));
+  demoApi.rememberCatalog(twelve);
+  mockParams.id = '9';
+  const spy = jest.spyOn(demoApi, 'fetchProducts');
+  await render(<ProductDetail />);
+  expect(await screen.findByText('Item 9')).toBeTruthy();
+  expect(spy).not.toHaveBeenCalled();
+  spy.mockRestore();
+});
+
+test('products stores what it loaded for the detail screen', async () => {
+  await render(<Products />);
+  await screen.findByText('Widget');
+  mockParams.id = '1';
+  const spy = jest.spyOn(demoApi, 'fetchProducts');
+  await render(<ProductDetail />);
+  expect(await screen.findAllByText('Widget')).toBeTruthy();
+  expect(spy).not.toHaveBeenCalled();
+  spy.mockRestore();
+});
+
+test('product detail shows Product not found with a back button when the id is in no catalog', async () => {
+  const spy = jest.spyOn(demoApi, 'fetchProducts').mockResolvedValue({ products: [], source: 'mock' });
+  mockParams.id = '11';
+  await render(<ProductDetail />);
+  expect(await screen.findByText('Product not found')).toBeTruthy();
+  expect(screen.queryByText('Loading...')).toBeNull();
+  await fireEvent.press(screen.getByText('Back to products'));
+  expect(mockBack).toHaveBeenCalled();
+  spy.mockRestore();
 });

@@ -44,6 +44,27 @@ export async function fetchProducts(
   }
 }
 
+/**
+ * The catalog the Products screen last loaded. Product detail reads from it, so an id from the network list is
+ * not looked up in a different list (a refetch can fall back to the 4-item offline mock).
+ */
+let catalog: Product[] | null = null;
+export const rememberCatalog = (products: Product[]): void => {
+  catalog = products;
+};
+export const forgetCatalog = (): void => {
+  catalog = null;
+};
+const findIn = (list: Product[] | null, id: string) => list?.find((p) => String(p.id) === id) ?? null;
+/** The product from the shared catalog; fetches only when it is missing there. `null`: not found. */
+export async function findProduct(id: string): Promise<Product | null> {
+  const cached = findIn(catalog, id);
+  if (cached) return cached;
+  const r = await fetchProducts();
+  if (!catalog) rememberCatalog(r.products);
+  return findIn(r.products, id);
+}
+
 export async function postJson(
   url: string,
   body: unknown,
