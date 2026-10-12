@@ -57,9 +57,9 @@ export function SessionProvider({ children }: { children?: ReactNode }) {
   }, [refreshStatus]);
 
   const launch = useCallback(() => run(async () => {
-    await setConfig({ ...configRef.current, everLaunched: true });
-    return launchWith(configRef.current);
-  }), [run, setConfig]);
+    if (!configRef.current.everLaunched) await setConfig({ ...configRef.current, everLaunched: true });
+    try { return await launchWith(configRef.current); } catch (e) { push(`launch failed: ${msg(e)}`); throw e; }
+  }), [run, setConfig, push]);
   const relaunch = useCallback(
     () => run(() => Bugsee.relaunch(buildLaunchOptions(configRef.current, Platform.OS as 'ios' | 'android'))),
     [run],
