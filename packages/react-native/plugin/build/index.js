@@ -72,6 +72,7 @@ const withBugsee = (config, props) => {
     const iosToken = platformToken(options.appToken, 'ios');
     const uploadSourcemaps = options.uploadSourcemaps !== false;
     const uploadSymbols = options.uploadSymbols !== false;
+    const symbolicateReactNative = options.symbolicateReactNativeFrameworks === true;
     const endpoint = (0, endpoint_1.pluginEndpoint)(options.endpoint);
     const versions = (0, native_versions_1.loadNativeVersions)(__dirname);
     const edits = {
@@ -172,7 +173,7 @@ const withBugsee = (config, props) => {
                 podfile = undefined;
             }
             if (podfile !== undefined) {
-                await (0, promises_1.writeFile)(podfilePath, uploadSymbols ? (0, podfile_1.insertSymbolicatePrebuilt)(podfile) : (0, podfile_1.removeSymbolicatePrebuilt)(podfile));
+                await (0, promises_1.writeFile)(podfilePath, symbolicateReactNative ? (0, podfile_1.insertSymbolicatePrebuilt)(podfile) : (0, podfile_1.removeSymbolicatePrebuilt)(podfile));
             }
             return cfg;
         },

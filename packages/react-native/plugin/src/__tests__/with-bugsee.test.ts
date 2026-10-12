@@ -219,16 +219,33 @@ describe('withBugsee through the Expo mod compiler', () => {
     expect(snapshot(projectRoot)).toEqual(first);
   });
 
-  it('asks pod install for React dSYMs, once, at the top of the Podfile', async () => {
+  it('leaves the Podfile alone by default and for any non-true value', async () => {
     const podfilePath = join(projectRoot, 'ios/Podfile');
     const original = readFileSync(podfilePath, 'utf8');
     await prebuild({ appToken: ANDROID_TOKEN });
+    expect(readFileSync(podfilePath, 'utf8')).toBe(original);
+    await prebuild({ appToken: ANDROID_TOKEN, symbolicateReactNativeFrameworks: false });
+    expect(readFileSync(podfilePath, 'utf8')).toBe(original);
+  });
+
+  it('asks pod install for React dSYMs with symbolicateReactNativeFrameworks, once, and removes it byte for byte', async () => {
+    const podfilePath = join(projectRoot, 'ios/Podfile');
+    const original = readFileSync(podfilePath, 'utf8');
+    await prebuild({ appToken: ANDROID_TOKEN, symbolicateReactNativeFrameworks: true });
     const first = readFileSync(podfilePath, 'utf8');
     expect(first.split('\n')[1]).toBe("ENV['RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS'] ||= '1'");
     expect(first.match(/RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS/g)).toHaveLength(1);
     expect(first.endsWith(original)).toBe(true);
-    await prebuild({ appToken: ANDROID_TOKEN });
+    await prebuild({ appToken: ANDROID_TOKEN, symbolicateReactNativeFrameworks: true });
     expect(readFileSync(podfilePath, 'utf8')).toBe(first);
+    await prebuild({ appToken: ANDROID_TOKEN });
+    expect(readFileSync(podfilePath, 'utf8')).toBe(original);
+  });
+
+  it('keeps the Podfile line independent of uploadSymbols', async () => {
+    const podfilePath = join(projectRoot, 'ios/Podfile');
+    await prebuild({ appToken: ANDROID_TOKEN, uploadSymbols: false, symbolicateReactNativeFrameworks: true });
+    expect(readFileSync(podfilePath, 'utf8')).toContain('RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS');
   });
 
   it('drops the NDK pieces with nativeCrashReporting false', async () => {

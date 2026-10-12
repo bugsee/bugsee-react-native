@@ -67,6 +67,14 @@ export interface BugseePluginProps {
    */
   uploadSymbols?: boolean;
   /**
+   * Defaults off. `true` makes `pod install` download React Native's dSYMs
+   * (RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1, written as a marked line at the
+   * top of ios/Podfile), so React frames in iOS crashes symbolicate. It costs
+   * an extra download at pod install, and a failure there can fail the
+   * install. Off removes the line again; React frames then stay raw addresses.
+   */
+  symbolicateReactNativeFrameworks?: boolean;
+  /**
    * Defaults on. Writes `plugin.ndk.enabled=true` for a real token and adds
    * `com.bugsee:bugsee-android-ndk`; the Bugsee Gradle plugin then uploads
    * native symbols from the unstripped libraries, whatever
@@ -179,6 +187,7 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   const iosToken = platformToken(options.appToken, 'ios');
   const uploadSourcemaps = options.uploadSourcemaps !== false;
   const uploadSymbols = options.uploadSymbols !== false;
+  const symbolicateReactNative = options.symbolicateReactNativeFrameworks === true;
   const endpoint = pluginEndpoint(options.endpoint);
   const versions = loadNativeVersions(__dirname);
   const edits: GradleEdits = {
@@ -295,7 +304,7 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
       if (podfile !== undefined) {
         await writeFile(
           podfilePath,
-          uploadSymbols ? insertSymbolicatePrebuilt(podfile) : removeSymbolicatePrebuilt(podfile),
+          symbolicateReactNative ? insertSymbolicatePrebuilt(podfile) : removeSymbolicatePrebuilt(podfile),
         );
       }
       return cfg;
