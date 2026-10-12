@@ -5,7 +5,7 @@
  *
  * Tasks 4.1 and 4.2 unit-tested `Bugsee.log`, `event` and `trace` against
  * mocks. What only a device shows is what the SDK then writes: that a line
- * lands as `Custom` at the level it was sent at, that event params survive
+ * lands as `Bugsee` at the level it was sent at, that event params survive
  * the bridge with their types and nesting (an integer stays an integer), that
  * a trace keeps its value's type (a boolean does not become `1`), and that
  * nothing sent before `launch()` reaches the bundle.
@@ -195,7 +195,9 @@ describeDevice(`log, event and trace in a retained bundle on ${TARGET_NAME}`, ()
     return bundles[0]!;
   }
 
-  it('lines land as Custom at the level they were sent at', () => {
+  // Bugsee.log goes through the native Bugsee.log, not the wrapper channel:
+  // source Bugsee (4), not Custom (98).
+  it('lines land as Bugsee (4) at the level they were sent at', () => {
     const events = captureEvents(theBundle(), 'log');
     const expected: Array<[string, number]> = [1, 2, 3, 4, 5].map(level => [
       `BUGSEE_E2E data log L${level} ${nonce}`,
@@ -210,7 +212,7 @@ describeDevice(`log, event and trace in a retained bundle on ${TARGET_NAME}`, ()
       expect({ message, level: event.level, source: event.source, tag: has(event, 'tag') }).toEqual({
         message,
         level,
-        source: 98,
+        source: 4,
         tag: false,
       });
     }

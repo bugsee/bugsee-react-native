@@ -372,9 +372,11 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       await stopApp();
     });
 
-    it('[API-20a] log(message) with no level is Custom (98) at Info (3)', () => {
+    // The app's own line goes through the native Bugsee.log, not the wrapper
+    // channel: source Bugsee (4), not Custom (98).
+    it('[API-20a] log(message) with no level is Bugsee (4) at Info (3)', () => {
       const lines = captureEvents(bundle, 'log').filter(e => e.message === `api-log default ${run.scenario.nonce}`);
-      expect(lines.map(e => ({ level: e.level, source: e.source }))).toEqual([{ level: 3, source: 98 }]);
+      expect(lines.map(e => ({ level: e.level, source: e.source }))).toEqual([{ level: 3, source: 4 }]);
     });
 
     it('[API-21] event(name) with no params reaches the report; a bad name or bad params throw', () => {

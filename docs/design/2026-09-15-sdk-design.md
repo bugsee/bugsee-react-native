@@ -394,6 +394,15 @@ The wrapper captures two distinct streams and they need different handling. Neit
 
 Both send `LogSource.Custom`, which is what makes the source consistent across platforms.
 
+> **Changed 2026-10-12.** The app's own `Bugsee.log()` is not one of these streams, and no
+> longer goes through the channel. `com.bugsee.option.capture.logs` turns off automatic
+> capture only, and the SDKs now drop the channel's `log` with it off (`bugsee/specs#49`, spec text in #52,
+> `sdk/wrapper-channel`), so an explicit line sent there would vanish with the option off.
+> `log()` calls the native public `Bugsee.log` with `requiresFiltering = true`: source
+> `Bugsee`, recorded whatever the option says, and still filtered natively, once, like a
+> channel line. Without the flag the native call would skip the app's filter, and whatever it
+> redacts would be recorded as is.
+
 **This fixes two divergences that exist today.** The iOS RN hook tags logs `source: 98` while Android tags the same logs `source: 4`, because neither platform exposed a source parameter publicly and Android's wrapper had no other route — so one `console.log` in one app is recorded differently per platform. And `BGSLoggerInterceptor.m:54` hard-codes `enforceFiltering:NO`, so React Native logs on iOS are **never** passed through the log filter: a customer's redaction silently does not apply to them, while the comparable Android logs are filtered. The second is a privacy gap, not a cosmetic one, and neither is fixable inside a hook with the flag baked in.
 
 Four implementation constraints:

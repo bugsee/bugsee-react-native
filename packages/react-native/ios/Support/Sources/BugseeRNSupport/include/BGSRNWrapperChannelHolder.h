@@ -6,6 +6,14 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /**
+ * By value, the table both platforms share: 1 Error .. 5 Verbose, and
+ * anything else Info. Never `BugseeLogLevelInvalid` (0) -- a log line has no
+ * honest reading of "invalid". Shared by the channel's lines and the app's
+ * own `Bugsee.log` lines, which do not go through the channel.
+ */
+FOUNDATION_EXPORT BugseeLogLevel BGSRNLogLevelForWireValue(NSInteger wire);
+
+/**
  * The SDK's wrapper channel, held for the whole process. The iOS mirror of
  * Android's `WrapperChannelHolder`.
  *

@@ -1,11 +1,6 @@
 #import "BGSRNWrapperChannelHolder.h"
 
-/**
- * By value, the table both platforms share: 1 Error .. 5 Verbose, and
- * anything else Info. Never `BugseeLogLevelInvalid` (0) -- a log line has no
- * honest reading of "invalid".
- */
-static BugseeLogLevel BGSRNLogLevelForWireValue(NSInteger wire) {
+BugseeLogLevel BGSRNLogLevelForWireValue(NSInteger wire) {
   switch (wire) {
     case 1:
       return BugseeLogLevelError;

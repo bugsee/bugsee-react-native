@@ -15,7 +15,7 @@ import type { LifecycleEvent } from './wrapper/events';
 import { setReportHandler as installReportHandler } from './report/dispatcher';
 import { createReport as openCreatedReport } from './report/CreatedReport';
 import type { BugseeCreatedReport, BugseeReportHandler } from './report/types';
-import { forwardLog } from './wrapper/channel';
+import { log as sendLog } from './logs/log';
 import { installConsoleCapture } from './console/capture';
 import { setLogFilter as installLogFilter } from './logs/filter';
 import type { LogFilter } from './logs/filter';
@@ -406,12 +406,14 @@ class Bugsee {
   }
 
   /**
-   * One line into the Bugsee log, attributed to the wrapper (source Custom, no
-   * tag) and filtered natively by the app's log filter, exactly once. Dropped
-   * before launch() -- the channel is inert until then.
+   * One line into the Bugsee log: the app's own, through the native
+   * `Bugsee.log` (source Bugsee, no tag). Recorded with
+   * `com.bugsee.option.capture.logs` false, which turns off only what is
+   * captured automatically. Filtered natively by the app's log filter
+   * ({@link setLogFilter}), exactly once. Dropped before launch().
    */
   log(message: string, level: LogLevel = LogLevel.Info): void {
-    forwardLog(message, level);
+    sendLog(message, level);
   }
 
   /**

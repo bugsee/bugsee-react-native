@@ -136,7 +136,9 @@ describeDevice(`log filter on ${TARGET_NAME}`, () => {
     expect(matches).toHaveLength(1);
     const [event] = matches as [Record<string, unknown>];
     expect(event.message).toBe(want);
-    expect(event.source).toBe(98);
+    // The app's own line goes through the native Bugsee.log, not the wrapper
+    // channel: source Bugsee (4), not Custom (98).
+    expect(event.source).toBe(4);
     expect(event.level).toBe(2);
     const leaked = events.filter(event => messageOf(event).includes(`log-filter immediate ${nonce} SECRET`));
     expect(leaked).toHaveLength(0);
@@ -151,7 +153,9 @@ describeDevice(`log filter on ${TARGET_NAME}`, () => {
     expect(matches).toHaveLength(1);
     const [event] = matches as [Record<string, unknown>];
     expect(event.message).toBe(want);
-    expect(event.source).toBe(98);
+    // The app's own line goes through the native Bugsee.log, not the wrapper
+    // channel: source Bugsee (4), not Custom (98).
+    expect(event.source).toBe(4);
     expect(event.level).toBe(2);
   });
 
