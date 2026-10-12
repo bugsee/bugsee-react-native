@@ -10,7 +10,13 @@ export const DEMO = {
   PRODUCTS: 'https://dummyjson.com/products?limit=12&select=id,title,price,thumbnail,description',
 };
 
-export interface Product { id: number; title: string; price: number; thumbnail?: string; description: string }
+export interface Product {
+  id: number;
+  title: string;
+  price: number;
+  thumbnail?: string;
+  description: string;
+}
 
 export class DemoHttpError extends Error {
   constructor(public status: number) {
@@ -38,10 +44,22 @@ export async function fetchProducts(
   }
 }
 
-export async function postJson(url: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; json: unknown }> {
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+export async function postJson(
+  url: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; json: unknown }> {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  });
   const text = await r.text();
   let json: unknown;
-  try { json = JSON.parse(text); } catch { json = null; }
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = null;
+  }
   return { status: r.status, json };
 }

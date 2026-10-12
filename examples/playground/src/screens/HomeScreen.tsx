@@ -13,16 +13,84 @@ import { Section } from '../ui/Section';
 import { Toggle } from '../ui/Toggle';
 
 export const homeActions: Action[] = [
-  { id: 'launch', label: 'Launch', call: 'Bugsee.launch(token, options)', expect: 'Status goes Launching → Launched; resolves true', run: async () => launchWith(await loadConfig()) },
-  { id: 'relaunch', label: 'Relaunch with saved options', call: 'Bugsee.relaunch(options)', expect: 'Lifecycle shows a stop and a new launch; new options in effect', run: async () => Bugsee.relaunch(buildLaunchOptions(await loadConfig(), Platform.OS as 'ios' | 'android')) },
-  { id: 'stop', label: 'Stop', call: 'Bugsee.stop()', expect: 'Status → Stopped; resolves true', run: () => Bugsee.stop() },
-  { id: 'status', label: 'Get status', call: 'Bugsee.getStatus()', expect: '2 (Launched) after launch, 0 (Stopped) after stop', run: () => Bugsee.getStatus() },
-  { id: 'launch-options', label: 'Get launch options', call: 'Bugsee.getLaunchOptions()', expect: 'The options the SDK reports in effect', run: () => Bugsee.getLaunchOptions() },
-  { id: 'attach', label: 'Attach to a native auto-launch', call: 'Bugsee.attach()', expect: 'Resolves; no second session. Only meaningful when the native side auto-launched (config plugin autoLaunch); the playground does not', run: () => Bugsee.attach() },
-  { id: 'delete-true-ios', label: 'Delete collected data (incl. intermediate)', call: 'Bugsee.deleteCollectedDataOnDevice(true)', expect: 'false while launched; true after Stop, and no old report is sent at the next launch', run: () => Bugsee.deleteCollectedDataOnDevice(true), platforms: ['ios'], knownIssue: 'cocoa-195' },
-  { id: 'delete-true-android', label: 'Delete collected data (incl. intermediate)', call: 'Bugsee.deleteCollectedDataOnDevice(true)', expect: 'false while launched; true after Stop', run: () => Bugsee.deleteCollectedDataOnDevice(true), platforms: ['android'] },
-  { id: 'delete-false-ios', label: 'Delete processed data only', call: 'Bugsee.deleteCollectedDataOnDevice(false)', expect: 'false while launched; true after Stop; intermediate capture kept', run: () => Bugsee.deleteCollectedDataOnDevice(false), platforms: ['ios'], knownIssue: 'cocoa-195' },
-  { id: 'delete-false-android', label: 'Delete processed data only', call: 'Bugsee.deleteCollectedDataOnDevice(false)', expect: 'false while launched; true after Stop; intermediate capture kept', run: () => Bugsee.deleteCollectedDataOnDevice(false), platforms: ['android'], knownIssue: 'android-250' },
+  {
+    id: 'launch',
+    label: 'Launch',
+    call: 'Bugsee.launch(token, options)',
+    expect: 'Status goes Launching → Launched; resolves true',
+    run: async () => launchWith(await loadConfig()),
+  },
+  {
+    id: 'relaunch',
+    label: 'Relaunch with saved options',
+    call: 'Bugsee.relaunch(options)',
+    expect: 'Lifecycle shows a stop and a new launch; new options in effect',
+    run: async () => Bugsee.relaunch(buildLaunchOptions(await loadConfig(), Platform.OS as 'ios' | 'android')),
+  },
+  {
+    id: 'stop',
+    label: 'Stop',
+    call: 'Bugsee.stop()',
+    expect: 'Status → Stopped; resolves true',
+    run: () => Bugsee.stop(),
+  },
+  {
+    id: 'status',
+    label: 'Get status',
+    call: 'Bugsee.getStatus()',
+    expect: '2 (Launched) after launch, 0 (Stopped) after stop',
+    run: () => Bugsee.getStatus(),
+  },
+  {
+    id: 'launch-options',
+    label: 'Get launch options',
+    call: 'Bugsee.getLaunchOptions()',
+    expect: 'The options the SDK reports in effect',
+    run: () => Bugsee.getLaunchOptions(),
+  },
+  {
+    id: 'attach',
+    label: 'Attach to a native auto-launch',
+    call: 'Bugsee.attach()',
+    expect:
+      'Resolves; no second session. Only meaningful when the native side auto-launched (config plugin autoLaunch); the playground does not',
+    run: () => Bugsee.attach(),
+  },
+  {
+    id: 'delete-true-ios',
+    label: 'Delete collected data (incl. intermediate)',
+    call: 'Bugsee.deleteCollectedDataOnDevice(true)',
+    expect: 'false while launched; true after Stop, and no old report is sent at the next launch',
+    run: () => Bugsee.deleteCollectedDataOnDevice(true),
+    platforms: ['ios'],
+    knownIssue: 'cocoa-195',
+  },
+  {
+    id: 'delete-true-android',
+    label: 'Delete collected data (incl. intermediate)',
+    call: 'Bugsee.deleteCollectedDataOnDevice(true)',
+    expect: 'false while launched; true after Stop',
+    run: () => Bugsee.deleteCollectedDataOnDevice(true),
+    platforms: ['android'],
+  },
+  {
+    id: 'delete-false-ios',
+    label: 'Delete processed data only',
+    call: 'Bugsee.deleteCollectedDataOnDevice(false)',
+    expect: 'false while launched; true after Stop; intermediate capture kept',
+    run: () => Bugsee.deleteCollectedDataOnDevice(false),
+    platforms: ['ios'],
+    knownIssue: 'cocoa-195',
+  },
+  {
+    id: 'delete-false-android',
+    label: 'Delete processed data only',
+    call: 'Bugsee.deleteCollectedDataOnDevice(false)',
+    expect: 'false while launched; true after Stop; intermediate capture kept',
+    run: () => Bugsee.deleteCollectedDataOnDevice(false),
+    platforms: ['android'],
+    knownIssue: 'android-250',
+  },
 ];
 const statusName = (s: number) => Object.entries(Status).find(([, v]) => v === s)?.[0] ?? String(s);
 const launchOptionsAction = homeActions.find((a) => a.id === 'launch-options')!;
@@ -34,7 +102,10 @@ function SessionButton({ id, label, onPress }: { id: string; label: string; onPr
   const call = homeActions.find((a) => a.id === id)!;
   const go = () => {
     log(`▶ ${label}`);
-    onPress().then((v) => log(`→ ${String(v)}`), (e) => log(`✗ ${describeError(e)}`));
+    onPress().then(
+      (v) => log(`→ ${String(v)}`),
+      (e) => log(`✗ ${describeError(e)}`),
+    );
   };
   return (
     <Pressable accessibilityRole="button" onPress={go} style={styles.box} testID={`session-${id}`}>
@@ -52,7 +123,12 @@ export default function HomeScreen() {
   const [optsError, setOptsError] = useState<string | null>(null);
   const [autoError, setAutoError] = useState<string | null>(null);
   const refresh = async () => {
-    try { setOpts(await Bugsee.getLaunchOptions()); setOptsError(null); } catch (e) { setOptsError(describeError(e)); }
+    try {
+      setOpts(await Bugsee.getLaunchOptions());
+      setOptsError(null);
+    } catch (e) {
+      setOptsError(describeError(e));
+    }
   };
   return (
     <Screen title="Home">
@@ -67,7 +143,11 @@ export default function HomeScreen() {
         <SessionButton id="launch" label="Launch" onPress={session.launch} />
         <SessionButton id="relaunch" label="Relaunch with saved options" onPress={session.relaunch} />
         <SessionButton id="stop" label="Stop" onPress={session.stop} />
-        {restActions.filter((a) => !a.id.startsWith('delete-') && a.id !== 'launch-options').map((a) => <ActionButton key={a.id} action={a} />)}
+        {restActions
+          .filter((a) => !a.id.startsWith('delete-') && a.id !== 'launch-options')
+          .map((a) => (
+            <ActionButton key={a.id} action={a} />
+          ))}
       </Section>
       <Section title="Launch options">
         <Pressable accessibilityRole="button" onPress={refresh} style={styles.box}>
@@ -79,13 +159,21 @@ export default function HomeScreen() {
         {opts !== undefined ? <Text style={styles.mono}>{JSON.stringify(opts, null, 2)}</Text> : null}
       </Section>
       <Section title="Data deletion">
-        {restActions.filter((a) => a.id.startsWith('delete-')).map((a) => <ActionButton key={a.id} action={a} />)}
+        {restActions
+          .filter((a) => a.id.startsWith('delete-'))
+          .map((a) => (
+            <ActionButton key={a.id} action={a} />
+          ))}
       </Section>
       <Section title="Auto-launch">
-        <Toggle label="Auto-launch on app start" value={session.config.autoLaunch} onChange={(v) => {
-          setAutoError(null);
-          session.setConfig({ ...session.config, autoLaunch: v }).catch((e) => setAutoError(describeError(e)));
-        }} />
+        <Toggle
+          label="Auto-launch on app start"
+          value={session.config.autoLaunch}
+          onChange={(v) => {
+            setAutoError(null);
+            session.setConfig({ ...session.config, autoLaunch: v }).catch((e) => setAutoError(describeError(e)));
+          }}
+        />
         {autoError ? <Text style={styles.error}>{`Could not save: ${autoError}`}</Text> : null}
       </Section>
       <Section title="Demo shop">

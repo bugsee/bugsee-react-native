@@ -14,7 +14,10 @@ export const REPORT_HANDLER_PRESETS: Record<'labels' | 'attachFile' | 'drop', Bu
     onAfterReportCreated: async (report) => {
       const names = await report.getAttachmentNames();
       if (names.includes(HANDLER_ATTACHMENT)) return;
-      await report.addDataAttachment(globalThis.btoa('attached by the report handler'), { name: HANDLER_ATTACHMENT, mimeType: 'text/plain' });
+      await report.addDataAttachment(globalThis.btoa('attached by the report handler'), {
+        name: HANDLER_ATTACHMENT,
+        mimeType: 'text/plain',
+      });
     },
   },
   // There is no drop API in 7.x: redact instead.

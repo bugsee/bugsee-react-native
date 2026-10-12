@@ -5,13 +5,25 @@ import { useLog } from './ResultLog';
 
 export function describe(value: unknown): string {
   if (value === undefined) return 'undefined';
-  try { return JSON.stringify(value) ?? String(value); } catch { /* fall through */ }
-  try { return String(value); } catch { return '[unprintable]'; }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    /* fall through */
+  }
+  try {
+    return String(value);
+  } catch {
+    return '[unprintable]';
+  }
 }
 export function describeError(e: unknown): string {
   if (e instanceof Error) {
     const code = (e as { code?: unknown }).code;
-    try { return `${e.name}${typeof code === 'string' ? ` [${code}]` : ''}: ${e.message}`; } catch { return '[unprintable]'; }
+    try {
+      return `${e.name}${typeof code === 'string' ? ` [${code}]` : ''}: ${e.message}`;
+    } catch {
+      return '[unprintable]';
+    }
   }
   return describe(e);
 }
@@ -26,7 +38,10 @@ export function ActionButton({ action }: { action: Action }) {
     try {
       const r = action.run();
       if (typeof (r as { then?: unknown } | null | undefined)?.then === 'function') {
-        Promise.resolve(r).then((v) => log(`→ ${describeResult(v)}`), (e) => log(`✗ ${describeError(e)}`));
+        Promise.resolve(r).then(
+          (v) => log(`→ ${describeResult(v)}`),
+          (e) => log(`✗ ${describeError(e)}`),
+        );
       } else log(`→ ${describeResult(r)}`);
     } catch (e) {
       log(`✗ ${describeError(e)}`);
@@ -34,7 +49,10 @@ export function ActionButton({ action }: { action: Action }) {
   };
   const press = () =>
     action.confirm
-      ? Alert.alert(action.label, action.confirm, [{ text: 'Cancel', style: 'cancel' }, { text: 'Crash', style: 'destructive', onPress: go }])
+      ? Alert.alert(action.label, action.confirm, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Crash', style: 'destructive', onPress: go },
+        ])
       : go();
   return (
     <Pressable accessibilityRole="button" onPress={press} style={styles.box} testID={`action-${action.id}`}>

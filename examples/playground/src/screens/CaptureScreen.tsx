@@ -16,12 +16,33 @@ const group = (prefixes: string[]) => captureActions.filter((a) => prefixes.some
 export default function CaptureScreen() {
   return (
     <Screen title="Capture">
-      <Section title="Logging">{group(['log-', 'console-', 'native-log']).map((a) => <ActionButton key={a.id} action={a} />)}</Section>
-      <Section title="Network (JS)">{group(['net-']).filter((a) => !a.id.startsWith('net-native') && a.id !== 'net-add-event').map((a) => <ActionButton key={a.id} action={a} />)}</Section>
-      <Section title="Network (native)">{group(['net-native']).map((a) => <ActionButton key={a.id} action={a} />)}</Section>
-      <Section title="Network filters and events">{group(['nf-', 'net-add-event']).map((a) => <ActionButton key={a.id} action={a} />)}</Section>
+      <Section title="Logging">
+        {group(['log-', 'console-', 'native-log']).map((a) => (
+          <ActionButton key={a.id} action={a} />
+        ))}
+      </Section>
+      <Section title="Network (JS)">
+        {group(['net-'])
+          .filter((a) => !a.id.startsWith('net-native') && a.id !== 'net-add-event')
+          .map((a) => (
+            <ActionButton key={a.id} action={a} />
+          ))}
+      </Section>
+      <Section title="Network (native)">
+        {group(['net-native']).map((a) => (
+          <ActionButton key={a.id} action={a} />
+        ))}
+      </Section>
+      <Section title="Network filters and events">
+        {group(['nf-', 'net-add-event']).map((a) => (
+          <ActionButton key={a.id} action={a} />
+        ))}
+      </Section>
       <Section title="WebView">
-        <Text style={styles.note}>Expect: the WebView console line, its fetch, and the JS error in the report (with capture.webview.advanced on).</Text>
+        <Text style={styles.note}>
+          Expect: the WebView console line, its fetch, and the JS error in the report (with capture.webview.advanced
+          on).
+        </Text>
         <WebView source={{ html: WEBVIEW_HTML }} style={styles.web} originWhitelist={['*']} />
       </Section>
     </Screen>

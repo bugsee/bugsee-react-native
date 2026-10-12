@@ -2,7 +2,15 @@ import { ActivityIndicator, Pressable, Text } from 'react-native';
 import { Redirect, Tabs, useRouter } from 'expo-router';
 import { useSession } from '../../src/session/SessionContext';
 
-const TABS = [['index', 'Home'], ['capture', 'Capture'], ['privacy', 'Privacy'], ['errors', 'Errors'], ['reports', 'Reports'], ['data', 'Data'], ['perf', 'Perf']] as const;
+const TABS = [
+  ['index', 'Home'],
+  ['capture', 'Capture'],
+  ['privacy', 'Privacy'],
+  ['errors', 'Errors'],
+  ['reports', 'Reports'],
+  ['data', 'Data'],
+  ['perf', 'Perf'],
+] as const;
 
 export default function TabsLayout() {
   const { ready, config } = useSession();
@@ -19,7 +27,9 @@ export default function TabsLayout() {
         ),
       }}
     >
-      {TABS.map(([name, title]) => <Tabs.Screen key={name} name={name} options={{ title }} />)}
+      {TABS.map(([name, title]) => (
+        <Tabs.Screen key={name} name={name} options={{ title }} />
+      ))}
     </Tabs>
   );
 }
