@@ -38,14 +38,27 @@
   };
 }
 
-/// Lets a main-queue hop or a short deadline run.
+/// Lets a main-queue hop or a short deadline run. Pumps the main run loop for
+/// `seconds` and asserts nothing about timing: a starved runner only makes it
+/// return late.
 - (void)spinMain:(NSTimeInterval)seconds {
-  XCTestExpectation *turned = [self expectationWithDescription:@"main turned"];
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    [turned fulfill];
-  });
-  // Generous: a loaded CI runner can starve main for seconds; this wait only pumps main and asserts nothing about timing.
-  [self waitForExpectations:@[ turned ] timeout:seconds + 30];
+  NSDate *end = [NSDate dateWithTimeIntervalSinceNow:seconds];
+  while (end.timeIntervalSinceNow > 0) {
+    if (![NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:end]) {
+      [NSThread sleepForTimeInterval:0.005];
+    }
+  }
+}
+
+/// Pumps main until `done` holds. The generous limit (runner main-queue
+/// starvation) is only a backstop; the wait asserts nothing about timing.
+- (void)spinMainUntil:(BOOL (^)(void))done {
+  NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:30];
+  while (!done() && limit.timeIntervalSinceNow > 0) {
+    [NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode
+                        beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+  }
+  XCTAssertTrue(done(), @"main never reached the expected state");
 }
 
 - (void)testTheSharedHoldHasTheDocumentedBounds {
@@ -175,25 +188,33 @@
 /// A deadline armed for a batch that Launched already released does nothing
 /// to the next batch, which gets its own.
 ///
-/// Timeline, D = the deadline, scaled up so a main-queue stall of a few
-/// seconds on a loaded runner cannot reorder it (only the ordering matters):
-///   t=0     batch a submitted, released at once; its timer is due at D
-///   t=1.3   batch b submitted; its timer is due at 1.3 + D = 3.3
-///   t=2.6   first assertion: a's old timer (2.0) has fired, b's (3.3) has not
-///   t=4.1   second assertion: b's timer has fired
+/// No wall-clock race: the "b is still held" check runs inside a main-queue
+/// block due BETWEEN a's stale timer and b's own, so it runs after the former
+/// and before the latter whatever the runner does (timers fire in due order).
+/// With D = 2 s, t = seconds after a was submitted:
+///   a's stale timer due t=2.0 < the check due t=2.5 < b's timer due >= t=3.0
+/// (b is submitted no earlier than t=1.0, and its deadline is D after that).
 - (void)testAnOldDeadlineDoesNotTouchALaterBatch {
   BGSRNLaunchHold *hold = [self holdWithCapacity:8 deadlineMs:2000];
   [hold submit:@"a" call:[self recorder:@"a"]];
   _status = BugseeStatusLaunched;
   [hold lifecycleEvent:@"com.bugsee.lifecycle.Launched"];
   _status = BugseeStatusLaunching;
-  [self spinMain:1.3];
+  __block BOOL checked = NO;
+  __weak __typeof(self) weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    __typeof(self) strongSelf = weakSelf;
+    // a's stale timer has run; b's has not.
+    XCTAssertEqualObjects(strongSelf->_runs, @[ @"a:replay" ]);
+    XCTAssertEqual(hold.heldCount, 1u);
+    checked = YES;
+  });
+  [self spinMain:1.0];
   [hold submit:@"b" call:[self recorder:@"b"]];
-  // The first batch's deadline passes here; the second's has not.
-  [self spinMain:1.3];
-  XCTAssertEqualObjects(_runs, @[ @"a:replay" ]);
   XCTAssertEqual(hold.heldCount, 1u);
-  [self spinMain:1.5];
+  [self spinMainUntil:^BOOL {
+    return checked && hold.heldCount == 0;
+  }];
   XCTAssertEqualObjects(_runs, (@[ @"a:replay", @"b:drop" ]));
 }
 
