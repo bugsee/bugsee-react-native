@@ -210,8 +210,23 @@ export interface Spec extends TurboModule {
   traceBoolean(name: string, value: boolean): void;
 
   /**
+   * One line the app sent with `Bugsee.log()`, through the SDK's public
+   * `Bugsee.log` with `requiresFiltering` true: source `Bugsee`, no tag.
+   *
+   * `level` is the SDK's by-value level, 1 Error .. 5 Verbose, already
+   * checked in JS; native maps anything else to Info. `capture.logs` does not
+   * gate it. The app's log filter runs on it natively, once, as on a channel
+   * line. Fire-and-forget: before launch the SDK drops it.
+   *
+   * `log` in `src/logs/log.ts` is its only caller.
+   */
+  log(message: string, level: number): void;
+
+  /**
    * One log line into the SDK's wrapper channel, attributed to the wrapper
-   * (source `Custom`, no tag) rather than to the app's own `Bugsee.log`.
+   * (source `Custom`, no tag) rather than to the app's own `Bugsee.log`:
+   * output this wrapper captured on its own, which the SDKs drop with
+   * `capture.logs` off.
    *
    * `level` is the SDK's by-value level, 1 Error .. 5 Verbose, already
    * checked in JS; native maps anything else to Info. The line is filtered
@@ -219,8 +234,8 @@ export interface Spec extends TurboModule {
    * §10.3). Fire-and-forget: before launch the channel accepts and drops it.
    *
    * Internal. `forwardLog` in `src/wrapper/channel.ts` is its only caller;
-   * Phase 4's `log()` and Phase 9's console routing build on that, and must
-   * not add a second native route.
+   * Phase 9's console routing builds on that, and must not add a second
+   * native route. The app's own `log()` does not come here.
    */
   wrapperLog(message: string, level: number): void;
 

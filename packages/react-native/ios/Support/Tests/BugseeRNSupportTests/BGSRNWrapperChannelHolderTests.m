@@ -137,6 +137,20 @@
 }
 
 /**
+ * The same table, exported for the app's own `Bugsee.log` lines, which the
+ * module sends to the SDK directly rather than through the channel.
+ */
+- (void)testExportedLevelTableMatchesTheChannel {
+  XCTAssertEqual(BGSRNLogLevelForWireValue(1), BugseeLogLevelError);
+  XCTAssertEqual(BGSRNLogLevelForWireValue(2), BugseeLogLevelWarning);
+  XCTAssertEqual(BGSRNLogLevelForWireValue(3), BugseeLogLevelInfo);
+  XCTAssertEqual(BGSRNLogLevelForWireValue(4), BugseeLogLevelDebug);
+  XCTAssertEqual(BGSRNLogLevelForWireValue(5), BugseeLogLevelVerbose);
+  XCTAssertEqual(BGSRNLogLevelForWireValue(0), BugseeLogLevelInfo);
+  XCTAssertEqual(BGSRNLogLevelForWireValue(6), BugseeLogLevelInfo);
+}
+
+/**
  * `NO` would also skip the SDK's own network sanitizer, not only the app's
  * filter -- there is no case where this wrapper wants that.
  */

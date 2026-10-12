@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.json.JSONException;
@@ -69,6 +70,9 @@ public class BugseeModule extends NativeBugseeSpec
 
     /** The wrapper's log tag, as ReportHandlerBridge and WrapperEventBus use. */
     private static final String TAG = "BugseeRN";
+
+    /** Whether a throwing log filter has been reported for {@link #log} yet. */
+    private static final AtomicBoolean LOG_FAULT_REPORTED = new AtomicBoolean();
 
     /** Production adapter: the SDK's handled / unhandled entry points. */
     private static final ExceptionBridge.Sdk PROD_EXCEPTION_SDK = new ExceptionBridge.Sdk() {
@@ -582,6 +586,31 @@ public class BugseeModule extends NativeBugseeSpec
             });
         } catch (final RuntimeException e) {
             Log.e(TAG, "showReportDialog failed: " + e.getClass().getName());
+        }
+    }
+
+    /**
+     * The app's own {@code Bugsee.log()} line, through the SDK's public
+     * {@code Bugsee.log} -- not the wrapper channel, which records nothing
+     * with {@code capture.logs} off. {@code requiresFiltering = true} keeps
+     * the app's log filter on these lines, as it was while they went through
+     * the channel. The level maps by the channel's table.
+     *
+     * <p>The app's filter runs on this thread, and an exception it throws
+     * comes back here, as on the channel ({@link WrapperChannelHolder#log}).
+     * This thread is React Native's, so it stops here and is reported once
+     * per process: the report is itself a logcat line, which the SDK's
+     * logcat capture can feed back into the same filter.
+     */
+    @Override
+    public void log(final String message, final double level) {
+        try {
+            Bugsee.log(message, WrapperChannelHolder.levelFor((int) level), true);
+        } catch (final Throwable e) {
+            if (LOG_FAULT_REPORTED.compareAndSet(false, true)) {
+                Log.w(TAG, "the app's log filter threw on a Bugsee.log line "
+                        + "(reported once per process): " + e.getClass().getName());
+            }
         }
     }
 

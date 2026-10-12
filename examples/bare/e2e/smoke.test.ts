@@ -211,12 +211,19 @@ describeDevice(`the smoke set on ${TARGET_NAME}`, () => {
       bundle = bundleBySummary(await awaitBundles(1), `smoke-data-${nonce}`);
     });
 
-    it('S2 Bugsee.log and console.log land once each as Custom (98) at Info', () => {
+    // Bugsee.log is the app's own line, through the native Bugsee.log: source
+    // Bugsee (4). console.log is captured output, through the wrapper channel:
+    // Custom (98).
+    it('S2 Bugsee.log lands once as Bugsee (4), console.log once as Custom (98), both at Info', () => {
       const lines = captureEvents(bundle, 'log');
-      for (const message of [`smoke log ${nonce}`, `smoke console ${nonce}`]) {
+      const expected: Array<[string, number]> = [
+        [`smoke log ${nonce}`, 4],
+        [`smoke console ${nonce}`, 98],
+      ];
+      for (const [message, source] of expected) {
         const found = lines.filter(line => line.message === message);
         expect({ message, count: found.length }).toEqual({ message, count: 1 });
-        expect({ message, source: found[0]!.source, level: found[0]!.level }).toEqual({ message, source: 98, level: 3 });
+        expect({ message, source: found[0]!.source, level: found[0]!.level }).toEqual({ message, source, level: 3 });
       }
     });
 
