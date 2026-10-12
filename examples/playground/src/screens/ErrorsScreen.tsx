@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Platform, Text } from 'react-native';
+import { Button, Text } from 'react-native';
 import Bugsee, { ErrorBoundary } from '@bugsee/react-native';
 import { NATIVE_UNAVAILABLE, PlaygroundNative } from '../../modules/playground-native';
 import { ActionButton } from '../ui/ActionButton';
@@ -13,7 +13,6 @@ const CRASH_CONFIRM =
   'The app will crash. Turn on Setup → Auto-launch first (or tap Home → Launch after reopening) to send the report.';
 const reopen = (kind: string) =>
   `Reopen the app: a crash report with a symbolicated ${kind} stack (Release build with symbols uploaded)`;
-const jni = Platform.OS === 'android' ? ' (JNI)' : '';
 
 /** Throws now, inside the tap, so ActionButton logs it, rather than later inside the afterTap timer. */
 const afterTapNative = (fn: () => void) => {
@@ -22,13 +21,14 @@ const afterTapNative = (fn: () => void) => {
 };
 
 type CrashKind = 'segv' | 'abort' | 'exception' | 'backgroundThread';
-const nativeCrash = (kind: CrashKind, label: string): Action => ({
+const nativeCrash = (kind: CrashKind, label: string, platforms?: Action['platforms']): Action => ({
   id: `crash-native-${kind}`,
   label,
   call: `PlaygroundNative.crash('${kind}')`,
   confirm: CRASH_CONFIRM,
   expect: reopen('native'),
   run: () => afterTapNative(() => PlaygroundNative.crash(kind)),
+  ...(platforms ? { platforms } : {}),
 });
 const ndkCrash = (kind: 'segv' | 'abort'): Action => ({
   id: `crash-ndk-${kind}`,
@@ -122,8 +122,9 @@ export const errorsActions: Action[] = [
     expect: reopen('native'),
     run: () => afterTap(() => Bugsee.testNativeCrash()),
   },
-  nativeCrash('segv', `Native crash: segv${jni}`),
-  nativeCrash('abort', `Native crash: abort${jni}`),
+  // iOS only: on Android crash('segv'|'abort') calls the same C++ as crashNdk, so the NDK pair below covers it.
+  nativeCrash('segv', 'Native crash: segv', ['ios']),
+  nativeCrash('abort', 'Native crash: abort', ['ios']),
   nativeCrash('exception', 'Native crash: exception'),
   nativeCrash('backgroundThread', 'Native crash: background thread'),
   ndkCrash('segv'),

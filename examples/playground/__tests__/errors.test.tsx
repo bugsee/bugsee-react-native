@@ -52,3 +52,12 @@ test.each(errorsActions.filter((a) => a.call.startsWith('PlaygroundNative.crash'
     }
   },
 );
+
+test('native signal crashes: crash(segv|abort) on iOS only, the NDK pair on Android only', () => {
+  const by = (id: string) => errorsActions.find((a) => a.id === id)!;
+  for (const k of ['segv', 'abort']) {
+    expect(by(`crash-native-${k}`).platforms).toEqual(['ios']);
+    expect(by(`crash-ndk-${k}`).platforms).toEqual(['android']);
+  }
+  for (const k of ['exception', 'backgroundThread']) expect(by(`crash-native-${k}`).platforms).toBeUndefined();
+});
