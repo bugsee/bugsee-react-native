@@ -29,7 +29,7 @@
  *   BUGSEE_E2E exc app-handler fatal=<bool>
  *
  * Case 7 is `it.failing` on Android for a documented gap (labels ignored,
- * still in 7.3.1). Do not weaken it. Case 10 was `it.failing` on 7.3.0, which
+ * still in 7.3.1; https://github.com/bugsee/bugsee-android/issues/247). Do not weaken it. Case 10 was `it.failing` on 7.3.0, which
  * also filed an error report for an unhandled exception; 7.3.1 files the
  * crash only (bugsee-android d390b5203, #192), so it is a plain `it`.
  * On iOS both are plain `it` (labels apply; Debug files no second report).
@@ -401,6 +401,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       );
     });
 
+    // Known SDK bug (R10): https://github.com/bugsee/bugsee-android/issues/247
     itAndroid.failing('labels reach the report', () => {
       const labels = handled.request.labels;
       report('case 7 actual labels', labels);
@@ -813,6 +814,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
 
   // --- Task 7.5b: iOS simulator documented behaviour -------------------------
 
+  // Known SDK bug: https://github.com/bugsee/bugsee-cocoa/issues/225
   describeIosSimulatorDebug('simulator slice (logException compiled out)', () => {
     it('the simulator slice reports no JS exception', async () => {
       await clearBundles();
