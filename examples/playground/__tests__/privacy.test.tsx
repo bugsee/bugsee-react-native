@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import Bugsee from '@bugsee/react-native';
+import { View, StyleSheet } from 'react-native';
 import PrivacyScreen, { privacyActions } from '../src/screens/PrivacyScreen';
 import { callTarget } from '../src/ui/action';
 
@@ -15,10 +16,23 @@ test('renders labels and pressing start blackout calls the mock', async () => {
   expect(Bugsee.startBlackout).toHaveBeenCalled();
 });
 test('set and clear secure rectangle draws and removes the overlay', async () => {
+  jest.spyOn(View.prototype, 'measureInWindow' as never).mockImplementation(((cb: (x: number, y: number) => void) => cb(0, 100)) as never);
   await render(<PrivacyScreen />);
+  await fireEvent(screen.getByTestId('privacy-root'), 'layout');
   await fireEvent.press(screen.getByText('Set secure rectangle'));
   expect(Bugsee.setSecureRectangles).toHaveBeenCalledWith([{ x: 20, y: 200, width: 200, height: 80 }]);
   expect(screen.getAllByTestId('secure-overlay')).toHaveLength(1);
+  expect(StyleSheet.flatten(screen.getByTestId('secure-overlay').props.style).top).toBe(100);
   await fireEvent.press(screen.getByText('Clear secure rectangles'));
   expect(screen.queryAllByTestId('secure-overlay')).toHaveLength(0);
+});
+test('blackout before launch stops, blacks out, then launches', async () => {
+  const a = privacyActions.find((x) => x.id === 'blackout-before-launch')!;
+  expect(a.call.startsWith('Bugsee.startBlackout()')).toBe(true);
+  expect(a.knownIssue).toBe('android-248');
+  [Bugsee.stop, Bugsee.startBlackout, Bugsee.launch].forEach((f) => (f as jest.Mock).mockClear());
+  await a.run();
+  const o = (f: unknown) => (f as jest.Mock).mock.invocationCallOrder[0];
+  expect(o(Bugsee.stop)).toBeLessThan(o(Bugsee.startBlackout));
+  expect(o(Bugsee.startBlackout)).toBeLessThan(o(Bugsee.launch));
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 import Bugsee, { BugseeSecure } from '@bugsee/react-native';
 import { NativeSecureField } from '../../modules/playground-native';
@@ -52,8 +52,14 @@ export default function PrivacyScreen() {
     overlayListeners.add(setRects);
     return () => { overlayListeners.delete(setRects); };
   }, []);
+  const rootRef = useRef<View>(null);
+  const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null);
+  // Rectangles are in window coordinates; the overlay container sits below the header.
+  const measure = useCallback(() => {
+    rootRef.current?.measureInWindow((x, y) => setOrigin({ x, y }));
+  }, []);
   return (
-    <View style={styles.root}>
+    <View ref={rootRef} onLayout={measure} testID="privacy-root" style={styles.root}>
       <Screen title="Privacy">
         <Section title="Blackout">
           {byId('blackout-start', 'blackout-end', 'blackout-is').map((a) => <ActionButton key={a.id} action={a} />)}
@@ -84,9 +90,9 @@ export default function PrivacyScreen() {
           <Text style={styles.note}>Expect: the native password field is hidden, and the plain one beside it is visible</Text>
         </Section>
       </Screen>
-      {rects.map((r, i) => (
-        <View key={i} pointerEvents="none" testID="secure-overlay" style={[styles.overlay, { left: r.x, top: r.y, width: r.width, height: r.height }]} />
-      ))}
+      {origin ? rects.map((r, i) => (
+        <View key={i} pointerEvents="none" testID="secure-overlay" style={[styles.overlay, { left: r.x - origin.x, top: r.y - origin.y, width: r.width, height: r.height }]} />
+      )) : null}
     </View>
   );
 }
