@@ -306,6 +306,7 @@ describeDevice(`blackout on ${TARGET_NAME}`, () => {
       expect(ended[0]!.index).toBeGreaterThan(state.index);
     } else {
       // Android: the SDK drops a startBlackout() before launch (a logged no-op).
+      // Known SDK bug: https://github.com/bugsee/bugsee-android/issues/248
       expect(state.text).toMatch(/ isBlackout=false /);
       expect(cleared.text).toMatch(/ isBlackout=false /);
       // ...and says nothing about it: the lifecycle listener, subscribed before

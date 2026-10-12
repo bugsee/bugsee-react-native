@@ -258,7 +258,7 @@
 
 /// beta3 stores `internalAttributes` in a file-scope global and `-init`
 /// replaces it. When this fails, that bug is gone and P5 (one created report
-/// at a time) can be lifted.
+/// at a time) can be lifted. Filed: https://github.com/bugsee/bugsee-cocoa/issues/224
 - (void)testTheSdkSharesAttributesAcrossExtendedReports {
   BugseeExtendedReport *first = [BugseeExtendedReport new];
   [first setAttribute:@"only-a" withValue:@"1"];

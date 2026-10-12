@@ -3,7 +3,8 @@
  * (the API rows marked N-08 in section 1.1). Scenarios in
  * scenarios/api-args.ts and, for the rendering ones, scenarios/api.tsx.
  *
- * The iOS simulator slice compiles logException out (exceptions.test.ts), so
+ * The iOS simulator slice compiles logException out (exceptions.test.ts;
+ * https://github.com/bugsee/bugsee-cocoa/issues/225), so
  * the cases that need an error report are A and X only there.
  */
 import { type PulledBundle, captureEvents, crashOf, relayTexts } from './bundles';
@@ -172,6 +173,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       expect(errors).toHaveLength(5);
     });
 
+    // iOS ignores includeVideo too: https://github.com/bugsee/bugsee-cocoa/issues/226
     itReports('[API-11d] includeVideo is accepted and changes nothing', () => {
       const nonce = run.scenario.nonce;
       const video = jsonAfter<Record<string, Settled>>(done.text, 'video');
@@ -224,7 +226,8 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       }
     });
 
-    /** Android 7.3.0 ignores logException labels (R10, exceptions.test.ts case 7): the same path. */
+    /** Android 7.3.0 ignores logException labels (R10, exceptions.test.ts case 7): the same path.
+     * https://github.com/bugsee/bugsee-android/issues/247 */
     (ON_ANDROID ? it.failing : itReports)('[API-13d] the options prop: labels reach the report', () => {
       expect(bundles).toHaveLength(1);
       expect(bundles[0]!.request.labels).toEqual(expect.arrayContaining([`api-label-${run.scenario.nonce}`]));

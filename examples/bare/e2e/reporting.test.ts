@@ -17,7 +17,7 @@
  * iOS case 6 is gated on `E2E_IOS_OPERATOR=1` and the iPhone. This file never
  * sets that variable and never taps Send. The simulator never runs case 6.
  *
- * iOS case 3 is `it.failing` (P10). The plain `it` before it is case 1,
+ * iOS case 3 is `it.failing` (P10; https://github.com/bugsee/bugsee-cocoa/issues/223). The plain `it` before it is case 1,
  * which checks identity. The body still requires `source.type === 'code_upload'`.
  * Case 8 on iOS: `rp create before` and `rp create after` both follow
  * `rp uploading` (P6), and `rp created null=false` precedes `rp uploading`.
@@ -246,7 +246,7 @@ describeDevice(`reporting paths in a retained bundle on ${TARGET_NAME}`, () => {
     });
 
     // Case 1, above, is the plain `it` that checks identity. This one is
-    // `it.failing` on iOS only (P10): beta3's `uploadWithSummary:…` files
+    // `it.failing` on iOS only (P10, https://github.com/bugsee/bugsee-cocoa/issues/223): beta3's `uploadWithSummary:…` files
     // `source.type` other than `code_upload`. The assertion stays
     // `code_upload`. The observed value is reported, and is not what passes.
     const case3 = ON_IOS ? it.failing : it;
