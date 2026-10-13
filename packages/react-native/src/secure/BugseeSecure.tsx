@@ -2,6 +2,8 @@ import { useLayoutEffect, useRef } from 'react';
 import type { ComponentRef, ReactElement, ReactNode } from 'react';
 import { View } from 'react-native';
 import type { LayoutChangeEvent, ViewProps } from 'react-native';
+import { ancestryOfInstance, clipToAncestors, isHidden } from './ancestry';
+import type { Ancestry } from './ancestry';
 import { addMeasurer } from './measureLoop';
 import { clearOwner, setOwnerRectangles } from './registry';
 import { surfaceOfInstance } from './surface';
@@ -23,8 +25,21 @@ export interface BugseeSecureProps extends ViewProps {
  * never disturbs what `Bugsee.setSecureRectangles` set or another instance
  * holds.
  *
+ * Only the part that is on screen is published: the rectangle is cut to every
+ * ancestor that clips it, up to its surface's root (a ScrollView's viewport,
+ * or a view styled `overflow: 'hidden'`). A view scrolled fully out of sight
+ * publishes nothing, so it does not mask, or drop the taps on, whatever is
+ * shown there instead (a bottom tab bar, say).
+ *
+ * Nothing is published, and nothing measured, while an ancestor is known to
+ * hide the view: a view styled `display: 'none'`, an inactive
+ * react-native-screens screen (`activityState` 0, such as an inactive tab that
+ * stays mounted) or a hidden `<Activity>`. The rectangle is back on the next
+ * re-measure once the view is shown again.
+ *
  * Fails closed: a measurement that throws or is rejected leaves the last
- * rectangle published. Only unmounting or `enabled={false}` removes it.
+ * rectangle published, and an ancestor that cannot be read or measured cuts
+ * nothing off it. Only unmounting or `enabled={false}` removes it for good.
  *
  * Fabric `measureInWindow` is relative to the measured node's nearest
  * `RootNodeKind` ancestor: the app's root, or the content of the `<Modal>`
@@ -48,9 +63,10 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
   // disable must not bring the region back.
   const active = useRef(false);
   const warned = useRef(false);
-  // The surface this view is measured in. Read once per mount: a mounted
-  // host never changes ancestors.
+  // The surface this view is measured in, and the ancestors that can clip or
+  // hide it. Read once per mount: a mounted host never changes ancestors.
   const surface = useRef<number | null>(null);
+  const ancestry = useRef<Ancestry | null>(null);
 
   // Reads refs only, so every render's copy does the same thing; the loop
   // keeps the one from the render that enabled it.
@@ -68,13 +84,23 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
     }
     try {
       surface.current ??= surfaceOfInstance(view);
+      ancestry.current ??= ancestryOfInstance(view);
       const measuredIn = surface.current;
+      const above = ancestry.current;
+      if (isHidden(above)) {
+        setOwnerRectangles(token, 0, [], measuredIn);
+        return;
+      }
+      // Fabric answers every measurement at once, so the view and its
+      // clipping ancestors are measured in the same layout and published
+      // once. Paper answers later, and its ancestors then cut nothing.
       view.measureInWindow((x, y, width, height) => {
         if (!active.current) {
           return;
         }
         try {
-          setOwnerRectangles(token, 0, [{ x, y, width, height }], measuredIn);
+          const visible = clipToAncestors({ x, y, width, height }, above);
+          setOwnerRectangles(token, 0, visible === null ? [] : [visible], measuredIn);
         } catch (error) {
           failed(error);
         }
@@ -97,6 +123,7 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
     return () => {
       active.current = false;
       surface.current = null;
+      ancestry.current = null;
       removeMeasurer();
       clearOwner(token);
     };
