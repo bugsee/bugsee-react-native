@@ -250,7 +250,7 @@ describe('P2: a static clipped or hidden view costs nothing per frame', () => {
     expect(firstPublished()).toEqual(px(rect(10, 60, 200, 50)));
   });
 
-  it('the tick re-checks a bounded number of parked views, by measuring each alone', () => {
+  it('the tick re-checks every parked view, by measuring each alone', () => {
     const fibers = selvesIn(root([scrollView(rect(0, 0, 400, 120), Array.from({ length: 40 }, () => self()))]));
     renderAll(fibers);
     frames(12);
@@ -259,7 +259,7 @@ describe('P2: a static clipped or hidden view costs nothing per frame', () => {
 
     wait(100);
 
-    expect(measureInWindow.mock.calls.length - selfBefore).toBe(32);
+    expect(measureInWindow.mock.calls.length - selfBefore).toBe(40);
   });
 
   it('a layout event on a parked view that did not move leaves it parked', () => {

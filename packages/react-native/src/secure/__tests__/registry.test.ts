@@ -562,4 +562,40 @@ describe('the secure-rectangle registry, publishing together', () => {
     expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, A_FLAT);
     warn.mockRestore();
   });
+
+  it('publishes a lane that failed again on the next call, though nothing on it changed', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    native.setSecureRectanglesOnSurface.mockImplementationOnce(() => {
+      throw new Error('bridge down');
+    });
+    registry.publishTogether(() => registry.setOwnerRectangles({}, 0, [A], 42));
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(1);
+
+    registry.publishTogether(() => undefined);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(2);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, 42, A_FLAT);
+
+    // Once it went through, it is not published again.
+    registry.publishTogether(() => undefined);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('keeps a lane that failed again for the call after', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    native.setSecureRectangles
+      .mockImplementationOnce(() => {
+        throw new Error('bridge down');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('bridge down');
+      });
+    registry.publishTogether(() => registry.setOwnerRectangles({}, 0, [A]));
+    registry.publishTogether(() => undefined);
+    registry.publishTogether(() => undefined);
+
+    expect(native.setSecureRectangles).toHaveBeenCalledTimes(3);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, A_FLAT);
+    warn.mockRestore();
+  });
 });

@@ -12,6 +12,11 @@ import type { WindowRect } from '../viewtree/fiber';
  * added at once and removed late: what a view covered stays published for
  * this long after it stopped covering it, and a hidden view withdraws only
  * once it has been hidden this long without a break.
+ *
+ * What is held is what the view covered, not the path between: a native
+ * animation that carries the view further than its own size in one step
+ * draws positions neither the old nor the new rectangle covers. Main, which
+ * publishes only where the view is now, covers them no better.
  */
 export const SECURE_SHRINK_HOLD_MS = 500;
 

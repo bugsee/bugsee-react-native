@@ -160,30 +160,41 @@ export function setOwnerRectangles(
 /** The lanes changed inside {@link publishTogether}, by display, in the order they changed. */
 let deferred: Map<number, Set<number>> | undefined;
 
+/**
+ * Lanes whose last publish inside {@link publishTogether} threw: the next
+ * one publishes them again, whether or not anything on them changed (an
+ * owner that has not moved never asks again).
+ */
+let failed = new Map<number, Set<number>>();
+
+function addLanes(into: Map<number, Set<number>>, display: number, surfaces: ReadonlySet<number>): void {
+  const lanes = into.get(display) ?? new Set<number>();
+  surfaces.forEach((surface) => lanes.add(surface));
+  into.set(display, lanes);
+}
+
 function publishOrDefer(display: number, surfaces: ReadonlySet<number>): void {
   if (deferred === undefined) {
     publish(display, surfaces);
     return;
   }
-  const lanes = deferred.get(display) ?? new Set<number>();
-  surfaces.forEach((surface) => lanes.add(surface));
-  deferred.set(display, lanes);
+  addLanes(deferred, display, surfaces);
 }
 
 /**
  * Runs `changes`, publishing every lane they changed once, at the end,
  * rather than once per change: every instance re-measured in one tick or
  * frame changes its lane, and each publish re-flattens the lane's whole
- * union. A lane whose publish throws is logged and retried by its next
- * change (its last publish did not reach the bridge, so nothing on it is
- * skipped). Inside another call, it simply runs `changes`.
+ * union. A lane whose publish throws is logged and published again by the
+ * next call, changed or not. Inside another call, it simply runs `changes`.
  */
 export function publishTogether(changes: () => void): void {
   if (deferred !== undefined) {
     changes();
     return;
   }
-  deferred = new Map();
+  deferred = failed;
+  failed = new Map();
   try {
     changes();
   } finally {
@@ -193,6 +204,7 @@ export function publishTogether(changes: () => void): void {
       try {
         publish(display, surfaces);
       } catch (error) {
+        addLanes(failed, display, surfaces);
         console.warn('[Bugsee] could not publish secure rectangles', errorName(error));
       }
     }

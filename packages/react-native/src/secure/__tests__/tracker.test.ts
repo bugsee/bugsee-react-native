@@ -68,7 +68,7 @@ jest.mock('../registry', () => ({
   },
 }));
 
-import { STEADY_FRAMES, SecureTracker } from '../tracker';
+import { STEADY_FRAMES, SecureTracker, monotonicNow } from '../tracker';
 
 const rect = (x: number, y: number, width: number, height: number): WindowRect => ({ x, y, width, height });
 
@@ -482,5 +482,29 @@ describe('SecureTracker', () => {
 
     expect(mockLoop.frame).toHaveLength(0);
     expect(measures).toBe(2);
+  });
+});
+
+describe('monotonicNow', () => {
+  const g = globalThis as { performance?: unknown };
+  const real = g.performance;
+
+  afterEach(() => {
+    g.performance = real;
+  });
+
+  it('reads performance.now, not the wall clock', () => {
+    g.performance = { now: () => 42 };
+
+    expect(monotonicNow()).toBe(42);
+  });
+
+  it.each([
+    ['no performance', undefined],
+    ['a performance without now', {}],
+  ])('falls back to Date.now with %s', (_, performance) => {
+    g.performance = performance;
+
+    expect(monotonicNow()).toBe(Date.now());
   });
 });

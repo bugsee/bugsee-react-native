@@ -28,6 +28,16 @@ type MeasureInWindow = (callback: (x: number, y: number, width: number, height: 
  */
 type Mode = 'tick' | 'active' | 'parked' | 'hidden';
 
+/**
+ * Milliseconds on a clock that only goes forward: the hold must not end
+ * early because the wall clock was set forward (NTP, the user). Falls back
+ * to `Date.now` where there is no `performance.now`.
+ */
+export function monotonicNow(): number {
+  const { performance: perf } = globalThis as { performance?: { now?: () => number } };
+  return typeof perf?.now === 'function' ? perf.now() : Date.now();
+}
+
 function where(rect: WindowRect | null): string {
   // Stryker disable next-line StringLiteral -- any marker no rectangle reads as does
   return rect === null ? 'none' : `${rect.x},${rect.y},${rect.width},${rect.height}`;
@@ -95,7 +105,7 @@ export class SecureTracker {
       this.ancestry ??= ancestryOfInstance(view);
       const above = this.ancestry;
       if (isHidden(above)) {
-        this.publish(this.hold.update(null, Date.now()));
+        this.publish(this.hold.update(null, monotonicNow()));
         this.watch([]);
         this.enter('hidden');
         return;
@@ -126,7 +136,7 @@ export class SecureTracker {
     }
     this.lastSelf = where(self);
     const visible = clipToAncestors(self, above);
-    this.publish(this.hold.update(visible, Date.now()));
+    this.publish(this.hold.update(visible, monotonicNow()));
     const clipped = visible === null || visible.width < self.width || visible.height < self.height;
     const now = where(visible);
     this.steady = now === this.lastVisible ? this.steady + 1 : 0;
@@ -155,7 +165,7 @@ export class SecureTracker {
     if (this.mode === 'tick') {
       this.measure();
     } else if (this.mode === 'parked' && this.hold.holding()) {
-      this.publish(this.hold.publishable(Date.now()));
+      this.publish(this.hold.publishable(monotonicNow()));
     }
   }
 
@@ -176,7 +186,7 @@ export class SecureTracker {
     if (!hides) {
       this.measure();
     } else if (this.hold.holding()) {
-      this.publish(this.hold.publishable(Date.now()));
+      this.publish(this.hold.publishable(monotonicNow()));
     }
   }
 

@@ -34,33 +34,24 @@ function measureAll(): void {
   }
 }
 
+/** Parked instances' checks (clipped and still): every tick runs every one. */
+const parked = new Set<Registration>();
+
 /**
- * How many parked instances (clipped, and still) the tick re-checks, in
- * turn: their ScrollViews are watched every frame, so the tick only catches
- * what moves them otherwise, and a hundred of them must not cost a tick a
- * hundred measurements.
+ * Every parked instance's check, every tick. Each measures its view alone
+ * (no ancestors, nothing published while it has not moved), so a tick costs
+ * one measurement per parked instance, as a tick-mode instance's does; no
+ * frame costs any.
  */
-export const PARKED_CHECKS_PER_TICK = 32;
-
-/** Parked instances' checks, in the order they take turns. */
-const parked: Registration[] = [];
-
-/** Where the next tick's turns start in `parked`. */
-let parkedCursor = 0;
-
 function checkParked(): void {
-  const turns = Math.min(PARKED_CHECKS_PER_TICK, parked.length);
   // A snapshot: a check may park or unpark one while the tick runs.
-  const queue = [...parked];
-  for (let turn = 0; turn < turns; turn += 1) {
-    const registration = queue[(parkedCursor + turn) % queue.length] as Registration;
+  for (const { measure } of [...parked]) {
     try {
-      registration.measure();
+      measure();
     } catch (error) {
       console.warn('[Bugsee] a secure-region measurer threw', errorName(error));
     }
   }
-  parkedCursor = queue.length === 0 ? 0 : (parkedCursor + turns) % queue.length;
 }
 
 /** One pass: a ScrollView shared by many measurers is measured once. */
@@ -74,18 +65,15 @@ function tick(): void {
 }
 
 /**
- * Adds `check` to the parked instances the tick re-checks in turn, at most
- * {@link PARKED_CHECKS_PER_TICK} a tick, until the returned function is
- * called. Only while some measurer keeps the tick running.
+ * Adds `check` to the parked instances every tick re-checks, until the
+ * returned function is called. Only while some measurer keeps the tick
+ * running.
  */
 export function addParked(check: () => void): () => void {
   const registration: Registration = { measure: check };
-  parked.push(registration);
+  parked.add(registration);
   return () => {
-    const index = parked.indexOf(registration);
-    if (index >= 0) {
-      parked.splice(index, 1);
-    }
+    parked.delete(registration);
   };
 }
 
@@ -140,8 +128,10 @@ function requestFrame(callback: () => void): () => void {
 interface WatchedNode {
   /** What moved callbacks to call; a callback per subscription. */
   readonly subscribers: Set<{ readonly moved: () => void }>;
-  /** Where the node was at the last frame, `undefined` before its first. */
-  last: string | undefined;
+  /** Where the node was at the last frame (or when first watched). */
+  last: string;
+  /** Its two fibers' props objects then: a commit that changes either may change how it clips. */
+  props: readonly unknown[];
 }
 
 /** Nodes measured every frame (a ScrollView's content, a clipping view), by fiber. */
@@ -151,22 +141,42 @@ function where(rect: WindowRect | null | undefined): string {
   return rect == null ? String(rect) : `${rect.x},${rect.y},${rect.width},${rect.height}`;
 }
 
-/** Measures every watched node once, and wakes the subscribers of each that moved. */
+function whereNow(fiber: FiberLike): string {
+  try {
+    return where(measureFiber(fiber));
+  } catch {
+    // Unknown, as a node that does not answer is.
+    return where(undefined);
+  }
+}
+
+/**
+ * The props objects of both fibers of `fiber`'s pair. Whichever is
+ * committed, a commit that changes its props replaces one of them, so
+ * comparing both by identity catches every such commit (and, harmlessly,
+ * renders that never commit).
+ */
+function propsOf(fiber: FiberLike): unknown[] {
+  return [fiber.memoizedProps, fiber.alternate?.memoizedProps];
+}
+
+/**
+ * Measures every watched node once, and wakes the subscribers of each that
+ * moved or whose props changed (an `overflow` that stops clipping moves
+ * nothing).
+ */
 function watchNodes(): void {
   for (const [fiber, node] of [...watched]) {
-    let now: string;
-    try {
-      now = where(measureFiber(fiber));
-    } catch {
-      // Stryker disable next-line StringLiteral -- any marker no rectangle reads as does
-      now = 'throws';
-    }
-    if (node.last !== undefined && node.last !== now) {
+    const now = whereNow(fiber);
+    const props = propsOf(fiber);
+    const changed = now !== node.last || props.some((value, index) => value !== node.props[index]);
+    node.last = now;
+    node.props = props;
+    if (changed) {
       for (const { moved } of [...node.subscribers]) {
         moved();
       }
     }
-    node.last = now;
   }
 }
 
@@ -203,7 +213,8 @@ function frame(): void {
 export function watchNode(fiber: FiberLike, moved: () => void): () => void {
   let node = watched.get(fiber);
   if (node === undefined) {
-    node = { subscribers: new Set(), last: undefined };
+    // Measured at once: a move before the next frame is a move.
+    node = { subscribers: new Set(), last: whereNow(fiber), props: propsOf(fiber) };
     watched.set(fiber, node);
   }
   const subscription = { moved };
