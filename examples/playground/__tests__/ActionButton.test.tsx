@@ -13,6 +13,8 @@ test('shows label, call and Expect', async () => {
 test.each([
   ['returned value', () => 42, '→ 42'],
   ['resolved value', () => Promise.resolve({ a: 1 }), '→ {"a":1}'],
+  ['void call', () => undefined, '→ done (returns nothing)'],
+  ['void promise', () => Promise.resolve(), '→ done (returns nothing)'],
   ['sync throw', () => { throw Object.assign(new TypeError('bad'), { code: 'E_X' }); }, '✗ TypeError [E_X]: bad'],
   ['rejection', () => Promise.reject(new Error('nope')), '✗ Error: nope'],
 ])('logs a %s', async (_n, run, line) => {

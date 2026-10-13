@@ -29,7 +29,9 @@ export function describeError(e: unknown): string {
   return describe(e);
 }
 
-const describeResult = (v: unknown) => (v instanceof Error ? describeError(v) : describe(v));
+// Many SDK calls return nothing (upload, log, startBlackout...): say "done" rather than a bare "undefined".
+const describeResult = (v: unknown) =>
+  v === undefined ? 'done (returns nothing)' : v instanceof Error ? describeError(v) : describe(v);
 
 export function ActionButton({ action }: { action: Action }) {
   const log = useLog();
