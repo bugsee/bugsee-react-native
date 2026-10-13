@@ -1,5 +1,6 @@
 import { errorName } from '../errorName';
 import { measureFiber, measurePass } from './ancestry';
+import { publishTogether } from './registry';
 import type { FiberLike, WindowRect } from '../viewtree/fiber';
 
 /**
@@ -64,10 +65,12 @@ function checkParked(): void {
 
 /** One pass: a ScrollView shared by many measurers is measured once. */
 function tick(): void {
-  measurePass(() => {
-    measureAll();
-    checkParked();
-  });
+  measurePass(() =>
+    publishTogether(() => {
+      measureAll();
+      checkParked();
+    }),
+  );
 }
 
 /**
@@ -171,16 +174,18 @@ function watchNodes(): void {
 function frame(): void {
   cancelFrame = undefined;
   try {
-    measurePass(() => {
-      watchNodes();
-      for (const { measure } of [...frameMeasurers]) {
-        try {
-          measure();
-        } catch (error) {
-          console.warn('[Bugsee] a secure-region measurer threw', errorName(error));
+    measurePass(() =>
+      publishTogether(() => {
+        watchNodes();
+        for (const { measure } of [...frameMeasurers]) {
+          try {
+            measure();
+          } catch (error) {
+            console.warn('[Bugsee] a secure-region measurer threw', errorName(error));
+          }
         }
-      }
-    });
+      }),
+    );
   } finally {
     // In a finally: nothing thrown above (a warn included) may stop the loop.
     if (frameMeasurers.size > 0 || watched.size > 0) {

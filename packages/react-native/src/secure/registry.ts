@@ -1,4 +1,5 @@
 import NativeBugsee from '../NativeBugsee';
+import { errorName } from '../errorName';
 import { flattenSecureRectangles } from './rectangles';
 import type { SecureRectangle } from './rectangles';
 import { MAIN_SURFACE } from './surface';
@@ -150,9 +151,51 @@ export function setOwnerRectangles(
     surfaces.add(previous.surface);
   }
   // The new display is covered before the old one is uncovered.
-  publish(display, surfaces);
+  publishOrDefer(display, surfaces);
   if (previous !== undefined && previous.display !== display) {
-    publish(previous.display, new Set([previous.surface]));
+    publishOrDefer(previous.display, new Set([previous.surface]));
+  }
+}
+
+/** The lanes changed inside {@link publishTogether}, by display, in the order they changed. */
+let deferred: Map<number, Set<number>> | undefined;
+
+function publishOrDefer(display: number, surfaces: ReadonlySet<number>): void {
+  if (deferred === undefined) {
+    publish(display, surfaces);
+    return;
+  }
+  const lanes = deferred.get(display) ?? new Set<number>();
+  surfaces.forEach((surface) => lanes.add(surface));
+  deferred.set(display, lanes);
+}
+
+/**
+ * Runs `changes`, publishing every lane they changed once, at the end,
+ * rather than once per change: every instance re-measured in one tick or
+ * frame changes its lane, and each publish re-flattens the lane's whole
+ * union. A lane whose publish throws is logged and retried by its next
+ * change (its last publish did not reach the bridge, so nothing on it is
+ * skipped). Inside another call, it simply runs `changes`.
+ */
+export function publishTogether(changes: () => void): void {
+  if (deferred !== undefined) {
+    changes();
+    return;
+  }
+  deferred = new Map();
+  try {
+    changes();
+  } finally {
+    const lanes = deferred;
+    deferred = undefined;
+    for (const [display, surfaces] of lanes) {
+      try {
+        publish(display, surfaces);
+      } catch (error) {
+        console.warn('[Bugsee] could not publish secure rectangles', errorName(error));
+      }
+    }
   }
 }
 

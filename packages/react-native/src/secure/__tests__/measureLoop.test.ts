@@ -5,6 +5,20 @@
  */
 import type * as LoopModule from '../measureLoop';
 
+// The loop publishes each tick's and frame's changes together; what that
+// does is the registry's, tested there.
+const mockTogether: string[] = [];
+jest.mock('../registry', () => ({
+  publishTogether: (changes: () => void) => {
+    mockTogether.push('start');
+    try {
+      changes();
+    } finally {
+      mockTogether.push('end');
+    }
+  },
+}));
+
 type Loop = typeof LoopModule;
 
 let loop: Loop;
@@ -523,5 +537,23 @@ describe('watched nodes and parked views', () => {
 
     jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
     expect([first.mock.calls.length, second.mock.calls.length]).toEqual([1, 2]);
+  });
+});
+
+describe('publishing together', () => {
+  beforeEach(() => {
+    mockTogether.length = 0;
+  });
+
+  it('runs a tick, and a frame, as one publish', () => {
+    const seen: string[] = [];
+    loop.addMeasurer(() => seen.push(`tick inside ${mockTogether.length % 2 === 1}`));
+    loop.addFrameMeasurer(() => seen.push(`frame inside ${mockTogether.length % 2 === 1}`));
+
+    jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
+
+    expect(seen).toContain('tick inside true');
+    expect(seen).toContain('frame inside true');
+    expect(seen.some((entry) => entry.endsWith('false'))).toBe(false);
   });
 });

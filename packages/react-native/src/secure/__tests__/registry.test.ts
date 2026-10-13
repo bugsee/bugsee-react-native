@@ -480,3 +480,86 @@ describe('the secure-rectangle registry, an owner that has not moved', () => {
     expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, 42, [200, 400, 220, 420]);
   });
 });
+
+// Every instance re-measured in one tick or frame changes its lane: they are
+// published together at the end, once per lane, not once per change.
+describe('the secure-rectangle registry, publishing together', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.doMock('react-native', () => ({ Platform: { OS: 'ios' } }));
+    native = require('../../__mocks__/native').native;
+    native.reset();
+    registry = require('../registry');
+  });
+
+  it('publishes each changed lane once, at the end', () => {
+    const [first, second] = [{}, {}];
+    registry.publishTogether(() => {
+      registry.setOwnerRectangles(first, 0, [A]);
+      registry.setOwnerRectangles(second, 0, [B]);
+      registry.setOwnerRectangles('manual:2', 2, [A]);
+      registry.setOwnerRectangles({}, 0, [B], 42);
+      expect(native.setSecureRectangles).not.toHaveBeenCalled();
+    });
+
+    expect(native.setSecureRectangles.mock.calls).toEqual([
+      [0, [...A_FLAT, ...B_FLAT]],
+      [2, A_FLAT],
+    ]);
+    expect(native.setSecureRectanglesOnSurface.mock.calls).toEqual([[0, 42, B_FLAT]]);
+  });
+
+  it('publishes the lane an owner left as well as the one it moved to', () => {
+    const owner = {};
+    registry.setOwnerRectangles(owner, 0, [A]);
+
+    registry.publishTogether(() => registry.setOwnerRectangles(owner, 2, [A]));
+
+    expect(native.setSecureRectangles.mock.calls.slice(1)).toEqual([
+      [2, A_FLAT],
+      [0, []],
+    ]);
+  });
+
+  it('inside another, simply runs the changes', () => {
+    registry.publishTogether(() => {
+      registry.publishTogether(() => registry.setOwnerRectangles({}, 0, [A]));
+      expect(native.setSecureRectangles).not.toHaveBeenCalled();
+    });
+
+    expect(native.setSecureRectangles).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes even when the changes throw, and publishes at once after', () => {
+    expect(() =>
+      registry.publishTogether(() => {
+        registry.setOwnerRectangles({}, 0, [A]);
+        throw new Error('measurer broke');
+      }),
+    ).toThrow('measurer broke');
+    expect(native.setSecureRectangles).toHaveBeenCalledWith(0, A_FLAT);
+
+    registry.setOwnerRectangles({}, 0, [B]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [...A_FLAT, ...B_FLAT]);
+  });
+
+  it('logs a lane whose publish threw, publishes the rest, and retries it on its next change', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    native.setSecureRectangles.mockImplementationOnce(() => {
+      throw new Error('bridge down');
+    });
+    const owner = {};
+    registry.publishTogether(() => {
+      registry.setOwnerRectangles(owner, 0, [A]);
+      registry.setOwnerRectangles({}, 2, [B]);
+    });
+
+    expect(warn).toHaveBeenCalledWith('[Bugsee] could not publish secure rectangles', 'Error');
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(2, B_FLAT);
+
+    // Unchanged, but its lane never reached the bridge: not skipped.
+    registry.setOwnerRectangles(owner, 0, [A]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, A_FLAT);
+    warn.mockRestore();
+  });
+});
