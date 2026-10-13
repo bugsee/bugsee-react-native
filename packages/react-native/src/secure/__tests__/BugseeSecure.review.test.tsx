@@ -9,7 +9,7 @@ import type { ReactElement } from 'react';
 import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 import { BugseeSecure } from '../BugseeSecure';
-import { SCREEN_HOST_TYPE } from '../ancestry';
+import { MODAL_SCREEN_HOST_TYPE, SCREEN_HOST_TYPE } from '../ancestry';
 import { native } from '../../__mocks__/native';
 import { FiberTag } from '../../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../../viewtree/fiber';
@@ -214,6 +214,24 @@ describe('P0-4: nothing above a root-kind host clips or hides what is inside', (
       expect(renderer.measures).toEqual([]);
     },
   );
+});
+
+// Cursor review on #87: react-native-screens' iOS modals mount
+// RNSModalScreen, which takes activityState like RNSScreen.
+describe('a react-native-screens modal screen', () => {
+  it('withdraws it while inactive, and shows it again within a frame', () => {
+    const modal = fabricHost(MODAL_SCREEN_HOST_TYPE, rect(0, 0, 400, 800), { activityState: 0 }, [view([self()])]);
+    const fiber = selfIn(root([composite([modal])]));
+    render(fiber);
+    publishedOnlyNothing();
+
+    commitProps(ancestorOfType(fiber, MODAL_SCREEN_HOST_TYPE), { activityState: 2 });
+    act(() => {
+      jest.advanceTimersByTime(17);
+    });
+
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
 });
 
 describe('P1-1: a hidden Offscreen can be a frozen screen that is still drawn', () => {

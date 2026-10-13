@@ -52,7 +52,8 @@ export const SCROLL_HOST_TYPES: ReadonlySet<unknown> = new Set(['RCTScrollView',
  * Host types whose shadow node is `RootNodeKind`: `measureInWindow` stops
  * there (`LayoutableShadowNode::computeRelativeLayoutMetrics`) and natively
  * their content is drawn outside the hosts above, so nothing above one
- * clips or hides what is inside. React Native's `<Modal>` and
+ * clips or hides what is inside, and the host itself clips nothing (only
+ * {@link MODAL_SCREEN_HOST_TYPE} can hide it). React Native's `<Modal>` and
  * `<InputAccessoryView>` (the JS names are their `paperComponentName`s),
  * and react-native-screens' `FullWindowOverlay`, modal screen and split
  * screen.
@@ -67,6 +68,13 @@ export const ROOT_KIND_HOST_TYPES: ReadonlySet<unknown> = new Set([
 
 /** react-native-screens' screen host (`ScreenNativeComponent`). */
 export const SCREEN_HOST_TYPE = 'RNSScreen';
+
+/**
+ * react-native-screens' iOS modal screen host (`ModalScreenNativeComponent`),
+ * which takes `activityState` like a screen. It is also root-kind, so it ends
+ * the walk: it can hide what is inside it, but never clips it.
+ */
+export const MODAL_SCREEN_HOST_TYPE = 'RNSModalScreen';
 
 /** `activityState` of an inactive react-native-screens screen. */
 const INACTIVE_SCREEN = 0;
@@ -86,6 +94,8 @@ interface HostAncestor {
   above: number;
   readonly scrolls: boolean;
   readonly screen: boolean;
+  /** A root-kind host: it ends the walk and clips nothing. */
+  readonly boundary: boolean;
   /** The committed props object `inactive` and `clips` were last read from. */
   props: unknown;
   /** A screen whose committed `activityState` is 0. */
@@ -127,19 +137,21 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
       if (below !== undefined && below.above === MAX_ANCESTORS) {
         below.above = path.length;
       }
-      bounded ||= ROOT_KIND_HOST_TYPES.has(current.type);
-      if (!bounded) {
+      const boundary = ROOT_KIND_HOST_TYPES.has(current.type);
+      if (!bounded && (!boundary || current.type === MODAL_SCREEN_HOST_TYPE)) {
         hosts.push({
           index: path.length,
           above: MAX_ANCESTORS,
           scrolls: SCROLL_HOST_TYPES.has(current.type),
-          screen: current.type === SCREEN_HOST_TYPE,
+          screen: current.type === SCREEN_HOST_TYPE || current.type === MODAL_SCREEN_HOST_TYPE,
+          boundary,
           props: UNREAD,
           inactive: false,
           clips: false,
           instance: undefined,
         });
       }
+      bounded ||= boundary;
     }
     path.push(current);
     current = current.return;
@@ -261,7 +273,7 @@ function refresh(host: HostAncestor, resolved: readonly FiberLike[]): boolean {
     host.props = props;
     const { style, activityState } = (props ?? {}) as { style?: unknown; activityState?: unknown };
     const overflow = styleValue(style, 'overflow');
-    host.clips = host.scrolls ? overflow !== 'visible' : overflow === 'hidden';
+    host.clips = !host.boundary && (host.scrolls ? overflow !== 'visible' : overflow === 'hidden');
     host.inactive = host.screen && activityState === INACTIVE_SCREEN;
   }
   // Read every time: the wrapper's props can change while the host's do not.

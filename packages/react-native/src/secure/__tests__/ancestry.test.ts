@@ -8,6 +8,7 @@
 import { FiberTag } from '../../viewtree/fiber';
 import type { FiberLike } from '../../viewtree/fiber';
 import {
+  MODAL_SCREEN_HOST_TYPE,
   ROOT_KIND_HOST_TYPES,
   SCREEN_HOST_TYPE,
   SCROLL_HOST_TYPES,
@@ -104,14 +105,26 @@ describe('ancestryOfFiber', () => {
     expect(ancestryOfFiber({ ...fiber, return: null }).root).toBeNull();
   });
 
-  it.each([...ROOT_KIND_HOST_TYPES])('leaves out %s and every host above it', (type) => {
-    const boundary = fabricHost(type as string, rect(0, 0, 1, 1), {}, [view([self()])]);
-    const ancestry = ancestryIn(root([scrollView(null, [boundary])]));
+  it.each([...ROOT_KIND_HOST_TYPES].filter((type) => type !== MODAL_SCREEN_HOST_TYPE))(
+    'leaves out %s and every host above it',
+    (type) => {
+      const boundary = fabricHost(type as string, rect(0, 0, 1, 1), {}, [view([self()])]);
+      const ancestry = ancestryIn(root([scrollView(null, [boundary])]));
 
-    expect(types(ancestry)).toEqual(['RCTView']);
-    // The view below it ends at the boundary, not at the next host above.
-    expect(ancestry.hosts[0]!.above).toBe(1);
-    expect(ancestry.path).toHaveLength(5);
+      expect(types(ancestry)).toEqual(['RCTView']);
+      // The view below it ends at the boundary, not at the next host above.
+      expect(ancestry.hosts[0]!.above).toBe(1);
+      expect(ancestry.path).toHaveLength(5);
+    },
+  );
+
+  it('keeps a modal screen as its last host, a boundary screen, and none above it', () => {
+    const modal = fabricHost(MODAL_SCREEN_HOST_TYPE, null, {}, [view([self()])]);
+    const ancestry = ancestryIn(root([scrollView(null, [composite([modal])])]));
+
+    expect(types(ancestry)).toEqual(['RCTView', MODAL_SCREEN_HOST_TYPE]);
+    expect(ancestry.hosts[1]).toMatchObject({ index: 1, above: 3, screen: true, boundary: true, scrolls: false });
+    expect(ancestry.hosts[0]).toMatchObject({ screen: false, boundary: false });
   });
 
   it('knows the root-kind hosts of React Native and react-native-screens', () => {
@@ -124,8 +137,9 @@ describe('ancestryOfFiber', () => {
     ]);
   });
 
-  it('knows the react-native-screens screen host', () => {
+  it('knows the react-native-screens screen hosts', () => {
     expect(SCREEN_HOST_TYPE).toBe('RNSScreen');
+    expect(MODAL_SCREEN_HOST_TYPE).toBe('RNSModalScreen');
   });
 
   it('marks the ScrollView hosts of both platforms, and the screens', () => {
@@ -235,6 +249,33 @@ describe('isHidden', () => {
     [undefined, false],
   ])('a screen with committed activityState %p hides: %p', (activityState, hidden) => {
     expect(isHidden(ancestryOfFiber(underScreen(activityState)))).toBe(hidden);
+  });
+
+  describe('a modal screen', () => {
+    /** A secure view in an RNSModalScreen with `props`, in a clipping ScrollView under an inactive screen. */
+    function inModal(props: Record<string, unknown>, wrapperProps: Record<string, unknown> = {}): Ancestry {
+      const modal = fabricHost(MODAL_SCREEN_HOST_TYPE, null, props, [view([self()])]);
+      return ancestryIn(root([inactive([scrollView(null, [composite([modal], wrapperProps)])])]));
+    }
+
+    it.each([
+      [0, true],
+      [2, false],
+    ])('with committed activityState %p hides: %p', (activityState, hidden) => {
+      expect(isHidden(inModal({ activityState }))).toBe(hidden);
+    });
+
+    it('driven by an Animated activityState hides nothing', () => {
+      expect(isHidden(inModal({ activityState: 0 }, { activityState: { __getValue: () => 0 } }))).toBe(false);
+    });
+
+    it('never clips, whatever its style', () => {
+      const ancestry = inModal({ activityState: 2, style: { overflow: 'hidden' } });
+
+      isHidden(ancestry);
+
+      expect(ancestry.hosts.map((host) => host.clips)).toEqual([false, false]);
+    });
   });
 
   it('activityState 0 on any other host hides nothing', () => {
