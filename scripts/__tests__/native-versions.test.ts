@@ -11,10 +11,12 @@ const valid: NativeVersions = {
 describe('readNativeVersions', () => {
   it('exposes the pinned native versions', () => {
     const v = readNativeVersions();
-    expect(v.android.sdk).toBe('7.3.1');
+    // Beta validation: bugsee-android main plus PR #265, built in the
+    // private clone and published to mavenLocal. Flip to the released 7.3.2
+    // (and drop snapshotCommit) before this merges.
+    expect(v.android.sdk).toBe('7.3.2-SNAPSHOT');
     expect(v.android.gradlePlugin).toBe('4.0.8');
-    // A released pin carries no snapshot provenance.
-    expect(v.android).not.toHaveProperty('snapshotCommit');
+    expect(v.android.snapshotCommit).toBe('93338c7e8f4a3cfcdbe27b39d3efc451caadc2a7');
     expect(v.ios.sdk).toBe('7.0.0-beta6');
     expect(v.ios.spmUrl).toBe('https://github.com/bugsee/spm');
   });

@@ -1,9 +1,9 @@
 {
   "manifestVersion": 1,
   "sdk": "android",
-  "sdkVersion": "7.3.1",
+  "sdkVersion": "7.3.2-SNAPSHOT",
   "buildConfiguration": "release",
-  "generatedAt": "2026-10-09T11:29:32Z",
+  "generatedAt": "2026-10-13T06:34:09Z",
   "options": [
     {
       "key": "com.bugsee.option.config.duration",
