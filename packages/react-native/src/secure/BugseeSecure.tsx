@@ -9,6 +9,23 @@ import { clearOwner, setOwnerRectangles } from './registry';
 import { surfaceOfInstance } from './surface';
 import { errorName } from '../errorName';
 
+/** A frame, for the fallback where there is no `requestAnimationFrame`. */
+const FRAME_MS = 16;
+
+/** Runs `callback` before the next frame, returning what cancels it. */
+function nextFrame(callback: () => void): () => void {
+  const { requestAnimationFrame: request, cancelAnimationFrame: cancel } = globalThis as {
+    requestAnimationFrame?: (callback: () => void) => number;
+    cancelAnimationFrame?: (handle: number) => void;
+  };
+  if (request === undefined || cancel === undefined) {
+    const timer = setTimeout(callback, FRAME_MS);
+    return () => clearTimeout(timer);
+  }
+  const handle = request(callback);
+  return () => cancel(handle);
+}
+
 export interface BugseeSecureProps extends ViewProps {
   /** While false, nothing is redacted and nothing is measured. Default true. */
   enabled?: boolean;
@@ -31,11 +48,13 @@ export interface BugseeSecureProps extends ViewProps {
  * publishes nothing, so it does not mask, or drop the taps on, whatever is
  * shown there instead (a bottom tab bar, say).
  *
- * Nothing is published, and nothing measured, while an ancestor is known to
- * hide the view: a view styled `display: 'none'`, an inactive
- * react-native-screens screen (`activityState` 0, such as an inactive tab that
- * stays mounted) or a hidden `<Activity>`. The rectangle is back on the next
- * re-measure once the view is shown again.
+ * Nothing is published, and nothing measured, while a react-native-screens
+ * screen above it is inactive in the committed tree (`activityState` 0, such
+ * as an inactive tab that stays mounted): that hides a view without changing
+ * its layout. While withdrawn it checks every frame, reading props only, so
+ * the rectangle is back within a frame of the screen showing again. A view
+ * hidden by `display: 'none'` or a hidden `<Activity>` measures 0x0, which
+ * publishes nothing anyway.
  *
  * Fails closed: a measurement that throws or is rejected leaves the last
  * rectangle published, and an ancestor that cannot be read or measured cuts
@@ -67,6 +86,8 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
   // hide it. Read once per mount: a mounted host never changes ancestors.
   const surface = useRef<number | null>(null);
   const ancestry = useRef<Ancestry | null>(null);
+  // Cancels the frame callback watching a withdrawn view, while one is pending.
+  const watching = useRef<(() => void) | null>(null);
 
   // Reads refs only, so every render's copy does the same thing; the loop
   // keeps the one from the render that enabled it.
@@ -89,6 +110,12 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
       const above = ancestry.current;
       if (isHidden(above)) {
         setOwnerRectangles(token, 0, [], measuredIn);
+        // Again next frame: while it stays hidden that is prop reads and an
+        // unchanged (skipped) publish; once it shows, one measurement.
+        watching.current ??= nextFrame(() => {
+          watching.current = null;
+          measure();
+        });
         return;
       }
       // Fabric answers every measurement at once, so the view and its
@@ -122,6 +149,8 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
     const removeMeasurer = addMeasurer(measure);
     return () => {
       active.current = false;
+      watching.current?.();
+      watching.current = null;
       surface.current = null;
       ancestry.current = null;
       removeMeasurer();

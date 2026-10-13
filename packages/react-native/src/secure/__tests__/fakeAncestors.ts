@@ -1,10 +1,12 @@
 /**
  * Fake fiber trees for the secure view's ancestry (`ancestry.ts`), built
- * with the view tree's `buildFiberTree`. A host's committed props live on
- * `stateNode.canonical.currentProps`, which a Fabric host shares with its
- * alternate; `memoizedProps` is what the stored fiber itself holds, and may
- * be stale. `stateNode.rect` is what the host measures to in the window
- * (`null`: it never answers).
+ * with the view tree's `buildFiberTree`. The tree built is the committed one:
+ * its root's `stateNode.current` is itself and its fibers' `memoizedProps`
+ * are committed props, also mirrored on `stateNode.canonical.currentProps`
+ * as Fabric keeps them. {@link pairWith} adds the other fiber of a pair (a
+ * stale or in-flight one) and routes the stored `.return` chain through it.
+ * `stateNode.rect` is what the host measures to in the window (`null`: it
+ * never answers).
  */
 import { FiberTag } from '../../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../../viewtree/fiber';
@@ -47,9 +49,10 @@ export const offscreen = (visibility: unknown, children: FiberSpec[]): FiberSpec
   children,
 });
 
-export const composite = (children: FiberSpec[]): FiberSpec => ({
+export const composite = (children: FiberSpec[], props: Record<string, unknown> = {}): FiberSpec => ({
   tag: FiberTag.FunctionComponent,
   type: () => null,
+  memoizedProps: props,
   children,
 });
 
@@ -60,7 +63,11 @@ export const root = (children: FiberSpec[]): FiberSpec => ({ tag: FiberTag.HostR
 /** Every `SELF` host in the tree `spec` builds, in no particular order. */
 export function selvesIn(spec: FiberSpec): FiberLike[] {
   const found: FiberLike[] = [];
-  const pending: FiberLike[] = [buildFiberTree(spec)];
+  const top = buildFiberTree(spec);
+  if (top.tag === FiberTag.HostRoot && top.stateNode === null) {
+    top.stateNode = { current: top };
+  }
+  const pending: FiberLike[] = [top];
   while (pending.length > 0) {
     const fiber = pending.pop() as FiberLike;
     if (fiber.type === SELF) {
@@ -82,19 +89,39 @@ export function selfIn(spec: FiberSpec): FiberLike {
   return fiber;
 }
 
-/** The nearest ancestor of `fiber` of host type `type`. */
-export function ancestorOfType(fiber: FiberLike, type: string): FiberLike {
+/** The nearest ancestor of `fiber` of type `type`, along its stored `.return` chain. */
+export function ancestorOfType(fiber: FiberLike, type: unknown): FiberLike {
   for (let current = fiber.return; current !== null; current = current.return) {
     if (current.type === type) {
       return current;
     }
   }
-  throw new Error(`no ${type} above the fiber`);
+  throw new Error(`no ${String(type)} above the fiber`);
 }
 
-/** Replaces a host's committed props, as a commit that changed them would. */
-export function commitProps(fiber: FiberLike, props: Record<string, unknown>): void {
+/** Replaces a committed host's props, as a commit that changed them would. */
+export function commitProps(fiber: FiberLike, props: unknown): void {
+  fiber.memoizedProps = props;
   (fiber.stateNode as { canonical: { currentProps: unknown } }).canonical.currentProps = props;
+}
+
+/**
+ * Gives the committed `fiber` its other fiber, holding `props`, and points
+ * `fiber`'s children's `.return` at that other fiber, so a chain stored from
+ * below runs through it. `rendered`: it is a render in flight (or abandoned)
+ * rather than a stale leftover, and has written its props to the shared
+ * `canonical`, as `completeWork` does.
+ */
+export function pairWith(fiber: FiberLike, props: unknown, rendered = false): FiberLike {
+  const other: FiberLike = { ...fiber, memoizedProps: props, alternate: fiber };
+  fiber.alternate = other;
+  for (let child = fiber.child; child !== null; child = child.sibling) {
+    child.return = other;
+  }
+  if (rendered) {
+    (fiber.stateNode as { canonical: { currentProps: unknown } }).canonical.currentProps = props;
+  }
+  return other;
 }
 
 /** Moves a host to `measured`, as a scroll or layout would. */

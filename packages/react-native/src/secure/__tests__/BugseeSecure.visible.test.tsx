@@ -22,7 +22,6 @@ import {
   fabricHost,
   fakeRenderer,
   moveTo,
-  offscreen,
   rect,
   root,
   scrollView,
@@ -217,33 +216,6 @@ describe('<BugseeSecure> while hidden', () => {
     expect(lastPublished()).toEqual([0, px(selfRect)]);
   });
 
-  it("a view styled display: 'none' withdraws it", () => {
-    const fiber = selfIn(root([view([view([self()])])]));
-    render(fiber);
-
-    commitProps(ancestorOfType(fiber, 'RCTView'), { style: [{ flex: 1 }, { display: 'none' }] });
-    tick();
-    expect(lastPublished()).toEqual([0, []]);
-
-    commitProps(ancestorOfType(fiber, 'RCTView'), { style: [{ flex: 1 }, { display: 'flex' }] });
-    tick();
-    expect(lastPublished()).toEqual([0, px(selfRect)]);
-  });
-
-  it('a hidden Offscreen (Activity) withdraws it', () => {
-    const fiber = selfIn(root([offscreen(1, [view([self()])])]));
-    render(fiber);
-    const instance = fiber.return?.return?.stateNode as { _visibility: number };
-
-    instance._visibility = 0;
-    tick();
-    expect(lastPublished()).toEqual([0, []]);
-
-    instance._visibility = 1;
-    tick();
-    expect(lastPublished()).toEqual([0, px(selfRect)]);
-  });
-
   it('mounted hidden, it publishes nothing and measures nothing', () => {
     render(underScreen(0));
     tick(5);
@@ -268,21 +240,6 @@ describe('<BugseeSecure> while hidden', () => {
     expect(renderer.measures).toEqual([]);
     // The registry sends only a change across the bridge.
     expect(native.setSecureRectangles.mock.calls).toEqual([[0, []]]);
-  });
-
-  // The stored ancestor fiber may be the stale one of its pair: what is on
-  // screen is the committed props both share through canonical.
-  it('goes by committed props, not the stored fiber’s stale ones', () => {
-    const staleHidden = fabricHost('RCTView', null, { style: {} }, [self()], { style: { display: 'none' } });
-    render(selfIn(root([staleHidden])));
-    expect(lastPublished()).toEqual([0, px(selfRect)]);
-  });
-
-  it('goes by committed props when the stored fiber’s own are stale and visible', () => {
-    const staleVisible = fabricHost('RCTView', null, { style: { display: 'none' } }, [self()], { style: {} });
-    render(selfIn(root([staleVisible])));
-    publishedOnlyNothing();
-    expect(measureInWindow).not.toHaveBeenCalled();
   });
 });
 
@@ -363,7 +320,7 @@ describe('<BugseeSecure> ancestors cost and failures', () => {
   });
 
   it('an ancestor that throws while its props are read hides nothing', () => {
-    const fiber = selfIn(root([offscreen(0, [view([self()])])]));
+    const fiber = selfIn(root([fabricHost(SCREEN_HOST_TYPE, null, { activityState: 0 }, [view([self()])])]));
     commitProps(ancestorOfType(fiber, 'RCTView'), {
       get style(): never {
         throw new Error('torn props');
