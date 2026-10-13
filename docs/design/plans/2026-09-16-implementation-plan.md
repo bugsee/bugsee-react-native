@@ -1859,7 +1859,7 @@ The reviewer must independently:
 | `DATA_REQUEST_DEADLINE_MS` | `450` | Android `DataRequestBridge`, iOS `BGSRNDataRequestDeadlineMs` | Below the SDK's 500 ms; the Android test pins `< VIEW_HIERARCHY_TIMEOUT_MS`. |
 | `VH_WALK_BUDGET_MS` | `250` | `src/viewtree/walk.ts` | Leaves at least 200 ms for JS-thread queueing and two bridge hops. |
 | `VH_MAX_NODES` | `2000` | walk | Bounds CPU and payload size. |
-| `VH_MAX_DEPTH` | `64` | walk | Android's own native walk cap. |
+| `VH_MAX_DEPTH` | `200` (was `64`) | walk | 64, Android's native walk cap, cut Expo Router screens before any app view (RNAA-109 on staging: depth 59 under one stack). 200 keeps the JSON nesting (~2 per level) below 512. |
 | `VH_TAG_MAX_LENGTH` | `99` | walk | Android emits `tag` only when shorter than 100 characters. |
 | `VH_IOS_DECIMALS` | `2` | walk | Points, rounded for a compact payload. |
 | `VH_FIBER_VISIT_BUDGET` | `VH_MAX_NODES * 8` (16 000) | walk (internal, not exported) | Bounds total fibers *visited* (not just emitted), so a wide fan-out or long transparent chain under a frozen clock still stops even though the iterative walk can no longer overflow the stack. Added during Task 6.3's review round 1 (I6); flagged there as a real cap a large screen could hit before `VH_MAX_NODES` (2000) does. |

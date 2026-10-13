@@ -26,7 +26,13 @@ import type { FiberLike, WindowRect } from './fiber';
 
 export const VH_WALK_BUDGET_MS = 250;
 export const VH_MAX_NODES = 2000;
-export const VH_MAX_DEPTH = 64;
+// React trees are deep: every composite (provider, navigator, screen wrapper)
+// is a level. One Expo Router stack screen alone reached depth 59 before any
+// app view, so Android's native cap of 64 cut whole screens. The walk is
+// iterative and bounded by the node, visit and time budgets, so depth only
+// guards the payload: 200 levels is about 405 levels of JSON nesting, below
+// the 512 that some JSON parsers refuse.
+export const VH_MAX_DEPTH = 200;
 export const VH_TAG_MAX_LENGTH = 99;
 export const VH_IOS_DECIMALS = 2;
 
