@@ -74,7 +74,7 @@ export const homeActions: Action[] = [
   },
   {
     id: 'delete-false-ios',
-    label: 'Delete collected data (keep intermediate)',
+    label: 'Delete capture, keep finished bundles',
     call: 'Bugsee.deleteCollectedDataOnDevice(false)',
     expect: 'false while launched; true after Stop; the rolling capture is deleted, finished bundles are kept',
     run: () => Bugsee.deleteCollectedDataOnDevice(false),
@@ -82,7 +82,7 @@ export const homeActions: Action[] = [
   },
   {
     id: 'delete-false-android',
-    label: 'Delete collected data (keep intermediate)',
+    label: 'Delete capture, keep finished bundles',
     call: 'Bugsee.deleteCollectedDataOnDevice(false)',
     expect: 'false while launched; true after Stop; the rolling capture is deleted, finished bundles are kept',
     run: () => Bugsee.deleteCollectedDataOnDevice(false),

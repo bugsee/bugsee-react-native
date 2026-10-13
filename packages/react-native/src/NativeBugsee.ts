@@ -93,10 +93,9 @@ export interface Spec extends TurboModule {
    * view hierarchy. Logs, network events, custom events and traces keep
    * recording throughout (design doc §4.1).
    *
-   * Android ignores this before `launch()` resolves -- a logged no-op, not an
-   * error -- while iOS honours it regardless of launch state. A caller that
-   * needs blackout to hold on both platforms must call this after `launch()`
-   * resolves.
+   * Both platforms honour it before `launch()`: blackout then holds from the
+   * first captured frame (Android 7.4.0 applies it at launch,
+   * bugsee-android#248).
    *
    * {@link isBlackout} verifies whether it actually took effect.
    */

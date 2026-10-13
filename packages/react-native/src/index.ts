@@ -192,9 +192,10 @@ class Bugsee {
    * view hierarchy. Logs, network events, custom events and traces keep
    * recording throughout (design doc §4.1).
    *
-   * Android ignores this before `launch()` resolves -- a logged no-op, not an
-   * error -- while iOS honours it regardless of launch state. Call this after
-   * `launch()` resolves when blackout must hold on both platforms.
+   * Both platforms honour it before `launch()`: blackout then holds from the
+   * first captured frame (Android 7.4.0 applies it at launch,
+   * bugsee-android#248). Call it before `launch()` to keep the first seconds
+   * of a session redacted.
    *
    * {@link isBlackout} verifies whether it actually took effect.
    */

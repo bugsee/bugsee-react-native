@@ -398,10 +398,8 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     // --- Blackout and view-hierarchy capture (design doc §4.1) -----------
-    // Android ignores startBlackout/endBlackout before launch() (a logged
-    // no-op inside the SDK itself); iOS honours them regardless. Recorded in
-    // the plan as a candidate SDK issue, not patched here -- see the Phase 6
-    // preamble's "Planner decisions".
+    // Since 7.4.0 the SDK honours startBlackout/endBlackout before launch()
+    // and applies the state at launch (bugsee-android#248), as iOS does.
 
     @Override
     public void startBlackout() {
