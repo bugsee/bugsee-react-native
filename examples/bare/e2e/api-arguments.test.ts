@@ -486,11 +486,11 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
   });
 
   /**
-   * Android 7.3.1 deletes every capture generation for `false` too (3/3 on
-   * WOD_LX1: 49 parts -> 0, the bundle kept), against its javadoc and ours.
-   * https://github.com/bugsee/bugsee-android/issues/250
+   * Both SDKs delete the rolling capture for `false` too and keep the finished
+   * bundles (Android 7.3.2 javadoc, bugsee-android#250; iOS 7.0.0-beta6, whose
+   * header is stale: https://github.com/bugsee/bugsee-cocoa/issues/231).
    */
-  (ON_ANDROID ? it.failing : it)('[API-41c] deleteCollectedDataOnDevice(false) after stop resolves and reports what it kept', async () => {
+  it('[API-41c] deleteCollectedDataOnDevice(false) after stop deletes the capture, resolves true and keeps the bundle', async () => {
     await clearBundles();
     const run = await startRun('api-delete-false');
     const uploaded = await apiMarker(log!, 'delete uploaded', run.scenario.nonce, 30_000, run.start);
@@ -505,8 +505,10 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
     expect(jsonAfter<Settled>(done.text, 'stopped')).toEqual({ ok: true, value: true });
     expect(jsonAfter<Settled>(done.text, 'deleted')).toEqual({ ok: true, value: true });
     expect(bundlesBefore.length).toBe(1);
-    // Documented semantics (index.ts): `false` keeps the rolling capture.
-    expect(partsAfter.length).toBeGreaterThan(0);
+    // Documented semantics (index.ts): `false` deletes the capture, keeps finished bundles.
+    expect(partsBefore.length).toBeGreaterThan(0);
+    expect(partsAfter).toEqual([]);
+    expect(bundlesAfter.length).toBe(1);
   });
 
   it('[API-31] <BugseeSecure enabled={false}> is recorded in the clear, its enabled twin masked', async () => {

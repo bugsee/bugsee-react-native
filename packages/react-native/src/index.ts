@@ -807,10 +807,10 @@ class Bugsee {
   /**
    * Deletes collected data stored on the device.
    *
-   * `includingIntermediate` crosses unchanged: `true` also deletes
-   * intermediate capture data (snapshots, partial bundles); `false` deletes
-   * only fully processed data. Android 7.3.1 also deletes the rolling
-   * capture with `false` (https://github.com/bugsee/bugsee-android/issues/250).
+   * `includingIntermediate` crosses unchanged. Both SDKs delete the rolling
+   * capture data whatever it is, and keep finished bundles:
+   * - `false`: deletes the capture data, keeps finished bundles.
+   * - `true`: also deletes intermediate data (snapshots, exported reports).
    * The SDK must be stopped for the deletion to succeed. While launched, both
    * platforms refuse it and this resolves `false`.
    */
