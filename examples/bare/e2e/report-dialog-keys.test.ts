@@ -45,21 +45,17 @@ function blend(top: string, under: string, alpha: number): string {
 
 /**
  * Keys a platform reads back but never paints, pinned (it.failing).
- * iOS 7.0.0-beta5: the report dialog's close and send controls are round
- * shape buttons (BGSShapeView, system blue and translucent white on the
- * simulator and the XS); `reportCloseButtonColor` is used only in
- * commented-out code (BGSReportController.m) and `reportSendButtonColor`
- * only as the title colour of the send shape's untitled inner button
- * (BGSBarButtonItem.m). Neither colour appears. Filed:
- * bugsee-cocoa#201.
+ * iOS 7.0.0-beta6 deprecated `reportCloseButtonColor` and
+ * `reportSendButtonColor` as "Not applied", so both keys are no-ops on iOS by
+ * design: they read back as set and paint nothing (bugsee-cocoa#201).
  */
 const KNOWN_NOT_PAINTED: Record<'android' | 'ios', Record<string, string>> = {
   // Android 7.3.0 never read Report::ActionBarColor (bugsee-android#217);
   // 7.3.1 paints the dialog bar with it (#224, WOD_LX1).
   android: {},
   ios: {
-    closeButtonColor: 'iOS beta5 never applies reportCloseButtonColor (bugsee-cocoa#201)',
-    sendButtonColor: 'iOS beta5 never applies reportSendButtonColor (bugsee-cocoa#201)',
+    closeButtonColor: 'iOS 7.0.0-beta6 deprecated reportCloseButtonColor as "Not applied" (bugsee-cocoa#201)',
+    sendButtonColor: 'iOS 7.0.0-beta6 deprecated reportSendButtonColor as "Not applied" (bugsee-cocoa#201)',
   },
 };
 
