@@ -1,0 +1,77 @@
+import Bugsee, { SpanStatus } from '@bugsee/react-native';
+import { useRouter } from 'expo-router';
+import { useState } from 'react';
+import { Button, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { DEMO, postJson } from '../../demoApi';
+import { stepSpan } from '../../shop/flow';
+import { CapturedNote } from '../../ui/CapturedNote';
+import { Screen } from '../../ui/Screen';
+import { PLACEHOLDER_COLOR } from '../../ui/placeholder';
+
+export default function SignIn() {
+  const router = useRouter();
+  const [email, setEmail] = useState('shopper@example.com');
+  const [password, setPassword] = useState('hunter2');
+  // On by default: this screen is the setUserIdentifier demo, and VALIDATION M-C4 expects the user id.
+  const [remember, setRemember] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const s = stepSpan('sign-in');
+    setError(null);
+    try {
+      await postJson(DEMO.ECHO, { email, password });
+      if (remember) {
+        Bugsee.setUserIdentifier(email);
+      }
+      s.finish(SpanStatus.OK);
+    } catch (e) {
+      s.finish(SpanStatus.Error);
+      setError(`Sign in failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    router.push('/shop/products');
+  };
+
+  return (
+    <Screen title="Sign in">
+      <TextInput
+        style={styles.input}
+        value={email}
+        onChangeText={setEmail}
+        placeholderTextColor={PLACEHOLDER_COLOR}
+        placeholder="Email"
+        autoCapitalize="none"
+        keyboardType="email-address"
+        accessibilityLabel="Email"
+      />
+      <TextInput
+        style={styles.input}
+        value={password}
+        onChangeText={setPassword}
+        placeholderTextColor={PLACEHOLDER_COLOR}
+        placeholder="Password"
+        secureTextEntry
+        accessibilityLabel="Password"
+      />
+      <View style={styles.row}>
+        <Text>Remember me</Text>
+        <Switch value={remember} onValueChange={setRemember} accessibilityLabel="Remember me" />
+      </View>
+      <Button title="Sign in" onPress={submit} />
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <CapturedNote
+        lines={[
+          'Password masked in video with no extra code',
+          'Request body shows "password":"***"',
+          'User id set while Remember me is on (the default)',
+        ]}
+      />
+    </Screen>
+  );
+}
+const styles = StyleSheet.create({
+  input: { borderWidth: 1, borderColor: '#bbb', borderRadius: 6, padding: 10, marginBottom: 10 },
+  error: { color: '#b91c1c', marginTop: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+});

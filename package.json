@@ -11,6 +11,7 @@
     "test:release": "BUGSEE_RELEASE=1 yarn test",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.example.json",
     "lint": "eslint . && node scripts/cli-check-no-internal-hosts.ts",
+    "playground": "yarn workspace bugsee-playground",
     "mutate": "yarn mutate:src && yarn mutate:scripts",
     "assert:ios-embed": "node scripts/cli-assert-framework-embedded.ts",
     "mutate:src": "stryker run stryker.src.json",

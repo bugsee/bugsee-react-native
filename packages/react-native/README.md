@@ -419,6 +419,10 @@ then run `pod install` again:
     end
 ```
 
+## Examples
+
+[`examples/playground`](https://github.com/bugsee/bugsee-react-native/tree/main/examples/playground) is a sample app with a button for every SDK API, a demo shop and a manual validation map.
+
 ## Licence
 
 Commercial. See [LICENSE](./LICENSE) and https://www.bugsee.com/terms.

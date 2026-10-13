@@ -1,0 +1,7 @@
+/ios/
+/android/
+.expo/
+bugsee.config.json
+modules/playground-native/android/.cxx/
+modules/playground-native/android/build/
+modules/playground-native/android/.gradle/

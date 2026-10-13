@@ -13,7 +13,6 @@
  * examples/bare uses on Android. `launch` is the default. The N-01 smoke
  * scenarios register in SCENARIOS below (additive edits only).
  */
-/* global setInterval, clearInterval */
 const React = require('react');
 const { Linking, Platform, Text, View } = require('react-native');
 const Bugsee = require('@bugsee/react-native');
