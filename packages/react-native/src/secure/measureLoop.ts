@@ -1,4 +1,5 @@
 import { errorName } from '../errorName';
+import { measurePass } from './ancestry';
 
 /**
  * How often every mounted `<BugseeSecure>` re-measures itself.
@@ -19,7 +20,7 @@ const measurers = new Set<Registration>();
 /** Stops the running interval; set exactly while one is running. */
 let stopTimer: (() => void) | undefined;
 
-function tick(): void {
+function measureAll(): void {
   // A snapshot: a measurer may add or remove one while the tick runs.
   for (const { measure } of [...measurers]) {
     // One broken measurer must not leave the rest stale for this tick.
@@ -29,6 +30,11 @@ function tick(): void {
       console.warn('[Bugsee] a secure-region measurer threw', errorName(error));
     }
   }
+}
+
+/** One pass: a ScrollView shared by many measurers is measured once. */
+function tick(): void {
+  measurePass(measureAll);
 }
 
 /**

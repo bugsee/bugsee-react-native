@@ -202,16 +202,41 @@ function publicInstanceOf(fiber: FiberLike): { measureInWindow: MeasureInWindow 
   return rendererProxy.getPublicInstanceFromInternalInstanceHandle(fiber);
 }
 
+/**
+ * The clipping ancestors measured in the running {@link measurePass}, by
+ * public instance: views under one ScrollView all clip to it, and measure it
+ * once a pass. `undefined` outside a pass, which measures every time.
+ */
+let passMeasurements: Map<object, WindowRect | undefined> | undefined;
+
+/**
+ * Runs `pass` with each clipping ancestor measured at most once. Only for a
+ * synchronous stretch of JS (the re-measure loop's tick): no commit can move
+ * anything while it runs, so a rectangle measured once holds for all of it.
+ */
+export function measurePass(pass: () => void): void {
+  passMeasurements = new Map();
+  try {
+    pass();
+  } finally {
+    passMeasurements = undefined;
+  }
+}
+
 /** `host`'s window rectangle, or `undefined` unless it answers at once with finite numbers. */
 function measureHost(host: HostAncestor): WindowRect | undefined {
-  host.instance ??= publicInstanceOf(host.fiber);
+  const instance = (host.instance ??= publicInstanceOf(host.fiber));
+  if (passMeasurements?.has(instance)) {
+    return passMeasurements.get(instance);
+  }
   let measured: WindowRect | undefined;
-  host.instance.measureInWindow((x, y, width, height) => {
+  instance.measureInWindow((x, y, width, height) => {
     const answer = { x, y, width, height };
     if (finite(answer)) {
       measured = answer;
     }
   });
+  passMeasurements?.set(instance, measured);
   return measured;
 }
 

@@ -15,6 +15,7 @@ import {
   ancestryOfInstance,
   clipToAncestors,
   isHidden,
+  measurePass,
   styleValue,
 } from '../ancestry';
 import type { Ancestry } from '../ancestry';
@@ -32,6 +33,7 @@ import {
   scrollView,
   self,
   selfIn,
+  selvesIn,
   view,
 } from './fakeAncestors';
 import type { FakeRenderer } from './fakeAncestors';
@@ -433,6 +435,70 @@ describe('clipToAncestors', () => {
     expect(clipToAncestors(SELF_RECT, ancestry)).toBe(SELF_RECT);
     isHidden(ancestry);
     expect(clipToAncestors(SELF_RECT, ancestry)).toEqual(rect(10, 100, 200, 10));
+  });
+
+  describe('in a measure pass', () => {
+    /** Two views under one ScrollView, each with its ancestry read. */
+    function twoUnder(viewport: Parameters<typeof scrollView>[0]): Ancestry[] {
+      return selvesIn(root([scrollView(viewport, [self(), self()])])).map((fiber) => {
+        const ancestry = ancestryOfFiber(fiber);
+        isHidden(ancestry);
+        return ancestry;
+      });
+    }
+
+    it('measures an ancestor shared by two views once', () => {
+      const [first, second] = twoUnder(rect(0, 0, 400, 120));
+      const results: unknown[] = [];
+
+      measurePass(() => {
+        results.push(clipToAncestors(SELF_RECT, first!), clipToAncestors(rect(0, 110, 100, 100), second!));
+      });
+
+      expect(results).toEqual([rect(10, 100, 200, 20), rect(0, 110, 100, 10)]);
+      expect(renderer.measures).toHaveLength(1);
+    });
+
+    it('keeps an ancestor that did not answer for the pass, unclipped for both', () => {
+      const [first, second] = twoUnder(null);
+      const results: unknown[] = [];
+
+      measurePass(() => {
+        results.push(clipToAncestors(SELF_RECT, first!), clipToAncestors(SELF_RECT, second!));
+      });
+
+      expect(results).toEqual([SELF_RECT, SELF_RECT]);
+      expect(renderer.measures).toHaveLength(1);
+    });
+
+    it('measures afresh in the next pass and outside any pass', () => {
+      const [first] = twoUnder(rect(0, 0, 400, 120));
+      measurePass(() => {
+        clipToAncestors(SELF_RECT, first!);
+      });
+      measurePass(() => {
+        clipToAncestors(SELF_RECT, first!);
+      });
+      clipToAncestors(SELF_RECT, first!);
+      clipToAncestors(SELF_RECT, first!);
+
+      expect(renderer.measures).toHaveLength(4);
+    });
+
+    it('ends the pass when it throws', () => {
+      const [first] = twoUnder(rect(0, 0, 400, 120));
+      const failure = new Error('measurer broke');
+
+      expect(() =>
+        measurePass(() => {
+          clipToAncestors(SELF_RECT, first!);
+          throw failure;
+        }),
+      ).toThrow(failure);
+      clipToAncestors(SELF_RECT, first!);
+
+      expect(renderer.measures).toHaveLength(2);
+    });
   });
 
   describe('fails closed: the whole rectangle, unclipped', () => {

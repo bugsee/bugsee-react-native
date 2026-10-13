@@ -28,6 +28,7 @@ import {
   scrollView,
   self,
   selfIn,
+  selvesIn,
   view,
 } from './fakeAncestors';
 import type { FakeRenderer } from './fakeAncestors';
@@ -152,6 +153,33 @@ describe('<BugseeSecure> clipping', () => {
     tick();
 
     expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 25))]);
+  });
+
+  it('measures a ScrollView shared by two views once a re-measure', () => {
+    const [first, second] = selvesIn(root([scrollView(rect(0, 0, 400, 130), [self(), self()])]));
+    let testRenderer: ReactTestRenderer | undefined;
+    act(() => {
+      testRenderer = create(
+        <>
+          <BugseeSecure testID="first" />
+          <BugseeSecure testID="second" />
+        </>,
+        {
+          createNodeMock: (element: { props: { testID?: string } }) => ({
+            measureInWindow,
+            __internalInstanceHandle: element.props.testID === 'first' ? first : second,
+          }),
+          unstable_isConcurrent: true,
+        } as Parameters<typeof create>[1],
+      );
+    });
+    mounted.push(testRenderer as ReactTestRenderer);
+    const before = renderer.measures.length;
+
+    tick();
+
+    expect(renderer.measures.length - before).toBe(1);
+    expect(lastPublished()).toEqual([0, [...px(rect(10, 100, 200, 30)), ...px(rect(10, 100, 200, 30))]]);
   });
 
   it('measures the view and its clipping ancestors once each per re-measure, and publishes once', () => {

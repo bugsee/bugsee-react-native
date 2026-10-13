@@ -57,19 +57,29 @@ export const self = (): FiberSpec => ({ tag: FiberTag.HostComponent, type: SELF,
 
 export const root = (children: FiberSpec[]): FiberSpec => ({ tag: FiberTag.HostRoot, type: null, children });
 
-/** The `SELF` host in the tree `spec` builds. */
-export function selfIn(spec: FiberSpec): FiberLike {
+/** Every `SELF` host in the tree `spec` builds, in no particular order. */
+export function selvesIn(spec: FiberSpec): FiberLike[] {
+  const found: FiberLike[] = [];
   const pending: FiberLike[] = [buildFiberTree(spec)];
   while (pending.length > 0) {
     const fiber = pending.pop() as FiberLike;
     if (fiber.type === SELF) {
-      return fiber;
+      found.push(fiber);
     }
     for (let child = fiber.child; child !== null; child = child.sibling) {
       pending.push(child);
     }
   }
-  throw new Error('no SELF host in the tree');
+  return found;
+}
+
+/** The `SELF` host in the tree `spec` builds. */
+export function selfIn(spec: FiberSpec): FiberLike {
+  const [fiber] = selvesIn(spec);
+  if (fiber === undefined) {
+    throw new Error('no SELF host in the tree');
+  }
+  return fiber;
 }
 
 /** The nearest ancestor of `fiber` of host type `type`. */
@@ -101,21 +111,28 @@ export interface FakeRenderer {
 
 /** A RendererProxy stand-in: a host's public instance measures to its `stateNode.rect`. */
 export function fakeRenderer(): FakeRenderer {
+  const instances = new Map<FiberLike, object>();
   const renderer: FakeRenderer = {
     lookups: [],
     measures: [],
     getPublicInstanceFromInternalInstanceHandle: (fiber) => {
       renderer.lookups.push(fiber);
-      return {
-        __nativeTag: (fiber.stateNode as { tag?: unknown } | null)?.tag,
-        measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => {
-          renderer.measures.push(fiber);
-          const measured = (fiber.stateNode as { rect: WindowRect | null }).rect;
-          if (measured !== null) {
-            callback(measured.x, measured.y, measured.width, measured.height);
-          }
-        },
-      };
+      // One public instance per host, as the renderer keeps it on canonical.
+      let instance = instances.get(fiber);
+      if (instance === undefined) {
+        instance = {
+          __nativeTag: (fiber.stateNode as { tag?: unknown } | null)?.tag,
+          measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => {
+            renderer.measures.push(fiber);
+            const measured = (fiber.stateNode as { rect: WindowRect | null }).rect;
+            if (measured !== null) {
+              callback(measured.x, measured.y, measured.width, measured.height);
+            }
+          },
+        };
+        instances.set(fiber, instance);
+      }
+      return instance;
     },
   };
   return renderer;
