@@ -14,7 +14,7 @@ The single most important finding behind this design: **iOS 7.x and Android 7.x 
 
 ## 2. Goals
 
-- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.3.2** (7.3.0 first, pinned transitionally as `7.3.0-SNAPSHOT` while that release was pending — see the plan's Phase 3 rulings; 7.3.1 fixes bugsee-android #214–#221 found by the beta campaign; beta validation pins `7.3.2-SNAPSHOT` until 7.3.2 is released) and iOS **7.0.0-beta6** (SPM only, iOS deployment target 15.0).
+- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.4.0** (7.3.0 first, pinned transitionally as `7.3.0-SNAPSHOT` while that release was pending — see the plan's Phase 3 rulings; 7.3.1 fixes bugsee-android #214–#221 found by the beta campaign; beta validation pinned `7.3.2-SNAPSHOT` (bugsee-android main plus PR #265), released as 7.4.0) and iOS **7.0.0-beta6** (SPM only, iOS deployment target 15.0).
 - Expose the capabilities 7.x added and 6.x never had: breadcrumbs, notification relay, APM, user identity, hang/HTTP-error/frustration/anomaly detection, SDK status, report handlers.
 - Make the wrapper's option surface **provably** consistent with the native SDKs, enforced in CI rather than by review.
 - Work on bare React Native and on Expo, including Expo apps that regenerate native projects with `prebuild`.

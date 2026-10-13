@@ -8,7 +8,7 @@
  * `upload('blackout-during-<n>')`; 2 s later `endBlackout()`; 3 s later
  * `upload('blackout-after-<n>')`. Scenario `blackout-prelaunch` calls
  * `startBlackout()` before `launch()` and reads the state back once Launched
- * (both SDKs honour it; Android 7.3.2 fixed bugsee-android#248).
+ * (both SDKs honour it; Android 7.4.0 fixed bugsee-android#248).
  *
  * Retention is airplane mode (bundles.ts), on top of the placeholder token's
  * dead endpoint. Preconditions as for the other Android suites: the debug

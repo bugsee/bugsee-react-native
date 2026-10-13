@@ -484,7 +484,7 @@ describeDevice(`launch options and their effects on ${TARGET_NAME}`, () => {
    * Control's own POST fails to connect (the dead endpoint); its request body
    * is still in the capture. Android 7.3.0 recorded it. 7.3.1 reads the body
    * only while OkHttp writes it, which a refused connection never does, and
-   * records no_body_reason no_data instead. 7.3.2 records cant_read_data:
+   * records no_body_reason no_data instead. 7.4.0 records cant_read_data:
    * React Native wraps request bodies in ProgressRequestBody, which the SDK
    * cannot read (bugsee-android#249; capturing them needs the RN SDK).
    * Android only: iOS was not measured here.

@@ -47,19 +47,4 @@ if (pinned != applied) {
             "but this build applies ${applied}.")
 }
 
-// Only while native-versions.json pins a SNAPSHOT: mavenLocal is a human's
-// own machine, not a build input CI or another developer can reproduce, and
-// ~/.m2 on this one already holds stale non-SNAPSHOT builds of com.bugsee
-// artifacts. The content filter is load-bearing -- without it those stale
-// versions could satisfy a normal request too.
-if (nativeVersions.android.sdk.endsWith('-SNAPSHOT')) {
-    allprojects {
-        repositories {
-            mavenLocal {
-                content { includeVersionByRegex('com\\.bugsee', '.*', '.*-SNAPSHOT') }
-            }
-        }
-    }
-}
-
 apply plugin: "com.facebook.react.rootproject"

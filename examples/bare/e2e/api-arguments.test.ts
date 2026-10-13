@@ -487,7 +487,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
 
   /**
    * Both SDKs delete the rolling capture for `false` too and keep the finished
-   * bundles (Android 7.3.2 javadoc, bugsee-android#250; iOS 7.0.0-beta6, whose
+   * bundles (Android 7.4.0 javadoc, bugsee-android#250; iOS 7.0.0-beta6, whose
    * header is stale: https://github.com/bugsee/bugsee-cocoa/issues/231).
    */
   it('[API-41c] deleteCollectedDataOnDevice(false) after stop deletes the capture, resolves true and keeps the bundle', async () => {

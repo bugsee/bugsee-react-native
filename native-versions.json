@@ -1,8 +1,7 @@
 {
   "android": {
-    "sdk": "7.3.2-SNAPSHOT",
-    "gradlePlugin": "4.0.8",
-    "snapshotCommit": "93338c7e8f4a3cfcdbe27b39d3efc451caadc2a7"
+    "sdk": "7.4.0",
+    "gradlePlugin": "4.0.8"
   },
   "ios": {
     "sdk": "7.0.0-beta6",
