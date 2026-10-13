@@ -191,7 +191,8 @@ export class SecureTracker {
       this.removeFrame?.();
       this.removeFrame = undefined;
     }
-    // Stryker disable next-line ConditionalExpression,StringLiteral -- entering parked from elsewhere, nothing is registered to remove
+    // Entering parked from elsewhere, nothing parked is registered to remove.
+    // Stryker disable next-line ConditionalExpression,StringLiteral -- so removing it anyway changes nothing
     if (mode !== 'parked') {
       this.removeParked?.();
       this.removeParked = undefined;
