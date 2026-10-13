@@ -1549,6 +1549,10 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// Not a channel line, so no `BGSRNBeginChannelLine`: the echo drop in the log
 /// filter never takes a line that is neither stdout/stderr nor a console stamp.
 /// Level by value, rounded as in `wrapperLog:` below.
+///
+/// Not hopped to main. Android's `log` calls `Bugsee.log` on the native-modules
+/// thread too, and `wrapperLog:` reached the same SDK log core from this queue.
+/// Staying here keeps these lines in JS order with the console lines.
 - (void)log:(NSString *)message
       level:(double)level {
   [Bugsee log:message
