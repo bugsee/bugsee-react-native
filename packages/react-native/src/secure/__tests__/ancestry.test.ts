@@ -985,7 +985,11 @@ describe('round 3', () => {
       const ancestry = ancestryOfFiber(fiber);
       isHidden(ancestry);
 
-      expect(clipWatchNodes(ancestry).map((node) => node.type)).toEqual(['RCTScrollContentView', 'RCTView']);
+      expect(clipWatchNodes(ancestry).map((node) => node.type)).toEqual([
+        'RCTScrollContentView',
+        'RCTScrollView',
+        'RCTView',
+      ]);
       expect(clipWatchNodes(ancestry)[0]).toBe(ancestorOfType(fiber, 'RCTScrollContentView'));
     });
 
@@ -1124,7 +1128,7 @@ describe('round 3: edges', () => {
   it('watches nothing once a read fails, whatever clipped before', () => {
     const ancestry = ancestryIn(root([scrollView(null, [self()])]));
     isHidden(ancestry);
-    expect(clipWatchNodes(ancestry)).toHaveLength(1);
+    expect(clipWatchNodes(ancestry)).toHaveLength(2);
 
     (ancestry.root as { current: unknown }).current = null;
     isHidden(ancestry);

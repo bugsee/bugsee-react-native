@@ -93,7 +93,7 @@ const view = {
 beforeEach(() => {
   jest.useFakeTimers();
   Object.assign(mockLoop, { tick: [], frame: [], parked: [], watched: [], removed: [] });
-  Object.assign(mockState, { hidden: false, screensHide: true, clipTo: null, nodes: [], published: [], cleared: 0 });
+  Object.assign(mockState, { hidden: false, screensHide: false, clipTo: null, nodes: [], published: [], cleared: 0 });
   self = rect(0, 100, 100, 50);
   measures = 0;
   pending = null;
@@ -230,12 +230,16 @@ describe('SecureTracker', () => {
     it('parks after STEADY_FRAMES frames still, and measures nothing per frame then', () => {
       tracker.start();
       runFrames(STEADY_FRAMES - 1);
-      expect(mockLoop.frame).toHaveLength(1);
+      expect(mockLoop.parked).toHaveLength(0);
       runFrames();
 
-      expect(mockLoop.frame).toHaveLength(0);
+      // Still on frames, for its screens alone.
+      expect(mockLoop.frame).toHaveLength(1);
       expect(mockLoop.parked).toHaveLength(1);
       expect(mockLoop.watched).toHaveLength(1);
+      const before = measures;
+      runFrames(3);
+      expect(measures).toBe(before);
     });
 
     it('a parked turn measures the view alone, and nothing more while it has not moved', () => {
@@ -263,6 +267,23 @@ describe('SecureTracker', () => {
       expect(mockLoop.parked).toHaveLength(0);
     });
 
+    it('parked, the frame its screens hide it, it is measured and goes hidden', () => {
+      tracker.start();
+      runFrames(STEADY_FRAMES);
+      expect(mockLoop.parked).toHaveLength(1);
+      mockState.hidden = true;
+      mockState.screensHide = true;
+
+      runFrames();
+
+      expect(mockLoop.parked).toHaveLength(0);
+      expect(mockLoop.frame).toHaveLength(1);
+      expect(mockLoop.watched).toEqual([]);
+      const before = measures;
+      runFrames(3);
+      expect(measures).toBe(before);
+    });
+
     it('a layout that finds it where it was leaves it parked', () => {
       tracker.start();
       runFrames(STEADY_FRAMES);
@@ -270,7 +291,9 @@ describe('SecureTracker', () => {
       tracker.measure();
 
       expect(mockLoop.parked).toHaveLength(1);
-      expect(mockLoop.frame).toHaveLength(0);
+      const before = measures;
+      runFrames(3);
+      expect(measures).toBe(before);
     });
 
     it('a watched node that moves puts it back per-frame, with a fresh count', () => {
@@ -392,6 +415,10 @@ describe('SecureTracker', () => {
   });
 
   describe('hidden', () => {
+    beforeEach(() => {
+      mockState.screensHide = true;
+    });
+
     it('holds what it covered, then withdraws, measuring nothing meanwhile', () => {
       tracker.start();
       mockState.hidden = true;

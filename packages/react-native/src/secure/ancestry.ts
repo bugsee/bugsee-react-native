@@ -365,8 +365,10 @@ let passScreens: Map<FiberLike | null | undefined, boolean> | undefined;
 
 /**
  * The nodes whose movement can change how `ancestry`'s clipping ancestors
- * (as the last {@link isHidden} read them) cut the view: a ScrollView's
- * content container, which moves as it scrolls, or the clipping host itself.
+ * (as the last {@link isHidden} read them) cut the view: every clipping
+ * host itself, whose bounds are the clip (a viewport that grows uncovers
+ * more of the view), and a ScrollView's content container, which moves as
+ * it scrolls.
  */
 export function clipWatchNodes(ancestry: Ancestry): FiberLike[] {
   if (!ancestry.readable) {
@@ -374,9 +376,10 @@ export function clipWatchNodes(ancestry: Ancestry): FiberLike[] {
   }
   return ancestry.hosts
     .filter((host) => host.clips)
-    .map((host) => {
+    .flatMap((host) => {
+      const clipper = ancestry.path[host.index] as FiberLike;
       const below = ancestry.path[host.index - 1];
-      return host.scrolls && below?.tag === FiberTag.HostComponent ? below : (ancestry.path[host.index] as FiberLike);
+      return host.scrolls && below?.tag === FiberTag.HostComponent ? [below, clipper] : [clipper];
     });
 }
 

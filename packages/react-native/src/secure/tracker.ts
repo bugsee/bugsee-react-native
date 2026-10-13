@@ -17,9 +17,10 @@ type MeasureInWindow = (callback: (x: number, y: number, width: number, height: 
  *  - `tick`: wholly visible; re-measured on the 100 ms tick, as on main.
  *  - `active`: moving, or just shown or clipped; re-measured every frame
  *    until its rectangle has stayed put for {@link STEADY_FRAMES} frames.
- *  - `parked`: clipped and still. Its clipping nodes (a ScrollView's
+ *  - `parked`: clipped and still. Its clipping nodes (a ScrollView and its
  *    content, a clipping view) are watched every frame, shared with every
- *    view under them, and a move wakes it; the tick also re-checks it, in
+ *    view under them, and a move wakes it; each frame also asks whether its
+ *    screens hide it (once per screen a frame); the tick re-checks it, in
  *    turn, by measuring the view alone.
  *  - `hidden`: withdrawn under an inactive screen; each frame asks only
  *    whether the screens still hide it (once a frame per screen), and
@@ -163,8 +164,16 @@ export class SecureTracker {
       this.measure();
       return;
     }
+    const hides = screensHide(this.ancestry as Ancestry);
+    if (this.mode === 'parked') {
+      // A screen that goes inactive moves nothing a watch would see.
+      if (hides) {
+        this.measure();
+      }
+      return;
+    }
     // Hidden: once its screens stop hiding it, measure (which checks fully).
-    if (!screensHide(this.ancestry as Ancestry)) {
+    if (!hides) {
       this.measure();
     } else if (this.hold.holding()) {
       this.publish(this.hold.publishable(Date.now()));
@@ -186,9 +195,11 @@ export class SecureTracker {
     if (mode === this.mode) {
       return;
     }
-    const perFrame = mode === 'active' || mode === 'hidden';
+    // Parked too, for its screens alone: once per screen a frame, or nothing.
+    const perFrame = mode !== 'tick';
     if (!perFrame) {
-      this.removeFrame?.();
+      // Every mode but tick is on frames, so leaving one for tick has this.
+      (this.removeFrame as () => void)();
       this.removeFrame = undefined;
     }
     // Entering parked from elsewhere, nothing parked is registered to remove.
@@ -215,6 +226,8 @@ export class SecureTracker {
     }
     this.unwatch.forEach((stop) => stop());
     this.watched = nodes;
+    // Any mode but tick or parked measures it the same frame and goes active.
+    // Stryker disable next-line StringLiteral -- so another mode name changes nothing
     this.unwatch = nodes.map((node) => watchNode(node, () => this.enter('active')));
   }
 

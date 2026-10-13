@@ -227,8 +227,9 @@ describe('P2: a static clipped or hidden view costs nothing per frame', () => {
     frames(5);
 
     expect(measureInWindow.mock.calls.length - selfBefore).toBe(0);
+    // The ScrollView's content and the ScrollView itself, watched once a frame.
     expect(renderer.measures.slice(ancestorsBefore).map((fiber) => fiber.type)).toEqual(
-      Array(5).fill('RCTScrollContentView'),
+      Array(5).fill(['RCTScrollContentView', 'RCTScrollView']).flat(),
     );
   });
 
@@ -255,12 +256,10 @@ describe('P2: a static clipped or hidden view costs nothing per frame', () => {
     frames(12);
     wait(100);
     const selfBefore = measureInWindow.mock.calls.length;
-    const ancestorsBefore = renderer.measures.filter((fiber) => fiber.type === 'RCTScrollView').length;
 
     wait(100);
 
     expect(measureInWindow.mock.calls.length - selfBefore).toBe(32);
-    expect(renderer.measures.filter((fiber) => fiber.type === 'RCTScrollView').length - ancestorsBefore).toBe(0);
   });
 
   it('a layout event on a parked view that did not move leaves it parked', () => {
@@ -307,6 +306,42 @@ describe('P2: a static clipped or hidden view costs nothing per frame', () => {
 
     expect(reads).toBe(0);
     expect(measureInWindow).not.toHaveBeenCalled();
+  });
+});
+
+// Cursor review of ec4913f: a parked view must still be hidden by a
+// screen going inactive, and must follow its viewport growing.
+describe('parked views', () => {
+  it('a parked view under a screen that goes inactive is withdrawn after the hold', () => {
+    const screen = fabricHost(SCREEN_HOST_TYPE, rect(0, 0, 400, 800), { activityState: 2 }, [
+      scrollView(rect(0, 0, 400, 120), [self()]),
+    ]);
+    const fiber = selfIn(root([screenContainer([screen])]));
+    render(fiber);
+    frames(12);
+    expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 20))]);
+
+    commitProps(ancestorOfType(fiber, SCREEN_HOST_TYPE), { activityState: 0 });
+    frames();
+    const before = measureInWindow.mock.calls.length;
+    wait(SECURE_SHRINK_HOLD_MS + 200);
+
+    expect(lastPublished()).toEqual([0, []]);
+    // Hidden: measured no more.
+    expect(measureInWindow.mock.calls.length).toBe(before);
+  });
+
+  it('a parked view follows its ScrollView viewport growing, within a frame', () => {
+    const fiber = selfIn(root([scrollView(rect(0, 0, 400, 120), [self()])]));
+    render(fiber);
+    frames(12);
+    wait(13);
+
+    // The viewport grows; the content does not move, the view does not lay out.
+    moveTo(ancestorOfType(fiber, 'RCTScrollView'), rect(0, 0, 400, 800));
+    frames();
+
+    expect(firstPublished()).toEqual(px(selfRect));
   });
 });
 
