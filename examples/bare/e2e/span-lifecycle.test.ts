@@ -17,7 +17,7 @@
  */
 import { type CaptureTransaction, performanceTransactions } from '../../../scripts/performance-capture';
 import { type PulledBundle } from './bundles';
-import { ON_IOS, type Run, TARGET_NAME, awaitBundles, describeDevice, must, report, startRun } from './harness';
+import { type Run, TARGET_NAME, awaitBundles, describeDevice, must, report, startRun } from './harness';
 import { beginRetainingSuite, endRetainingSuite } from './observe';
 import { type DeviceLog } from './scenario';
 
@@ -31,14 +31,6 @@ jest.setTimeout(5 * 60_000);
  */
 type Transaction = CaptureTransaction;
 type Span = NonNullable<CaptureTransaction['spans']>[number];
-
-/**
- * span.ts documents `setName` as the native setName, "which sets the
- * operation on both SDKs". Android does; iOS 7.0.0-beta4 renames the
- * transaction instead and leaves the operation `cov.flow`.
- * Filed: https://github.com/bugsee/bugsee-cocoa/issues/199
- */
-const itOperation = ON_IOS ? it.failing : it;
 
 describeDevice(`span names, descriptions, statuses and the active span on ${TARGET_NAME}`, () => {
   let log: DeviceLog | undefined;
@@ -95,7 +87,7 @@ describeDevice(`span names, descriptions, statuses and the active span on ${TARG
     expect(second.parentSpanId).toBe(root().spanId);
   });
 
-  itOperation('setName sets the operation, as span.ts documents', () => {
+  it('setName sets the operation, as span.ts documents', () => {
     expect(root().operation).toBe(`txn-renamed-${nonce}`);
     expect(transaction.operation).toBe(`txn-renamed-${nonce}`);
   });

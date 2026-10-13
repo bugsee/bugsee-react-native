@@ -20,7 +20,7 @@
  * removes every generation's parts and keeps `bundles/`.
  */
 import { type PulledBundle } from './bundles';
-import { ON_IOS, type Run, TARGET_NAME, awaitBundles, describeDevice, listBundles, must, report, startRun } from './harness';
+import { type Run, TARGET_NAME, awaitBundles, describeDevice, listBundles, must, report, startRun } from './harness';
 import { beginRetainingSuite, captureGenerationFiles, endRetainingSuite } from './observe';
 import { type DeviceLog, type LogLine } from './scenario';
 
@@ -110,18 +110,7 @@ describeDevice(`stop, status, lifecycle events and data deletion on ${TARGET_NAM
     expect(summaries).toEqual([`cov-lifecycle-${run.scenario.nonce}`]);
   });
 
-  /**
-   * Android 7.3.0 called `removeOtherGenerationsFilesSync(-1)`, which kept
-   * every generation (30 part files before, 69 after "deleted", WOD_LX1);
-   * 7.3.1 removes every generation (bugsee-android #214, fixed by #222), so
-   * this is a plain `it` there.
-   * iOS 7.0.0-beta4: `clearGenerationsFolder` empties the legacy generations
-   * folder, which the nextgen capture no longer writes; the parts under
-   * `capture/generations` stay (simulator: 18 before, 66 after;
-   * https://github.com/bugsee/bugsee-cocoa/issues/195).
-   */
-  const itDelete = ON_IOS ? it.failing : it;
-  itDelete('deleteCollectedDataOnDevice(true) after stop resolves true and removes the rolling capture', () => {
+  it('deleteCollectedDataOnDevice(true) after stop resolves true and removes the rolling capture', () => {
     expect(deleted.text).toMatch(/result=true\b/);
     expect(partsWhileLaunched.length).toBeGreaterThan(0);
     expect(partsAfterDelete).toEqual([]);

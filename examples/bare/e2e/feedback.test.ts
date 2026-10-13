@@ -21,7 +21,7 @@
  * needs a real backend.
  */
 import { colourOf, colourPixels } from './media';
-import { ON_ANDROID, ON_IOS, type Run, TARGET_NAME, describeDevice, must, report, startRun } from './harness';
+import { ON_ANDROID, type Run, TARGET_NAME, describeDevice, must, report, startRun } from './harness';
 import { androidTopActivity, beginRetainingSuite, captureScreen, endRetainingSuite, ocrLines } from './observe';
 import { type DeviceLog, adbStatus } from './scenario';
 
@@ -35,23 +35,6 @@ function ocrFold(text: string): string {
 const FEEDBACK_ACTIVITY = 'com.bareexample/com.bugsee.library.feedback.FeedbackActivity';
 /** scenarios/feedback.ts `appearance.backgroundColor`. */
 const CHAT_BACKGROUND = '#112233';
-
-/**
- * The iOS SwiftUI chat (7.0.0-beta3 and beta4) ignores BugseeTheme, a
- * documented limitation (packages/react-native-feedback/README.md): seen
- * white (#ffffff) on the simulator with #112233 set. Pinned until it does.
- * Filed: https://github.com/bugsee/bugsee-cocoa/issues/200
- */
-const itColour = ON_IOS ? it.failing : it;
-/**
- * Android 7.3.0 stored the greeting and never read it back: the chat opened
- * empty (bugsee-android #215). 7.3.1 (#225) is meant to show it in an empty
- * chat, as iOS does, but on this flow (greeting set just before
- * showFeedbackActivity, chat opened directly, offline) the WOD_LX1 still shows
- * an empty chat while the feedback preferences hold the greeting, 2 of 2 runs:
- * https://github.com/bugsee/bugsee-android/issues/245. Pinned until it shows.
- */
-const itGreeting = ON_ANDROID ? it.failing : it;
 
 describeDevice(`the feedback chat on ${TARGET_NAME}`, () => {
   let log: DeviceLog | undefined;
@@ -114,7 +97,7 @@ describeDevice(`the feedback chat on ${TARGET_NAME}`, () => {
     expect(text).not.toContain('Bugsee React Native');
   });
 
-  itGreeting('the chat shows the greeting setGreeting() set', async () => {
+  it('the chat shows the greeting setGreeting() set', async () => {
     const run = await show('feedback-chat');
     if (ON_ANDROID) {
       expect(await androidTopActivity()).toBe(FEEDBACK_ACTIVITY);
@@ -125,7 +108,7 @@ describeDevice(`the feedback chat on ${TARGET_NAME}`, () => {
     expect(text.map(ocrFold)).toContain(ocrFold(`hello ${run.scenario.nonce}`));
   });
 
-  itColour('the chat is painted in the appearance background color', async () => {
+  it('the chat is painted in the appearance background color', async () => {
     await show('feedback-chat');
     if (ON_ANDROID) {
       expect(await androidTopActivity()).toBe(FEEDBACK_ACTIVITY);
