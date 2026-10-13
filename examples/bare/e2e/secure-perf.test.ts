@@ -149,9 +149,10 @@ describeDevice(`<BugseeSecure> cost of 200 still, clipped views on ${TARGET_NAME
   // Every tick re-checks every parked view by measuring it alone: O(n) per
   // tick, the same per-view self-measure main makes every tick for every
   // view. Release keeps the 2 ms budget. Debug (React's dev build) spends
-  // about 12 µs per view on it, so 200 views take ~2.5 ms there; main's
-  // Debug p95 for these 200 views is in the PR's perf table (for 20 views it
-  // was already 2.2 ms). The scoped Debug budget for this mode is 4 ms.
+  // about 12 µs per view on it, so 200 views take ~2.5 ms there. Main, on
+  // the same 200 views on the API 24 emulator, measured p95 153 ms a tick in
+  // Debug and 70 ms in Release (its registry re-flattened every owner's
+  // union per owner). The scoped Debug budget for this mode is 4 ms.
   const MANY_DEBUG_TICK_BUDGET_MS = 4;
 
   it('keeps p95 of a tick under 2 ms in Release, 4 ms in Debug', () => {

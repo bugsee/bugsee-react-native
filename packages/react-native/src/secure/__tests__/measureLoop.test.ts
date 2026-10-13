@@ -8,8 +8,10 @@ import type * as LoopModule from '../measureLoop';
 // The loop publishes each tick's and frame's changes together; what that
 // does is the registry's, tested there.
 const mockTogether: string[] = [];
+const mockRetries: boolean[] = [];
 jest.mock('../registry', () => ({
-  publishTogether: (changes: () => void) => {
+  publishTogether: (changes: () => void, retryFailed = false) => {
+    mockRetries.push(retryFailed);
     mockTogether.push('start');
     try {
       changes();
@@ -586,6 +588,17 @@ describe('watched nodes and parked views', () => {
 describe('publishing together', () => {
   beforeEach(() => {
     mockTogether.length = 0;
+    mockRetries.length = 0;
+  });
+
+  it('retries failed publishes on the tick, not on frames', () => {
+    loop.addMeasurer(jest.fn());
+    loop.addFrameMeasurer(jest.fn());
+
+    jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
+
+    // Six frames, then the tick.
+    expect(mockRetries).toEqual([false, false, false, false, false, false, true]);
   });
 
   it('runs a tick, and a frame, as one publish', () => {

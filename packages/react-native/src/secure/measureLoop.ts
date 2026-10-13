@@ -60,7 +60,8 @@ function tick(): void {
     publishTogether(() => {
       measureAll();
       checkParked();
-    }),
+      // A lane that failed is retried here, once a tick, not every frame.
+    }, true),
   );
 }
 

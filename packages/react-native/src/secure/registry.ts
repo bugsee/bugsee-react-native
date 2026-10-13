@@ -162,10 +162,13 @@ let deferred: Map<number, Set<number>> | undefined;
 
 /**
  * Lanes whose last publish inside {@link publishTogether} threw: the next
- * one publishes them again, whether or not anything on them changed (an
- * owner that has not moved never asks again).
+ * call that retries publishes them again, whether or not anything on them
+ * changed (an owner that has not moved never asks again).
  */
 let failed = new Map<number, Set<number>>();
+
+/** Lanes warned about since they last published: one warning per lane per outage. */
+const warned = new Set<string>();
 
 function addLanes(into: Map<number, Set<number>>, display: number, surfaces: ReadonlySet<number>): void {
   const lanes = into.get(display) ?? new Set<number>();
@@ -185,27 +188,39 @@ function publishOrDefer(display: number, surfaces: ReadonlySet<number>): void {
  * Runs `changes`, publishing every lane they changed once, at the end,
  * rather than once per change: every instance re-measured in one tick or
  * frame changes its lane, and each publish re-flattens the lane's whole
- * union. A lane whose publish throws is logged and published again by the
- * next call, changed or not. Inside another call, it simply runs `changes`.
+ * union. A lane whose publish throws is logged once until it publishes
+ * again, and published again by the next call that `retryFailed` (the tick,
+ * so at most every 100 ms), changed or not; a call that changes it publishes
+ * it anyway. Inside another call, it simply runs `changes`.
  */
-export function publishTogether(changes: () => void): void {
+export function publishTogether(changes: () => void, retryFailed = false): void {
   if (deferred !== undefined) {
     changes();
     return;
   }
-  deferred = failed;
-  failed = new Map();
+  deferred = new Map();
+  if (retryFailed) {
+    failed.forEach((surfaces, display) => addLanes(deferred as Map<number, Set<number>>, display, surfaces));
+    failed = new Map();
+  }
   try {
     changes();
   } finally {
     const lanes = deferred;
     deferred = undefined;
     for (const [display, surfaces] of lanes) {
+      const keys = [...surfaces].map((surface) => publishKey(display, surface));
       try {
         publish(display, surfaces);
+        // Still listed as failed, a lane that went through here republishes
+        // the same list on the next retry, which the registry skips.
+        keys.forEach((key) => warned.delete(key));
       } catch (error) {
         addLanes(failed, display, surfaces);
-        console.warn('[Bugsee] could not publish secure rectangles', errorName(error));
+        if (keys.some((key) => !warned.has(key))) {
+          keys.forEach((key) => warned.add(key));
+          console.warn('[Bugsee] could not publish secure rectangles', errorName(error));
+        }
       }
     }
   }

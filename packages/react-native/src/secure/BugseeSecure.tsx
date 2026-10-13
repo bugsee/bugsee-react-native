@@ -51,6 +51,11 @@ export interface BugseeSecureProps extends ViewProps {
  * rectangle published, and an ancestor that cannot be read or measured cuts
  * nothing off it. Only unmounting or `enabled={false}` removes it at once.
  *
+ * Known limit: how an ancestor clips is read from its committed React props.
+ * An `overflow` changed natively, through `setNativeProps` or a native-driven
+ * style, is not seen: a view still believed clipped by an ancestor that no
+ * longer clips publishes only the part inside the old clip.
+ *
  * Fabric `measureInWindow` is relative to the measured node's nearest
  * `RootNodeKind` ancestor: the app's root, or the content of the `<Modal>`
  * it is in. The rectangle is published under that surface's key (the Modal
