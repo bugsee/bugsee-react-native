@@ -40,7 +40,7 @@ import { BugseeSecure } from '@bugsee/react-native';
 // withdrawn view runs, timed on the same views (as scenarios/channel.ts does).
 import { ancestryOfInstance, isHidden } from '@bugsee/react-native/src/secure/ancestry';
 
-export const SECURE_VISIBLE_SCENARIOS = ['secure-visible', 'secure-perf'] as const;
+export const SECURE_VISIBLE_SCENARIOS = ['secure-visible', 'secure-perf', 'secure-perf-many'] as const;
 
 export type SecureVisibleScenario = (typeof SECURE_VISIBLE_SCENARIOS)[number];
 
@@ -365,8 +365,96 @@ function SecurePerfProbe({ nonce }: { nonce: string }) {
   );
 }
 
+/** secure-perf-many: ScrollViews, and secure views in each. */
+const MANY_SCROLLS = 4;
+const MANY_PER_SCROLL = 50;
+
+function ManySecures() {
+  // After every child's layout effect: the loop's interval has started.
+  useLayoutEffect(() => {
+    endTimingWindow?.();
+    endTimingWindow = undefined;
+  }, []);
+  return (
+    <>
+      {Array.from({ length: MANY_SCROLLS }, (_, scroll) => (
+        <ScrollView key={scroll} style={styles.manyScroll} contentContainerStyle={styles.manyContent}>
+          {Array.from({ length: MANY_PER_SCROLL }, (__, i) => (
+            <BugseeSecure key={i} style={styles.manySecure} />
+          ))}
+        </ScrollView>
+      ))}
+    </>
+  );
+}
+
+/**
+ * secure-perf-many: 200 `<BugseeSecure>` in four still ScrollViews, each
+ * 100 dp tall with 50 views 40 dp tall stacked in it, so every view is
+ * partly clipped or wholly out of sight and nothing moves. Ticks and frame
+ * callbacks are timed for 40 s after the views have settled.
+ */
+function SecurePerfManyProbe({ nonce }: { nonce: string }) {
+  const [mountedSecures, setMountedSecures] = useState(false);
+
+  useEffect(() => {
+    endTimingWindow = timeLoopIntervals();
+    setMountedSecures(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mountedSecures) {
+      return undefined;
+    }
+    let cancelled = false;
+    const f = (value: number) => value.toFixed(3);
+    const report = (mode: string, durations: readonly number[]) => {
+      const sorted = [...durations].sort((a, b) => a - b);
+      const mean = sorted.reduce((sum, value) => sum + value, 0) / sorted.length;
+      mark(
+        `secure-perf result mode=${mode} ticks=${sorted.length} intervals=${timedIntervals} ` +
+          `secures=${MANY_SCROLLS * MANY_PER_SCROLL} p50=${f(percentile(sorted, 50))} ` +
+          `p95=${f(percentile(sorted, 95))} p99=${f(percentile(sorted, 99))} ` +
+          `max=${f(sorted[sorted.length - 1] ?? Number.NaN)} mean=${f(mean)} dev=${String(__DEV__)} nonce=${nonce}`,
+      );
+    };
+    (async () => {
+      await sleep(PERF_WARMUP_MS);
+      tickDurations.length = 0;
+      const frameDurations: number[] = [];
+      const realFrame = globalThis.requestAnimationFrame;
+      globalThis.requestAnimationFrame = (callback =>
+        realFrame(timestamp => {
+          const start = performance.now();
+          callback(timestamp);
+          frameDurations.push(performance.now() - start);
+        })) as typeof requestAnimationFrame;
+      try {
+        await sleep(PERF_MS);
+      } finally {
+        globalThis.requestAnimationFrame = realFrame;
+      }
+      if (cancelled) {
+        return;
+      }
+      report('many', tickDurations);
+      report('many-frames', frameDurations);
+    })().catch((error: unknown) => {
+      mark(`secure-perf threw ${String(error)} nonce=${nonce}`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mountedSecures, nonce]);
+
+  return <View style={styles.stage}>{mountedSecures && <ManySecures />}</View>;
+}
+
 export function SecureVisibleStage({ scenario, nonce }: { scenario: SecureVisibleScenario; nonce: string }) {
-  return scenario === 'secure-visible' ? <SecureVisibleProbe nonce={nonce} /> : <SecurePerfProbe nonce={nonce} />;
+  if (scenario === 'secure-visible') {
+    return <SecureVisibleProbe nonce={nonce} />;
+  }
+  return scenario === 'secure-perf' ? <SecurePerfProbe nonce={nonce} /> : <SecurePerfManyProbe nonce={nonce} />;
 }
 
 const styles = StyleSheet.create({
@@ -380,4 +468,7 @@ const styles = StyleSheet.create({
   wide: { width: 1500, height: 70 },
   perfSecure: { position: 'absolute', top: 10, width: 70, height: 40, backgroundColor: '#EEEEEE' },
   perfSecureTall: { height: 80 },
+  manyScroll: { height: 100, flexGrow: 0, marginBottom: 20 },
+  manyContent: { height: 2000 },
+  manySecure: { height: 40, backgroundColor: '#EEEEEE' },
 });

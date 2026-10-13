@@ -104,3 +104,53 @@ describeDevice(`<BugseeSecure> re-measure cost on ${TARGET_NAME}`, () => {
     });
   });
 });
+
+/**
+ * Scenario `secure-perf-many`: 200 `<BugseeSecure>` in four still
+ * ScrollViews, every one partly clipped or wholly out of sight. Once they
+ * have settled, a frame costs only the four watched ScrollView contents
+ * (`many-frames`), and a tick only its bounded turns of parked views
+ * (`many`).
+ */
+describeDevice(`<BugseeSecure> cost of 200 still, clipped views on ${TARGET_NAME}`, () => {
+  let log: DeviceLog;
+  const results = new Map<string, Record<string, string>>();
+
+  beforeAll(async () => {
+    log = await startDeviceLog('#86 perf many', '#86 perf many');
+    const run = await startRun('secure-perf-many');
+    const nonce = run.scenario.nonce;
+    for (const mode of ['many', 'many-frames']) {
+      const done = new RegExp(`BUGSEE_E2E secure-perf (result mode=${mode}|threw) .*nonce=${escape(nonce)}`);
+      const line = must(await log.waitFor(done, 120_000, run.start), `the secure-perf ${mode} result`, run.start);
+      const result = Object.fromEntries(
+        [...line.text.matchAll(/(\w+)=(\S+)/g)].map(([, key, value]) => [key!, value!]),
+      );
+      results.set(mode, result);
+      report('secure-perf', { label: process.env.E2E_PERF_LABEL ?? 'unlabelled', dev: run.dev, ...result });
+    }
+  });
+
+  afterAll(async () => {
+    try {
+      await stopApp();
+    } finally {
+      stopDeviceLog(log);
+      resetScenario();
+    }
+  });
+
+  it('timed every tick and frame of 200 views', () => {
+    expect(results.get('many')!.secures).toBe('200');
+    expect(Number(results.get('many')!.ticks)).toBeGreaterThanOrEqual(MIN_TICKS);
+    expect(Number(results.get('many-frames')!.ticks)).toBeGreaterThanOrEqual(MIN_TICKS);
+  });
+
+  it(`keeps p95 of a tick under ${P95_BUDGET_MS} ms`, () => {
+    expect(Number(results.get('many')!.p95)).toBeLessThan(P95_BUDGET_MS);
+  });
+
+  it('keeps a frame near nothing: p95 under 0.5 ms', () => {
+    expect(Number(results.get('many-frames')!.p95)).toBeLessThan(0.5);
+  });
+});
