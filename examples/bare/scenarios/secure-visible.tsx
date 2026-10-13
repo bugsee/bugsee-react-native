@@ -18,7 +18,11 @@
  *                   re-measure loop is timed with `performance.now()` for 40 s
  *                   with nothing moving, then for 40 s with every ScrollView
  *                   scrolled every 400 ms (moving views partly and fully out
- *                   of sight), then for 20 s the per-frame check a withdrawn
+ *                   of sight), then for 40 s with all 20 taller than their
+ *                   rows (every one partly clipped, so on the per-frame
+ *                   re-measure) and nudged every 400 ms, each mode timing
+ *                   both ticks and frame callbacks (`<mode>-frames`), then for
+ *                   20 s the per-frame check a withdrawn
  *                   view runs (`isHidden`, props only) for all 20 every
  *                   frame, and each mode's percentiles logged as
  *                   `secure-perf result`.
@@ -184,7 +188,7 @@ const PER_ROW = 5;
 /** A view inside each secure view: the same ancestors, one host deeper. */
 const insides: Array<View | null> = [];
 
-function PerfSecures({ rows }: { rows: { current: Array<ScrollView | null> } }) {
+function PerfSecures({ rows, tall }: { rows: { current: Array<ScrollView | null> }; tall: boolean }) {
   // After every child's layout effect: the loop's interval has started.
   useLayoutEffect(() => {
     endTimingWindow?.();
@@ -202,7 +206,9 @@ function PerfSecures({ rows }: { rows: { current: Array<ScrollView | null> } }) 
           style={styles.row}
           contentContainerStyle={styles.wide}>
           {Array.from({ length: PER_ROW }, (__, i) => (
-            <BugseeSecure key={i} style={[styles.perfSecure, { left: 10 + 78 * i }]}>
+            <BugseeSecure
+              key={i}
+              style={[styles.perfSecure, { left: 10 + 78 * i }, tall ? styles.perfSecureTall : null]}>
               <View
                 ref={inside => {
                   insides[row * PER_ROW + i] = inside;
@@ -222,6 +228,9 @@ function SecurePerfProbe({ nonce }: { nonce: string }) {
   const outer = useRef<ScrollView>(null);
   const rows = useRef<Array<ScrollView | null>>([]);
   const [mountedSecures, setMountedSecures] = useState(false);
+  // secure-perf's `clipped` mode: every view taller than its row, so all 20
+  // are cut by their row's viewport and on the per-frame re-measure.
+  const [tall, setTall] = useState(false);
 
   useEffect(() => {
     endTimingWindow = timeLoopIntervals();
@@ -237,10 +246,8 @@ function SecurePerfProbe({ nonce }: { nonce: string }) {
     const offsets = [0, 250, 700, 1200];
     let step = 0;
     const f = (value: number) => value.toFixed(3);
-    const timeFor = async (mode: string) => {
-      tickDurations.length = 0;
-      await sleep(PERF_MS);
-      const sorted = [...tickDurations].sort((a, b) => a - b);
+    const report = (mode: string, durations: readonly number[]) => {
+      const sorted = [...durations].sort((a, b) => a - b);
       const mean = sorted.reduce((sum, value) => sum + value, 0) / sorted.length;
       mark(
         `secure-perf result mode=${mode} ticks=${sorted.length} intervals=${timedIntervals} ` +
@@ -248,6 +255,26 @@ function SecurePerfProbe({ nonce }: { nonce: string }) {
           `p99=${f(percentile(sorted, 99))} max=${f(sorted[sorted.length - 1] ?? Number.NaN)} mean=${f(mean)} ` +
           `dev=${String(__DEV__)} nonce=${nonce}`,
       );
+    };
+    // Ticks of the shared interval, and every frame callback: the package's
+    // per-frame re-measure is the only one requesting frames in these modes.
+    const timeFor = async (mode: string) => {
+      tickDurations.length = 0;
+      const frameDurations: number[] = [];
+      const realFrame = globalThis.requestAnimationFrame;
+      globalThis.requestAnimationFrame = (callback =>
+        realFrame(timestamp => {
+          const start = performance.now();
+          callback(timestamp);
+          frameDurations.push(performance.now() - start);
+        })) as typeof requestAnimationFrame;
+      try {
+        await sleep(PERF_MS);
+      } finally {
+        globalThis.requestAnimationFrame = realFrame;
+      }
+      report(mode, tickDurations);
+      report(`${mode}-frames`, frameDurations);
     };
     (async () => {
       await sleep(PERF_WARMUP_MS);
@@ -264,6 +291,25 @@ function SecurePerfProbe({ nonce }: { nonce: string }) {
       }, 400);
       await timeFor('scrolling');
       clearInterval(scroller);
+      if (cancelled) {
+        return;
+      }
+      // All 20 partly clipped and moving: every one on the per-frame
+      // re-measure, the worst case.
+      setTall(true);
+      outer.current?.scrollTo({ y: 0, animated: false });
+      rows.current.forEach(row => row?.scrollTo({ x: 0, animated: false }));
+      await sleep(PERF_WARMUP_MS);
+      const nudges = [0, 20, 40];
+      scroller = setInterval(() => {
+        step += 1;
+        outer.current?.scrollTo({ y: nudges[step % nudges.length], animated: false });
+        rows.current.forEach((row, index) => row?.scrollTo({ x: ((step + index) % 2) * 20, animated: false }));
+      }, 400);
+      await timeFor('clipped');
+      clearInterval(scroller);
+      setTall(false);
+      await sleep(PERF_WARMUP_MS);
       if (cancelled) {
         return;
       }
@@ -311,7 +357,7 @@ function SecurePerfProbe({ nonce }: { nonce: string }) {
       <ScrollView ref={outer} style={styles.fill} contentContainerStyle={styles.perfTall}>
         <View style={styles.clipOuter}>
           <View style={styles.clipInner}>
-            {mountedSecures && <PerfSecures rows={rows} />}
+            {mountedSecures && <PerfSecures rows={rows} tall={tall} />}
           </View>
         </View>
       </ScrollView>
@@ -333,4 +379,5 @@ const styles = StyleSheet.create({
   row: { height: 70, flexGrow: 0, marginBottom: 10 },
   wide: { width: 1500, height: 70 },
   perfSecure: { position: 'absolute', top: 10, width: 70, height: 40, backgroundColor: '#EEEEEE' },
+  perfSecureTall: { height: 80 },
 });

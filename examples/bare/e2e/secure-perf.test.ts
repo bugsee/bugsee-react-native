@@ -29,18 +29,35 @@ import {
 } from './harness';
 import { type DeviceLog, resetScenario } from './scenario';
 
-jest.setTimeout(4 * 60_000);
+jest.setTimeout(6 * 60_000);
 
 /** The budget for one tick of the loop, all 20 views included. */
 const P95_BUDGET_MS = 2;
 const MIN_TICKS = 300;
 
 /**
+ * Each of `static`, `scrolling` and `clipped` also reports `<mode>-frames`:
+ * every frame callback of the per-frame re-measure that clipped views go on
+ * (their ticks skip them). `clipped` has every view partly clipped and
+ * moving, so all 20 are on it: the worst case. A frame mode's "ticks" are
+ * frames.
+ *
  * `watch` times, every frame for 20 s, the check each withdrawn view runs per
  * frame (BugseeSecure's frame callback), for all 20 views: what it costs if
  * every one of them were withdrawn at once. Its "ticks" are frames.
  */
-const MODES = ['static', 'scrolling', 'watch'] as const;
+const MODES = [
+  'static',
+  'static-frames',
+  'scrolling',
+  'scrolling-frames',
+  'clipped',
+  'clipped-frames',
+  'watch',
+] as const;
+
+/** Frame modes run only while some view is clipped: only `clipped-frames` must have many. */
+const minTicks = (mode: string): number => (mode.endsWith('-frames') && mode !== 'clipped-frames' ? 0 : MIN_TICKS);
 
 describeDevice(`<BugseeSecure> re-measure cost on ${TARGET_NAME}`, () => {
   let log: DeviceLog;
@@ -52,7 +69,7 @@ describeDevice(`<BugseeSecure> re-measure cost on ${TARGET_NAME}`, () => {
     const nonce = run.scenario.nonce;
     for (const mode of MODES) {
       const done = new RegExp(`BUGSEE_E2E secure-perf (result mode=${mode}|threw) .*nonce=${escape(nonce)}`);
-      const line = must(await log.waitFor(done, 180_000, run.start), `the secure-perf ${mode} result`, run.start);
+      const line = must(await log.waitFor(done, 240_000, run.start), `the secure-perf ${mode} result`, run.start);
       const result = Object.fromEntries(
         [...line.text.matchAll(/(\w+)=(\S+)/g)].map(([, key, value]) => [key!, value!]),
       );
@@ -75,11 +92,15 @@ describeDevice(`<BugseeSecure> re-measure cost on ${TARGET_NAME}`, () => {
       const result = results.get(mode)!;
       expect(result.intervals).toBe('1');
       expect(result.secures).toBe('20');
-      expect(Number(result.ticks)).toBeGreaterThanOrEqual(MIN_TICKS);
+      expect(Number(result.ticks)).toBeGreaterThanOrEqual(minTicks(mode));
     });
 
     it(`keeps p95 of a tick under ${P95_BUDGET_MS} ms`, () => {
-      expect(Number(results.get(mode)!.p95)).toBeLessThan(P95_BUDGET_MS);
+      const result = results.get(mode)!;
+      if (result.ticks === '0') {
+        return;
+      }
+      expect(Number(result.p95)).toBeLessThan(P95_BUDGET_MS);
     });
   });
 });
