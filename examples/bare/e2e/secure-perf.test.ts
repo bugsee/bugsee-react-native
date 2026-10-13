@@ -35,7 +35,12 @@ jest.setTimeout(4 * 60_000);
 const P95_BUDGET_MS = 2;
 const MIN_TICKS = 300;
 
-const MODES = ['static', 'scrolling'] as const;
+/**
+ * `watch` times, every frame for 20 s, the check each withdrawn view runs per
+ * frame (BugseeSecure's frame callback), for all 20 views: what it costs if
+ * every one of them were withdrawn at once. Its "ticks" are frames.
+ */
+const MODES = ['static', 'scrolling', 'watch'] as const;
 
 describeDevice(`<BugseeSecure> re-measure cost on ${TARGET_NAME}`, () => {
   let log: DeviceLog;
@@ -47,7 +52,7 @@ describeDevice(`<BugseeSecure> re-measure cost on ${TARGET_NAME}`, () => {
     const nonce = run.scenario.nonce;
     for (const mode of MODES) {
       const done = new RegExp(`BUGSEE_E2E secure-perf (result mode=${mode}|threw) .*nonce=${escape(nonce)}`);
-      const line = must(await log.waitFor(done, 120_000, run.start), `the secure-perf ${mode} result`, run.start);
+      const line = must(await log.waitFor(done, 180_000, run.start), `the secure-perf ${mode} result`, run.start);
       const result = Object.fromEntries(
         [...line.text.matchAll(/(\w+)=(\S+)/g)].map(([, key, value]) => [key!, value!]),
       );

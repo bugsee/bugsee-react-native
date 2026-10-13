@@ -18,7 +18,9 @@
  *                   re-measure loop is timed with `performance.now()` for 40 s
  *                   with nothing moving, then for 40 s with every ScrollView
  *                   scrolled every 400 ms (moving views partly and fully out
- *                   of sight), and each mode's percentiles logged as
+ *                   of sight), then for 20 s the per-frame check a withdrawn
+ *                   view runs (`isHidden`, props only) for all 20 every
+ *                   frame, and each mode's percentiles logged as
  *                   `secure-perf result`.
  *
  * The perf hook is the app's own, not the package's: while the 20 views mount
@@ -30,6 +32,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { PixelRatio, ScrollView, StyleSheet, View } from 'react-native';
 import { BugseeSecure } from '@bugsee/react-native';
+// Deep-imported for secure-perf's `watch` mode only: the per-frame check a
+// withdrawn view runs, timed on the same views (as scenarios/channel.ts does).
+import { ancestryOfInstance, isHidden } from '@bugsee/react-native/src/secure/ancestry';
 
 export const SECURE_VISIBLE_SCENARIOS = ['secure-visible', 'secure-perf'] as const;
 
@@ -46,6 +51,8 @@ const SETTLE_MS = 1_200;
 /** How long secure-perf times the loop for: 400 ticks at 100 ms, 300 at the least. */
 const PERF_MS = 40_000;
 const PERF_WARMUP_MS = 2_000;
+/** How long secure-perf's `watch` mode times frames for. */
+const WATCH_MS = 20_000;
 
 function mark(message: string): void {
   console.log(`BUGSEE_E2E ${message}`);
@@ -174,6 +181,9 @@ function percentile(sorted: readonly number[], p: number): number {
 const ROWS = 4;
 const PER_ROW = 5;
 
+/** A view inside each secure view: the same ancestors, one host deeper. */
+const insides: Array<View | null> = [];
+
 function PerfSecures({ rows }: { rows: { current: Array<ScrollView | null> } }) {
   // After every child's layout effect: the loop's interval has started.
   useLayoutEffect(() => {
@@ -192,7 +202,15 @@ function PerfSecures({ rows }: { rows: { current: Array<ScrollView | null> } }) 
           style={styles.row}
           contentContainerStyle={styles.wide}>
           {Array.from({ length: PER_ROW }, (__, i) => (
-            <BugseeSecure key={i} style={[styles.perfSecure, { left: 10 + 78 * i }]} />
+            <BugseeSecure key={i} style={[styles.perfSecure, { left: 10 + 78 * i }]}>
+              <View
+                ref={inside => {
+                  insides[row * PER_ROW + i] = inside;
+                }}
+                collapsable={false}
+                style={styles.fill}
+              />
+            </BugseeSecure>
           ))}
         </ScrollView>
       ))}
@@ -245,6 +263,40 @@ function SecurePerfProbe({ nonce }: { nonce: string }) {
         rows.current.forEach((row, index) => row?.scrollTo({ x: ((step + index) % 3) * 300, animated: false }));
       }, 400);
       await timeFor('scrolling');
+      clearInterval(scroller);
+      if (cancelled) {
+        return;
+      }
+      // What 20 withdrawn views would cost every frame: one isHidden each,
+      // props reads only, outside any measure pass, as BugseeSecure's frame
+      // callback runs it.
+      const ancestries = insides.map(inside => ancestryOfInstance(inside as object));
+      const watched = ancestries.length;
+      tickDurations.length = 0;
+      const until = Date.now() + WATCH_MS;
+      await new Promise<void>(resolve => {
+        const frame = () => {
+          const start = performance.now();
+          for (const ancestry of ancestries) {
+            isHidden(ancestry);
+          }
+          tickDurations.push(performance.now() - start);
+          if (Date.now() < until && !cancelled) {
+            requestAnimationFrame(frame);
+          } else {
+            resolve();
+          }
+        };
+        requestAnimationFrame(frame);
+      });
+      const sorted = [...tickDurations].sort((a, b) => a - b);
+      const mean = sorted.reduce((sum, value) => sum + value, 0) / sorted.length;
+      mark(
+        `secure-perf result mode=watch ticks=${sorted.length} intervals=${timedIntervals} ` +
+          `secures=${watched} p50=${f(percentile(sorted, 50))} p95=${f(percentile(sorted, 95))} ` +
+          `p99=${f(percentile(sorted, 99))} max=${f(sorted[sorted.length - 1] ?? Number.NaN)} mean=${f(mean)} ` +
+          `dev=${String(__DEV__)} nonce=${nonce}`,
+      );
     })().catch((error: unknown) => {
       mark(`secure-perf threw ${String(error)} nonce=${nonce}`);
     });
