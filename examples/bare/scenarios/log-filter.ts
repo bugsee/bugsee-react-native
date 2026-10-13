@@ -4,14 +4,16 @@
  *
  * After `Launched` it installs `Bugsee.setLogFilter` and then calls
  * `Bugsee.log` with `requiresFiltering` on the next line, with no await
- * between them. That first line is rewritten. A second line is rewritten the
- * same way. A third line's callback never settles, so the SDK's own timeout
- * drops it; this scenario does not add a timeout that would pass the line
- * through. A fourth line is sent without `requiresFiltering`, so the filter
- * never sees it and it is recorded as sent.
+ * between them. `log()` runs the filter in JS, inside the call, so that first
+ * line is rewritten before it crosses the bridge. A second line is rewritten
+ * the same way. A third line's callback never settles: `log()` drops it after
+ * 10 s, and the upload at 5 s comes first, so the line is never sent. This
+ * scenario does not add a timeout that would pass the line through. A fourth
+ * line is sent without `requiresFiltering`, so the filter never sees it and it
+ * is recorded as sent.
  *
- * The upload waits long enough for the rewrite's round trip to be recorded,
- * and not long enough for a second, local timeout to matter: the recording
+ * The upload waits long enough for the rewritten lines to be recorded, and
+ * not long enough for a second, local timeout to matter: the recording
  * `duration` stays the app's 90.
  */
 import Bugsee, { LogLevel } from '@bugsee/react-native';
@@ -53,8 +55,8 @@ export function installLogFilter(nonce: string): void {
 
 /**
  * Called once the SDK reaches `Launched`. `setLogFilter` and the first
- * `Bugsee.log` are adjacent: nothing is awaited between them, so the native
- * registration has to have finished before `setLogFilter` returns.
+ * `Bugsee.log` are adjacent: nothing is awaited between them, so the filter
+ * has to be in place when `setLogFilter` returns.
  */
 export function runLogFilterScenario(nonce: string): void {
   installLogFilter(nonce);

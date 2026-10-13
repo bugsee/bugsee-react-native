@@ -214,9 +214,10 @@ export interface Spec extends TurboModule {
    *
    * `level` is the SDK's by-value level, 1 Error .. 5 Verbose, already
    * checked in JS; native maps anything else to Info. `capture.logs` does not
-   * gate it. `requiresFiltering` is the app's choice, passed through: the
-   * app's log filter runs on the line, natively and once, only when it is
-   * `true`. Fire-and-forget: before launch the SDK drops it.
+   * gate it. `requiresFiltering` is always `false` from JS: `log()` runs the
+   * app's log filter itself when the app asks for it, and sends the result,
+   * so the filter does not run on it again here. Fire-and-forget: before
+   * launch the SDK drops it.
    *
    * `log` in `src/logs/log.ts` is its only caller.
    */

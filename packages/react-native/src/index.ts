@@ -409,9 +409,14 @@ class Bugsee {
    * One line into the Bugsee log: the app's own, through the native
    * `Bugsee.log` (source Bugsee, no tag). Recorded with
    * `com.bugsee.option.capture.logs` false, which turns off only what is
-   * captured automatically. The app's log filter ({@link setLogFilter}) runs
-   * on it natively, once, only when `requiresFiltering` is `true`; by
-   * default it does not, as in the native SDKs. Dropped before launch().
+   * captured automatically. As in the native SDKs, the app's log filter
+   * ({@link setLogFilter}) skips the line unless `requiresFiltering` is
+   * `true`. Then the filter runs in JS, inside this call: a string it
+   * returns is sent at once, a promise is waited on for at most 10 s and the
+   * line is stamped when it settles, and a throw, a rejection, or anything
+   * else drops the line. A filtered line logged while the filter runs,
+   * before it returns, is dropped. Dropped before launch(), after the filter
+   * has seen it.
    */
   log(message: string, level: LogLevel = LogLevel.Info, requiresFiltering: boolean = false): void {
     sendLog(message, level, requiresFiltering);
@@ -463,11 +468,17 @@ class Bugsee {
    * callback, or with `null`, clears it.
    *
    * The callback receives the line and returns the line to keep, or a
-   * replacement string. `null` or `undefined` drops the line. The native SDK
-   * is what invokes the filter; the callback runs on a later turn, and this
-   * method does not wait for it. A callback that throws, rejects, or does
-   * not settle before the SDK's own timeout drops the line. It is not passed
-   * through.
+   * replacement string. `null` or `undefined` drops the line. For a line the
+   * SDK captured, the native SDK invokes the filter; the callback runs on a
+   * later turn, and this method does not wait for it. A callback that
+   * throws, rejects, or does not settle before the SDK's own timeout drops
+   * the line. It is not passed through. A {@link log} line with
+   * `requiresFiltering` is filtered in JS, inside that call.
+   *
+   * The callback must not call {@link log} with `requiresFiltering`. Such a
+   * line is dropped only while the callback runs, before it returns. Logged
+   * later -- after an `await`, in a `then`, or from a microtask -- it is
+   * filtered again, and each pass records a line, without end.
    */
   setLogFilter(callback?: LogFilter | null): void {
     installLogFilter(callback);
