@@ -5,8 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/bugsee/spm",
       "state" : {
-        "revision" : "339f634bfdd1ba0ebcd96ca1d88d790adb64eb52",
-        "version" : "7.0.0-beta5"
+        "revision" : "75a25db8e5071a5133710f21f10265a804659de8",
+        "version" : "7.0.0-beta6"
       }
     }
   ],
