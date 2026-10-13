@@ -68,6 +68,11 @@ import {
 import { isNetworkScenario, runNetworkScenario } from './scenarios/network';
 import { SecureProbe, isSecureScenario } from './scenarios/secure';
 import {
+  SecureVisibleStage,
+  type SecureVisibleScenario,
+  isSecureVisibleScenario,
+} from './scenarios/secure-visible';
+import {
   isAttributeScenario,
   runAttributeScenario,
 } from './scenarios/attributes';
@@ -308,6 +313,10 @@ export default function App() {
   const [flowStage, setFlowStage] = useState<string | undefined>();
   /** Set by a campaign API scenario that puts something on screen (scenarios/api.tsx). */
   const [apiStage, setApiStage] = useState<ApiStageState | undefined>();
+  /** Set once Launched for scenarios/secure-visible.tsx (#86). */
+  const [secureVisible, setSecureVisible] = useState<
+    { scenario: SecureVisibleScenario; nonce: string } | undefined
+  >();
 
   useEffect(() => {
     let cancelled = false;
@@ -563,6 +572,13 @@ export default function App() {
           return;
         }
 
+        if (isSecureVisibleScenario(choice.scenario)) {
+          if (!cancelled) {
+            setSecureVisible({ scenario: choice.scenario, nonce: choice.nonce });
+          }
+          return;
+        }
+
         if (isReportingScenario(choice.scenario)) {
           runReportingScenario(choice.scenario, choice.nonce);
           return;
@@ -772,6 +788,9 @@ export default function App() {
       )}
       {flowStage !== undefined && <FlowStage />}
       {apiStage !== undefined && <ApiStage stage={apiStage} />}
+      {secureVisible !== undefined && (
+        <SecureVisibleStage scenario={secureVisible.scenario} nonce={secureVisible.nonce} />
+      )}
     </View>
   );
 }
