@@ -55,7 +55,6 @@ export const privacyActions: Action[] = [
       return launchWith(await loadConfig());
     },
     platforms: ['ios', 'android'],
-    knownIssue: 'android-248',
   },
   {
     id: 'secure-rect-set',
