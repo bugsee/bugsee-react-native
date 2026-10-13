@@ -235,11 +235,13 @@ async function filters(nonce: string): Promise<void> {
   Bugsee.setNetworkFilter();
   await fetchQuietly(deadEndpointUrl(`net-noarg-${nonce}`));
 
+  // Both lines ask for the filter: without requiresFiltering a Bugsee.log line
+  // skips it, and the second line would not show that the filter is gone.
   Bugsee.setLogFilter(line => (line.includes(nonce) ? null : line));
-  Bugsee.log(`api-log filtered ${nonce}`);
+  Bugsee.log(`api-log filtered ${nonce}`, LogLevel.Info, true);
   await delay(1_000);
   Bugsee.setLogFilter(null);
-  Bugsee.log(`api-log cleared ${nonce}`);
+  Bugsee.log(`api-log cleared ${nonce}`, LogLevel.Info, true);
 
   for (const level of BREADCRUMB_LEVELS_FOR_E2E) {
     Bugsee.addBreadcrumb({ category: 'api', level, message: `api-crumb ${level} ${nonce}`, type: 'user' });

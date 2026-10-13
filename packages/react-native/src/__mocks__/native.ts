@@ -271,7 +271,7 @@ export const native = {
   upload: jest.fn<void, [string, string, number, string[] | null]>(),
   showReportDialog:
     jest.fn<void, [string | null, string | null, number, string[] | null]>(),
-  log: jest.fn<void, [string, number]>(),
+  log: jest.fn<void, [string, number, boolean]>(),
   wrapperLog: jest.fn<void, [string, number]>(),
   /** `paramsJson` is JSON text (`encodeBridgeObject`), or null for no params. */
   event: jest.fn<void, [string, string | null]>(),

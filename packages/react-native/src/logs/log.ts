@@ -9,19 +9,28 @@ const LEVELS: ReadonlySet<number> = new Set(Object.values(LogLevel));
  * (`console.*`, RCTLog) and records nothing with `capture.logs` off
  * (`bugsee/specs` `sdk/wrapper-channel`).
  *
- * Native passes `requiresFiltering`, so the app's log filter still runs on
- * the line, natively and once, as it did while the line went through the
- * channel. Without the flag the native `Bugsee.log` skips the filter.
+ * `requiresFiltering` is passed through as the app chose it. As in the
+ * native SDKs, the app's log filter skips the line unless it is `true`; then
+ * the filter runs on it natively, once.
  *
  * The level crosses by value, 1 Error .. 5 Verbose, as on the channel
  * (`forwardLog`), and is rejected here otherwise, for the same reasons.
  */
-export function log(message: string, level: LogLevel = LogLevel.Info): void {
+export function log(
+  message: string,
+  level: LogLevel = LogLevel.Info,
+  requiresFiltering: boolean = false,
+): void {
   if (typeof message !== 'string') {
     throw new TypeError(`Bugsee.log requires message to be a string, got ${typeof message}`);
   }
   if (!LEVELS.has(level)) {
     throw new RangeError('Bugsee.log requires a LogLevel (1-5)');
   }
-  NativeBugsee.log(message, level);
+  if (typeof requiresFiltering !== 'boolean') {
+    throw new TypeError(
+      `Bugsee.log requires requiresFiltering to be a boolean, got ${typeof requiresFiltering}`,
+    );
+  }
+  NativeBugsee.log(message, level, requiresFiltering);
 }
