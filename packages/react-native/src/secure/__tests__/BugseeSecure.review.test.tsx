@@ -26,6 +26,7 @@ import {
   scrollView,
   self,
   selfIn,
+  selvesIn,
   view,
 } from './fakeAncestors';
 import type { FakeRenderer } from './fakeAncestors';
@@ -323,6 +324,107 @@ describe('P1-2: the frame fallback', () => {
 
     expect(lastPublished()).toEqual([0, px(selfRect)]);
     expect(called).not.toHaveBeenCalled();
+  });
+});
+
+// Round 2: a part of a clipped view that scrolls into view must be masked
+// within a frame. A clipped view re-measures every frame; a wholly visible one
+// stays on the 100 ms tick.
+describe('a clipped view follows a scroll into view within a frame', () => {
+  const g = globalThis as { requestAnimationFrame?: unknown; cancelAnimationFrame?: unknown };
+
+  afterEach(() => {
+    delete g.requestAnimationFrame;
+    delete g.cancelAnimationFrame;
+  });
+
+  function frame(): void {
+    act(() => {
+      jest.advanceTimersByTime(16);
+    });
+  }
+
+  it('publishes a view entering the viewport within one frame', () => {
+    selfRect = rect(10, 200, 200, 50);
+    render(selfIn(root([scrollView(rect(0, 0, 400, 130), [self()])])));
+    publishedOnlyNothing();
+
+    selfRect = rect(10, 100, 200, 50);
+    frame();
+
+    expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 30))]);
+  });
+
+  it('follows a horizontal scroll within one frame, clipped only in width', () => {
+    render(selfIn(root([scrollView(rect(0, 0, 110, 800), [self()], 'AndroidHorizontalScrollView')])));
+    expect(lastPublished()).toEqual([0, px(rect(10, 100, 100, 50))]);
+
+    selfRect = rect(-40, 100, 200, 50);
+    frame();
+
+    expect(lastPublished()).toEqual([0, px(rect(0, 100, 110, 50))]);
+  });
+
+  it('leaves the per-frame re-measure once the view is wholly visible', () => {
+    selfRect = rect(10, 100, 200, 50);
+    render(selfIn(root([scrollView(rect(0, 0, 400, 130), [self()])])));
+
+    selfRect = rect(10, 50, 200, 50);
+    frame();
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+    const settled = measureInWindow.mock.calls.length;
+
+    // Frames until the next tick measure nothing; the tick measures once.
+    act(() => {
+      jest.advanceTimersByTime(60);
+    });
+    expect(measureInWindow.mock.calls.length).toBe(settled);
+    tick();
+    expect(measureInWindow.mock.calls.length).toBe(settled + 1);
+  });
+
+  it('a clipped view is measured once a frame, not again on the tick', () => {
+    render(selfIn(root([scrollView(rect(0, 0, 400, 130), [self()])])));
+    const before = measureInWindow.mock.calls.length;
+
+    // 100 ms: six frames and one tick.
+    tick();
+
+    expect(measureInWindow.mock.calls.length - before).toBe(6);
+  });
+
+  it('many clipped views share one frame callback and one measure pass', () => {
+    const frames: Array<() => void> = [];
+    g.requestAnimationFrame = (callback: () => void) => frames.push(callback);
+    g.cancelAnimationFrame = () => undefined;
+    const fibers = selvesIn(root([scrollView(rect(0, 0, 400, 130), [self(), self(), self()])]));
+    let testRenderer: ReactTestRenderer | undefined;
+    act(() => {
+      testRenderer = create(
+        <>
+          {fibers.map((_, index) => (
+            <BugseeSecure key={index} testID={String(index)} />
+          ))}
+        </>,
+        {
+          createNodeMock: (element: { props: { testID?: string } }) => ({
+            measureInWindow,
+            __internalInstanceHandle: fibers[Number(element.props.testID)],
+          }),
+          unstable_isConcurrent: true,
+        } as Parameters<typeof create>[1],
+      );
+    });
+    mounted.push(testRenderer as ReactTestRenderer);
+    expect(frames).toHaveLength(1);
+    const ancestorsBefore = renderer.measures.length;
+    const selfBefore = measureInWindow.mock.calls.length;
+
+    act(() => frames.shift()?.());
+
+    expect(measureInWindow.mock.calls.length - selfBefore).toBe(3);
+    expect(renderer.measures.length - ancestorsBefore).toBe(1);
+    expect(frames).toHaveLength(1);
   });
 });
 

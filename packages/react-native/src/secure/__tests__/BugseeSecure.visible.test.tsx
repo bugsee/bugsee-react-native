@@ -94,6 +94,13 @@ function tick(times = 1): void {
   });
 }
 
+/** One frame of the per-frame re-measure (its 16 ms timer fallback here). */
+function frame(): void {
+  act(() => {
+    jest.advanceTimersByTime(16);
+  });
+}
+
 /** A window rectangle in points as the registry publishes it, at PixelRatio 2. */
 const px = ({ x, y, width, height }: WindowRect): number[] => [2 * x, 2 * y, 2 * (x + width), 2 * (y + height)];
 
@@ -154,7 +161,7 @@ describe('<BugseeSecure> clipping', () => {
     expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 25))]);
   });
 
-  it('measures a ScrollView shared by two views once a re-measure', () => {
+  it('measures a ScrollView shared by two views once a frame', () => {
     const [first, second] = selvesIn(root([scrollView(rect(0, 0, 400, 130), [self(), self()])]));
     let testRenderer: ReactTestRenderer | undefined;
     act(() => {
@@ -175,20 +182,21 @@ describe('<BugseeSecure> clipping', () => {
     mounted.push(testRenderer as ReactTestRenderer);
     const before = renderer.measures.length;
 
-    tick();
+    // Both are clipped, so both are on the per-frame re-measure.
+    frame();
 
     expect(renderer.measures.length - before).toBe(1);
     expect(lastPublished()).toEqual([0, [...px(rect(10, 100, 200, 30)), ...px(rect(10, 100, 200, 30))]]);
   });
 
-  it('measures the view and its clipping ancestors once each per re-measure, and publishes once', () => {
+  it('measures the view and its clipping ancestors once each a frame, and publishes once', () => {
     render(selfIn(root([scrollView(rect(0, 0, 400, 130), [scrollView(rect(0, 0, 400, 800), [self()])])])));
     const selfBefore = measureInWindow.mock.calls.length;
     const ancestorsBefore = renderer.measures.length;
     native.setSecureRectangles.mockClear();
 
     selfRect = rect(10, 90, 200, 50);
-    tick();
+    frame();
 
     expect(measureInWindow.mock.calls.length - selfBefore).toBe(1);
     expect(renderer.measures.length - ancestorsBefore).toBe(2);

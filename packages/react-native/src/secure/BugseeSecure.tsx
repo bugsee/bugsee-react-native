@@ -4,27 +4,10 @@ import { View } from 'react-native';
 import type { LayoutChangeEvent, ViewProps } from 'react-native';
 import { ancestryOfInstance, clipToAncestors, isHidden } from './ancestry';
 import type { Ancestry } from './ancestry';
-import { addMeasurer } from './measureLoop';
+import { addFrameMeasurer, addMeasurer } from './measureLoop';
 import { clearOwner, setOwnerRectangles } from './registry';
 import { surfaceOfInstance } from './surface';
 import { errorName } from '../errorName';
-
-/** A frame, for the fallback where there is no `requestAnimationFrame`. */
-const FRAME_MS = 16;
-
-/** Runs `callback` before the next frame, returning what cancels it. */
-function nextFrame(callback: () => void): () => void {
-  const { requestAnimationFrame: request, cancelAnimationFrame: cancel } = globalThis as {
-    requestAnimationFrame?: (callback: () => void) => number;
-    cancelAnimationFrame?: (handle: number) => void;
-  };
-  if (request === undefined || cancel === undefined) {
-    const timer = setTimeout(callback, FRAME_MS);
-    return () => clearTimeout(timer);
-  }
-  const handle = request(callback);
-  return () => cancel(handle);
-}
 
 export interface BugseeSecureProps extends ViewProps {
   /** While false, nothing is redacted and nothing is measured. Default true. */
@@ -52,7 +35,9 @@ export interface BugseeSecureProps extends ViewProps {
  * screen above it is inactive in the committed tree (`activityState` 0, such
  * as an inactive tab that stays mounted): that hides a view without changing
  * its layout. While withdrawn it checks every frame, reading props only, so
- * the rectangle is back within a frame of the screen showing again. A view
+ * the rectangle is back within a frame of the screen showing again. While it
+ * is clipped it re-measures every frame too, so a part scrolling into view is
+ * masked within a frame; once wholly visible it goes back to the tick. A view
  * hidden by `display: 'none'` or a hidden `<Activity>` measures 0x0, which
  * publishes nothing anyway.
  *
@@ -86,8 +71,10 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
   // hide it. Read once per mount: a mounted host never changes ancestors.
   const surface = useRef<number | null>(null);
   const ancestry = useRef<Ancestry | null>(null);
-  // Cancels the frame callback watching a withdrawn view, while one is pending.
-  const watching = useRef<(() => void) | null>(null);
+  // Removes this instance from the per-frame re-measure, while it is on it:
+  // while withdrawn as hidden or clipped, so it is back, or follows a scroll
+  // into view, within a frame rather than a tick.
+  const everyFrame = useRef<(() => void) | null>(null);
 
   // Reads refs only, so every render's copy does the same thing; the loop
   // keeps the one from the render that enabled it.
@@ -110,12 +97,9 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
       const above = ancestry.current;
       if (isHidden(above)) {
         setOwnerRectangles(token, 0, [], measuredIn);
-        // Again next frame: while it stays hidden that is prop reads and an
-        // unchanged (skipped) publish; once it shows, one measurement.
-        watching.current ??= nextFrame(() => {
-          watching.current = null;
-          measure();
-        });
+        // Every frame while it stays hidden: prop reads and an unchanged
+        // (skipped) publish; once it shows, a measurement.
+        everyFrame.current ??= addFrameMeasurer(measure);
         return;
       }
       // Fabric answers every measurement at once, so the view and its
@@ -128,6 +112,14 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
         try {
           const visible = clipToAncestors({ x, y, width, height }, above);
           setOwnerRectangles(token, 0, visible === null ? [] : [visible], measuredIn);
+          // Clipped (or cut away entirely): what scrolls into view next must
+          // be masked within a frame. Wholly visible: the tick is enough.
+          if (visible === null || visible.width < width || visible.height < height) {
+            everyFrame.current ??= addFrameMeasurer(measure);
+          } else {
+            everyFrame.current?.();
+            everyFrame.current = null;
+          }
         } catch (error) {
           failed(error);
         }
@@ -146,11 +138,16 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
     }
     active.current = true;
     measure();
-    const removeMeasurer = addMeasurer(measure);
+    // On the tick only while not on the per-frame re-measure, which covers it.
+    const removeMeasurer = addMeasurer(() => {
+      if (everyFrame.current === null) {
+        measure();
+      }
+    });
     return () => {
       active.current = false;
-      watching.current?.();
-      watching.current = null;
+      everyFrame.current?.();
+      everyFrame.current = null;
       surface.current = null;
       ancestry.current = null;
       removeMeasurer();

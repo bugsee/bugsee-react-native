@@ -58,3 +58,66 @@ export function addMeasurer(measure: () => void): () => void {
     }
   };
 }
+
+/** A frame, for the fallback where there is no `requestAnimationFrame`. */
+export const FRAME_MS = 16;
+
+/** Instances that re-measure every frame: withdrawn as hidden, or clipped. */
+const frameMeasurers = new Set<Registration>();
+
+/** Cancels the pending frame; set exactly while one is pending. */
+let cancelFrame: (() => void) | undefined;
+
+/**
+ * Runs `callback` before the next frame, returning what cancels it. Looked
+ * up per call, so it follows whatever the runtime provides at the time.
+ */
+function requestFrame(callback: () => void): () => void {
+  const { requestAnimationFrame: request, cancelAnimationFrame: cancel } = globalThis as {
+    requestAnimationFrame?: (callback: () => void) => number;
+    cancelAnimationFrame?: (handle: number) => void;
+  };
+  if (request === undefined || cancel === undefined) {
+    const timer = setTimeout(callback, FRAME_MS);
+    return () => clearTimeout(timer);
+  }
+  const handle = request(callback);
+  return () => cancel(handle);
+}
+
+/** Every frame measurer, in one measure pass, then the next frame if any are left. */
+function frame(): void {
+  cancelFrame = undefined;
+  measurePass(() => {
+    for (const { measure } of [...frameMeasurers]) {
+      try {
+        measure();
+      } catch (error) {
+        console.warn('[Bugsee] a secure-region measurer threw', errorName(error));
+      }
+    }
+  });
+  if (frameMeasurers.size > 0) {
+    cancelFrame ??= requestFrame(frame);
+  }
+}
+
+/**
+ * Calls `measure` before every frame until the returned function is called.
+ * One frame callback serves every frame measurer, in one measure pass, so a
+ * ScrollView they share is measured once a frame, and it runs only while
+ * there is at least one.
+ */
+export function addFrameMeasurer(measure: () => void): () => void {
+  const registration: Registration = { measure };
+  frameMeasurers.add(registration);
+  cancelFrame ??= requestFrame(frame);
+
+  return () => {
+    frameMeasurers.delete(registration);
+    if (frameMeasurers.size === 0) {
+      cancelFrame?.();
+      cancelFrame = undefined;
+    }
+  };
+}
