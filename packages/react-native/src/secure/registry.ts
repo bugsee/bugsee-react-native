@@ -37,8 +37,28 @@ function publishKey(display: number, surface: number): string {
   return `${display}:${surface}`;
 }
 
+/**
+ * The scale each lane's union was last flattened at, for as long as native
+ * holds that union. Absent while a lane's last publish has not reached the
+ * bridge, so nothing on it is skipped until one does.
+ */
+const laneScale = new Map<string, number>();
+
 function sameList(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function sameRectangles(a: readonly SecureRectangle[], b: readonly SecureRectangle[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let index = 0; index < a.length; index += 1) {
+    const [p, q] = [a[index]!, b[index]!];
+    if (p.x !== q.x || p.y !== q.y || p.width !== q.width || p.height !== q.height) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -46,8 +66,9 @@ function sameList(a: readonly number[], b: readonly number[]): boolean {
  * surface that has (or had) owners there.
  *
  * Re-flattened every time rather than cached per owner: the pixel ratio is
- * read per publish (see `secureRectangleScale`), so a ratio change reaches the
- * whole display the next time any owner on it moves.
+ * read per publish (see `secureRectangleScale`). A ratio change reaches each
+ * lane the next time any owner on it publishes: an owner that has not moved
+ * skips only while its lane was flattened at the current ratio.
  *
  * Skipping an unchanged union costs nothing observable: both native stores
  * already keep their version still for a no-op write. It saves a bridge hop
@@ -67,9 +88,11 @@ function publish(display: number, surfaces: ReadonlySet<number>): void {
     const key = publishKey(display, surface);
     const last = published.get(key);
     if (last !== undefined && sameList(last, flat)) {
+      laneScale.set(key, scale);
       continue;
     }
 
+    laneScale.delete(key);
     if (surface === MAIN_SURFACE) {
       NativeBugsee.setSecureRectangles(display, flat);
     } else {
@@ -78,6 +101,7 @@ function publish(display: number, surfaces: ReadonlySet<number>): void {
     // Only after the call returned: a publish that threw was not published, and
     // recording it would skip the retry as "unchanged".
     published.set(key, flat);
+    laneScale.set(key, scale);
   }
 }
 
@@ -87,6 +111,11 @@ function publish(display: number, surfaces: ReadonlySet<number>): void {
  *
  * Throws, changing nothing, if any rectangle is malformed. The owner's
  * previous rectangles stay published: a bad call never uncovers a region.
+ *
+ * An owner republishing exactly what it holds, on the same lane, costs a
+ * comparison and nothing else (every mounted `<BugseeSecure>` does so every
+ * re-measure it has not moved), unless the lane's last publish failed or the
+ * pixel ratio changed since.
  */
 export function setOwnerRectangles(
   owner: SecureOwner,
@@ -94,10 +123,20 @@ export function setOwnerRectangles(
   rectangles: readonly SecureRectangle[],
   surface: number = MAIN_SURFACE,
 ): void {
+  const previous = owners.get(owner);
+  if (
+    previous !== undefined &&
+    previous.display === display &&
+    previous.surface === surface &&
+    laneScale.get(publishKey(display, surface)) === secureRectangleScale() &&
+    sameRectangles(previous.rectangles, rectangles)
+  ) {
+    return;
+  }
+
   // Validation first, before the entry changes.
   flattenSecureRectangles(rectangles, secureRectangleScale());
 
-  const previous = owners.get(owner);
   // A copy: the caller keeps its array and objects, and an edit through them
   // must not change what a later publish for some other owner sends.
   owners.set(owner, {
