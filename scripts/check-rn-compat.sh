@@ -244,6 +244,30 @@ do
 done
 echo "    Offscreen's hidden signal (memoizedState) and the SimpleMemo/Offscreen tag numbers are unchanged in both renderer bundles"
 
+# (5) <BugseeSecure>'s ancestry (src/secure/ancestry.ts, #86) reads an
+# ancestor host's committed props off the `canonical` object both fibers of
+# a Fabric host share, which the renderer keeps current with an assignment
+# to `canonical.currentProps`; it reads a hidden Offscreen off the
+# `OffscreenVisible` bit (1) the commit phase clears on the shared instance
+# (`_visibility & ~OffscreenVisible` in dev, `_visibility & -2` once
+# minified); and it knows a ScrollView's viewport by its host type names.
+for RENDERER_BUNDLE in \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-dev.js" \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-prod.js"
+do
+  BUNDLE_NAME="$(basename "$RENDERER_BUNDLE")"
+  grep -qE 'canonical\.currentProps = ' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $BUNDLE_NAME no longer assigns canonical.currentProps"; exit 1; }
+  grep -qE '_visibility & (~OffscreenVisible|-2)' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $BUNDLE_NAME no longer clears the OffscreenVisible bit (1) of an Offscreen instance's _visibility"; exit 1; }
+done
+grep -qE "uiViewClassName: 'RCTScrollView'" "$RN_SRC/Libraries/Components/ScrollView/ScrollViewNativeComponent.js" \
+  || { echo "FAIL: ScrollViewNativeComponent.js no longer names its host RCTScrollView"; exit 1; }
+grep -qE "uiViewClassName: 'AndroidHorizontalScrollView'" \
+  "$RN_SRC/Libraries/Components/ScrollView/AndroidHorizontalScrollViewNativeComponent.js" \
+  || { echo "FAIL: AndroidHorizontalScrollViewNativeComponent.js no longer names its host AndroidHorizontalScrollView"; exit 1; }
+echo "    canonical.currentProps, the OffscreenVisible bit and the ScrollView host names are unchanged"
+
 echo "--- exception-handler internals guard"
 # Task 7.2: global ErrorUtils / promise-rejection capture depends on these
 # React Native surfaces staying put. Fail with a named reason the day any of
