@@ -3,10 +3,12 @@
  * (e2e/log-filter.test.ts).
  *
  * After `Launched` it installs `Bugsee.setLogFilter` and then calls
- * `Bugsee.log` on the next line, with no await between them. That first line
- * is rewritten. A second line is rewritten the same way. A third line's
- * callback never settles, so the SDK's own timeout drops it; this scenario
- * does not add a timeout that would pass the line through.
+ * `Bugsee.log` with `requiresFiltering` on the next line, with no await
+ * between them. That first line is rewritten. A second line is rewritten the
+ * same way. A third line's callback never settles, so the SDK's own timeout
+ * drops it; this scenario does not add a timeout that would pass the line
+ * through. A fourth line is sent without `requiresFiltering`, so the filter
+ * never sees it and it is recorded as sent.
  *
  * The upload waits long enough for the rewrite's round trip to be recorded,
  * and not long enough for a second, local timeout to matter: the recording
@@ -37,7 +39,8 @@ export function installLogFilter(nonce: string): void {
   Bugsee.setLogFilter((line) => {
     if (
       line.includes(`log-filter immediate ${nonce}`) ||
-      line.includes(`log-filter rewrite ${nonce}`)
+      line.includes(`log-filter rewrite ${nonce}`) ||
+      line.includes(`log-filter unfiltered ${nonce}`)
     ) {
       return line.replace('SECRET', 'REDACTED');
     }
@@ -55,13 +58,15 @@ export function installLogFilter(nonce: string): void {
  */
 export function runLogFilterScenario(nonce: string): void {
   installLogFilter(nonce);
-  Bugsee.log(`log-filter immediate ${nonce} SECRET`, LogLevel.Warning);
+  Bugsee.log(`log-filter immediate ${nonce} SECRET`, LogLevel.Warning, true);
   mark(`filter installed nonce=${nonce}`);
   mark(`immediate sent nonce=${nonce}`);
-  Bugsee.log(`log-filter rewrite ${nonce} SECRET`, LogLevel.Warning);
+  Bugsee.log(`log-filter rewrite ${nonce} SECRET`, LogLevel.Warning, true);
   mark(`rewrite sent nonce=${nonce}`);
-  Bugsee.log(`log-filter hang ${nonce} SECRET`, LogLevel.Warning);
+  Bugsee.log(`log-filter hang ${nonce} SECRET`, LogLevel.Warning, true);
   mark(`hang sent nonce=${nonce}`);
+  Bugsee.log(`log-filter unfiltered ${nonce} SECRET`, LogLevel.Warning);
+  mark(`unfiltered sent nonce=${nonce}`);
   setTimeout(() => {
     Bugsee.upload(`log-filter-${nonce}`, '');
     mark(`uploaded nonce=${nonce}`);

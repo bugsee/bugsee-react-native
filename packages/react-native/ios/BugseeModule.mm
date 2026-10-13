@@ -1541,8 +1541,8 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 
 /// The app's own `Bugsee.log()` line, through the SDK's public `+[Bugsee
 /// log:level:requiresFiltering:]` -- not the wrapper channel, which records
-/// nothing with `capture.logs` off. `requiresFiltering:YES` keeps the app's log
-/// filter on these lines, as it was while they went through the channel.
+/// nothing with `capture.logs` off. `requiresFiltering` is the app's choice,
+/// passed through: the app's log filter runs on the line only when it is YES.
 ///
 /// Not a channel line, so no `BGSRNBeginChannelLine`: the echo drop in the log
 /// filter never takes a line that is neither stdout/stderr nor a console stamp.
@@ -1552,10 +1552,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// thread too, and `wrapperLog:` reached the same SDK log core from this queue.
 /// Staying here keeps these lines in JS order with the console lines.
 - (void)log:(NSString *)message
-      level:(double)level {
+                level:(double)level
+    requiresFiltering:(BOOL)requiresFiltering {
   [Bugsee log:message
                   level:BGSRNLogLevelForWireValue((NSInteger)llround(level))
-      requiresFiltering:YES];
+      requiresFiltering:requiresFiltering];
 }
 
 /// Forwards a JS log line through the wrapper channel (tag nil,

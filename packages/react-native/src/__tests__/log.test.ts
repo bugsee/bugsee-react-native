@@ -13,20 +13,42 @@ describe('log', () => {
   it('sends message and level to the native log, not the channel', () => {
     Bugsee.log('a line', LogLevel.Warning);
     expect(native.log).toHaveBeenCalledTimes(1);
-    expect(native.log).toHaveBeenCalledWith('a line', 2);
+    expect(native.log).toHaveBeenCalledWith('a line', 2, false);
     expect(native.wrapperLog).not.toHaveBeenCalled();
   });
 
   it('defaults to Info (3)', () => {
     Bugsee.log('a line');
-    expect(native.log).toHaveBeenCalledWith('a line', LogLevel.Info);
+    expect(native.log).toHaveBeenCalledWith('a line', LogLevel.Info, false);
     expect(LogLevel.Info).toBe(3);
   });
 
   // Every value the level table defines crosses as itself, by value.
   it.each([1, 2, 3, 4, 5])('sends level %p unchanged', (level) => {
     Bugsee.log('a line', level as LogLevel);
-    expect(native.log).toHaveBeenCalledWith('a line', level);
+    expect(native.log).toHaveBeenCalledWith('a line', level, false);
+  });
+
+  // As in the native SDKs, the app's log filter skips an explicit line unless
+  // the app asks for it.
+  it('sends requiresFiltering as the app chose it, false by default', () => {
+    Bugsee.log('unfiltered', LogLevel.Info);
+    Bugsee.log('filtered', LogLevel.Info, true);
+    Bugsee.log('explicitly unfiltered', LogLevel.Info, false);
+    expect(native.log.mock.calls).toEqual([
+      ['unfiltered', 3, false],
+      ['filtered', 3, true],
+      ['explicitly unfiltered', 3, false],
+    ]);
+  });
+
+  it('rejects a non-boolean requiresFiltering before crossing', () => {
+    for (const flag of [null, 1, 'true', {}]) {
+      expect(() => Bugsee.log('a line', LogLevel.Info, flag as unknown as boolean)).toThrow(
+        new TypeError(`Bugsee.log requires requiresFiltering to be a boolean, got ${typeof flag}`),
+      );
+    }
+    expect(native.log).not.toHaveBeenCalled();
   });
 
   it('is a method on the default export', () => {
@@ -62,7 +84,7 @@ describe('log', () => {
   // An empty line is still a line; only the type is checked.
   it('sends an empty message', () => {
     Bugsee.log('');
-    expect(native.log).toHaveBeenCalledWith('', 3);
+    expect(native.log).toHaveBeenCalledWith('', 3, false);
   });
 
   // capture.logs turns off what is captured automatically: the console
@@ -79,7 +101,7 @@ describe('log', () => {
       installConsoleCapture({ 'com.bugsee.option.capture.logs': false });
       Bugsee.log('explicit');
       expect(native.log).toHaveBeenCalledTimes(1);
-      expect(native.log).toHaveBeenCalledWith('explicit', LogLevel.Info);
+      expect(native.log).toHaveBeenCalledWith('explicit', LogLevel.Info, false);
       console.log('from the patch');
       expect(native.log).toHaveBeenCalledTimes(1);
       expect(native.wrapperLog).not.toHaveBeenCalled();

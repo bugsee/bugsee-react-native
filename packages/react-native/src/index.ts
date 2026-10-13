@@ -409,11 +409,12 @@ class Bugsee {
    * One line into the Bugsee log: the app's own, through the native
    * `Bugsee.log` (source Bugsee, no tag). Recorded with
    * `com.bugsee.option.capture.logs` false, which turns off only what is
-   * captured automatically. Filtered natively by the app's log filter
-   * ({@link setLogFilter}), exactly once. Dropped before launch().
+   * captured automatically. The app's log filter ({@link setLogFilter}) runs
+   * on it natively, once, only when `requiresFiltering` is `true`; by
+   * default it does not, as in the native SDKs. Dropped before launch().
    */
-  log(message: string, level: LogLevel = LogLevel.Info): void {
-    sendLog(message, level);
+  log(message: string, level: LogLevel = LogLevel.Info, requiresFiltering: boolean = false): void {
+    sendLog(message, level, requiresFiltering);
   }
 
   /**

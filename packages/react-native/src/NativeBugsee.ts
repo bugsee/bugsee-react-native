@@ -210,16 +210,17 @@ export interface Spec extends TurboModule {
 
   /**
    * One line the app sent with `Bugsee.log()`, through the SDK's public
-   * `Bugsee.log` with `requiresFiltering` true: source `Bugsee`, no tag.
+   * `Bugsee.log`: source `Bugsee`, no tag.
    *
    * `level` is the SDK's by-value level, 1 Error .. 5 Verbose, already
    * checked in JS; native maps anything else to Info. `capture.logs` does not
-   * gate it. The app's log filter runs on it natively, once, as on a channel
-   * line. Fire-and-forget: before launch the SDK drops it.
+   * gate it. `requiresFiltering` is the app's choice, passed through: the
+   * app's log filter runs on the line, natively and once, only when it is
+   * `true`. Fire-and-forget: before launch the SDK drops it.
    *
    * `log` in `src/logs/log.ts` is its only caller.
    */
-  log(message: string, level: number): void;
+  log(message: string, level: number, requiresFiltering: boolean): void;
 
   /**
    * One log line into the SDK's wrapper channel, attributed to the wrapper
