@@ -13,10 +13,13 @@
  *                   compares them with the rectangles native says it was
  *                   given (`BugseeRN secure published ... raw=`).
  *   secure-perf     20 `<BugseeSecure>` in four horizontal ScrollViews, under
- *                   two `overflow: 'hidden'` views, in a vertical ScrollView,
- *                   scrolled every 400 ms. Every tick of the shared re-measure
- *                   loop is timed with `performance.now()` for 35 s and the
- *                   percentiles logged as `secure-perf result`.
+ *                   two `overflow: 'hidden'` views, in a vertical ScrollView;
+ *                   at rest all 20 are on screen. Every tick of the shared
+ *                   re-measure loop is timed with `performance.now()` for 40 s
+ *                   with nothing moving, then for 40 s with every ScrollView
+ *                   scrolled every 400 ms (moving views partly and fully out
+ *                   of sight), and each mode's percentiles logged as
+ *                   `secure-perf result`.
  *
  * The perf hook is the app's own, not the package's: while the 20 views mount
  * (their layout effects start the loop's one interval), `setInterval` is
@@ -40,8 +43,8 @@ export function isSecureVisibleScenario(name: string): name is SecureVisibleScen
 const REMEASURE_MS = 100;
 /** From a change to the marker: several re-measures, all settled. */
 const SETTLE_MS = 1_200;
-/** How long secure-perf times the loop for: 350 ticks at 100 ms. */
-const PERF_MS = 35_000;
+/** How long secure-perf times the loop for: 400 ticks at 100 ms, 300 at the least. */
+const PERF_MS = 40_000;
 const PERF_WARMUP_MS = 2_000;
 
 function mark(message: string): void {
@@ -189,7 +192,7 @@ function PerfSecures({ rows }: { rows: { current: Array<ScrollView | null> } }) 
           style={styles.row}
           contentContainerStyle={styles.wide}>
           {Array.from({ length: PER_ROW }, (__, i) => (
-            <BugseeSecure key={i} style={[styles.perfSecure, { left: 10 + 280 * i }]} />
+            <BugseeSecure key={i} style={[styles.perfSecure, { left: 10 + 78 * i }]} />
           ))}
         </ScrollView>
       ))}
@@ -212,28 +215,36 @@ function SecurePerfProbe({ nonce }: { nonce: string }) {
       return undefined;
     }
     let cancelled = false;
+    let scroller: ReturnType<typeof setInterval> | undefined;
     const offsets = [0, 250, 700, 1200];
     let step = 0;
-    const scroller = setInterval(() => {
-      step += 1;
-      outer.current?.scrollTo({ y: offsets[step % offsets.length], animated: false });
-      rows.current.forEach((row, index) => row?.scrollTo({ x: ((step + index) % 3) * 300, animated: false }));
-    }, 400);
-    (async () => {
-      await sleep(PERF_WARMUP_MS);
+    const f = (value: number) => value.toFixed(3);
+    const timeFor = async (mode: string) => {
       tickDurations.length = 0;
       await sleep(PERF_MS);
+      const sorted = [...tickDurations].sort((a, b) => a - b);
+      const mean = sorted.reduce((sum, value) => sum + value, 0) / sorted.length;
+      mark(
+        `secure-perf result mode=${mode} ticks=${sorted.length} intervals=${timedIntervals} ` +
+          `secures=${ROWS * PER_ROW} p50=${f(percentile(sorted, 50))} p95=${f(percentile(sorted, 95))} ` +
+          `p99=${f(percentile(sorted, 99))} max=${f(sorted[sorted.length - 1] ?? Number.NaN)} mean=${f(mean)} ` +
+          `dev=${String(__DEV__)} nonce=${nonce}`,
+      );
+    };
+    (async () => {
+      await sleep(PERF_WARMUP_MS);
+      // Nothing moves: the cost of re-measuring alone.
+      await timeFor('static');
       if (cancelled) {
         return;
       }
-      const sorted = [...tickDurations].sort((a, b) => a - b);
-      const mean = sorted.reduce((sum, value) => sum + value, 0) / sorted.length;
-      const f = (value: number) => value.toFixed(3);
-      mark(
-        `secure-perf result ticks=${sorted.length} intervals=${timedIntervals} secures=${ROWS * PER_ROW} ` +
-          `p50=${f(percentile(sorted, 50))} p95=${f(percentile(sorted, 95))} p99=${f(percentile(sorted, 99))} ` +
-          `max=${f(sorted[sorted.length - 1] ?? Number.NaN)} mean=${f(mean)} dev=${String(__DEV__)} nonce=${nonce}`,
-      );
+      // Everything moves every 400 ms: re-measuring plus the publishes.
+      scroller = setInterval(() => {
+        step += 1;
+        outer.current?.scrollTo({ y: offsets[step % offsets.length], animated: false });
+        rows.current.forEach((row, index) => row?.scrollTo({ x: ((step + index) % 3) * 300, animated: false }));
+      }, 400);
+      await timeFor('scrolling');
     })().catch((error: unknown) => {
       mark(`secure-perf threw ${String(error)} nonce=${nonce}`);
     });
@@ -267,7 +278,7 @@ const styles = StyleSheet.create({
   perfTall: { height: 3000 },
   clipOuter: { overflow: 'hidden', margin: 10, height: 2800 },
   clipInner: { overflow: 'hidden', margin: 10, flex: 1 },
-  row: { height: 160, marginBottom: 400 },
-  wide: { width: 1500, height: 160 },
-  perfSecure: { position: 'absolute', top: 20, width: 200, height: 100, backgroundColor: '#EEEEEE' },
+  row: { height: 70, flexGrow: 0, marginBottom: 10 },
+  wide: { width: 1500, height: 70 },
+  perfSecure: { position: 'absolute', top: 10, width: 70, height: 40, backgroundColor: '#EEEEEE' },
 });
