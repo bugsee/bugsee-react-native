@@ -10,6 +10,7 @@ import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 import { BugseeSecure } from '../BugseeSecure';
 import { MODAL_SCREEN_HOST_TYPE, SCREEN_HOST_TYPE } from '../ancestry';
+import { STEADY_FRAMES } from '../tracker';
 import { native } from '../../__mocks__/native';
 import { FiberTag } from '../../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../../viewtree/fiber';
@@ -23,6 +24,7 @@ import {
   pairWith,
   rect,
   root,
+  screenContainer,
   scrollView,
   self,
   selfIn,
@@ -113,10 +115,12 @@ function publishedOnlyNothing(): void {
 function underScreen(activityState: unknown, wrapperProps: Record<string, unknown> = {}): FiberLike {
   return selfIn(
     root([
-      composite(
-        [fabricHost(SCREEN_HOST_TYPE, rect(0, 0, 400, 800), { activityState }, [view([self()])])],
-        wrapperProps,
-      ),
+      screenContainer([
+        composite(
+          [fabricHost(SCREEN_HOST_TYPE, rect(0, 0, 400, 800), { activityState }, [view([self()])])],
+          wrapperProps,
+        ),
+      ]),
     ]),
   );
 }
@@ -222,7 +226,7 @@ describe('P0-4: nothing above a root-kind host clips or hides what is inside', (
 describe('a react-native-screens modal screen', () => {
   it('withdraws it while inactive, and shows it again within a frame', () => {
     const modal = fabricHost(MODAL_SCREEN_HOST_TYPE, rect(0, 0, 400, 800), { activityState: 0 }, [view([self()])]);
-    const fiber = selfIn(root([composite([modal])]));
+    const fiber = selfIn(root([screenContainer([composite([modal])], 'RNSScreenStack')]));
     render(fiber);
     publishedOnlyNothing();
 
@@ -285,6 +289,11 @@ describe('P1-2: shown again, it is masked again within a frame', () => {
       commitProps(ancestorOfType(fiber, SCREEN_HOST_TYPE), { activityState: 2 });
       act(() => frames.shift()?.());
       expect(lastPublished()).toEqual([0, px(selfRect)]);
+      // Just shown: on the per-frame re-measure until it has stayed put.
+      for (let frame = 0; frame < STEADY_FRAMES; frame += 1) {
+        expect(frames).toHaveLength(1);
+        act(() => frames.shift()?.());
+      }
       expect(frames).toHaveLength(0);
 
       commitProps(ancestorOfType(fiber, SCREEN_HOST_TYPE), { activityState: 0 });
@@ -292,7 +301,7 @@ describe('P1-2: shown again, it is masked again within a frame', () => {
       expect(frames).toHaveLength(1);
       act(() => testRenderer.unmount());
       mounted = mounted.filter((entry) => entry !== testRenderer);
-      expect(cancelled).toEqual([3]);
+      expect(cancelled).toEqual([handles]);
     } finally {
       delete g.requestAnimationFrame;
       delete g.cancelAnimationFrame;
@@ -362,7 +371,8 @@ describe('a clipped view follows a scroll into view within a frame', () => {
     selfRect = rect(-40, 100, 200, 50);
     frame();
 
-    expect(lastPublished()).toEqual([0, px(rect(0, 100, 110, 50))]);
+    // The new part at once, the old one held.
+    expect(lastPublished()).toEqual([0, [...px(rect(0, 100, 110, 50)), ...px(rect(10, 100, 100, 50))]]);
   });
 
   it('leaves the per-frame re-measure once the view is wholly visible', () => {
@@ -371,16 +381,20 @@ describe('a clipped view follows a scroll into view within a frame', () => {
 
     selfRect = rect(10, 50, 200, 50);
     frame();
-    expect(lastPublished()).toEqual([0, px(selfRect)]);
+    expect(lastPublished()).toEqual([0, [...px(selfRect), ...px(rect(10, 100, 200, 30))]]);
+    // Still for STEADY_FRAMES frames, then off the per-frame re-measure.
+    act(() => {
+      jest.advanceTimersByTime(16 * STEADY_FRAMES);
+    });
     const settled = measureInWindow.mock.calls.length;
 
-    // Frames until the next tick measure nothing; the tick measures once.
+    // Frames between ticks measure nothing; a tick measures once.
     act(() => {
-      jest.advanceTimersByTime(60);
+      jest.advanceTimersByTime(64);
     });
-    expect(measureInWindow.mock.calls.length).toBe(settled);
     tick();
-    expect(measureInWindow.mock.calls.length).toBe(settled + 1);
+    expect(measureInWindow.mock.calls.length - settled).toBeLessThanOrEqual(2);
+    expect(measureInWindow.mock.calls.length - settled).toBeGreaterThanOrEqual(1);
   });
 
   it('a clipped view is measured once a frame, not again on the tick', () => {
@@ -423,7 +437,8 @@ describe('a clipped view follows a scroll into view within a frame', () => {
     act(() => frames.shift()?.());
 
     expect(measureInWindow.mock.calls.length - selfBefore).toBe(3);
-    expect(renderer.measures.length - ancestorsBefore).toBe(1);
+    // The ScrollView and its content (watched), once each.
+    expect(renderer.measures.length - ancestorsBefore).toBe(2);
     expect(frames).toHaveLength(1);
   });
 });

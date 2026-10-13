@@ -13,6 +13,7 @@ import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 import { BugseeSecure } from '../BugseeSecure';
 import { SCREEN_HOST_TYPE } from '../ancestry';
+import { SECURE_SHRINK_HOLD_MS } from '../hold';
 import { MODAL_HOST_TYPE } from '../surface';
 import { native } from '../../__mocks__/native';
 import type { FiberLike, WindowRect } from '../../viewtree/fiber';
@@ -24,6 +25,7 @@ import {
   moveTo,
   rect,
   root,
+  screenContainer,
   scrollView,
   self,
   selfIn,
@@ -94,6 +96,13 @@ function tick(times = 1): void {
   });
 }
 
+/** Past SECURE_SHRINK_HOLD_MS (and its 100 ms window), with ticks and frames running. */
+function hold(): void {
+  act(() => {
+    jest.advanceTimersByTime(SECURE_SHRINK_HOLD_MS + 200);
+  });
+}
+
 /** One frame of the per-frame re-measure (its 16 ms timer fallback here). */
 function frame(): void {
   act(() => {
@@ -128,10 +137,14 @@ describe('<BugseeSecure> clipping', () => {
     render(selfIn(root([scrollView(rect(0, 0, 400, 130), [self()])])));
     expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 30))]);
 
+    // Scrolled out: what it covered is held for SECURE_SHRINK_HOLD_MS, then goes.
     selfRect = rect(10, 140, 200, 50);
-    tick();
+    frame();
+    expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 30))]);
+    hold();
     expect(lastPublished()).toEqual([0, []]);
 
+    // Back: covered again at once.
     selfRect = rect(10, 120, 200, 50);
     tick();
     expect(lastPublished()).toEqual([0, px(rect(10, 120, 200, 10))]);
@@ -157,7 +170,9 @@ describe('<BugseeSecure> clipping', () => {
 
     moveTo(ancestorOfType(fiber, 'RCTScrollView'), rect(0, 0, 400, 125));
     tick();
+    expect(lastPublished()).toEqual([0, [...px(rect(10, 100, 200, 25)), ...px(selfRect)]]);
 
+    hold();
     expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 25))]);
   });
 
@@ -182,10 +197,11 @@ describe('<BugseeSecure> clipping', () => {
     mounted.push(testRenderer as ReactTestRenderer);
     const before = renderer.measures.length;
 
-    // Both are clipped, so both are on the per-frame re-measure.
+    // Both are clipped, so both are on the per-frame re-measure: the
+    // ScrollView's content (watched) and the ScrollView, once each.
     frame();
 
-    expect(renderer.measures.length - before).toBe(1);
+    expect(renderer.measures.length - before).toBe(2);
     expect(lastPublished()).toEqual([0, [...px(rect(10, 100, 200, 30)), ...px(rect(10, 100, 200, 30))]]);
   });
 
@@ -199,28 +215,34 @@ describe('<BugseeSecure> clipping', () => {
     frame();
 
     expect(measureInWindow.mock.calls.length - selfBefore).toBe(1);
-    expect(renderer.measures.length - ancestorsBefore).toBe(2);
-    expect(native.setSecureRectangles.mock.calls).toEqual([[0, px(rect(10, 90, 200, 40))]]);
+    // Two ScrollViews and the two content containers watched under them.
+    expect(renderer.measures.length - ancestorsBefore).toBe(4);
+    expect(native.setSecureRectangles.mock.calls).toEqual([
+      [0, [...px(rect(10, 90, 200, 40)), ...px(rect(10, 100, 200, 30))]],
+    ]);
   });
 });
 
 describe('<BugseeSecure> while hidden', () => {
   /** A secure view under an RNSScreen with `activityState`. */
   function underScreen(activityState: number): FiberLike {
-    return selfIn(root([fabricHost(SCREEN_HOST_TYPE, rect(0, 0, 400, 800), { activityState }, [view([self()])])]));
+    const screen = fabricHost(SCREEN_HOST_TYPE, rect(0, 0, 400, 800), { activityState }, [view([self()])]);
+    return selfIn(root([screenContainer([screen])]));
   }
 
-  it('an inactive react-native-screens screen withdraws it, and an active one brings it back', () => {
+  it('an inactive screen withdraws it once held long enough, and an active one brings it back', () => {
     const fiber = underScreen(2);
     render(fiber);
     expect(lastPublished()).toEqual([0, px(selfRect)]);
 
     commitProps(ancestorOfType(fiber, SCREEN_HOST_TYPE), { activityState: 0 });
     tick();
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+    hold();
     expect(lastPublished()).toEqual([0, []]);
 
     commitProps(ancestorOfType(fiber, SCREEN_HOST_TYPE), { activityState: 2 });
-    tick();
+    frame();
     expect(lastPublished()).toEqual([0, px(selfRect)]);
   });
 
@@ -235,18 +257,19 @@ describe('<BugseeSecure> while hidden', () => {
 
   it('measures nothing while hidden, and withdraws once', () => {
     const screen = fabricHost(SCREEN_HOST_TYPE, null, { activityState: 2 }, [self()]);
-    const fiber = selfIn(root([scrollView(rect(0, 0, 400, 800), [screen])]));
+    const fiber = selfIn(root([scrollView(rect(0, 0, 400, 800), [screenContainer([screen])])]));
     render(fiber);
     commitProps(ancestorOfType(fiber, SCREEN_HOST_TYPE), { activityState: 0 });
     measureInWindow.mockClear();
     renderer.measures = [];
     native.setSecureRectangles.mockClear();
 
-    tick(5);
+    // A tick to see it hidden, then the hold.
+    tick(9);
 
     expect(measureInWindow).not.toHaveBeenCalled();
     expect(renderer.measures).toEqual([]);
-    // The registry sends only a change across the bridge.
+    // Held, then withdrawn; the registry sends only a change across the bridge.
     expect(native.setSecureRectangles.mock.calls).toEqual([[0, []]]);
   });
 });

@@ -10,14 +10,18 @@ import type { FiberLike } from '../../viewtree/fiber';
 import {
   MODAL_SCREEN_HOST_TYPE,
   ROOT_KIND_HOST_TYPES,
+  SCREEN_CONTAINER_HOST_TYPES,
   SCREEN_HOST_TYPE,
   SCROLL_HOST_TYPES,
   ancestryOfFiber,
   ancestryOfInstance,
   clipToAncestors,
+  clipWatchNodes,
   isHidden,
+  measureFiber,
   measurePass,
   noAncestry,
+  screensHide,
   styleValue,
 } from '../ancestry';
 import type { Ancestry } from '../ancestry';
@@ -33,6 +37,7 @@ import {
   rect,
   root,
   scrollView,
+  screenContainer,
   self,
   selfIn,
   selvesIn,
@@ -66,13 +71,17 @@ const types = (ancestry: Ancestry): unknown[] => ancestry.hosts.map((host) => an
 /** A secure view under an RNSScreen with committed `activityState`, inside a wrapper with `wrapperProps`. */
 function underScreen(activityState: unknown, wrapperProps: Record<string, unknown> = {}): FiberLike {
   return selfIn(
-    root([composite([fabricHost(SCREEN_HOST_TYPE, null, { activityState }, [view([self()])])], wrapperProps)]),
+    root([
+      screenContainer([
+        composite([fabricHost(SCREEN_HOST_TYPE, null, { activityState }, [view([self()])])], wrapperProps),
+      ]),
+    ]),
   );
 }
 
 /** An RNSScreen whose committed `activityState` is 0, over `children`. */
 const inactive = (children: Parameters<typeof fabricHost>[3]) =>
-  fabricHost(SCREEN_HOST_TYPE, null, { activityState: 0 }, children);
+  screenContainer([fabricHost(SCREEN_HOST_TYPE, null, { activityState: 0 }, children)]);
 
 describe('ancestryOfFiber', () => {
   it('keeps the whole path to the root, and the hosts on it nearest first', () => {
@@ -134,6 +143,7 @@ describe('ancestryOfFiber', () => {
       'RNSFullWindowOverlay',
       'RNSModalScreen',
       'RNSSplitScreen',
+      'RNSFormSheetHost',
     ]);
   });
 
@@ -164,7 +174,7 @@ describe('ancestryOfFiber', () => {
   it('starts every host unread and unmeasured', () => {
     const [host] = ancestryIn(root([view([self()])])).hosts;
 
-    expect(host).toMatchObject({ inactive: false, clips: false, instance: undefined });
+    expect(host).toMatchObject({ clips: false, instance: undefined });
     expect(typeof host?.props).toBe('symbol');
   });
 
@@ -209,7 +219,7 @@ describe('ancestryOfInstance', () => {
   it('noAncestry hides nothing and clips nothing', () => {
     const none = noAncestry();
 
-    expect(none).toEqual({ path: [], root: null, hosts: [], readable: false });
+    expect(none).toEqual({ path: [], root: null, hosts: [], screens: [], readable: false });
     expect(isHidden(none)).toBe(false);
     expect(clipToAncestors(rect(1, 2, 3, 4), none)).toEqual(rect(1, 2, 3, 4));
     expect(noAncestry()).not.toBe(none);
@@ -255,7 +265,8 @@ describe('isHidden', () => {
     /** A secure view in an RNSModalScreen with `props`, in a clipping ScrollView under an inactive screen. */
     function inModal(props: Record<string, unknown>, wrapperProps: Record<string, unknown> = {}): Ancestry {
       const modal = fabricHost(MODAL_SCREEN_HOST_TYPE, null, props, [view([self()])]);
-      return ancestryIn(root([inactive([scrollView(null, [composite([modal], wrapperProps)])])]));
+      const stack = screenContainer([composite([modal], wrapperProps)], 'RNSScreenStack');
+      return ancestryIn(root([inactive([scrollView(null, [stack])])]));
     }
 
     it.each([
@@ -289,7 +300,7 @@ describe('isHidden', () => {
     const ancestry = ancestryOfFiber(fiber);
 
     expect(isHidden(ancestry)).toBe(true);
-    expect(ancestry.hosts.map((host) => host.clips)).toEqual([true, false]);
+    expect(ancestry.hosts.map((host) => host.clips)).toEqual([true, false, false]);
   });
 
   it('a hidden display or Offscreen hides nothing: the shadow tree measures it 0x0', () => {
@@ -333,7 +344,7 @@ describe('isHidden', () => {
 
     it('above the next host up is not the screen’s', () => {
       const screen = fabricHost(SCREEN_HOST_TYPE, null, { activityState: 0 }, [view([self()])]);
-      const fiber = selfIn(root([composite([view([screen])], { activityState: { __getValue: () => 0 } })]));
+      const fiber = selfIn(root([composite([screenContainer([screen])], { activityState: { __getValue: () => 0 } })]));
 
       expect(isHidden(ancestryOfFiber(fiber))).toBe(true);
     });
@@ -839,5 +850,292 @@ describe('clipToAncestors', () => {
       expect(clipToAncestors(measured, ancestry)).toBe(measured);
       expect(renderer.measures).toEqual([]);
     });
+  });
+});
+
+// Round 3 of the review of #87.
+describe('round 3', () => {
+  it('a HostPortal ends the walk like a root-kind host', () => {
+    const portal = { tag: FiberTag.HostPortal, type: null, children: [view([self()])] };
+    const ancestry = ancestryIn(root([inactive([scrollView(rect(0, 0, 1, 1), [portal])])]));
+
+    expect(types(ancestry)).toEqual(['RCTView']);
+    expect(isHidden(ancestry)).toBe(false);
+  });
+
+  it('knows the containers that detach inactive screens', () => {
+    expect([...SCREEN_CONTAINER_HOST_TYPES]).toEqual([
+      'RNSScreenContainer',
+      'RNSScreenNavigationContainer',
+      'RNSScreenStack',
+    ]);
+  });
+
+  it.each([...SCREEN_CONTAINER_HOST_TYPES])('a screen 0 under %s hides', (type) => {
+    const screen = fabricHost(SCREEN_HOST_TYPE, null, { activityState: 0 }, [view([self()])]);
+
+    expect(isHidden(ancestryIn(root([screenContainer([composite([screen])], type as string)])))).toBe(true);
+  });
+
+  it.each([
+    ['a plain view', (children: Parameters<typeof view>[0]) => view(children)],
+    ['nothing at all', (children: Parameters<typeof view>[0]) => composite(children)],
+  ])('a screen 0 under %s hides nothing', (_, above) => {
+    const screen = fabricHost(SCREEN_HOST_TYPE, null, { activityState: 0 }, [view([self()])]);
+
+    expect(isHidden(ancestryIn(root([above([screen])])))).toBe(false);
+  });
+
+  it('reads a host again after a read that threw', () => {
+    let throws = true;
+    const props = {
+      get style(): unknown {
+        if (throws) {
+          throw new Error('torn props');
+        }
+        return { overflow: 'hidden' };
+      },
+    };
+    const fiber = selfIn(root([view([self()])]));
+    commitProps(ancestorOfType(fiber, 'RCTView'), props);
+    const ancestry = ancestryOfFiber(fiber);
+
+    expect(isHidden(ancestry)).toBe(false);
+    expect(ancestry.readable).toBe(false);
+    throws = false;
+    isHidden(ancestry);
+
+    expect(ancestry.hosts[0]!.clips).toBe(true);
+  });
+
+  describe('screensHide', () => {
+    it('is false with no screen', () => {
+      expect(screensHide(ancestryIn(root([view([self()])])))).toBe(false);
+    });
+
+    it('answers as isHidden does for the screens', () => {
+      expect(screensHide(ancestryOfFiber(underScreen(0)))).toBe(true);
+      expect(screensHide(ancestryOfFiber(underScreen(2)))).toBe(false);
+      expect(screensHide(ancestryOfFiber(underScreen(0, { activityState: { __getValue: () => 0 } })))).toBe(false);
+    });
+
+    it('reads the committed fiber, not one in flight', () => {
+      const fiber = underScreen(2);
+      pairWith(ancestorOfType(fiber, SCREEN_HOST_TYPE), { activityState: 0 }, true);
+
+      expect(screensHide(ancestryOfFiber(fiber))).toBe(false);
+    });
+
+    it('is false when the path does not resolve, or a read throws', () => {
+      const unresolved = ancestryOfFiber(underScreen(0));
+      (unresolved.root as { current: unknown }).current = null;
+      expect(screensHide(unresolved)).toBe(false);
+
+      const fiber = underScreen(0);
+      commitProps(ancestorOfType(fiber, SCREEN_HOST_TYPE), {
+        get activityState(): never {
+          throw new Error('torn props');
+        },
+      });
+      expect(screensHide(ancestryOfFiber(fiber))).toBe(false);
+    });
+
+    it('resolves only down to the nearest screen, not the view below it', () => {
+      const fiber = underScreen(0);
+      const ancestry = ancestryOfFiber(fiber);
+      // Below the screen, the committed tree no longer holds the view's parent.
+      ancestorOfType(fiber, SCREEN_HOST_TYPE).child = null;
+
+      expect(screensHide(ancestry)).toBe(true);
+      expect(isHidden(ancestry)).toBe(false);
+    });
+
+    it('answers once a pass for every view under the same screen, by either fiber of it', () => {
+      const fibers = selvesIn(root([inactive([view([self()]), view([self()])])]));
+      const screen = ancestorOfType(fibers[0]!, SCREEN_HOST_TYPE);
+      const other = pairWith(screen, { activityState: 0 });
+      fibers[0]!.return!.return = other;
+      fibers[1]!.return!.return = screen;
+      const [first, second] = fibers.map((fiber) => ancestryOfFiber(fiber));
+      let reads = 0;
+      const container = screen.return!;
+      const children = container.child;
+      Object.defineProperty(container, 'child', {
+        get(): FiberLike | null {
+          reads += 1;
+          return children;
+        },
+      });
+
+      measurePass(() => {
+        expect([screensHide(first!), screensHide(second!)]).toEqual([true, true]);
+      });
+      expect(reads).toBe(1);
+
+      screensHide(first!);
+      screensHide(second!);
+      expect(reads).toBe(3);
+    });
+  });
+
+  describe('clipWatchNodes', () => {
+    it("is a ScrollView's content container, or the clipping view itself", () => {
+      const clipping = fabricHost('RCTView', null, { style: { overflow: 'hidden' } }, [scrollView(null, [self()])]);
+      const fiber = selfIn(root([clipping]));
+      const ancestry = ancestryOfFiber(fiber);
+      isHidden(ancestry);
+
+      expect(clipWatchNodes(ancestry).map((node) => node.type)).toEqual(['RCTScrollContentView', 'RCTView']);
+      expect(clipWatchNodes(ancestry)[0]).toBe(ancestorOfType(fiber, 'RCTScrollContentView'));
+    });
+
+    it('is the ScrollView itself when what is below it is not a host', () => {
+      const scroll = fabricHost('RCTScrollView', null, {}, [composite([self()])]);
+      const ancestry = ancestryIn(root([scroll]));
+      isHidden(ancestry);
+
+      expect(clipWatchNodes(ancestry).map((node) => node.type)).toEqual(['RCTScrollView']);
+    });
+
+    it('is nothing when nothing clips, or the last read was not complete', () => {
+      const ancestry = ancestryIn(root([view([self()])]));
+      isHidden(ancestry);
+      expect(clipWatchNodes(ancestry)).toEqual([]);
+
+      const unread = ancestryIn(root([scrollView(null, [self()])]));
+      expect(clipWatchNodes(unread)).toEqual([]);
+    });
+  });
+
+  describe('measureFiber', () => {
+    it('looks a fiber’s instance up once, and measures once a pass', () => {
+      const fiber = ancestorOfType(selfIn(root([scrollView(rect(0, 0, 400, 120), [self()])])), 'RCTScrollView');
+
+      expect(measureFiber(fiber)).toEqual(rect(0, 0, 400, 120));
+      measurePass(() => {
+        measureFiber(fiber);
+        measureFiber(fiber);
+      });
+
+      expect(renderer.lookups).toHaveLength(1);
+      expect(renderer.measures).toHaveLength(2);
+    });
+
+    it('answers 0/0/0/0 as null and silence as undefined', () => {
+      const zero = ancestorOfType(selfIn(root([scrollView(rect(0, 0, 0, 0), [self()])])), 'RCTScrollView');
+      const silent = ancestorOfType(selfIn(root([scrollView(null, [self()])])), 'RCTScrollView');
+
+      expect(measureFiber(zero)).toBeNull();
+      expect(measureFiber(silent)).toBeUndefined();
+    });
+  });
+
+  it('scans a long sibling list once a pass, not once per view in it', () => {
+    // 50 rows, each holding a secure view: the rows are siblings on the paths.
+    const fibers = selvesIn(root([view(Array.from({ length: 50 }, () => view([self()])))]));
+    const ancestries = fibers.map((fiber) => ancestryOfFiber(fiber));
+    let reads = 0;
+    for (let row = fibers[0]!.return!.return!.child; row !== null; ) {
+      const next: FiberLike | null = row.sibling;
+      Object.defineProperty(row, 'sibling', {
+        get(): FiberLike | null {
+          reads += 1;
+          return next;
+        },
+      });
+      row = next;
+    }
+
+    measurePass(() => ancestries.forEach((ancestry) => expect(isHidden(ancestry)).toBe(false)));
+
+    expect(ancestries.every((ancestry) => ancestry.readable)).toBe(true);
+    expect(reads).toBe(50);
+  });
+
+});
+
+describe('round 3: edges', () => {
+  it('a stored pair neither of which is in the committed tree does not resolve', () => {
+    const fiber = underScreen(0);
+    const screen = ancestorOfType(fiber, SCREEN_HOST_TYPE);
+    pairWith(screen, { activityState: 0 });
+    const ancestry = ancestryOfFiber(fiber);
+    (screen.return as FiberLike).child = null;
+
+    expect(isHidden(ancestry)).toBe(false);
+    expect(ancestry.readable).toBe(false);
+  });
+
+  it('the container above a screen is not read as the screen’s wrapper', () => {
+    const screen = fabricHost(SCREEN_HOST_TYPE, null, { activityState: 0 }, [view([self()])]);
+    const container = fabricHost('RNSScreenContainer', null, { activityState: { __getValue: () => 0 } }, [screen]);
+
+    expect(isHidden(ancestryIn(root([container])))).toBe(true);
+  });
+
+  it('hosts with no props at all are read, clip nothing and hide nothing', () => {
+    const fiber = selfIn(root([screenContainer([fabricHost(SCREEN_HOST_TYPE, null, {}, [view([self()])])])]));
+    commitProps(ancestorOfType(fiber, SCREEN_HOST_TYPE), null);
+    commitProps(ancestorOfType(fiber, 'RCTView'), null);
+    const ancestry = ancestryOfFiber(fiber);
+
+    expect(isHidden(ancestry)).toBe(false);
+    expect(ancestry.readable).toBe(true);
+  });
+
+  it('a screen with no host above it is read, and hides nothing', () => {
+    const ancestry = ancestryIn(root([fabricHost(SCREEN_HOST_TYPE, null, { activityState: 0 }, [view([self()])])]));
+
+    expect(isHidden(ancestry)).toBe(false);
+    expect(ancestry.readable).toBe(true);
+    expect(screensHide(ancestry)).toBe(false);
+  });
+
+  it('any inactive screen hides, not only when every one is', () => {
+    const inner = fabricHost(SCREEN_HOST_TYPE, null, { activityState: 0 }, [view([self()])]);
+    const outer = fabricHost(SCREEN_HOST_TYPE, null, { activityState: 2 }, [screenContainer([inner])]);
+    const ancestry = ancestryIn(root([screenContainer([outer])]));
+
+    expect(screensHide(ancestry)).toBe(true);
+    expect(isHidden(ancestry)).toBe(true);
+  });
+
+  it('screensHide reads the screen’s props once a pass for every view under it', () => {
+    const fibers = selvesIn(root([inactive([view([self()]), view([self()])])]));
+    const screen = ancestorOfType(fibers[0]!, SCREEN_HOST_TYPE);
+    let reads = 0;
+    const props = screen.memoizedProps;
+    Object.defineProperty(screen, 'memoizedProps', {
+      get(): unknown {
+        reads += 1;
+        return props;
+      },
+    });
+    const [first, second] = fibers.map((fiber) => ancestryOfFiber(fiber));
+
+    measurePass(() => {
+      screensHide(first!);
+      screensHide(second!);
+    });
+
+    expect(reads).toBe(1);
+  });
+
+  it('watches nothing once a read fails, whatever clipped before', () => {
+    const ancestry = ancestryIn(root([scrollView(null, [self()])]));
+    isHidden(ancestry);
+    expect(clipWatchNodes(ancestry)).toHaveLength(1);
+
+    (ancestry.root as { current: unknown }).current = null;
+    isHidden(ancestry);
+
+    expect(clipWatchNodes(ancestry)).toEqual([]);
+  });
+
+  it('watches a ScrollView itself when the view is its direct child', () => {
+    const ancestry = ancestryIn(root([fabricHost('RCTScrollView', null, {}, [self()])]));
+    isHidden(ancestry);
+
+    expect(clipWatchNodes(ancestry).map((node) => node.type)).toEqual(['RCTScrollView']);
   });
 });

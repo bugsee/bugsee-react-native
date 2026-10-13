@@ -290,3 +290,238 @@ describe('the shared per-frame re-measure', () => {
     expect([ticked.mock.calls.length, framed.mock.calls.length]).toEqual([1, 1]);
   });
 });
+
+// Round 3: what a static, clipped view costs is bounded. Its clipping nodes
+// are watched (once a frame each, whatever the number of views under them),
+// and the tick re-checks parked views in turn, a bounded number a tick.
+describe('watched nodes and parked views', () => {
+  const g = globalThis as { requestAnimationFrame?: unknown; cancelAnimationFrame?: unknown };
+  let where: Map<unknown, unknown>;
+  let measured: unknown[];
+
+  beforeEach(() => {
+    where = new Map();
+    measured = [];
+    jest.resetModules();
+    jest.doMock('../ancestry', () => ({
+      measurePass: (pass: () => void) => pass(),
+      measureFiber: (fiber: unknown) => {
+        measured.push(fiber);
+        const at = where.get(fiber);
+        if (at instanceof Error) {
+          throw at;
+        }
+        return at;
+      },
+    }));
+    loop = require('../measureLoop');
+  });
+
+  afterEach(() => {
+    jest.dontMock('../ancestry');
+    delete g.requestAnimationFrame;
+    delete g.cancelAnimationFrame;
+  });
+
+  const node = (): never => ({}) as never;
+  const frame = (): void => {
+    jest.advanceTimersByTime(loop.FRAME_MS);
+  };
+
+  it('measures a watched node once a frame, however many watch it, and wakes them when it moves', () => {
+    const content = node();
+    where.set(content, { x: 0, y: 0, width: 10, height: 10 });
+    const first = jest.fn();
+    const second = jest.fn();
+    loop.watchNode(content, first);
+    loop.watchNode(content, second);
+
+    frame();
+    frame();
+    expect(measured).toEqual([content, content]);
+    expect(first).not.toHaveBeenCalled();
+
+    where.set(content, { x: 0, y: -5, width: 10, height: 10 });
+    frame();
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['answers nothing', undefined],
+    ['answers 0/0/0/0', null],
+    ['throws', new Error('detached')],
+  ])('wakes when a node that answered goes on to %s, and when it comes back', (_, gone) => {
+    const content = node();
+    where.set(content, { x: 0, y: 0, width: 10, height: 10 });
+    const moved = jest.fn();
+    loop.watchNode(content, moved);
+    frame();
+
+    where.set(content, gone);
+    frame();
+    expect(moved).toHaveBeenCalledTimes(1);
+    frame();
+    expect(moved).toHaveBeenCalledTimes(1);
+
+    where.set(content, { x: 0, y: 0, width: 10, height: 10 });
+    frame();
+    expect(moved).toHaveBeenCalledTimes(2);
+  });
+
+  it('tells a node that stopped answering from one answering 0/0/0/0', () => {
+    const content = node();
+    const moved = jest.fn();
+    loop.watchNode(content, moved);
+    frame();
+
+    where.set(content, null);
+    frame();
+
+    expect(moved).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops measuring a node, and frames, once nothing watches it', () => {
+    const content = node();
+    const stopFirst = loop.watchNode(content, jest.fn());
+    const stopSecond = loop.watchNode(content, jest.fn());
+    frame();
+
+    stopFirst();
+    frame();
+    expect(measured).toHaveLength(2);
+    stopSecond();
+    stopSecond();
+    frame();
+    expect(measured).toHaveLength(2);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('a stale unwatch leaves a node watched again under the same fiber alone', () => {
+    const content = node();
+    const stop = loop.watchNode(content, jest.fn());
+    stop();
+    loop.watchNode(content, jest.fn());
+
+    stop();
+    frame();
+
+    expect(measured).toEqual([content]);
+  });
+
+  it('keeps frames running while a node is watched with no frame measurer', () => {
+    const content = node();
+    loop.watchNode(content, jest.fn());
+    const removeMeasurer = loop.addFrameMeasurer(jest.fn());
+    removeMeasurer();
+
+    frame();
+    frame();
+
+    expect(measured).toHaveLength(2);
+  });
+
+  it('keeps frames running while a frame measurer is left and no node is watched', () => {
+    const measure = jest.fn();
+    loop.addFrameMeasurer(measure);
+    loop.watchNode(node(), jest.fn())();
+
+    frame();
+    frame();
+
+    expect(measure).toHaveBeenCalledTimes(2);
+  });
+
+  it('wakes measurers in the same frame, before running the frame measurers', () => {
+    const content = node();
+    where.set(content, { x: 0, y: 0, width: 10, height: 10 });
+    const measure = jest.fn();
+    loop.watchNode(content, () => {
+      loop.addFrameMeasurer(measure);
+    });
+    frame();
+    where.set(content, { x: 0, y: 1, width: 10, height: 10 });
+
+    frame();
+
+    expect(measure).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the frames going when a measurer throws and so does the warning', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {
+      throw new Error('console gone');
+    });
+    const later = jest.fn();
+    loop.addFrameMeasurer(() => {
+      throw new Error('detached');
+    });
+    loop.addFrameMeasurer(later);
+
+    expect(() => frame()).toThrow('console gone');
+    // The next frame was still requested, and runs (and throws) again.
+    expect(jest.getTimerCount()).toBe(1);
+    expect(() => frame()).toThrow('console gone');
+    expect(jest.getTimerCount()).toBe(1);
+  });
+
+  it('re-checks parked views in turn, at most PARKED_CHECKS_PER_TICK a tick', () => {
+    expect(loop.PARKED_CHECKS_PER_TICK).toBe(32);
+    loop.addMeasurer(jest.fn());
+    const checks = Array.from({ length: 40 }, () => jest.fn());
+    checks.forEach((check) => loop.addParked(check));
+
+    jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
+    expect(checks.map((check) => check.mock.calls.length)).toEqual([...Array(32).fill(1), ...Array(8).fill(0)]);
+
+    jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
+    // From where it stopped, round to the start.
+    expect(checks.map((check) => check.mock.calls.length)).toEqual([...Array(24).fill(2), ...Array(16).fill(1)]);
+  });
+
+  it('checks every parked view every tick when there are few, and none once removed', () => {
+    loop.addMeasurer(jest.fn());
+    const first = jest.fn();
+    const second = jest.fn();
+    const removeFirst = loop.addParked(first);
+    loop.addParked(second);
+
+    jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS * 2);
+    expect([first.mock.calls.length, second.mock.calls.length]).toEqual([2, 2]);
+
+    removeFirst();
+    removeFirst();
+    jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
+    expect([first.mock.calls.length, second.mock.calls.length]).toEqual([2, 3]);
+  });
+
+  it('a parked check that throws does not stop the others', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    loop.addMeasurer(jest.fn());
+    const failure = new Error('detached');
+    loop.addParked(() => {
+      throw failure;
+    });
+    const later = jest.fn();
+    loop.addParked(later);
+
+    jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
+
+    expect(later).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[Bugsee] a secure-region measurer threw', failure.name);
+  });
+
+  it('a parked view removed during a tick does not shift the turns of the others', () => {
+    loop.addMeasurer(jest.fn());
+    let removeFirst: () => void = () => undefined;
+    const first = jest.fn(() => removeFirst());
+    const second = jest.fn();
+    removeFirst = loop.addParked(first);
+    loop.addParked(second);
+
+    jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
+    expect([first.mock.calls.length, second.mock.calls.length]).toEqual([1, 1]);
+
+    jest.advanceTimersByTime(loop.SECURE_REMEASURE_MS);
+    expect([first.mock.calls.length, second.mock.calls.length]).toEqual([1, 2]);
+  });
+});

@@ -56,7 +56,8 @@ export const SCROLL_HOST_TYPES: ReadonlySet<unknown> = new Set(['RCTScrollView',
  * {@link MODAL_SCREEN_HOST_TYPE} can hide it). React Native's `<Modal>` and
  * `<InputAccessoryView>` (the JS names are their `paperComponentName`s),
  * and react-native-screens' `FullWindowOverlay`, modal screen and split
- * screen.
+ * screen, plus its gamma form sheet host. A `HostPortal` fiber ends the walk
+ * the same way: its children are drawn in another container.
  */
 export const ROOT_KIND_HOST_TYPES: ReadonlySet<unknown> = new Set([
   'RCTModalHostView',
@@ -64,6 +65,8 @@ export const ROOT_KIND_HOST_TYPES: ReadonlySet<unknown> = new Set([
   'RNSFullWindowOverlay',
   'RNSModalScreen',
   'RNSSplitScreen',
+  // Not RootNodeKind, but its content is presented in a sheet of its own.
+  'RNSFormSheetHost',
 ]);
 
 /** react-native-screens' screen host (`ScreenNativeComponent`). */
@@ -75,6 +78,17 @@ export const SCREEN_HOST_TYPE = 'RNSScreen';
  * the walk: it can hide what is inside it, but never clips it.
  */
 export const MODAL_SCREEN_HOST_TYPE = 'RNSModalScreen';
+
+/**
+ * The react-native-screens containers whose screens `activityState` 0 really
+ * hides (detaches): a screen hides the view only when the nearest host above
+ * it is one of these. Anywhere else the prop proves nothing.
+ */
+export const SCREEN_CONTAINER_HOST_TYPES: ReadonlySet<unknown> = new Set([
+  'RNSScreenContainer',
+  'RNSScreenNavigationContainer',
+  'RNSScreenStack',
+]);
 
 /** `activityState` of an inactive react-native-screens screen. */
 const INACTIVE_SCREEN = 0;
@@ -96,10 +110,8 @@ interface HostAncestor {
   readonly screen: boolean;
   /** A root-kind host: it ends the walk and clips nothing. */
   readonly boundary: boolean;
-  /** The committed props object `inactive` and `clips` were last read from. */
+  /** The committed props object `clips` was last read from. */
   props: unknown;
-  /** A screen whose committed `activityState` is 0. */
-  inactive: boolean;
   clips: boolean;
   /** The host's public instance, looked up the first time it clips. */
   instance: { measureInWindow: MeasureInWindow } | undefined;
@@ -112,13 +124,15 @@ export interface Ancestry {
   readonly root: { current?: unknown } | null;
   /** The hosts below the nearest root-kind host, nearest first. */
   readonly hosts: readonly HostAncestor[];
+  /** The screens among `hosts`. */
+  readonly screens: readonly HostAncestor[];
   /** Whether the last {@link isHidden} read everything; `false` clips nothing. */
   readable: boolean;
 }
 
 /** Nothing above the view can be read: it is never hidden and never clipped. */
 export function noAncestry(): Ancestry {
-  return { path: [], root: null, hosts: [], readable: false };
+  return { path: [], root: null, hosts: [], screens: [], readable: false };
 }
 
 /**
@@ -132,6 +146,7 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
   let bounded = false;
   let current = fiber.return;
   for (let steps = 0; current != null && steps < MAX_ANCESTORS; steps += 1) {
+    bounded ||= current.tag === FiberTag.HostPortal;
     if (current.tag === FiberTag.HostComponent) {
       const below = hosts[hosts.length - 1];
       if (below !== undefined && below.above === MAX_ANCESTORS) {
@@ -146,7 +161,6 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
           screen: current.type === SCREEN_HOST_TYPE || current.type === MODAL_SCREEN_HOST_TYPE,
           boundary,
           props: UNREAD,
-          inactive: false,
           clips: false,
           instance: undefined,
         });
@@ -162,7 +176,7 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
   }
   const top = path[path.length - 1];
   const root = top?.tag === FiberTag.HostRoot ? (top.stateNode as { current?: unknown } | null) : null;
-  return { path, root, hosts, readable: false };
+  return { path, root, hosts, screens: hosts.filter((host) => host.screen), readable: false };
 }
 
 /**
@@ -181,29 +195,38 @@ export function ancestryOfInstance(instance: object): Ancestry {
 }
 
 /**
- * The current fiber of every stored ancestor resolved in the running
- * {@link measurePass}, keyed by both fibers of the pair: views that share
- * ancestors resolve them once a pass.
+ * Each current parent's children, collected in the running pass the first
+ * time any view looks among them, so views that are siblings in a long list
+ * scan that list once a pass rather than once each.
  */
-let passCurrent: Map<FiberLike | null | undefined, FiberLike> | undefined;
+let passChildren: Map<FiberLike, Set<FiberLike>> | undefined;
 
 /** The child of `parent` (a current fiber) that is `fiber` or its alternate, if any. */
 function currentChild(parent: FiberLike, fiber: FiberLike): FiberLike | undefined {
-  const alternate = fiber.alternate;
-  for (let child = parent.child; child != null; child = child.sibling) {
-    if (child === fiber || child === alternate) {
-      return child;
+  let children = passChildren?.get(parent);
+  if (children === undefined) {
+    children = new Set();
+    for (let child = parent.child; child != null; child = child.sibling) {
+      children.add(child);
     }
+    passChildren?.set(parent, children);
   }
-  return undefined;
+  // No child is null or undefined, so a missing alternate is never found.
+  const alternate = fiber.alternate as FiberLike;
+  return children.has(fiber) ? fiber : children.has(alternate) ? alternate : undefined;
 }
 
 /**
- * The current fiber of every fiber in `ancestry.path`, in the same order, or
+ * The current fiber of every fiber in `ancestry.path` from `downTo` up, in
+ * the same order (entries below `downTo` are left as the root), or
  * `undefined` when the path does not resolve against the committed tree.
  * Reads fibers only, which React never makes throw.
+ *
+ * Nothing is kept from one pass to the next: React keeps no commit count, and
+ * the root's `current` alternates between the same two fibers, so a cached
+ * level cannot be told apart from one two commits stale.
  */
-function resolve(ancestry: Ancestry): FiberLike[] | undefined {
+function resolve(ancestry: Ancestry, downTo = 0): FiberLike[] | undefined {
   const { path, root } = ancestry;
   // A root exists only on a path that ends at one.
   const top = path[path.length - 1] as FiberLike;
@@ -214,15 +237,10 @@ function resolve(ancestry: Ancestry): FiberLike[] | undefined {
   // The root's entry stays; every other is replaced below, or the path does
   // not resolve.
   const resolved = path.map(() => rootCurrent);
-  for (let index = path.length - 2; index >= 0; index -= 1) {
-    const fiber = path[index] as FiberLike;
-    let current = passCurrent?.get(fiber);
+  for (let index = path.length - 2; index >= downTo; index -= 1) {
+    const current = currentChild(resolved[index + 1] as FiberLike, path[index] as FiberLike);
     if (current === undefined) {
-      current = currentChild(resolved[index + 1] as FiberLike, fiber);
-      if (current === undefined) {
-        return undefined;
-      }
-      passCurrent?.set(fiber, current).set(fiber.alternate, current);
+      return undefined;
     }
     resolved[index] = current;
   }
@@ -263,29 +281,38 @@ function animatedActivity(resolved: readonly FiberLike[], from: number, to: numb
   return false;
 }
 
-/**
- * Re-reads `host`'s flags from its current fiber, if its committed props
- * changed, and says whether it hides the view now.
- */
-function refresh(host: HostAncestor, resolved: readonly FiberLike[]): boolean {
+/** Re-reads `host`'s clip from its current fiber, if its committed props changed. */
+function refresh(host: HostAncestor, resolved: readonly FiberLike[]): void {
   const props = (resolved[host.index] as FiberLike).memoizedProps;
   if (props !== host.props) {
-    host.props = props;
-    const { style, activityState } = (props ?? {}) as { style?: unknown; activityState?: unknown };
-    const overflow = styleValue(style, 'overflow');
+    const overflow = styleValue((props as { style?: unknown } | null)?.style, 'overflow');
     host.clips = !host.boundary && (host.scrolls ? overflow !== 'visible' : overflow === 'hidden');
-    host.inactive = host.screen && activityState === INACTIVE_SCREEN;
+    // Only once read: a read that threw is tried again next time.
+    host.props = props;
   }
-  // Read every time: the wrapper's props can change while the host's do not.
-  return host.inactive && !animatedActivity(resolved, host.index + 1, host.above);
+}
+
+/**
+ * Whether `screen` hides the view in the committed tree: `activityState` 0
+ * on its current fiber, not driven by an Animated node on the wrapper above
+ * it, under a react-native-screens container that detaches inactive screens.
+ */
+function screenHides(screen: HostAncestor, ancestry: Ancestry, resolved: readonly FiberLike[]): boolean {
+  const activityState = ((resolved[screen.index] as FiberLike).memoizedProps as { activityState?: unknown } | null)
+    ?.activityState;
+  return (
+    activityState === INACTIVE_SCREEN &&
+    SCREEN_CONTAINER_HOST_TYPES.has(ancestry.path[screen.above]?.type) &&
+    !animatedActivity(resolved, screen.index + 1, screen.above)
+  );
 }
 
 /**
  * Whether a react-native-screens screen above the view is inactive in the
- * committed tree (`activityState` 0, not Animated). Also reads which hosts
- * clip, for {@link clipToAncestors}. When anything cannot be read (the path
- * does not resolve, or a props read throws) the answer is `false` and
- * nothing is clipped either.
+ * committed tree (see `screenHides`). Also reads which hosts clip, for
+ * {@link clipToAncestors}. When anything cannot be read (the path does not
+ * resolve, or a props read throws) the answer is `false` and nothing is
+ * clipped either.
  */
 export function isHidden(ancestry: Ancestry): boolean {
   ancestry.readable = false;
@@ -295,16 +322,75 @@ export function isHidden(ancestry: Ancestry): boolean {
   }
   // Props are the app's: a getter on one can throw.
   try {
-    let hidden = false;
     for (const host of ancestry.hosts) {
-      // Not short-circuited: every host's clips are read for clipToAncestors.
-      hidden = refresh(host, resolved) || hidden;
+      refresh(host, resolved);
     }
+    const hidden = ancestry.screens.some((screen) => screenHides(screen, ancestry, resolved));
     ancestry.readable = true;
     return hidden;
   } catch {
     return false;
   }
+}
+
+/**
+ * The screens alone of {@link isHidden}, for a view withdrawn as hidden to
+ * check every frame: it resolves the path only down to the nearest screen,
+ * and only once a pass for every view under the same screen.
+ */
+export function screensHide(ancestry: Ancestry): boolean {
+  const nearest = ancestry.screens[0];
+  if (nearest === undefined) {
+    return false;
+  }
+  const key = ancestry.path[nearest.index] as FiberLike;
+  const known = passScreens?.get(key);
+  if (known !== undefined) {
+    return known;
+  }
+  const resolved = resolve(ancestry, nearest.index);
+  let hidden: boolean;
+  // An unresolved path (`undefined`) throws here as a props getter can.
+  try {
+    hidden = ancestry.screens.some((screen) => screenHides(screen, ancestry, resolved as FiberLike[]));
+  } catch {
+    hidden = false;
+  }
+  passScreens?.set(key, hidden).set(key.alternate, hidden);
+  return hidden;
+}
+
+/** {@link screensHide}'s answers in the running pass, by both fibers of the nearest screen. */
+let passScreens: Map<FiberLike | null | undefined, boolean> | undefined;
+
+/**
+ * The nodes whose movement can change how `ancestry`'s clipping ancestors
+ * (as the last {@link isHidden} read them) cut the view: a ScrollView's
+ * content container, which moves as it scrolls, or the clipping host itself.
+ */
+export function clipWatchNodes(ancestry: Ancestry): FiberLike[] {
+  if (!ancestry.readable) {
+    return [];
+  }
+  return ancestry.hosts
+    .filter((host) => host.clips)
+    .map((host) => {
+      const below = ancestry.path[host.index - 1];
+      return host.scrolls && below?.tag === FiberTag.HostComponent ? below : (ancestry.path[host.index] as FiberLike);
+    });
+}
+
+/** Public instances of watched nodes, looked up once each. */
+const nodeInstances = new WeakMap<FiberLike, { measureInWindow: MeasureInWindow }>();
+
+/** `fiber`'s window rectangle, as {@link measureHost} answers, measured at most once a pass. */
+export function measureFiber(fiber: FiberLike): WindowRect | null | undefined {
+  let instance = nodeInstances.get(fiber);
+  if (instance === undefined) {
+    instance = publicInstanceOf(fiber);
+    nodeInstances.set(fiber, instance);
+  }
+  return measureInstance(instance);
 }
 
 function publicInstanceOf(fiber: FiberLike): { measureInWindow: MeasureInWindow } {
@@ -329,12 +415,14 @@ let passMeasurements: Map<object, WindowRect | null | undefined> | undefined;
  */
 export function measurePass(pass: () => void): void {
   passMeasurements = new Map();
-  passCurrent = new Map();
+  passChildren = new Map();
+  passScreens = new Map();
   try {
     pass();
   } finally {
     passMeasurements = undefined;
-    passCurrent = undefined;
+    passChildren = undefined;
+    passScreens = undefined;
   }
 }
 
@@ -344,7 +432,10 @@ export function measurePass(pass: () => void): void {
  * at once with finite numbers.
  */
 function measureHost(host: HostAncestor, fiber: FiberLike): WindowRect | null | undefined {
-  const instance = (host.instance ??= publicInstanceOf(fiber));
+  return measureInstance((host.instance ??= publicInstanceOf(fiber)));
+}
+
+function measureInstance(instance: { measureInWindow: MeasureInWindow }): WindowRect | null | undefined {
   if (passMeasurements?.has(instance)) {
     return passMeasurements.get(instance);
   }

@@ -56,6 +56,10 @@ export const composite = (children: FiberSpec[], props: Record<string, unknown> 
   children,
 });
 
+/** A react-native-screens container, which detaches its inactive screens. */
+export const screenContainer = (children: FiberSpec[], type = 'RNSScreenContainer'): FiberSpec =>
+  fabricHost(type, null, {}, children);
+
 export const self = (): FiberSpec => ({ tag: FiberTag.HostComponent, type: SELF, stateNode: { canonical: {} } });
 
 export const root = (children: FiberSpec[]): FiberSpec => ({ tag: FiberTag.HostRoot, type: null, children });
