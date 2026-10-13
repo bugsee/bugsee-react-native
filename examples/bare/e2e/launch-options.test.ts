@@ -203,8 +203,9 @@ const CASES: readonly Case[] = [
     platforms: ['android', 'ios'],
     set: { 'com.bugsee.option.capture.logs.level': 1 },
     // Android filters the platform's own log (logcat, source 3) by level and
-    // leaves the wrapper's Custom (98) lines alone; iOS filters the Custom
-    // lines. Each is read against control's levels.
+    // leaves the app's and the wrapper's lines alone; iOS filters every source
+    // by level, the app's Bugsee (4) lines and the console's Custom (98) lines
+    // alike. Each is read against control's levels.
     effect: (outcome, control) => {
       if (ON_ANDROID) {
         const levels = (o: Outcome) =>
