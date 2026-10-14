@@ -690,6 +690,34 @@ describe('nativeMotion', () => {
     );
   });
 
+  it('P3-b: inside a Reanimated level (unbounded anyway), an inner level keeps its own bound', () => {
+    const fiber = selfIn(
+      root([
+        {
+          tag: FiberTag.FunctionComponent,
+          type: Object.assign(() => null, { displayName: 'AnimatedComponent(View)' }),
+          memoizedProps: { style: { transitionProperty: 'transform' } },
+          children: [
+            {
+              tag: FiberTag.FunctionComponent,
+              type: AnimatedView,
+              memoizedProps: { style: { transform: [{ translateX: value(0, timing(0, 50)) }] } },
+              children: [
+                fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [{ translateX: 0 }] } }, [
+                  view([self()]),
+                ]),
+              ],
+            },
+          ],
+        },
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
+
+    expect(moved(ancestry)).toEqual(rect(10, 100, 250, 50));
+  });
+
   it('N1: one native node among nodes not native yet is a level', () => {
     const transform = [{ translateX: { ...value(0), __isNative: false } }, { translateY: value(0, timing(0, 20)) }];
 
@@ -698,16 +726,21 @@ describe('nativeMotion', () => {
     );
   });
 
-  /** A view under an inner `Animated.View` translated by `inner`, inside one scaled by `scale`, rendered at `at`. */
-  function scaledOuter(scale: unknown, at: number, inner: unknown): ReturnType<typeof ancestryOfFiber> {
+  /**
+   * A view under an inner `Animated.View` translated by `inner`, inside one
+   * scaled by `scale` (after a still translation, with `lifted`), rendered at `at`.
+   */
+  function scaledOuter(scale: unknown, at: number, inner: unknown, lifted = false): ReturnType<typeof ancestryOfFiber> {
+    const lift = lifted ? [{ translateY: value(0) }] : [];
+    const liftRendered = lifted ? [{ translateY: 0 }] : [];
     const fiber = selfIn(
       root([
         {
           tag: FiberTag.FunctionComponent,
           type: AnimatedView,
-          memoizedProps: { style: { transform: [{ scale }] } },
+          memoizedProps: { style: { transform: [...lift, { scale }] } },
           children: [
-            fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [{ scale: at }] } }, [
+            fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [...liftRendered, { scale: at }] } }, [
               {
                 tag: FiberTag.FunctionComponent,
                 type: AnimatedView,
@@ -737,6 +770,8 @@ describe('nativeMotion', () => {
     expect(moved(scaledOuter(value(2), undefined as never, slide()))).toBeUndefined();
     expect(moved(scaledOuter(value(0.5), 0.5, slide()))).toEqual(rect(10, 100, 250, 50));
     expect(moved(scaledOuter(value(1), 1, slide()))).toEqual(rect(10, 100, 250, 50));
+    // Scaled up after a translation: still scaled.
+    expect(moved(scaledOuter(value(2), 2, slide(), true))).toBeUndefined();
     // The outer level itself is bounded either way.
     expect(nativeMotion(scaledOuter(value(2), 2, slide()))?.levels[1]?.move(SELF)).toBeDefined();
   });
@@ -1103,7 +1138,7 @@ describe('transform geometry', () => {
   });
 
   it.each<[string, unknown]>([
-    ['plain values', { opacity: 1, transform: [{ translateX: 3 }, 'x', null] }],
+    ['plain values', { opacity: 1, backgroundColor: null, transform: [{ translateX: 3 }, 'x', null] }],
     ['a transform that is not a list', { transform: 'none', modify: 1 }],
     ['an object that is not a shared value', { shadowOffset: { width: 1, height: 1 } }],
     ['a function with a modify', { opacity: Object.assign(() => 1, { modify: () => undefined }) }],

@@ -156,7 +156,7 @@ export class SecureTracker {
     const above = this.ancestry;
     let cover: WindowRect | null = null;
     // The fiber tree and props are read as they are: a getter can throw.
-    try {
+    this.attempt(() => {
       if (above !== null) {
         const leaving = carriersOf(above).filter((carrier) => carrierLeaving(above, carrier));
         cover = carriedCovers(above, leaving, this.seen);
@@ -166,9 +166,7 @@ export class SecureTracker {
         }
         this.tellStacks(above, leaving, now + SECURE_TRANSITION_HOLD_MS);
       }
-    } catch (error) {
-      this.failed(error);
-    }
+    });
     this.leave();
     if (cover !== null) {
       // Joined with a cover still running (a push it was carried in by), the later end kept.
@@ -374,7 +372,7 @@ export class SecureTracker {
     // Stryker disable next-line BooleanLiteral -- as above
     this.arriving = false;
     // As in `depart`: a read that throws carries nothing, and the view is still published.
-    try {
+    this.attempt(() => {
       let until = 0;
       const carriers = carriersOf(above).filter((carrier) => {
         const ends = carrierEntering(above, carrier, now);
@@ -387,11 +385,7 @@ export class SecureTracker {
         // A Modal's content is laid out again once its dialog is up: within a frame.
         this.settling = true;
       }
-    } catch (error) {
-      // `checkStacks`, just before, reads the same tree and warns first: once a view, this warns nothing more.
-      // Stryker disable next-line all
-      this.failed(error);
-    }
+    });
   }
 
   /**
@@ -682,6 +676,15 @@ export class SecureTracker {
   private publish(rectangles: WindowRect[]): void {
     // Set by the measure that got here.
     setOwnerRectangles(this.token, 0, rectangles, this.surface as number);
+  }
+
+  /** Runs `run`; what it throws is warned about, once a view, and stops nothing else. */
+  private attempt(run: () => void): void {
+    try {
+      run();
+    } catch (error) {
+      this.failed(error);
+    }
   }
 
   private failed(error: unknown): void {

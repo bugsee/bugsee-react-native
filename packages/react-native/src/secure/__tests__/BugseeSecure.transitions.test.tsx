@@ -781,6 +781,38 @@ describe('N4: a screen replaced by another on its stack', () => {
     expect(published.join()).not.toContain(px(SCREEN).join());
   });
 
+  it('a cover run out but not yet dropped (between ticks) is not joined as it departs', () => {
+    const tree = root([
+      fabricHost('RNSScreenStack', null, { children: 1 }, [
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, stackAnimation: 'fade' }, [view([self()])]),
+      ]),
+    ]);
+    const fiber = existing(selvesIn(tree)[0] as FiberLike);
+    const testRenderer = render(fiber);
+    wait(212);
+    const stack = ancestorOfType(fiber, 'RNSScreenStack');
+    const spec = fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, []);
+    (stack.child as FiberLike).sibling = {
+      tag: spec.tag,
+      type: spec.type,
+      memoizedProps: spec.memoizedProps,
+      stateNode: spec.stateNode,
+      child: null,
+      sibling: null,
+      return: stack,
+    } as FiberLike;
+    stack.memoizedProps = { children: 2 };
+    wait(17);
+    expect(firstPublished()).toEqual(px(SCREEN));
+    // The push's cover ran out at ~1029; the next tick, which drops it, is at 1100.
+    wait(1050 - 229);
+
+    deleting(ancestorOfType(fiber, SCREEN_HOST_TYPE));
+    unmount(testRenderer);
+
+    expect(firstPublished()).toEqual(px(selfRect));
+  });
+
   it('popped alone, nothing new on its stack: its own animation', () => {
     const fiber = onOnlyScreen({ stackAnimation: 'fade' });
     const testRenderer = render(fiber);
@@ -1143,6 +1175,53 @@ describe('C3: a Modal sliding in and out', () => {
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(selfRect), ...px(before)]]);
     // Carried with no cover from it: nothing to join, nothing thrown.
     expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('a view first laid out with no width, elsewhere, joins nothing of there into its band', () => {
+    selfRect = rect(300, 100, 0, 50);
+    render(inModal({ animationType: 'slide' }));
+    selfRect = rect(10, 100, 200, 50);
+    wait(17);
+
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(band(selfRect)));
+  });
+
+  it('a view carried in while cut away by a ScrollView in it covers nothing, and throws nothing', () => {
+    selfRect = rect(10, 500, 200, 50);
+    const fiber = selfIn(
+      root([
+        view([
+          {
+            tag: FiberTag.HostComponent,
+            type: 'RCTModalHostView',
+            memoizedProps: { animationType: 'slide' },
+            stateNode: { rect: null, tag: MODAL_TAG, canonical: { currentProps: {} } },
+            children: [
+              fabricHost('RCTView', rect(0, 0, 400, 800), {}, [scrollView(rect(0, 0, 400, 300), [view([self()])])]),
+            ],
+          },
+        ]),
+      ]),
+    );
+    existingFrom(ancestorOfType(ancestorOfType(fiber, 'RCTModalHostView'), 'RCTView'));
+    render(fiber);
+    wait(17);
+
+    expect(console.warn).not.toHaveBeenCalled();
+    const published = (lastOnSurface() as [number, number, number[]] | undefined)?.[2] ?? [];
+    expect(published).toEqual([]);
+  });
+
+  it('a stack inside a fading Modal opening covers the screen, and nothing for the Modal', () => {
+    const fiber = onScreenInModal('RNSScreenStack', 2, { animationType: 'fade', visible: true }, true);
+    const host = ancestorOfType(fiber, 'RCTModalHostView');
+    for (let current: FiberLike | null = host; current !== null; current = current.child) {
+      current.alternate = null;
+    }
+    render(fiber);
+
+    expect(console.warn).not.toHaveBeenCalled();
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(SCREEN));
   });
 
   it.each<[string, WindowRect]>([

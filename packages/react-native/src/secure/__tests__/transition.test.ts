@@ -200,6 +200,14 @@ describe('carrierEntering', () => {
     expect(carrierEntering(ancestry, carrier, 5000)).toBeUndefined();
   });
 
+  it('N3: a carrier rendered before, with nothing above rendered before, is first seen now too', () => {
+    const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
+    const screen = ancestry.path[0] as FiberLike;
+    screen.alternate = { ...screen, alternate: screen };
+
+    expect(carrierEntering(ancestry, { kind: 'screen', index: 0 }, 7)).toBe(7 + SECURE_TRANSITION_HOLD_MS);
+  });
+
   it('N3: a screen seen pushed is carried in from then; a birth known already stands', () => {
     const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
     for (const fiber of ancestry.path) {
