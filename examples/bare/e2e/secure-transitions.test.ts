@@ -154,7 +154,13 @@ describeAndroid(`<BugseeSecure> stays covered through native transitions, on ${T
     expect(moved.value).toBeLessThan(NATIVE_SHIFT);
     report('native-moved measured at', { rest: rest.self, moved: moved.self, value: moved.value });
     const drawn = pixels({ ...rest.self!, x: rest.self!.x + moved.value }, moved.ratio);
+    // The mask joins where the view is drawn with where the shadow tree has it: it contains it.
+    const contains = (outer: number[], inner: number[]): boolean =>
+      outer[0]! <= inner[0]! + 1 &&
+      outer[1]! <= inner[1]! + 1 &&
+      outer[2]! >= inner[2]! - 1 &&
+      outer[3]! >= inner[3]! - 1;
 
-    expect(heldAt('native-moved', 0).some(rect => near(rect, drawn))).toBe(true);
+    expect(heldAt('native-moved', 0).some(rect => contains(rect, drawn))).toBe(true);
   });
 });
