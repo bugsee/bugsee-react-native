@@ -24,13 +24,15 @@ import {
   stopDeviceLog,
 } from './harness';
 import { type DeviceLog, type LogLine, adb, resetScenario } from './scenario';
-import { NATIVE_SHIFT } from '../scenarios/secure-transitions';
 
 jest.setTimeout(4 * 60_000);
 
 const describeAndroid = ON_ANDROID ? describeDevice : describe.skip;
 
 const PUBLISHED = /BugseeRN\s*:\s*secure published display=0 surface=(\d+) raw=\[([^\]]*)\]/;
+
+/** How far the scenario's native-driven animation moves the view, in points (its NATIVE_SHIFT). */
+const NATIVE_SHIFT = 120;
 
 /** The bottom edge of a slide band, as the registry flattens it: past any display. */
 const BAND_BOTTOM_POINTS = 100_000;
@@ -44,6 +46,8 @@ interface Box {
 
 interface Marker {
   self: Box | null;
+  /** `native-moved`'s translateX, where the animation was stopped. */
+  value: number;
   ratio: number;
   line: LogLine;
 }
@@ -77,15 +81,16 @@ describeAndroid(`<BugseeSecure> stays covered through native transitions, on ${T
     report('banner', run.banner.text.trim());
 
     const marker = new RegExp(
-      `BUGSEE_E2E secure-transitions phase=(\\S+) self=(\\S+) ratio=(\\S+) nonce=${escape(nonce)}`,
+      `BUGSEE_E2E secure-transitions phase=(\\S+)(?: value=(\\S+))? self=(\\S+) ratio=(\\S+) nonce=${escape(nonce)}`,
     );
     const finished = new RegExp(`BUGSEE_E2E secure-transitions (done|threw).* nonce=${escape(nonce)}`);
     const end = must(await log.waitFor(finished, 90_000, run.start), 'the scenario finishing', run.start);
     expect(end.text).toContain('secure-transitions done');
     for (const line of log.all(marker, run.start)) {
-      const [, name, self, ratio] = marker.exec(line.text)!;
+      const [, name, value, self, ratio] = marker.exec(line.text)!;
       const [x, y, w, h] = self!.split(',').map(Number) as [number, number, number, number];
-      markers.set(name!, { self: self === 'none' ? null : { x, y, w, h }, ratio: Number(ratio), line });
+      const box = self === 'none' ? null : { x, y, w, h };
+      markers.set(name!, { self: box, value: Number(value), ratio: Number(ratio), line });
     }
   });
 
@@ -141,11 +146,14 @@ describeAndroid(`<BugseeSecure> stays covered through native transitions, on ${T
     expect(heldAt('modal-gone')).toEqual([]);
   });
 
-  it('a view a native-driven animation moved is covered where it is drawn, not where it was measured', () => {
+  it('a view a native-driven loop moved is covered where it is drawn, not where it was measured', () => {
+    const rest = marker('native-rest');
     const moved = marker('native-moved');
-    // React Native still measures it where it rendered it.
-    expect(moved.self!.x).toBeCloseTo(marker('native-rest').self!.x, 0);
-    const drawn = pixels({ ...moved.self!, x: moved.self!.x + NATIVE_SHIFT }, moved.ratio);
+    // Stopped part-way through a loop.
+    expect(moved.value).toBeGreaterThan(0);
+    expect(moved.value).toBeLessThan(NATIVE_SHIFT);
+    report('native-moved measured at', { rest: rest.self, moved: moved.self, value: moved.value });
+    const drawn = pixels({ ...rest.self!, x: rest.self!.x + moved.value }, moved.ratio);
 
     expect(heldAt('native-moved', 0).some(rect => near(rect, drawn))).toBe(true);
   });

@@ -12,9 +12,11 @@
  *       later and `modal-settled` 1.5 s later), and closes the same way
  *       (`modal-closing`, `modal-closed`, `modal-gone`);
  *     - native: a `<BugseeSecure>` under an `Animated.View` whose translateX
- *       a native-driven timing animation moves from 0 to 120 points; 600 ms
- *       after it ends (`native-moved`) the step logs the view's window
- *       rectangle as React Native measures it, which never saw the move.
+ *       a native-driven `Animated.loop` moves from 0 to 120 points again and
+ *       again; stopped part-way (a looping animation's value is synced back
+ *       to JS, not to the shadow tree), 600 ms later (`native-moved`) the
+ *       step logs the view's window rectangle as React Native measures it
+ *       and `value=` the translateX it was stopped at.
  *   Every marker carries `self=x,y,w,h` (window points, `none` if unmounted)
  *   and `ratio=` the pixel ratio.
  */
@@ -89,13 +91,16 @@ export function SecureTransitionsProbe({ nonce }: { nonce: string }) {
       setAnimated(true);
       await sleep(1500);
       await log('native-rest', animatedTwin.current);
-      await new Promise<void>(resolve => {
-        Animated.timing(shift, { toValue: NATIVE_SHIFT, duration: 300, useNativeDriver: true }).start(() =>
-          resolve(),
-        );
-      });
+      const loop = Animated.loop(
+        Animated.timing(shift, { toValue: NATIVE_SHIFT, duration: 700, useNativeDriver: true }),
+      );
+      loop.start();
+      await sleep(1000);
+      // Stopped as an app stops a loop; native sends the value back to JS once it has stopped.
+      loop.stop();
       await sleep(600);
-      await log('native-moved', animatedTwin.current);
+      const value = (shift as unknown as { __getValue(): number }).__getValue();
+      await log(`native-moved value=${value}`, animatedTwin.current);
       mark(`secure-transitions done nonce=${nonce}`);
     })().catch((error: unknown) => {
       mark(`secure-transitions threw ${String(error)} nonce=${nonce}`);
