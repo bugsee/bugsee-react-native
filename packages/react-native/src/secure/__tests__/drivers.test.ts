@@ -349,6 +349,13 @@ describe('what a value is driven by', () => {
     expect(knownDriven(node)).toBe(true);
   });
 
+  it('a value no one watches is moved with nothing to wake', () => {
+    const rn = sources();
+    followDrivers(rn);
+
+    expect(() => new rn.valueClass().animate('timing')).not.toThrow();
+  });
+
   it('a value set from JS after its event left it is known again', () => {
     const rn = sources();
     followDrivers(rn);
@@ -372,6 +379,8 @@ describe('what a value is driven by', () => {
       }
     }
     expect(followDrivers({ ...rn, valueClass: Bare })).toBe(true);
+    // Nothing React Native lacks is added.
+    expect(Object.getOwnPropertyNames(Bare.prototype).sort()).toEqual(['__makeNative', 'constructor']);
     const node = new Bare();
     const woken = jest.fn();
     whenMoved(node, woken);

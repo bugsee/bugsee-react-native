@@ -568,23 +568,22 @@ export class SecureTracker {
    */
   private watchValues(nodes: readonly object[]): void {
     const natives = nodes.map((node) => (node as { __isNative?: unknown }).__isNative !== false);
-    // Watching the same values again takes their state now as the baseline, as the frame just did: only work.
-    // Stryker disable next-line ConditionalExpression,ArrowFunction,BooleanLiteral,EqualityOperator,BlockStatement
-    if (nodes.length === this.values.length && nodes.every((node, index) => node === this.values[index])) {
-      // A value made native since is polled from now on.
-      if (natives.every((native, index) => native === this.natives[index])) {
-        return;
-      }
+    // Watching the same values again takes their state now as the baseline, as the frame just did: only work. A
+    // value made native since is polled from then on; JS moving it is followed, so that only adds a safety net.
+    const same = (node: object, index: number): boolean =>
+      // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator -- as above
+      node === this.values[index] && natives[index] === this.natives[index];
+    // Stryker disable next-line ConditionalExpression,MethodExpression,EqualityOperator,BlockStatement -- as above
+    if (nodes.length === this.values.length && nodes.every(same)) {
+      return;
     }
     this.unwatchValues.forEach((stop) => stop());
     this.values = [...nodes];
     this.natives = natives;
     // Stryker disable next-line StringLiteral -- woken in any mode but tick or parked, it is measured that frame
     const wake = (): void => this.enter('active');
-    const now = (): void => {
-      wake();
-      this.measure();
-    };
+    // Measured now: it goes active if it finds an animation running.
+    const now = (): void => this.measure();
     this.unwatchValues = this.values.flatMap((node, index) => {
       const told = whenMoved(node, now);
       // Driven from JS, it keeps no frame loop where JS moving it is followed.

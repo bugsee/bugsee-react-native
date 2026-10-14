@@ -179,8 +179,12 @@ function wrapAttach(target: Record<string, unknown>, state: DriverState): void {
 
 /** Wakes what watches `value`, at once: before React Native hands the change to the UI thread. */
 function moved(state: DriverState, value: object): void {
+  const wakes = state.onMove.get(value);
+  if (wakes === undefined) {
+    return;
+  }
   // A snapshot: a watcher may stop watching, or watch again, as it is woken.
-  for (const wake of [...(state.onMove.get(value) ?? [])]) {
+  for (const wake of [...wakes]) {
     try {
       wake();
     } catch {

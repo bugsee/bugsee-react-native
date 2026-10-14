@@ -18,6 +18,7 @@ import { BugseeSecure } from '../BugseeSecure';
 import { SCREEN_HOST_TYPE, ancestryOfFiber } from '../ancestry';
 import { SECURE_SHRINK_HOLD_MS } from '../hold';
 import { SCROLL_OVERRUN, nativeMotion, nodeBound } from '../nativeAnimation';
+import * as drivers from '../drivers';
 import { followDrivers, forgetDrivers } from '../drivers';
 import { SECURE_TRANSITION_HOLD_MS, WHOLE_SURFACE, keyOf, noteBirth, stackMoving } from '../transition';
 import { native } from '../../__mocks__/native';
@@ -2010,6 +2011,24 @@ describe('R3-3: content uncovered by a pop', () => {
 });
 
 describe('B6, N1: a value JS moves is covered in the JS task that moves it', () => {
+  it('stops watching every value as it unmounts', () => {
+    const stops: jest.Mock[] = [];
+    const real = drivers.whenMoved;
+    jest.spyOn(drivers, 'whenMoved').mockImplementation((node, wake) => {
+      const stop = jest.fn(real(node, wake));
+      stops.push(stop);
+      return stop;
+    });
+    const testRenderer = render(
+      underAnimated([{ translateY: animatedValue(0) }, { translateX: animatedValue(0, false) }], [{ translateY: 0 }]),
+    );
+    expect(stops).toHaveLength(2);
+
+    unmount(testRenderer);
+
+    stops.forEach((stop) => expect(stop).toHaveBeenCalledTimes(1));
+  });
+
   it('B6: a loop restarting (reset to its start, then animated again) is covered at once, before any frame', () => {
     // Stopped at 80, which the shadow tree holds too.
     const value = animatedValue(80);
