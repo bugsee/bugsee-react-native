@@ -1,8 +1,8 @@
 import { ancestryOfInstance, clipToAncestors, clipWatchNodes, isHidden, screensHide } from './ancestry';
 import type { Ancestry } from './ancestry';
 import { CoverageHold } from './hold';
-import { addFrameMeasurer, addMeasurer, addParked, watchNode } from './measureLoop';
-import { nativeMotion } from './nativeAnimation';
+import { addFrameMeasurer, addMeasurer, addParked, watchNode, watchValue } from './measureLoop';
+import { nativeMotion, throughMotion } from './nativeAnimation';
 import { clearOwner, setOwnerRectangles } from './registry';
 import { surfaceOfInstance } from './surface';
 import {
@@ -13,9 +13,15 @@ import {
   carrierEntering,
   carrierLeaving,
   carriersOf,
+  joinStack,
+  keyOf,
   modalOf,
+  screenCover,
+  screenRect,
+  stackMotionOf,
+  stackMoving,
 } from './transition';
-import type { Carrier } from './transition';
+import type { Carrier, StackMotion } from './transition';
 import { errorName } from '../errorName';
 import type { FiberLike, WindowRect } from '../viewtree/fiber';
 
@@ -93,8 +99,14 @@ export class SecureTracker {
   /** Under an `Animated` component: re-measured every frame. Set by every measurement. */
   // Stryker disable next-line BooleanLiteral -- every measurement sets it before `next` reads it
   private animating = false;
-  /** The view's last measured rectangle, unclipped. */
-  private lastRect: WindowRect | null = null;
+  /** What of the view was on screen at its last measurement (`null`: nothing); `undefined`: never measured. */
+  private seen: WindowRect | null | undefined;
+  /** The native values its transforms come from, watched for an animation starting. */
+  // Stryker disable next-line ArrayDeclaration -- the first watch replaces it whatever it holds
+  private values: object[] = [];
+  private unwatchValues: Array<() => void> = [];
+  /** Leaves the stacks its screens are on. */
+  private leaveStacks: Array<() => void> = [];
   /** Frames (or checks) in a row the visible rectangle stayed put. */
   private steady = 0;
   private lastVisible: string | undefined;
@@ -117,6 +129,11 @@ export class SecureTracker {
     this.forget();
     this.running = true;
     this.arriving = true;
+    // Read before any measurement: a view popped before one answers still knows its screen.
+    const view = this.view();
+    if (view !== null) {
+      this.ancestry = ancestryOfInstance(view);
+    }
     this.measure();
     this.removeTick = addMeasurer(() => this.onTick());
   }
@@ -138,13 +155,13 @@ export class SecureTracker {
     }
     const now = monotonicNow();
     const above = this.ancestry;
-    const last = this.lastRect;
     let cover: WindowRect | null = null;
     // The fiber tree and props are read as they are: a getter can throw.
     try {
       if (above !== null) {
         const leaving = carriersOf(above).filter((carrier) => carrierLeaving(above, carrier));
-        cover = carriedCovers(above, leaving, last);
+        cover = carriedCovers(above, leaving, this.seen);
+        this.tellStacks(above, leaving, now + SECURE_TRANSITION_HOLD_MS);
       }
     } catch (error) {
       this.failed(error);
@@ -172,7 +189,7 @@ export class SecureTracker {
     this.carried = null;
     this.modal = undefined;
     this.closing = false;
-    this.lastRect = null;
+    this.seen = undefined;
   }
 
   /** Stops measuring: off every loop, as if never started. */
@@ -186,6 +203,9 @@ export class SecureTracker {
     this.watch([]);
     this.unwatchModal?.();
     this.unwatchModal = undefined;
+    this.watchValues([]);
+    this.leaveStacks.forEach((leave) => leave());
+    this.leaveStacks = [];
     this.steady = 0;
     this.lastVisible = undefined;
     this.lastSelf = undefined;
@@ -223,14 +243,21 @@ export class SecureTracker {
       const above = this.ancestry;
       if (this.modal === undefined) {
         this.watchModal(above);
+        this.joinStacks(above);
       }
       if (isHidden(above)) {
-        // Hidden as it mounts: whatever carried it in is not drawn.
+        // Not drawn while hidden: whatever carries it in is looked for once it is shown.
         this.arriving = false;
+        this.noteBirths(above);
+        this.seen = null;
         this.publish(this.covering(this.hold.update(null, monotonicNow()), monotonicNow()));
         this.watch([]);
         this.enter('hidden');
         return;
+      }
+      if (this.mode === 'hidden') {
+        // Shown again: perhaps by a transition still running.
+        this.arriving = true;
       }
       // Fabric answers every measurement at once, so the view and its
       // clipping ancestors are measured in the same layout. Paper answers
@@ -257,23 +284,24 @@ export class SecureTracker {
       throw new RangeError('BugseeSecure measured a non-finite rectangle');
     }
     this.lastSelf = where(self);
-    this.lastRect = self;
     const now = monotonicNow();
+    // Where native-driven transforms can draw it, which the shadow tree never sees.
+    const motion = nativeMotion(above);
+    const { drawn, visible } =
+      motion === null ? { drawn: self, visible: clipToAncestors(self, above) } : throughMotion(self, above, motion);
+    this.seen = visible;
+    // Per frame while a native animation runs; otherwise woken the frame one starts.
+    this.animating = motion?.running ?? false;
+    this.watchValues(motion?.roots ?? []);
     if (this.arriving) {
       this.arrive(above, now);
     }
     if (this.carried !== null) {
-      this.carry(self, above, now);
+      this.carry(visible, above, now);
     }
     if (this.modal) {
-      this.watchClosing(self, above, now);
+      this.watchClosing(visible, above, now);
     }
-    // Where a native-driven animation can draw it, which the shadow tree never sees.
-    const motion = nativeMotion(self, above);
-    // Under any Animated component: a native animation can start, or its value jump, on any frame.
-    this.animating = above.animated.length > 0;
-    const drawn = motion?.rect ?? self;
-    const visible = clipToAncestors(drawn, above, motion?.above);
     this.publish(this.covering(this.hold.update(visible, now), now));
     const clipped = visible === null || visible.width < drawn.width || visible.height < drawn.height;
     const at = where(visible);
@@ -288,9 +316,15 @@ export class SecureTracker {
     this.arriving = false;
     // As in `depart`: a read that throws carries nothing, and the view is still published.
     try {
-      const carriers = carriersOf(above).filter((carrier) => carrierEntering(above, carrier));
+      let until = 0;
+      const carriers = carriersOf(above).filter((carrier) => {
+        const ends = carrierEntering(above, carrier, now);
+        until = Math.max(until, ends ?? 0);
+        return ends !== undefined;
+      });
       if (carriers.length > 0) {
-        this.carried = { carriers, until: now + SECURE_TRANSITION_HOLD_MS };
+        this.carried = { carriers, until };
+        this.tellStacks(above, carriers, until);
         // A Modal's content is laid out again once its dialog is up: within a frame.
         this.settling = true;
       }
@@ -323,7 +357,7 @@ export class SecureTracker {
    * it, covers the band below the view for the transition hold, as an
    * unmount does where the Modal is removed at once (Android).
    */
-  private watchClosing(self: WindowRect, above: Ancestry, now: number): void {
+  private watchClosing(self: WindowRect | null, above: Ancestry, now: number): void {
     const carrier = this.modal as Carrier;
     const host = (above.resolved ?? above.path)[carrier.index];
     const hidden = (host?.memoizedProps as { visible?: unknown } | null | undefined)?.visible === false;
@@ -341,7 +375,7 @@ export class SecureTracker {
    * where it rests now, as well as from where it rested before (a Modal's
    * content laid out again moves the band), until the transition hold ends.
    */
-  private carry(self: WindowRect, above: Ancestry, now: number): void {
+  private carry(self: WindowRect | null, above: Ancestry, now: number): void {
     const { carriers, until } = this.carried as { carriers: readonly Carrier[]; until: number };
     // Past it, the cover set below would be dropped as soon as it is published.
     // Stryker disable next-line ConditionalExpression,BlockStatement -- so carrying on changes nothing
@@ -349,8 +383,8 @@ export class SecureTracker {
       this.carried = null;
       return;
     }
-    // Not laid out yet (0x0): drawn nowhere, so nothing to cover from it.
-    if (self.width <= 0 || self.height <= 0) {
+    // Not laid out yet (0x0), or cut away: drawn nowhere, so nothing to cover from it.
+    if (self === null || self.width <= 0 || self.height <= 0) {
       return;
     }
     let cover: WindowRect | null;
@@ -365,15 +399,82 @@ export class SecureTracker {
     }
   }
 
+  /** Records the transitions creating its carriers, for when it is shown while they run. */
+  private noteBirths(above: Ancestry): void {
+    try {
+      carriersOf(above).forEach((carrier) => carrierEntering(above, carrier, monotonicNow()));
+    } catch {
+      // Unreadable: nothing recorded; the measurement says why, once.
+    }
+  }
+
+  /** Joins the stacks its screens are on, to be told when another screen on one moves. */
+  private joinStacks(above: Ancestry): void {
+    try {
+      for (const carrier of carriersOf(above)) {
+        if (carrier.stack !== undefined) {
+          const stack = keyOf(above.path[carrier.stack] as FiberLike);
+          const told = (motion: StackMotion, until: number, moving: object): void =>
+            this.screenMoved(carrier, motion, until, moving);
+          this.leaveStacks.push(joinStack(stack, told));
+        }
+      }
+    } catch {
+      // Unreadable: no stacks joined; the measurement says why, once.
+    }
+  }
+
+  /** Tells the stacks of the screens in `carriers` that those screens are pushed or popped. */
+  private tellStacks(above: Ancestry, carriers: readonly Carrier[], until: number): void {
+    const fibers = above.resolved ?? above.path;
+    for (const carrier of carriers) {
+      if (carrier.stack !== undefined) {
+        const screen = fibers[carrier.index] as FiberLike;
+        const stack = keyOf(above.path[carrier.stack] as FiberLike);
+        stackMoving(stack, stackMotionOf(screen.memoizedProps), until, keyOf(screen));
+      }
+    }
+  }
+
+  /**
+   * Another screen on a stack its screen is on is pushed or popped as
+   * `motion` until `until`: its own screen, uncovered or covered, moves too.
+   */
+  private screenMoved(carrier: Carrier, motion: StackMotion, until: number, moving: object): void {
+    const above = this.ancestry as Ancestry;
+    const screen = above.path[carrier.index] as FiberLike;
+    if (!this.running || moving === keyOf(screen) || this.seen == null) {
+      return;
+    }
+    // Seen on screen, so covered somewhere.
+    const cover = screenCover(motion, screenRect(screen), this.seen, false) as WindowRect;
+    // Whatever cover is still running is joined, not replaced.
+    this.covering([], monotonicNow());
+    const kept = this.cover;
+    this.cover = { rect: bounding(cover, kept?.rect), until: Math.max(until, kept?.until ?? 0) };
+    this.republish();
+  }
+
+  /** Watches `nodes` (native values) and wakes the frame an animation starts on one. */
+  private watchValues(nodes: readonly object[]): void {
+    if (nodes.length === this.values.length && nodes.every((node, index) => node === this.values[index])) {
+      return;
+    }
+    this.unwatchValues.forEach((stop) => stop());
+    this.values = [...nodes];
+    // Stryker disable next-line StringLiteral -- woken in any mode but tick or parked, it is measured that frame
+    this.unwatchValues = this.values.map((node) => watchValue(node, () => this.enter('active')));
+  }
+
   private next(clipped: boolean): Mode {
     if (this.mode === 'active') {
-      if (this.steady < STEADY_FRAMES || this.animating) {
+      if (this.steady < STEADY_FRAMES || this.animating || this.carried !== null) {
         return 'active';
       }
       this.settling = false;
       return clipped ? 'parked' : 'tick';
     }
-    if (this.mode === 'hidden' || this.settling || this.animating) {
+    if (this.mode === 'hidden' || this.settling || this.animating || this.carried !== null) {
       return 'active';
     }
     if (!clipped) {

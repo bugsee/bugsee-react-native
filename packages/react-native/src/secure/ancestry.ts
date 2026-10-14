@@ -154,17 +154,31 @@ export function noAncestry(): Ancestry {
   };
 }
 
-/**
- * Whether `fiber` is an `Animated` component (`Animated.createAnimatedComponent`
- * names every one `Animated(<name>)`), as a plain function or a `forwardRef`.
- */
-export function isAnimatedComponent(fiber: FiberLike): boolean {
+function displayNameOf(fiber: FiberLike): unknown {
   const type = fiber.type as { displayName?: unknown; render?: { displayName?: unknown } } | null | undefined;
   if (type === null || (typeof type !== 'function' && typeof type !== 'object')) {
-    return false;
+    return undefined;
   }
-  const name = type.displayName ?? type.render?.displayName;
-  return typeof name === 'string' && name.startsWith('Animated(');
+  return type.displayName ?? type.render?.displayName;
+}
+
+/**
+ * Whether `fiber` is a Reanimated component (`createAnimatedComponent` of
+ * react-native-reanimated names every one `AnimatedComponent(<name>)`).
+ */
+export function isReanimatedComponent(fiber: FiberLike): boolean {
+  const name = displayNameOf(fiber);
+  return typeof name === 'string' && name.startsWith('AnimatedComponent(');
+}
+
+/**
+ * Whether `fiber` is an `Animated` component (`Animated.createAnimatedComponent`
+ * names every one `Animated(<name>)`), as a plain function or a `forwardRef`,
+ * or a Reanimated one.
+ */
+export function isAnimatedComponent(fiber: FiberLike): boolean {
+  const name = displayNameOf(fiber);
+  return (typeof name === 'string' && name.startsWith('Animated(')) || isReanimatedComponent(fiber);
 }
 
 /**
@@ -468,13 +482,32 @@ export function measurePass(pass: () => void): void {
   passMeasurements = new Map();
   passChildren = new Map();
   passScreens = new Map();
+  passMemos = new Map();
   try {
     pass();
   } finally {
     passMeasurements = undefined;
     passChildren = undefined;
     passScreens = undefined;
+    passMemos = undefined;
   }
+}
+
+/** What {@link passMemo} computed in the running pass, by key. */
+let passMemos: Map<object, unknown> | undefined;
+
+/**
+ * `compute()`, at most once per `key` in the running {@link measurePass}
+ * (many views under one `Animated` component read its nodes once a pass);
+ * every time outside a pass.
+ */
+export function passMemo<T>(key: object, compute: () => T): T {
+  if (passMemos?.has(key)) {
+    return passMemos.get(key) as T;
+  }
+  const value = compute();
+  passMemos?.set(key, value);
+  return value;
 }
 
 /**
@@ -508,9 +541,9 @@ function finite({ x, y, width, height }: WindowRect): boolean {
 /**
  * The part of `rect` inside every ancestor that clips now (as the last
  * {@link isHidden} read them), or `null` when none of it is. Only the
- * ancestors above `path` index `above` cut it: one below a native-driven
- * transform clips where that transform moved it, not where the shadow tree
- * has it.
+ * ancestors between `path` indices `above` and `below` cut it: a native-driven
+ * transform between two clippers moves what the lower one left, and the upper
+ * one cuts where it was moved to.
  *
  * Fails closed: `rect` itself, unclipped, when it is not finite, the last
  * read was not complete, or any clipping ancestor throws, answers late or
@@ -518,16 +551,21 @@ function finite({ x, y, width, height }: WindowRect): boolean {
  * nothing. Measures nothing, and returns `rect` as it is, when nothing
  * clips.
  */
-export function clipToAncestors(rect: WindowRect, ancestry: Ancestry, above = -1): WindowRect | null {
+export function clipToAncestors(
+  rect: WindowRect,
+  ancestry: Ancestry,
+  above = -1,
+  below = Number.POSITIVE_INFINITY,
+): WindowRect | null {
   if (!finite(rect) || !ancestry.readable) {
     return rect;
   }
   const clips: Array<WindowRect | null | undefined> = [];
   try {
     for (const host of ancestry.hosts) {
-      // `above` is an Animated component's index, never a host's.
-      // Stryker disable next-line EqualityOperator -- so `>=` picks the same hosts
-      if (host.clips && host.index > above) {
+      // `above` and `below` are Animated components' indices, never a host's.
+      // Stryker disable next-line EqualityOperator -- so `>=` and `<=` pick the same hosts
+      if (host.clips && host.index > above && host.index < below) {
         clips.push(measureHost(host, ancestry.path[host.index] as FiberLike));
       }
     }

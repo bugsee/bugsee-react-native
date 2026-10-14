@@ -190,6 +190,7 @@ function frame(): void {
     measurePass(() =>
       publishTogether(() => {
         watchNodes();
+        watchValues();
         for (const { measure } of [...frameMeasurers]) {
           try {
             measure();
@@ -201,7 +202,7 @@ function frame(): void {
     );
   } finally {
     // In a finally: nothing thrown above (a warn included) may stop the loop.
-    if (frameMeasurers.size > 0 || watched.size > 0) {
+    if (frameMeasurers.size > 0 || watched.size > 0 || watchedValues.size > 0) {
       cancelFrame ??= requestFrame(frame);
     }
   }
@@ -239,8 +240,61 @@ export function watchNode(fiber: FiberLike, moved: () => void, geometry = true):
   };
 }
 
+interface WatchedValue {
+  readonly subscribers: Set<{ readonly changed: () => void }>;
+  /** The node's running animation and value at the last frame. */
+  state: readonly unknown[];
+}
+
+/** Native `Animated` values watched for an animation starting, by node. */
+const watchedValues = new Map<object, WatchedValue>();
+
+function stateOf(node: object): unknown[] {
+  const { _animation: animation, _value: value } = node as { _animation?: unknown; _value?: unknown };
+  return [animation, value];
+}
+
+/** Wakes the subscribers of every watched value whose animation or value changed. */
+function watchValues(): void {
+  for (const [node, entry] of [...watchedValues]) {
+    const state = stateOf(node);
+    const changed = state.some((part, index) => part !== entry.state[index]);
+    entry.state = state;
+    if (changed) {
+      for (const { changed: wake } of [...entry.subscribers]) {
+        wake();
+      }
+    }
+  }
+}
+
+/**
+ * Reads `node` (a native `Animated.Value`) every frame, and calls `changed`
+ * whenever an animation starts or ends on it, or its value moves, until the
+ * returned function is called: a view under a still native transform needs no
+ * measuring until then. A few property reads a frame for every subscriber.
+ */
+export function watchValue(node: object, changed: () => void): () => void {
+  let entry = watchedValues.get(node);
+  if (entry === undefined) {
+    entry = { subscribers: new Set(), state: stateOf(node) };
+    watchedValues.set(node, entry);
+  }
+  const subscription = { changed };
+  entry.subscribers.add(subscription);
+  cancelFrame ??= requestFrame(frame);
+  const target = entry;
+  return () => {
+    target.subscribers.delete(subscription);
+    if (target.subscribers.size === 0 && watchedValues.get(node) === target) {
+      watchedValues.delete(node);
+    }
+    stopFramesIfIdle();
+  };
+}
+
 function stopFramesIfIdle(): void {
-  if (frameMeasurers.size === 0 && watched.size === 0) {
+  if (frameMeasurers.size === 0 && watched.size === 0 && watchedValues.size === 0) {
     cancelFrame?.();
     cancelFrame = undefined;
   }

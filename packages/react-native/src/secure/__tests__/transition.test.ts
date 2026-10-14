@@ -5,6 +5,7 @@
  */
 import { MODAL_SCREEN_HOST_TYPE, SCREEN_HOST_TYPE, ancestryOfFiber, noAncestry } from '../ancestry';
 import {
+  SECURE_TRANSITION_HOLD_MS,
   WHOLE_SURFACE,
   carriedCover,
   carrierEntering,
@@ -13,8 +14,14 @@ import {
   carriedCovers,
   carriersOf,
   deletionRoot,
+  joinStack,
+  keyOf,
+  screenCover,
+  stackMotionOf,
+  stackMoving,
 } from '../transition';
-import type { FiberLike } from '../../viewtree/fiber';
+import type { StackMotion } from '../transition';
+import type { FiberLike, WindowRect } from '../../viewtree/fiber';
 import { fabricHost, fakeRenderer, rect, root, self, selfIn, view } from './fakeAncestors';
 import type { FakeRenderer } from './fakeAncestors';
 
@@ -52,7 +59,9 @@ describe('carriersOf', () => {
   it('a screen in a stack carries the view', () => {
     const fiber = onScreen('RNSScreenStack');
 
-    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([{ kind: 'screen', index: indexOf(fiber, SCREEN_HOST_TYPE) }]);
+    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([
+      { kind: 'screen', index: indexOf(fiber, SCREEN_HOST_TYPE), stack: indexOf(fiber, 'RNSScreenStack') },
+    ]);
   });
 
   it('so does a modal screen in a stack', () => {
@@ -61,13 +70,16 @@ describe('carriersOf', () => {
     expect(carriersOf(ancestryOfFiber(fiber)).map((carrier) => carrier.kind)).toEqual(['screen']);
   });
 
-  it('only the nearest stack screen', () => {
+  it('every stack screen, nearest first: in nested stacks the one pushed or popped moves', () => {
     const inner = fabricHost('RNSScreenStack', null, {}, [fabricHost(SCREEN_HOST_TYPE, SCREEN, {}, [self()])]);
     const fiber = selfIn(
       root([fabricHost('RNSScreenStack', null, {}, [fabricHost(SCREEN_HOST_TYPE, SCREEN, {}, [inner])])]),
     );
 
-    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([{ kind: 'screen', index: 0 }]);
+    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([
+      { kind: 'screen', index: 0, stack: 1 },
+      { kind: 'screen', index: 2, stack: 3 },
+    ]);
   });
 
   it('a screen in a tab container does not; nothing else does either', () => {
@@ -90,7 +102,7 @@ describe('carriersOf', () => {
     );
 
     expect(carriersOf(ancestryOfFiber(fiber))).toEqual([
-      { kind: 'screen', index: 0 },
+      { kind: 'screen', index: 0, stack: 1 },
       { kind: 'modal', index: 2 },
     ]);
   });
@@ -142,19 +154,29 @@ describe('carriedCovers and bounding', () => {
 });
 
 describe('carrierEntering', () => {
-  it('a carrier with no alternate was created by the commit running now', () => {
+  it('a carrier created by the commit running now is carried in until the hold ends, and stays so', () => {
     const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
     const carrier = { kind: 'screen' as const, index: 0 };
 
     // Mounted whole, as an app starts: nothing above it was there.
-    expect(carrierEntering(ancestry, carrier)).toBe(false);
+    expect(carrierEntering(ancestry, carrier, 1000)).toBeUndefined();
     const above = ancestry.path[1] as FiberLike;
     above.alternate = { ...above, alternate: above };
-    expect(carrierEntering(ancestry, carrier)).toBe(true);
-    (ancestry.path[0] as FiberLike).alternate = null;
-    expect(carrierEntering(ancestry, carrier)).toBe(true);
-    (ancestry.path[0] as FiberLike).alternate = { ...(ancestry.path[0] as FiberLike) };
-    expect(carrierEntering(ancestry, carrier)).toBe(false);
+    expect(carrierEntering(ancestry, carrier, 1000)).toBe(1000 + SECURE_TRANSITION_HOLD_MS);
+    // Rendered again since, a later view still finds it carried in, from when it was created.
+    const screen = ancestry.path[0] as FiberLike;
+    screen.alternate = { ...screen, alternate: screen };
+    expect(carrierEntering(ancestry, carrier, 1300)).toBe(1000 + SECURE_TRANSITION_HOLD_MS);
+    expect(carrierEntering(ancestry, carrier, 1000 + SECURE_TRANSITION_HOLD_MS)).toBeUndefined();
+  });
+
+  it('a carrier there before, never seen created, is not carried in', () => {
+    const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
+    for (const fiber of ancestry.path) {
+      fiber.alternate = { ...fiber, alternate: fiber };
+    }
+
+    expect(carrierEntering(ancestry, { kind: 'screen', index: 0 }, 5)).toBeUndefined();
   });
 });
 
@@ -243,5 +265,66 @@ describe('carriedCover', () => {
 
     const carrier = { kind: 'modal' as const, index: indexOf(fiber, 'RCTModalHostView') };
     expect(carriedCover(ancestry, carrier, SELF)).toEqual(expected);
+  });
+});
+
+describe('stack motion and covers', () => {
+  it.each<[unknown, unknown, StackMotion]>([
+    ['slide_from_right', undefined, 'sideways'],
+    ['simple_push', 'push', 'sideways'],
+    ['fade_from_bottom', undefined, 'upwards'],
+    ['none', undefined, 'still'],
+    ['default', 'modal', 'any'],
+    [undefined, undefined, 'any'],
+    ['flip', undefined, 'any'],
+  ])('%s, presented %s: %s', (stackAnimation, stackPresentation, expected) => {
+    expect(stackMotionOf({ stackAnimation, stackPresentation })).toBe(expected);
+  });
+
+  it('props that are not there: any motion', () => {
+    expect(stackMotionOf(null)).toBe('any');
+  });
+
+  it.each<[StackMotion, boolean, WindowRect]>([
+    ['sideways', true, rect(0, 100, 400, 50)],
+    ['sideways', false, rect(0, 100, 400, 50)],
+    ['upwards', true, rect(10, 100, 200, 700)],
+    ['upwards', false, SELF],
+    ['still', true, SELF],
+    ['any', false, SCREEN],
+  ])('%s, the screen moving %s', (motion, moving, expected) => {
+    expect(screenCover(motion, SCREEN, SELF, moving)).toEqual(expected);
+  });
+
+  it('a view below the screen\'s bottom still has a column of its own height', () => {
+    expect(screenCover('upwards', rect(0, 0, 400, 100), SELF, true)).toEqual(SELF);
+  });
+
+  it('a view not on screen is covered nowhere, whatever the motion', () => {
+    expect(screenCover('any', SCREEN, null, true)).toBeNull();
+    const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
+    expect(carriedCover(ancestry, { kind: 'screen', index: 1 }, null)).toBeNull();
+    expect(carriedCover(ancestry, { kind: 'screen', index: 1 }, undefined)).toEqual(SCREEN);
+  });
+
+  it('tells every view joined on a stack, until it leaves; a stack nobody joined tells nobody', () => {
+    const stack = {};
+    const told = jest.fn();
+    const leave = joinStack(stack, told);
+    stackMoving(stack, 'sideways', 5, {});
+    leave();
+    stackMoving(stack, 'sideways', 5, {});
+    stackMoving({}, 'any', 5, {});
+
+    expect(told).toHaveBeenCalledTimes(1);
+    expect(told).toHaveBeenCalledWith('sideways', 5, {});
+  });
+
+  it('keys a host by its shared canonical, or else the fiber itself', () => {
+    const canonical = {};
+
+    expect(keyOf({ stateNode: { canonical } } as never)).toBe(canonical);
+    const bare = { stateNode: null } as never;
+    expect(keyOf(bare)).toBe(bare);
   });
 });

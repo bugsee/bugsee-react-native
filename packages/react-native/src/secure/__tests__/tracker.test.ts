@@ -632,11 +632,11 @@ describe('SecureTracker', () => {
       // Popped: the screen (unmeasurable here, so the whole surface) and the view.
       tracker.depart();
       expect((last() as WindowRect[]).length).toBe(2);
-      // The view's own hold has run out (600 ms); the cover lasts until 650.
+      // The view's own hold has run out (600 ms); the cover lasts until 850.
       later(570);
       runTick();
       expect((last() as WindowRect[]).length).toBe(1);
-      later(100);
+      later(250);
       runTick();
       expect(mockState.cleared).toBe(1);
     });
@@ -656,7 +656,7 @@ describe('SecureTracker', () => {
       expect(warn).toHaveBeenCalledTimes(1);
     });
 
-    it('a parked view drops a transition cover on the tick once it runs out', () => {
+    it('a view carried in stays per-frame until the transition hold ends, then parks without the cover', () => {
       const stack = { type: 'RNSScreenStack' };
       // A screen with no alternate: pushed by the commit that mounts the view.
       mockState.ancestry = {
@@ -670,12 +670,13 @@ describe('SecureTracker', () => {
       mockState.clipTo = cutAt120;
       tracker.start();
       runFrames(STEADY_FRAMES + 2);
-      expect(mockLoop.parked).toHaveLength(1);
+      expect(mockLoop.parked).toHaveLength(0);
       expect((last() as WindowRect[]).length).toBe(2);
 
       later(SECURE_TRANSITION_HOLD_MS + 100);
-      runTick();
+      runFrames(STEADY_FRAMES + 2);
 
+      expect(mockLoop.parked).toHaveLength(1);
       expect(last()).toEqual([cutAt120(self)]);
     });
   });

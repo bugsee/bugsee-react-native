@@ -33,6 +33,7 @@ import {
   scrollView,
   self,
   selfIn,
+  selvesIn,
   view,
 } from './fakeAncestors';
 import type { FakeRenderer } from './fakeAncestors';
@@ -290,6 +291,177 @@ describe('a screen pushed onto a stack', () => {
   });
 });
 
+describe('P2-6: the screen below a push or pop moves too', () => {
+  function stackOf(): { a: FiberLike; b: FiberLike } {
+    const tree = root([
+      fabricHost('RNSScreenStack', null, {}, [
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()])]),
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, stackAnimation: 'slide_from_right' }, [
+          view([self()]),
+        ]),
+      ]),
+    ]);
+    const selves = selvesIn(tree);
+    const [a, b] = selves.sort((p, q) => {
+      const screen = (fiber: FiberLike): FiberLike => ancestorOfType(fiber, SCREEN_HOST_TYPE);
+      return screen(p).sibling === screen(q) ? -1 : 1;
+    }) as [FiberLike, FiberLike];
+    return { a, b };
+  }
+
+  /** The rectangles of the last publish on display 0, as strings. */
+  const rects = (): string[] => {
+    const published = (lastPublished() as [number, number[]])[1];
+    const out: string[] = [];
+    for (let index = 0; index < published.length; index += 4) {
+      out.push(published.slice(index, index + 4).join());
+    }
+    return out;
+  };
+  const BAND = px(rect(0, 100, 400, 50)).join();
+
+  it('a push (sliding sideways) covers the view on the screen below with its band, for the transition hold', () => {
+    const { a, b } = stackOf();
+    existing(a);
+    // The pushed screen, and what is in it, are new.
+    const pushed = ancestorOfType(b, SCREEN_HOST_TYPE);
+    for (let current: FiberLike | null = pushed; current !== null; current = current.child) {
+      current.alternate = null;
+    }
+    render(a);
+
+    render(b);
+
+    // The pushed view's band and the band of the view below.
+    expect(rects().filter((entry) => entry === BAND)).toHaveLength(2);
+    wait(SECURE_TRANSITION_HOLD_MS + 100);
+    expect(rects()).toEqual([px(selfRect).join(), px(selfRect).join()]);
+  });
+
+  it('a pop covers the view on the screen it uncovers, and the view below joins every cover it is given', () => {
+    const { a, b } = stackOf();
+    existing(a);
+    existing(b);
+    render(a);
+    const top = render(b);
+
+    deleting(ancestorOfType(b, SCREEN_HOST_TYPE));
+    unmount(top);
+    // Told twice (as two views on the popped screen would tell it): one cover, joined.
+    expect(rects().filter((entry) => entry === BAND)).toHaveLength(2);
+  });
+
+  it('a view on the screen below that is not on screen is told, and covers nothing', () => {
+    const { a, b } = stackOf();
+    existing(a);
+    existing(b);
+    render(a);
+    const top = render(b);
+    // Scrolled away (as a hidden view would be): nothing seen.
+    ancestorOfType(a, SCREEN_HOST_TYPE).memoizedProps = { activityState: 0 };
+    wait(SECURE_SHRINK_HOLD_MS + 200);
+    native.reset();
+
+    deleting(ancestorOfType(b, SCREEN_HOST_TYPE));
+    unmount(top);
+
+    expect(rects().filter((entry) => entry === BAND)).toHaveLength(1);
+  });
+});
+
+describe('P2-8: the cover follows the screen\'s stackAnimation', () => {
+  function pushed(stackAnimation: unknown, extra: Record<string, unknown> = {}): void {
+    const fiber = selfIn(
+      root([
+        fabricHost('RNSScreenStack', null, {}, [
+          fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, stackAnimation, ...extra }, [view([self()])]),
+        ]),
+      ]),
+    );
+    existingFrom(ancestorOfType(fiber, 'RNSScreenStack'));
+    render(fiber);
+  }
+
+  it.each([
+    ['slide_from_right', { x: 0, y: 100, width: 400, height: 50 }],
+    ['ios_from_left', { x: 0, y: 100, width: 400, height: 50 }],
+    ['slide_from_bottom', { x: 10, y: 100, width: 200, height: 700 }],
+    ['fade', { x: 10, y: 100, width: 200, height: 50 }],
+    ['default', SCREEN],
+    ['flip', SCREEN],
+    [undefined, SCREEN],
+  ])('%s', (animation, expected) => {
+    pushed(animation);
+
+    expect(firstPublished()).toEqual(px(expected));
+  });
+
+  it('a modal presentation with the default animation on Android covers the whole screen', () => {
+    pushed('default', { stackPresentation: 'modal' });
+
+    expect(firstPublished()).toEqual(px(SCREEN));
+  });
+
+  it('a view cut away by a ScrollView on the screen covers nothing more as it moves', () => {
+    const fiber = selfIn(
+      root([
+        fabricHost('RNSScreenStack', null, {}, [
+          fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, stackAnimation: 'slide_from_right' }, [
+            scrollView(rect(0, 400, 400, 100), [self()]),
+          ]),
+        ]),
+      ]),
+    );
+    existingFrom(ancestorOfType(fiber, 'RNSScreenStack'));
+    render(fiber);
+
+    // Nothing published at all: the lane already holds nothing.
+    expect(native.setSecureRectangles.mock.calls.every(([, flat]) => (flat as number[]).length === 0)).toBe(true);
+  });
+});
+
+describe('P2-5: views that come later into a transition still running', () => {
+  it('a view mounted on a pushed screen a commit later, within the hold, is carried in until the hold ends', () => {
+    const tree = root([
+      fabricHost('RNSScreenStack', null, {}, [
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()]), view([self()])]),
+      ]),
+    ]);
+    const [first, later] = selvesIn(tree) as [FiberLike, FiberLike];
+    existingFrom(ancestorOfType(first, 'RNSScreenStack'));
+    render(first);
+
+    // 300 ms on, a row rendered in a later batch: the screen has been rendered again since.
+    wait(300);
+    existing(later);
+    native.reset();
+    render(later);
+    // Both views cover the screen: the first from its own push, the later one carried in with it.
+    const published = (lastPublished() as [number, number[]])[1];
+    const screens = published.filter((_, index) => index % 4 === 0).filter((_, index) =>
+      published.slice(index * 4, index * 4 + 4).join() === px(SCREEN).join(),
+    );
+    expect(screens).toHaveLength(2);
+
+    wait(SECURE_TRANSITION_HOLD_MS - 300 + 100);
+    expect(lastPublished()).toEqual([0, [...px(selfRect), ...px(selfRect)]]);
+  });
+
+  it('a view whose first measurement failed still covers its popped screen', () => {
+    const fiber = existing(onStackScreen());
+    measureInWindow.mockImplementationOnce(() => {
+      throw new Error('not laid out');
+    });
+    const testRenderer = render(fiber);
+    expect(native.setSecureRectangles).not.toHaveBeenCalled();
+
+    deleting(ancestorOfType(fiber, SCREEN_HOST_TYPE));
+    unmount(testRenderer);
+
+    expect(lastPublished()).toEqual([0, px(SCREEN)]);
+  });
+});
+
 describe('C3: a Modal sliding in and out', () => {
   it('a Modal mounted with the whole tree (open as the app starts) is not carried', () => {
     const fiber = inModal({ animationType: 'slide' });
@@ -492,7 +664,7 @@ describe('C3: a Modal sliding in and out', () => {
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(selfRect), ...px(before)]]);
   });
 
-  it('a view hidden as a Modal opens is not carried in once shown later', () => {
+  it('P2-5: a view hidden as a Modal opens, shown while it still slides in, is carried in; shown later, not', () => {
     const fiber = onScreenInModal('RNSScreenContainer', 0, { animationType: 'slide', visible: true });
     // The Modal was created by the commit that mounted the view; the screen that opened it was there.
     const host = ancestorOfType(fiber, 'RCTModalHostView');
@@ -500,9 +672,17 @@ describe('C3: a Modal sliding in and out', () => {
       current.alternate = null;
     }
     render(fiber);
-    ancestorOfType(fiber, SCREEN_HOST_TYPE).memoizedProps = { activityState: 2 };
+    const screen = ancestorOfType(fiber, SCREEN_HOST_TYPE);
+    screen.memoizedProps = { activityState: 2 };
     wait(17);
 
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(band(selfRect)));
+
+    // Hidden, and shown again once the transition is over: no band.
+    screen.memoizedProps = { activityState: 0 };
+    wait(SECURE_TRANSITION_HOLD_MS + 100);
+    screen.memoizedProps = { activityState: 2 };
+    wait(17);
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
   });
 
@@ -548,41 +728,59 @@ interface FakeValue {
   _value: number;
   _offset: number;
   _animation: { _fromValue: number; _toValue: number; _easing: (t: number) => number } | null;
+  _tracking: null;
   __getValue: () => number;
+  hasListeners: () => boolean;
 }
 
-function animatedValue(value: number, isNative = true): FakeValue {
+/** `synced`: JS provably holds its native value (the app listens to it). */
+function animatedValue(value: number, isNative = true, synced = true): FakeValue {
   const node: FakeValue = {
     __isNative: isNative,
     _value: value,
     _offset: 0,
     _animation: null,
+    _tracking: null,
     __getValue: () => node._value + node._offset,
+    hasListeners: () => synced,
   };
   return node;
 }
 
-/** A stand-in for `value.interpolate({ inputRange, outputRange })`, extending past its ends. */
-function interpolation(parent: FakeValue, inputRange: number[], outputRange: number[]): object {
+const linear = (t: number): number => t;
+const timing = (from: number, to: number): FakeValue['_animation'] => ({
+  _fromValue: from,
+  _toValue: to,
+  _easing: linear,
+});
+
+/** A stand-in for `value.interpolate({ inputRange, outputRange, ...extra })`, extending past its ends. */
+function interpolation(
+  parent: object,
+  inputRange: number[],
+  outputRange: number[],
+  extra: Record<string, unknown> = {},
+): object {
   const interpolate = (input: number): number => {
     const [i0, i1] = inputRange as [number, number];
     const [o0, o1] = outputRange as [number, number];
     return o0 + ((input - i0) * (o1 - o0)) / (i1 - i0);
   };
   return {
-    __isNative: parent.__isNative,
+    __isNative: true,
     _parent: parent,
-    _config: { inputRange, outputRange },
+    _config: { inputRange, outputRange, ...extra },
     _getInterpolation: () => interpolate,
-    __getValue: () => interpolate(parent.__getValue()),
+    __getValue: () => interpolate((parent as FakeValue).__getValue()),
   };
 }
 
 const AnimatedView = Object.assign(() => null, { displayName: 'Animated(View)' });
 
 /**
- * The view under an `Animated.View` styled `transform`, which renders the
- * host `RCTView` measured at `animatedRect` with `rendered` as its transform.
+ * The view under an `Animated.View` styled `transform` (and `extra`), which
+ * renders the host `RCTView` measured at `animatedRect` with `rendered` as
+ * its transform.
  */
 function underAnimated(
   transform: Array<Record<string, unknown>>,
@@ -590,6 +788,7 @@ function underAnimated(
   animatedRect = rect(0, 0, 400, 800),
   outer: (spec: FiberSpec) => FiberSpec = (spec) => spec,
   inner: (spec: FiberSpec) => FiberSpec = (spec) => spec,
+  extra: Record<string, unknown> = {},
 ): FiberLike {
   return existing(
     selfIn(
@@ -597,32 +796,50 @@ function underAnimated(
         outer({
           tag: FiberTag.FunctionComponent,
           type: AnimatedView,
-          memoizedProps: { style: { transform } },
-          children: [fabricHost('RCTView', animatedRect, { style: { transform: rendered } }, [inner(view([self()]))])],
+          memoizedProps: { style: { transform, ...extra } },
+          children: [
+            fabricHost('RCTView', animatedRect, { style: { transform: rendered, ...extra } }, [inner(view([self()]))]),
+          ],
         }),
       ]),
     ),
   );
 }
 
+/** The first rectangle of the last publish on display 0. */
+const firstPublished = (): number[] => (lastPublished() as [number, number[]])[1].slice(0, 4);
+
 describe('B6: a native-driven Animated transform above the view', () => {
   it('covers every place an interpolated translateX can draw it', () => {
     const value = animatedValue(0);
-    value._animation = { _fromValue: 0, _toValue: 1, _easing: (t) => t };
+    value._animation = timing(0, 1);
     render(underAnimated([{ translateX: interpolation(value, [0, 1], [0, 160]) }], [{ translateX: 0 }]));
 
     expect(lastPublished()).toEqual([0, px(rect(10, 100, 360, 50))]);
   });
 
-  it('follows a value stopped part-way, which the shadow tree never saw', () => {
+  it('covers a value stopped part-way, whichever value the shadow tree holds', () => {
     const value = animatedValue(0);
     render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
 
-    // Stopped at 40: native synced the value back to JS, not to the shadow tree.
+    // Stopped at 40: synced back to JS; the shadow tree holds 0 (or 40, with C++ Animated).
     value._value = 40;
     wait(100);
 
-    expect(lastPublished()).toEqual([0, [...px(rect(10, 140, 200, 50)), ...px(selfRect)]]);
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 90)));
+  });
+
+  it('P1-1: with the end value in the shadow tree and the stale one in props, the mask stays on the view', () => {
+    // C++ Animated: the card slid from 300 to 0; native committed 0 to the shadow tree; props still say 300.
+    const value = animatedValue(0);
+    render(underAnimated([{ translateY: value }], [{ translateY: 300 }]));
+
+    const published = firstPublished();
+    // The view, where the shadow tree (and native) have it, is covered...
+    expect(published[1]).toBeLessThanOrEqual(2 * selfRect.y);
+    expect(published[3]).toBeGreaterThanOrEqual(2 * (selfRect.y + selfRect.height));
+    // ...and so is where it would be with the props' value in the shadow tree.
+    expect(published[1]).toBe(2 * (selfRect.y - 300));
   });
 
   it('covers a running timing animation from end to end, and follows it every frame', () => {
@@ -630,45 +847,97 @@ describe('B6: a native-driven Animated transform above the view', () => {
     render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
     const measures = measureInWindow.mock.calls.length;
 
-    value._animation = { _fromValue: 0, _toValue: 100, _easing: (t) => t };
-    wait(100);
-    expect(lastPublished()).toEqual([0, [...px(rect(10, 100, 200, 150)), ...px(selfRect)]]);
+    value._animation = timing(0, 100);
+    wait(17);
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 150)));
 
     // Running: measured every frame, however still the shadow tree is.
     wait(16 * 20);
     expect(measureInWindow.mock.calls.length - measures).toBeGreaterThanOrEqual(20);
   });
 
-  it('follows a still value that jumps (a loop restarting), within a frame', () => {
-    const value = animatedValue(160);
-    render(underAnimated([{ translateX: value }], [{ translateX: 0 }]));
-    wait(16 * 20);
-    expect(lastPublished()).toEqual([0, px(rect(170, 100, 200, 50))]);
+  it('P2-3: a still native transform measures nothing per frame, and wakes the frame an animation starts', () => {
+    const value = animatedValue(0);
+    render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
+    wait(16 * 12);
+    const before = measureInWindow.mock.calls.length;
 
-    // `Animated.loop` resets the value before each iteration: native draws it there at once.
-    value._value = 0;
+    // Six frames, no tick: nothing measured.
+    act(() => {
+      jest.advanceTimersByTime(16 * 5);
+    });
+    expect(measureInWindow.mock.calls.length).toBeLessThanOrEqual(before + 1);
+
+    value._animation = timing(0, 100);
+    const started = measureInWindow.mock.calls.length;
     wait(17);
-
-    expect((lastPublished() as [number, number[]])[1].slice(0, 4)).toEqual(px(selfRect));
+    expect(measureInWindow.mock.calls.length).toBeGreaterThan(started);
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 150)));
   });
 
-  it('a clipped, still view under an Animated component follows a native animation that starts later', () => {
-    // JS-driven so far (in the shadow tree), and the view half cut by a ScrollView above.
-    const value = animatedValue(0, false);
+  it('P2-3: under an Animated component with no native transform, a view parks like any other', () => {
     render(
-      underAnimated([{ translateY: value }], [{ translateY: 0 }], undefined, (spec) =>
-        scrollView(rect(0, 0, 400, 125), [spec]),
+      underAnimated([{ translateX: 5 }], [{ translateX: 5 }], undefined, undefined, (spec) =>
+        scrollView(rect(0, 0, 400, 120), [spec]),
       ),
     );
-    wait(16 * 20);
-    expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 25))]);
+    wait(16 * 12);
+    const before = measureInWindow.mock.calls.length;
 
-    // Now driven natively: the view slides up, into the viewport, with no layout and no scroll.
-    value.__isNative = true;
-    value._value = -60;
-    wait(17);
+    act(() => {
+      jest.advanceTimersByTime(16 * 5);
+    });
 
-    expect((lastPublished() as [number, number[]])[1].slice(0, 4)).toEqual(px(rect(10, 40, 200, 50)));
+    // Parked: only the tick's own check (at 200 ms) measures it.
+    expect(measureInWindow.mock.calls.length).toBe(before + 1);
+  });
+
+  it('P1-2: a native value nobody animated from JS (an Animated.event) covers the whole surface, clipped', () => {
+    const scrollY = animatedValue(0, true, false);
+    render(
+      underAnimated([{ translateY: scrollY }], [{ translateY: 0 }], undefined, (spec) =>
+        scrollView(rect(0, 50, 400, 300), [spec]),
+      ),
+    );
+
+    expect(firstPublished()).toEqual(px(rect(0, 50, 400, 300)));
+  });
+
+  it('P1-2: a collapsing header (diffClamp, clamped interpolation) is covered over its whole travel', () => {
+    const scrollY = animatedValue(0, true, false);
+    const clamp = { __isNative: true, _a: scrollY, _min: 0, _max: 60, _value: 0, __getValue: () => 0 };
+    const header = interpolation(clamp, [0, 60], [0, -60], { extrapolate: 'clamp' });
+    render(underAnimated([{ translateY: header }], [{ translateY: 0 }]));
+
+    expect(firstPublished()).toEqual(px(rect(10, 40, 200, 110)));
+  });
+
+  it('P1-2: a clamped interpolation of a value it cannot bound is covered over its output range', () => {
+    const scrollY = animatedValue(0, true, false);
+    render(
+      underAnimated(
+        [
+          {
+            translateY: interpolation(scrollY, [0, 100], [0, -30], {
+              extrapolateLeft: 'clamp',
+              extrapolateRight: 'clamp',
+            }),
+          },
+        ],
+        [{ translateY: 0 }],
+      ),
+    );
+
+    expect(firstPublished()).toEqual(px(rect(10, 70, 200, 80)));
+  });
+
+  it('P2-1: a value whose fields were renamed is unbounded: the whole surface', () => {
+    const value = animatedValue(0) as unknown as Record<string, unknown>;
+    value._runningAnimation = value._animation;
+    delete value._animation;
+    render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
+
+    expect(firstPublished()).toEqual(px(WHOLE_SURFACE));
   });
 
   it('includes what an easing overshoots', () => {
@@ -676,50 +945,80 @@ describe('B6: a native-driven Animated transform above the view', () => {
     value._animation = { _fromValue: 0, _toValue: 100, _easing: (t) => t * (1.2 - 0.2 * t) * (t < 0.5 ? 1 : 1.25) };
     render(underAnimated([{ translateX: value }], [{ translateX: 0 }]));
 
-    const published = (lastPublished() as [number, number[]])[1];
-    expect(published[2]).toBeGreaterThan(2 * (10 + 200 + 100));
-  });
-
-  it('measures from the value React last rendered, not from zero', () => {
-    const value = animatedValue(30);
-    render(underAnimated([{ translateX: value }], [{ translateX: 20 }]));
-
-    expect(lastPublished()).toEqual([0, px(rect(20, 100, 200, 50))]);
+    expect(firstPublished()[2]).toBeGreaterThan(2 * (10 + 200 + 100));
   });
 
   it('scales about the animated view’s centre', () => {
     const value = animatedValue(2);
     render(underAnimated([{ scale: value }], [{ scale: 1 }], rect(0, 0, 400, 400)));
 
-    // Drawn at twice the size about (200, 200): x 10..210 to -180..220, y 100..150 to 0..100.
-    expect(lastPublished()).toEqual([0, px(rect(-180, 0, 400, 100))]);
+    // Twice the size about (200, 200): x 10..210 to -180..220, y 100..150 to 0..100; and where it rests.
+    expect(firstPublished()).toEqual(px(rect(-180, 0, 400, 150)));
   });
 
-  it('covers the whole surface for a transform it cannot bound, cut by a clipping ancestor above', () => {
+  it('P2-2: scales about its transformOrigin', () => {
+    const value = animatedValue(1);
+    value._animation = timing(1, 1.5);
+    render(underAnimated([{ scale: value }], [{ scale: 1 }], rect(0, 0, 400, 400), undefined, undefined, {
+      transformOrigin: 'top left',
+    }));
+
+    // About (0, 0), by 1 to 1.5: x 10..315, y 100..225.
+    expect(firstPublished()).toEqual(px(rect(10, 100, 305, 125)));
+  });
+
+  it('P2-2: a transformOrigin it cannot read is unbounded', () => {
+    const value = animatedValue(1);
+    value._animation = timing(1, 1.5);
+    render(underAnimated([{ scale: value }], [{ scale: 1 }], rect(0, 0, 400, 400), undefined, undefined, {
+      transformOrigin: 'calc(50% - 2px) top',
+    }));
+
+    expect(firstPublished()).toEqual(px(WHOLE_SURFACE));
+  });
+
+  it('P2-4: composes a translation with a scale, and adds two bounded values', () => {
+    const lift = animatedValue(0);
+    lift._animation = timing(0, -20);
+    const sum = { __isNative: true, _a: lift, _b: animatedValue(10), __getValue: () => lift.__getValue() + 10 };
+    const zoom = animatedValue(1);
+    zoom._animation = timing(1, 1.1);
+    render(
+      underAnimated([{ translateY: sum }, { scale: zoom }], [{ translateY: 10 }, { scale: 1 }], rect(0, 0, 400, 400)),
+    );
+
+    const [left, top, right, bottom] = firstPublished();
+    // Never the whole surface; reaches 20 up and the 10% growth about the centre.
+    expect(right! - left!).toBeLessThan(2 * 400);
+    expect(top).toBeLessThanOrEqual(2 * (100 - 20 - 10 - 1));
+    expect(bottom).toBeGreaterThanOrEqual(2 * 150);
+  });
+
+  it('P2-4: clips by a clipping ancestor inside the transform before moving, and by one above after', () => {
+    const value = animatedValue(0);
+    value._animation = timing(0, 1);
+    render(
+      underAnimated(
+        [{ translateY: interpolation(value, [0, 1], [0, 300]) }],
+        [{ translateY: 0 }],
+        undefined,
+        (spec) => scrollView(rect(0, 0, 400, 1000), [spec]),
+        (spec) => scrollView(rect(0, 0, 400, 130), [spec]),
+      ),
+    );
+
+    // Cut to 100..130 inside, then moved by up to 300: 100..430 (not 100..450), within 0..1000 above.
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 330)));
+  });
+
+  it('a rotation stays unbounded: the whole surface, cut by a clipping ancestor above', () => {
     render(
       underAnimated([{ rotate: animatedValue(1) }], [{ rotate: '0deg' }], undefined, (spec) =>
         scrollView(rect(0, 50, 400, 300), [spec]),
       ),
     );
 
-    expect(lastPublished()).toEqual([0, px(rect(0, 50, 400, 300))]);
-  });
-
-  it('a clipping ancestor below the transform does not cut where it draws the view', () => {
-    const value = animatedValue(0);
-    value._animation = { _fromValue: 0, _toValue: 1, _easing: (t) => t };
-    render(
-      underAnimated(
-        [{ translateY: interpolation(value, [0, 1], [0, 300]) }],
-        [{ translateY: 0 }],
-        undefined,
-        undefined,
-        (spec) => scrollView(rect(0, 0, 400, 130), [spec]),
-      ),
-    );
-
-    // The ScrollView moves with the transform: the whole path stays covered.
-    expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 350))]);
+    expect(firstPublished()).toEqual(px(rect(0, 50, 400, 300)));
   });
 
   it('a JS-driven transform is in the shadow tree already, and changes nothing', () => {
@@ -736,6 +1035,47 @@ describe('B6: a native-driven Animated transform above the view', () => {
     pairWith(wrapper, { style: { transform: [{ translateX: interpolation(value, [0, 1], [0, 160]) }] } });
 
     render(fiber);
+
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
+});
+
+const ReanimatedView = Object.assign(() => null, { displayName: 'AnimatedComponent(View)' });
+
+/** The view under a Reanimated component with `style`. */
+function underReanimated(style: unknown): FiberLike {
+  return existing(
+    selfIn(
+      root([
+        scrollView(rect(0, 50, 400, 300), [
+          {
+            tag: FiberTag.FunctionComponent,
+            type: ReanimatedView,
+            memoizedProps: { style },
+            children: [view([self()])],
+          },
+        ]),
+      ]),
+    ),
+  );
+}
+
+describe('P2-7: Reanimated', () => {
+  it('an animated style that sets a transform covers the whole surface, clipped', () => {
+    const animatedStyle = { viewDescriptors: {}, initial: { value: { transform: [{ translateY: 0 }] } } };
+    render(underReanimated([{ flex: 1 }, animatedStyle]));
+
+    expect(firstPublished()).toEqual(px(rect(0, 50, 400, 300)));
+  });
+
+  it('an animated style it cannot read is taken as moving the view', () => {
+    render(underReanimated({ viewDescriptors: {}, initial: {} }));
+
+    expect(firstPublished()).toEqual(px(rect(0, 50, 400, 300)));
+  });
+
+  it('an animated style without a transform, or plain styles, move nothing', () => {
+    render(underReanimated([{ viewDescriptors: {}, initial: { value: { opacity: 1 } } }, null, { margin: 2 }]));
 
     expect(lastPublished()).toEqual([0, px(selfRect)]);
   });

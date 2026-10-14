@@ -20,10 +20,14 @@ import type { FiberLike, WindowRect } from '../viewtree/fiber';
  * So for {@link SECURE_TRANSITION_HOLD_MS} from the commit that starts such a
  * transition, a view it carries also covers everywhere the transition can
  * draw it:
- *  - a screen pushed onto, or popped off, a stack: the screen's own
- *    rectangle. The stack clips what its screens draw to its bounds, and
- *    every stack animation (slide, scale, fade, either direction, RTL) keeps
- *    a screen inside them, so this holds whatever animation the app chose;
+ *  - a screen pushed onto, or popped off, a stack, and the screen it uncovers
+ *    or covers on that stack (which moves too): by the screen's
+ *    `stackAnimation`, the band of the view across the screen for a
+ *    sideways slide, the column from the view down for a slide from the
+ *    bottom, the view itself for a fade or none; for the platform default and
+ *    anything else, the screen's whole rectangle. The stack clips what its
+ *    screens draw to its bounds, so each of these holds for its animation in
+ *    either direction and RTL, and the whole screen holds for any;
  *  - a `<Modal animationType="slide">` opening or closing: the band from the
  *    view's top down to the bottom of the surface, the path it slides along.
  *    A fading Modal does not move the view, and the hold every unmount gets
@@ -31,16 +35,18 @@ import type { FiberLike, WindowRect } from '../viewtree/fiber';
  *
  * A transition is told apart from a view coming and going inside a screen
  * that stays by the fiber tree alone: in the commit that mounts a view, an
- * ancestor created by that same commit has no alternate yet; in the commit
- * that unmounts it, the root of what is deleted is listed in its parent's
- * `deletions`.
+ * ancestor created by that same commit has no alternate yet (and the time is
+ * kept, so a view mounted, or shown, later in the same transition is covered
+ * too); in the commit that unmounts it, the root of what is deleted is listed
+ * in its parent's `deletions`.
  *
- * 600 ms: react-native-screens' default Android animations run 450 ms (200 ms
- * before Android 13), started a frame or more after the commit; the cover
- * masks a whole screen, so each millisecond past the animation is a black
- * screen in the video.
+ * 800 ms from the commit: on an API 30 emulator (Debug) the native animation
+ * started ~200 ms after the commit and react-native-screens' default Android
+ * animations run 450 ms (200 ms before Android 13), 650 ms in all; iOS pushes
+ * run ~350-500 ms. React Native screens report the end of a transition only
+ * to the navigator's own handlers, so the cover ends on time.
  */
-export const SECURE_TRANSITION_HOLD_MS = 600;
+export const SECURE_TRANSITION_HOLD_MS = 800;
 
 /**
  * A rectangle past every edge of any surface, for a cover whose bounds cannot
@@ -56,21 +62,21 @@ export interface Carrier {
   readonly kind: 'screen' | 'modal';
   /** Where the screen's, or the Modal's, host is in `Ancestry.path`. */
   readonly index: number;
+  /** A screen's stack, in `Ancestry.path`. */
+  readonly stack?: number;
 }
 
 /**
- * What can carry the view through a native transition: its nearest screen in
- * a stack, and the `<Modal>` it is in, each independently (a stack inside a
- * Modal slides in with the Modal, and pushes within it on its own).
+ * What can carry the view through a native transition: every screen in a
+ * stack above it (nearest first), and the `<Modal>` it is in, each
+ * independently (a stack inside a Modal slides in with the Modal, and pushes
+ * within it on its own; in nested stacks, the screen that moves is the one
+ * pushed or popped).
  */
 export function carriersOf(ancestry: Ancestry): Carrier[] {
-  const carriers: Carrier[] = [];
-  const screen = ancestry.hosts.find(
-    (host) => host.screen && STACK_HOST_TYPES.has(ancestry.path[host.above]?.type),
-  );
-  if (screen !== undefined) {
-    carriers.push({ kind: 'screen', index: screen.index });
-  }
+  const carriers: Carrier[] = ancestry.hosts
+    .filter((host) => host.screen && STACK_HOST_TYPES.has(ancestry.path[host.above]?.type))
+    .map((host) => ({ kind: 'screen' as const, index: host.index, stack: host.above }));
   const modal = modalOf(ancestry);
   if (modal !== null) {
     carriers.push(modal);
@@ -79,17 +85,17 @@ export function carriersOf(ancestry: Ancestry): Carrier[] {
 }
 
 /**
- * Where the `carriers` can draw a view that rests at `self`, joined, or
+ * Where the `carriers` can draw a view seen at `view`, joined, or
  * `null` when none of them moves it.
  */
 export function carriedCovers(
   ancestry: Ancestry,
   carriers: readonly Carrier[],
-  self: WindowRect | null,
+  view: WindowRect | null | undefined,
 ): WindowRect | null {
   let joined: WindowRect | null = null;
   for (const carrier of carriers) {
-    const cover = carriedCover(ancestry, carrier, self);
+    const cover = carriedCover(ancestry, carrier, view);
     if (cover !== null) {
       joined = bounding(cover, joined);
     }
@@ -119,20 +125,45 @@ export function modalOf(ancestry: Ancestry): Carrier | null {
 }
 
 /**
- * Whether the commit running now created the carrier, as a push or a Modal
- * opening does: a fiber gets its alternate the first time it is rendered
- * again, and every ancestor of a view that mounts is either created or
- * rendered again by that commit. Something above the carrier must have been
- * there before (the stack, the screen that opened the Modal): a tree mounted
- * whole, as an app starts, is drawn where it is laid out, with no transition.
- * Only meaningful while that commit's layout effects run.
+ * Until when the carrier is being carried in (`undefined`: it is not): a
+ * commit no longer ago than {@link SECURE_TRANSITION_HOLD_MS} created it, as a
+ * push or a Modal opening does. A fiber gets its alternate the first time it
+ * is rendered again, and every ancestor of a view that mounts is either
+ * created or rendered again by that commit, so a carrier with no alternate
+ * was created by the commit running now, and its time is kept for views that
+ * come later. Something above the carrier must have been there before (the
+ * stack, the screen that opened the Modal): a tree mounted whole, as an app
+ * starts, is drawn where it is laid out, with no transition.
  */
-export function carrierEntering(ancestry: Ancestry, carrier: Carrier): boolean {
+export function carrierEntering(ancestry: Ancestry, carrier: Carrier, now: number): number | undefined {
   const { path } = ancestry;
-  const created = (path[carrier.index] as FiberLike).alternate == null;
+  const fiber = path[carrier.index] as FiberLike;
+  const key = keyOf(fiber);
+  const created = fiber.alternate == null;
   // Nothing below a created carrier can have been there before it.
   // Stryker disable next-line MethodExpression -- so looking from the bottom finds the same
-  return created && path.slice(carrier.index + 1).some((fiber) => fiber.alternate != null);
+  if (created && !births.has(key) && path.slice(carrier.index + 1).some((above) => above.alternate != null)) {
+    births.set(key, now);
+  }
+  const born = births.get(key);
+  return born !== undefined && now - born < SECURE_TRANSITION_HOLD_MS ? born + SECURE_TRANSITION_HOLD_MS : undefined;
+}
+
+/**
+ * When each carrier was created by a transition, by {@link keyOf}: a view
+ * that mounts, or is shown, while that transition still runs is carried in
+ * with it.
+ */
+const births = new WeakMap<object, number>();
+
+/**
+ * What stays the same for a host across both fibers of its pair and every
+ * commit: Fabric's shared `canonical` (a host's `stateNode` is cloned on
+ * every update), or the fiber when there is none.
+ */
+export function keyOf(fiber: FiberLike): object {
+  const canonical = (fiber.stateNode as { canonical?: unknown } | null | undefined)?.canonical;
+  return canonical !== null && typeof canonical === 'object' ? canonical : fiber;
 }
 
 function deletes(parent: FiberLike | null | undefined, child: FiberLike): boolean {
@@ -166,32 +197,151 @@ export function carrierLeaving(ancestry: Ancestry, carrier: Carrier): boolean {
   return Number(deletionRoot(ancestry)) >= carrier.index;
 }
 
+/** How a stack animation moves its screens, as far as covering goes. */
+export type StackMotion = 'sideways' | 'upwards' | 'still' | 'any';
+
+const SIDEWAYS: ReadonlySet<unknown> = new Set([
+  'slide_from_right',
+  'slide_from_left',
+  'ios_from_right',
+  'ios_from_left',
+  'simple_push',
+]);
+const UPWARDS: ReadonlySet<unknown> = new Set(['slide_from_bottom', 'fade_from_bottom']);
+const STILL: ReadonlySet<unknown> = new Set(['fade', 'none']);
+/** iOS presentations that slide a screen up over the one below by default. */
+const MODAL_PRESENTATIONS: ReadonlySet<unknown> = new Set([
+  'modal',
+  'fullScreenModal',
+  'formSheet',
+  'pageSheet',
+  'transparentModal',
+  'containedModal',
+  'containedTransparentModal',
+]);
+
+function platformOS(): unknown {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy: only an app has it
+    return (require('react-native') as { Platform?: { OS?: unknown } }).Platform?.OS;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Where `carrier` can draw a view that rests at `self` while it is carried in
- * or out, or `null` when it does not move it.
+ * How the screen whose host props are `props` is animated in and out: from
+ * its `stackAnimation`, and on iOS its presentation. The platform default
+ * (sideways on Android 13+, a scale before, sideways on iOS) and anything
+ * unknown is `any`.
+ */
+export function stackMotionOf(props: unknown): StackMotion {
+  const { stackAnimation: animation, stackPresentation: presentation } = (props ?? {}) as Record<string, unknown>;
+  if (SIDEWAYS.has(animation)) {
+    return 'sideways';
+  }
+  if (UPWARDS.has(animation)) {
+    return 'upwards';
+  }
+  if (STILL.has(animation)) {
+    return 'still';
+  }
+  const defaulted = animation === undefined || animation === 'default';
+  return defaulted && MODAL_PRESENTATIONS.has(presentation) && platformOS() === 'ios' ? 'upwards' : 'any';
+}
+
+/**
+ * Where a stack transition moving as `motion` can draw a view on a screen at
+ * `screen`, seen at `view` (`null`: nothing of it is on screen, cut away by
+ * a ScrollView, say, and so drawn nowhere as the screen moves either). `moving`:
+ * the screen itself is the one pushed or popped; otherwise it is the one
+ * uncovered or covered below, which a slide up leaves where it is.
+ */
+export function screenCover(
+  motion: StackMotion,
+  screen: WindowRect,
+  view: WindowRect | null,
+  moving: boolean,
+): WindowRect | null {
+  if (view === null) {
+    return null;
+  }
+  if (motion === 'any') {
+    return screen;
+  }
+  if (motion === 'sideways') {
+    return { x: screen.x, y: view.y, width: screen.width, height: view.height };
+  }
+  if (motion === 'upwards' && moving) {
+    const bottom = Math.max(screen.y + screen.height, view.y + view.height);
+    return { x: view.x, y: view.y, width: view.width, height: bottom - view.y };
+  }
+  return view;
+}
+
+/** The window rectangle of a screen host, or the whole surface when it cannot be measured. */
+export function screenRect(fiber: FiberLike): WindowRect {
+  let screen: WindowRect | null | undefined;
+  try {
+    screen = measureFiber(fiber);
+  } catch {
+    // Unmeasurable: covered as the whole surface below.
+  }
+  return screen ?? WHOLE_SURFACE;
+}
+
+/**
+ * Where `carrier` can draw a view seen at `view` while it is carried in or
+ * out (`view`: what of it is on screen, `null` when nothing is, `undefined`
+ * when it was never measured), or `null` when it does not move it.
  */
 export function carriedCover(
   ancestry: Ancestry,
   carrier: Carrier,
-  self: WindowRect | null,
+  view: WindowRect | null | undefined,
 ): WindowRect | null {
-  const fiber = ancestry.path[carrier.index] as FiberLike;
+  const fiber = (ancestry.resolved ?? ancestry.path)[carrier.index] as FiberLike;
   if (carrier.kind === 'screen') {
-    let screen: WindowRect | null | undefined;
-    try {
-      screen = measureFiber(fiber);
-    } catch {
-      // Unmeasurable: covered as the whole surface below.
-    }
-    return screen ?? WHOLE_SURFACE;
+    const screen = screenRect(fiber);
+    return view === undefined ? screen : screenCover(stackMotionOf(fiber.memoizedProps), screen, view, true);
   }
   const animationType = (fiber.memoizedProps as { animationType?: unknown } | null | undefined)?.animationType;
-  // Never measured (no answer yet): it is drawn nowhere it was measured either.
-  if (self === null) {
+  // Never measured, or nothing of it on screen: it is drawn nowhere it was measured either.
+  if (view == null) {
     return null;
   }
   if (animationType === 'slide') {
-    return { x: self.x, y: self.y, width: self.width, height: WHOLE_SURFACE.height - self.y };
+    return { x: view.x, y: view.y, width: view.width, height: WHOLE_SURFACE.height - view.y };
   }
   return null;
+}
+
+/** A view on a stack's screen, told when another screen on that stack is pushed or popped. */
+export type StackNeighbour = (motion: StackMotion, until: number, moving: object) => void;
+
+/** The views on each stack's screens, by the stack's {@link keyOf}. */
+const stacks = new WeakMap<object, Set<StackNeighbour>>();
+
+/** Adds `neighbour` to the views on `stack`'s screens, until the returned function is called. */
+export function joinStack(stack: object, neighbour: StackNeighbour): () => void {
+  let views = stacks.get(stack);
+  if (views === undefined) {
+    views = new Set();
+    stacks.set(stack, views);
+  }
+  views.add(neighbour);
+  const joined = views;
+  return () => {
+    joined.delete(neighbour);
+  };
+}
+
+/**
+ * Tells every view on `stack` that its screen `moving` is being pushed or
+ * popped as `motion`, until `until`: the screens below move with it.
+ */
+export function stackMoving(stack: object, motion: StackMotion, until: number, moving: object): void {
+  for (const neighbour of [...(stacks.get(stack) ?? [])]) {
+    neighbour(motion, until, moving);
+  }
 }

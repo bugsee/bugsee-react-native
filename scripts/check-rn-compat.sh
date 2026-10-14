@@ -296,7 +296,8 @@ echo "    the commit and pairing, hidden Offscreen hosts, RootNodeKind hosts, Sc
 # - an Animated.Value keeping its running animation in `_animation`, a timing
 #   animation its `_fromValue`, `_toValue` and `_easing`, an interpolation its
 #   `_parent`, `_config` and `_getInterpolation()`, and a native node
-#   `__isNative`.
+#   `__isNative`; a value its `_value`, `_offset` and `hasListeners()`; diffClamp,
+#   modulo and division their own fields; Modal its `animationType` prop.
 for RENDERER_BUNDLE in \
   "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-dev.js" \
   "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-prod.js"
@@ -319,6 +320,21 @@ for FIELD in 'this\._parent = parent' 'this\._config = config' '_getInterpolatio
 done
 grep -qE 'this\.__isNative = true' "$ANIMATED/nodes/AnimatedWithChildren.js" \
   || { echo "FAIL: AnimatedWithChildren.js no longer marks a native node __isNative"; exit 1; }
+for FIELD in 'this\._value = ' 'this\._offset = ' 'this\._animation = null' 'hasListeners\(\)'; do
+  grep -qE "$FIELD" "$ANIMATED/nodes/AnimatedValue.js" "$ANIMATED/nodes/AnimatedNode.js" \
+    || { echo "FAIL: AnimatedValue.js/AnimatedNode.js no longer has $FIELD"; exit 1; }
+done
+grep -qE 'this\._min = min' "$ANIMATED/nodes/AnimatedDiffClamp.js" \
+  || { echo "FAIL: AnimatedDiffClamp.js no longer keeps its bounds in _min/_max"; exit 1; }
+grep -qE 'this\._modulus = modulus' "$ANIMATED/nodes/AnimatedModulo.js" \
+  || { echo "FAIL: AnimatedModulo.js no longer keeps its modulus in _modulus"; exit 1; }
+grep -qE '_warnedAboutDivideByZero' "$ANIMATED/nodes/AnimatedDivision.js" \
+  || { echo "FAIL: AnimatedDivision.js is no longer told apart by _warnedAboutDivideByZero"; exit 1; }
+grep -qE 'animationType=\{animationType\}' "$RN_SRC/Libraries/Modal/Modal.js" \
+  || { echo "FAIL: Modal.js no longer passes animationType to its host"; exit 1; }
+# Tracked, not required: with C++ Animated on, the shadow tree holds a native animation's end value.
+grep -qE 'cxxNativeAnimatedEnabled' "$RN_SRC/src/private/featureflags/ReactNativeFeatureFlags.js" \
+  || echo "    note: no cxxNativeAnimatedEnabled flag in this React Native"
 echo "    deletions, Animated component names and the Animated node fields are unchanged"
 
 echo "--- exception-handler internals guard"

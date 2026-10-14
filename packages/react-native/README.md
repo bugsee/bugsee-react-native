@@ -70,6 +70,37 @@ running, or a token the backend rejects — without that being an error worth
 throwing on. Capture comes up asynchronously, so poll `getStatus()` rather
 than assuming a resolved `launch` means recording has begun.
 
+### Hiding a view from recordings
+
+Wrap anything that must never be recorded in `<BugseeSecure>`:
+
+```tsx
+import { BugseeSecure } from '@bugsee/react-native';
+
+<BugseeSecure>
+  <Text>{accountNumber}</Text>
+</BugseeSecure>
+```
+
+The part of it that is on screen is masked, and taps on it are dropped, while
+it is mounted and `enabled` (default `true`). It follows scrolling, hidden
+screens, react-native-screens push and pop transitions, sliding `<Modal>`s and
+`Animated` transforms driven by the native driver, masking more rather than
+less where it cannot tell exactly. `enabled={false}` unmasks at once; an
+unmount keeps the mask for about half a second, as native may still draw the
+view.
+
+Known limits:
+
+- Reanimated runs its animations on the UI thread, out of JS's sight. A
+  Reanimated component whose animated style sets a transform masks the whole
+  surface around it; other Reanimated motion (layout animations,
+  `entering`/`exiting`, shared element transitions) is not followed.
+- An interactive back gesture (iOS swipe-back, Android predictive back) moves
+  a mounted screen without anything JS can see.
+- A native animation's first frame or two may be drawn before the mask
+  follows it.
+
 ## Expo config plugin
 
 ```json
