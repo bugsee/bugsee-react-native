@@ -289,6 +289,38 @@ grep -qE "uiViewClassName: 'AndroidHorizontalScrollView'" \
   || { echo "FAIL: AndroidHorizontalScrollViewNativeComponent.js no longer names its host AndroidHorizontalScrollView"; exit 1; }
 echo "    the commit and pairing, hidden Offscreen hosts, RootNodeKind hosts, ScrollView clipping and host names are unchanged"
 
+# (6) <BugseeSecure>'s transitions and native-driven transforms
+# (src/secure/transition.ts, src/secure/nativeAnimation.ts) depend on:
+# - a deleted child being listed in its parent's `deletions` (deleteChild);
+# - Animated components being named `Animated(<name>)`;
+# - an Animated.Value keeping its running animation in `_animation`, a timing
+#   animation its `_fromValue`, `_toValue` and `_easing`, an interpolation its
+#   `_parent`, `_config` and `_getInterpolation()`, and a native node
+#   `__isNative`.
+for RENDERER_BUNDLE in \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-dev.js" \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-prod.js"
+do
+  grep -qE 'deletions = \[childToDelete\]' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $(basename "$RENDERER_BUNDLE") no longer lists a deleted child in its parent's deletions"; exit 1; }
+done
+ANIMATED="$RN_SRC/Libraries/Animated"
+grep -qE 'Animated\(\$\{' "$ANIMATED/createAnimatedComponent.js" \
+  || { echo "FAIL: createAnimatedComponent.js no longer names its components Animated(<name>)"; exit 1; }
+grep -qE 'this\._animation = animation' "$ANIMATED/nodes/AnimatedValue.js" \
+  || { echo "FAIL: AnimatedValue.js no longer keeps its running animation in _animation"; exit 1; }
+for FIELD in '_fromValue = fromValue' '_toValue = config\.toValue' '_easing = '; do
+  grep -qE "this\.$FIELD" "$ANIMATED/animations/TimingAnimation.js" \
+    || { echo "FAIL: TimingAnimation.js no longer sets this.$FIELD"; exit 1; }
+done
+for FIELD in 'this\._parent = parent' 'this\._config = config' '_getInterpolation\(\)'; do
+  grep -qE "$FIELD" "$ANIMATED/nodes/AnimatedInterpolation.js" \
+    || { echo "FAIL: AnimatedInterpolation.js no longer has $FIELD"; exit 1; }
+done
+grep -qE 'this\.__isNative = true' "$ANIMATED/nodes/AnimatedWithChildren.js" \
+  || { echo "FAIL: AnimatedWithChildren.js no longer marks a native node __isNative"; exit 1; }
+echo "    deletions, Animated component names and the Animated node fields are unchanged"
+
 echo "--- exception-handler internals guard"
 # Task 7.2: global ErrorUtils / promise-rejection capture depends on these
 # React Native surfaces staying put. Fail with a named reason the day any of

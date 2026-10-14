@@ -39,8 +39,14 @@ import { BugseeSecure } from '@bugsee/react-native';
 // Deep-imported for secure-perf's `watch` mode only: the full hidden check,
 // timed on the same views (as scenarios/channel.ts does).
 import { ancestryOfInstance, isHidden } from '@bugsee/react-native/src/secure/ancestry';
+import { SECURE_TRANSITIONS_SCENARIO, SecureTransitionsProbe } from './secure-transitions';
 
-export const SECURE_VISIBLE_SCENARIOS = ['secure-visible', 'secure-perf', 'secure-perf-many'] as const;
+export const SECURE_VISIBLE_SCENARIOS = [
+  'secure-visible',
+  'secure-perf',
+  'secure-perf-many',
+  SECURE_TRANSITIONS_SCENARIO,
+] as const;
 
 export type SecureVisibleScenario = (typeof SECURE_VISIBLE_SCENARIOS)[number];
 
@@ -455,6 +461,9 @@ function SecurePerfManyProbe({ nonce }: { nonce: string }) {
 export function SecureVisibleStage({ scenario, nonce }: { scenario: SecureVisibleScenario; nonce: string }) {
   if (scenario === 'secure-visible') {
     return <SecureVisibleProbe nonce={nonce} />;
+  }
+  if (scenario === SECURE_TRANSITIONS_SCENARIO) {
+    return <SecureTransitionsProbe nonce={nonce} />;
   }
   return scenario === 'secure-perf' ? <SecurePerfProbe nonce={nonce} /> : <SecurePerfManyProbe nonce={nonce} />;
 }
