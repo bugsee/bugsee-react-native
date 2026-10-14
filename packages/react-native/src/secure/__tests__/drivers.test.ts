@@ -4,7 +4,7 @@
  * and their being made native. Anything it cannot follow is trusted for
  * nothing.
  */
-import { eventsOn, followDrivers, forgetDrivers, isNode, knownDriven, noteAnimating, whenNative } from '../drivers';
+import { eventsOn, followDrivers, forgetDrivers, isNode, knownDriven, noteAnimating, whenMoved } from '../drivers';
 import type { DriverSources } from '../drivers';
 
 /** Fresh stand-ins for React Native's four sources, unpatched. */
@@ -15,7 +15,19 @@ function sources(): DriverSources & {
   };
   implementation: { attachNativeEvent: jest.Mock };
   exported: { attachNativeEvent: jest.Mock };
-  valueClass: new () => { _value: number; __isNative: boolean; __makeNative: () => void; __getValue: () => number };
+  valueClass: new () => {
+    _value: number;
+    _animation: unknown;
+    __isNative: boolean;
+    __makeNative: () => void;
+    __getValue: () => number;
+    animate: (animation: unknown) => string;
+    setValue: (to: number) => void;
+    resetAnimation: () => void;
+    setOffset: () => void;
+    flattenOffset: () => void;
+    extractOffset: () => void;
+  };
   calls: unknown[][];
 } {
   const calls: unknown[][] = [];
@@ -32,9 +44,32 @@ function sources(): DriverSources & {
   }
   class AnimatedValue {
     _value = 0;
+    _animation: unknown = null;
     __isNative = false;
     __getValue(): number {
       return this._value;
+    }
+    animate(animation: unknown): string {
+      calls.push(['animate', this, animation]);
+      this._animation = animation;
+      return 'animating';
+    }
+    setValue(to: number): void {
+      calls.push(['setValue', this, to]);
+      this._value = to;
+    }
+    resetAnimation(): void {
+      calls.push(['resetAnimation', this]);
+      this._value = 0;
+    }
+    setOffset(): void {
+      calls.push(['setOffset', this]);
+    }
+    flattenOffset(): void {
+      calls.push(['flattenOffset', this]);
+    }
+    extractOffset(): void {
+      calls.push(['extractOffset', this]);
     }
     __makeNative(): void {
       calls.push(['makeNative', this]);
@@ -157,7 +192,7 @@ describe('followDrivers', () => {
     // Made native once, woken once: not wrapped twice.
     const node = new rn.valueClass();
     const woken = jest.fn();
-    whenNative(node, woken);
+    whenMoved(node, woken);
     node.__makeNative();
     expect(woken).toHaveBeenCalledTimes(1);
     rn.implementation.attachNativeEvent('host', 'onScroll', [{ nativeEvent: { y: scrollY } }]);
@@ -249,7 +284,7 @@ describe('followDrivers', () => {
     expect(followDrivers(from(rn))).toBe(false);
     expect(eventsOn(value())).toBeUndefined();
     expect(knownDriven(new rn.valueClass())).toBe(false);
-    expect(whenNative(value(), () => undefined)).toBeUndefined();
+    expect(whenMoved(value(), () => undefined)).toBeUndefined();
   });
 
   it('without the public Animated object, the rest is still followed', () => {
@@ -286,6 +321,67 @@ describe('what a value is driven by', () => {
     expect(knownDriven(early)).toBe(false);
   });
 
+  it('B6, N1: wakes a watcher at once as JS moves its value, after React Native did, once a move', () => {
+    const rn = sources();
+    followDrivers(rn);
+    const node = new rn.valueClass();
+    const seen: unknown[] = [];
+    whenMoved(node, () => seen.push([node._value, node._animation]));
+
+    expect(node.animate('timing')).toBe('animating');
+    node.setValue(5);
+    node.resetAnimation();
+    node.setOffset();
+    node.flattenOffset();
+    node.extractOffset();
+
+    // Each woke it once, with what React Native's own method had just done.
+    expect(seen).toEqual([[0, 'timing'], [5, 'timing'], [0, 'timing'], [0, 'timing'], [0, 'timing'], [0, 'timing']]);
+    expect(rn.calls.map(([name]) => name)).toEqual([
+      'animate',
+      'setValue',
+      'resetAnimation',
+      'setOffset',
+      'flattenOffset',
+      'extractOffset',
+    ]);
+    // Set from JS: known from then on, as long as no event is attached.
+    expect(knownDriven(node)).toBe(true);
+  });
+
+  it('a value set from JS after its event left it is known again', () => {
+    const rn = sources();
+    followDrivers(rn);
+    const node = new rn.valueClass();
+    const event = new rn.eventClass([{ nativeEvent: { y: node } }]);
+    event.__attach();
+    event.__detach();
+    expect(knownDriven(node)).toBe(false);
+
+    node.setValue(3);
+
+    expect(knownDriven(node)).toBe(true);
+  });
+
+  it('an AnimatedValue without the methods that move it is still followed by being made native', () => {
+    const rn = sources();
+    class Bare {
+      __isNative = false;
+      __makeNative(): void {
+        this.__isNative = true;
+      }
+    }
+    expect(followDrivers({ ...rn, valueClass: Bare })).toBe(true);
+    const node = new Bare();
+    const woken = jest.fn();
+    whenMoved(node, woken);
+
+    node.__makeNative();
+
+    expect(woken).toHaveBeenCalledTimes(1);
+    expect(knownDriven(node)).toBe(true);
+  });
+
   it('P3-3: wakes a watcher the moment its value is made native, once, until it stops watching', () => {
     const rn = sources();
     followDrivers(rn);
@@ -294,8 +390,8 @@ describe('what a value is driven by', () => {
     const failing = jest.fn(() => {
       throw new Error('watcher');
     });
-    whenNative(node, failing);
-    const stop = whenNative(node, woken) as () => void;
+    whenMoved(node, failing);
+    const stop = whenMoved(node, woken) as () => void;
 
     node.__makeNative();
     node.__makeNative();
@@ -305,7 +401,7 @@ describe('what a value is driven by', () => {
     expect(rn.calls.filter(([name]) => name === 'makeNative')).toHaveLength(2);
 
     const other = new rn.valueClass();
-    const stopOther = whenNative(other, woken) as () => void;
+    const stopOther = whenMoved(other, woken) as () => void;
     stopOther();
     stop();
     other.__makeNative();

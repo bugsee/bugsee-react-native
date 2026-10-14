@@ -2009,7 +2009,66 @@ describe('R3-3: content uncovered by a pop', () => {
   });
 });
 
+describe('B6, N1: a value JS moves is covered in the JS task that moves it', () => {
+  it('B6: a loop restarting (reset to its start, then animated again) is covered at once, before any frame', () => {
+    // Stopped at 80, which the shadow tree holds too.
+    const value = animatedValue(80);
+    selfRect = rect(10, 180, 200, 50);
+    render(underAnimated([{ translateY: value }], [{ translateY: 80 }]));
+    wait(16 * 40);
+    expect(lastPublished()).toEqual([0, px(rect(10, 180, 200, 50))]);
+
+    // Animated.loop's next iteration: resetAnimation (natively, a jump back to 0), then the timing again.
+    act(() => {
+      (value as unknown as FakeAnimatedValue).resetAnimation();
+      (value as unknown as FakeAnimatedValue).animate({ ...timing(0, 80), useNativeDriver: true });
+    });
+
+    // No frame or tick has run: covered over the loop's path (0 to 80), whichever value the shadow tree holds.
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 210)));
+  });
+
+  it('N1: a value\'s first native animation is covered in the JS task that starts it', () => {
+    const value = animatedValue(0, false);
+    render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
+    wait(212);
+
+    act(() => (value as unknown as FakeAnimatedValue).animate({ ...timing(0, -100), useNativeDriver: true }));
+
+    expect(firstPublished()).toEqual(px(rect(10, 0, 200, 150)));
+  });
+
+  it('a value set from JS is covered where it is set, at once', () => {
+    const value = animatedValue(0);
+    render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
+    wait(212);
+
+    act(() => (value as unknown as FakeAnimatedValue).setValue(40));
+
+    // At 40, whichever value the shadow tree holds (0 as rendered, or 40).
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 90)));
+  });
+});
+
 describe('P3-3: a view under a JS-driven Animated value', () => {
+  it('where nothing is followed, it is polled every frame', () => {
+    const value = animatedValue(0, false);
+    forgetDrivers();
+    try {
+      render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
+      wait(16 * 20);
+      // The tick, and the frame loop reading the value.
+      expect(jest.getTimerCount()).toBe(2);
+    } finally {
+      followDrivers({
+        eventClass: FakeAnimatedEvent,
+        implementation,
+        exported: animated,
+        valueClass: FakeAnimatedValue,
+      });
+    }
+  });
+
   it('keeps no frame loop running, and is woken the moment its value is made native', () => {
     const value = animatedValue(0, false);
     render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));

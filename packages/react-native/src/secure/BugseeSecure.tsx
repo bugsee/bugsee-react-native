@@ -93,10 +93,13 @@ export interface BugseeSecureProps extends ViewProps {
  * (any other event's value, an iOS ScrollView's offset, a rotation, a
  * spring, a node React Native renamed) covers the whole surface, cut by the
  * clipping ancestors above it, for as long as it cannot be. A view under a
- * running native animation is re-measured every frame; under a still one it
- * is woken by the JS frame an animation starts on it; under values not native
- * yet (the first animation with the native driver makes them native, and
- * commits nothing), the moment one is made native, with no frame loop meanwhile.
+ * running native animation is re-measured every frame. When JS moves a value
+ * above it (starts an animation on it, the first with the native driver
+ * included, which makes it native and commits nothing; sets, resets or
+ * offsets it), the view is measured and published in that same JS task,
+ * before React Native hands the change to the UI thread; what native does to
+ * a still native value on its own (an animation ending) is seen by the next
+ * JS frame. A value driven from JS keeps no frame loop running.
  *
  * What drives a native value is followed from when the package is first
  * imported (its entry imports `secure/followEvents` for that, so Metro's
@@ -114,9 +117,10 @@ export interface BugseeSecureProps extends ViewProps {
  * it; anything else Reanimated moves (an animated style that adds a
  * transform only later, layout animations, `entering`/`exiting`, shared
  * transitions) is not seen. An interactive back gesture moves a mounted
- * screen with nothing JS sees. A native animation's first frame can be drawn
- * by the UI thread before JS's next frame publishes the cover (about one
- * frame). A native event attached without `Animated` (code that calls React
+ * screen with nothing JS sees. The cover published as JS starts a native
+ * animation and the animation itself reach native separately; under heavy
+ * load the UI thread could still draw its first frame before the cover lands.
+ * A native event attached without `Animated` (code that calls React
  * Native's native Animated module itself) is not seen, and its value is
  * taken where JS last had it.
  *

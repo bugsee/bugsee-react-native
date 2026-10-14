@@ -38,8 +38,26 @@ export const animated = { ...implementation };
 /** React Native's `AnimatedValue`: made native by an animation or an event with the native driver. */
 export class FakeAnimatedValue {
   __isNative = false;
+  _value = 0;
+  _animation: unknown = null;
   __makeNative(): void {
     this.__isNative = true;
+  }
+  /** Starts `animation`; with the native driver, it makes the value native as it starts, as React Native's does. */
+  animate(animation: { useNativeDriver?: boolean } | null): void {
+    this._animation = animation;
+    if (animation?.useNativeDriver === true) {
+      this.__makeNative();
+    }
+  }
+  /** Stops it, back at 0 (its starting value). */
+  resetAnimation(): void {
+    this._animation = null;
+    this._value = 0;
+  }
+  setValue(value: number): void {
+    this._animation = null;
+    this._value = value;
   }
 }
 

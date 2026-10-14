@@ -127,8 +127,10 @@ Known limits:
   `entering`/`exiting`, shared element transitions) is not followed.
 - An interactive back gesture (iOS swipe-back, Android predictive back) moves
   a mounted screen without anything JS can see.
-- A native animation's first frame can be drawn before the mask follows it
-  (about one frame).
+- The mask is published in the same JS task that starts a native animation
+  (or sets, resets or offsets an `Animated.Value`), but the two reach native
+  separately: under heavy load the animation's first frame could still be
+  drawn before the mask lands.
 
 ## Expo config plugin
 

@@ -46,8 +46,8 @@ interface DriverState {
   readonly events: WeakMap<object, Attached[][]>;
   /** Values made native while followed, or seen animating, with no event since: only animations move them. */
   readonly known: WeakSet<object>;
-  /** Called the moment a value is made native, by value. */
-  readonly onNative: WeakMap<object, Set<() => void>>;
+  /** Called the moment JS moves a value, or makes it native, by value. */
+  readonly onMove: WeakMap<object, Set<() => void>>;
   /** An attachment could not be read: which values it drives is not known. */
   lost: boolean;
 }
@@ -177,6 +177,25 @@ function wrapAttach(target: Record<string, unknown>, state: DriverState): void {
   mark(target, state);
 }
 
+/** Wakes what watches `value`, at once: before React Native hands the change to the UI thread. */
+function moved(state: DriverState, value: object): void {
+  // A snapshot: a watcher may stop watching, or watch again, as it is woken.
+  for (const wake of [...(state.onMove.get(value) ?? [])]) {
+    try {
+      wake();
+    } catch {
+      // A watcher's failure is its own; React Native's animation goes on.
+    }
+  }
+}
+
+/**
+ * The `AnimatedValue` methods by which JS moves a value natively: starting an
+ * animation, setting or resetting it, changing its offset. Each is followed
+ * where React Native has it.
+ */
+const MOVES = ['animate', 'setValue', 'resetAnimation', 'setOffset', 'flattenOffset', 'extractOffset'];
+
 function wrapNative(prototype: Record<string, unknown>, state: DriverState): void {
   const makeNative = prototype.__makeNative as Method;
   prototype.__makeNative = mark(function (this: { __isNative?: unknown }, ...args: unknown[]) {
@@ -184,16 +203,20 @@ function wrapNative(prototype: Record<string, unknown>, state: DriverState): voi
     const result = makeNative.apply(this, args);
     if (becoming) {
       state.known.add(this);
-      state.onNative.get(this)?.forEach((wake) => {
-        try {
-          wake();
-        } catch {
-          // A watcher's failure is its own; React Native's animation goes on.
-        }
-      });
+      moved(state, this);
     }
     return result;
   }, state);
+  for (const name of MOVES.filter((each) => typeof prototype[each] === 'function')) {
+    const move = prototype[name] as Method;
+    prototype[name] = mark(function (this: object, ...args: unknown[]) {
+      const result = move.apply(this, args);
+      // Set from JS: where it is now, JS has. (An event attached to it still moves it, and is told first.)
+      state.known.add(this);
+      moved(state, this);
+      return result;
+    }, state);
+  }
   mark(prototype, state);
 }
 
@@ -237,7 +260,7 @@ export function followDrivers(sources: DriverSources): boolean {
     attached: new WeakMap(),
     events: new WeakMap(),
     known: new WeakSet(),
-    onNative: new WeakMap(),
+    onMove: new WeakMap(),
     lost: false,
   };
   if (stateOn(events) === undefined) {
@@ -285,19 +308,20 @@ export function noteAnimating(node: object): void {
 }
 
 /**
- * Calls `wake` the moment `node` is made native (its first animation or
- * event with the native driver, which commits nothing), until the returned
- * function is called; `undefined` when that is not followed.
+ * Calls `wake` the moment JS moves `node` (starts an animation on it, sets,
+ * resets or offsets it) or makes it native (its first animation or event
+ * with the native driver, which commits nothing), synchronously, until the
+ * returned function is called; `undefined` when that is not followed.
  */
-export function whenNative(node: object, wake: () => void): (() => void) | undefined {
+export function whenMoved(node: object, wake: () => void): (() => void) | undefined {
   const state = drivers;
   if (state === null) {
     return undefined;
   }
-  let wakes = state.onNative.get(node);
+  let wakes = state.onMove.get(node);
   if (wakes === undefined) {
     wakes = new Set();
-    state.onNative.set(node, wakes);
+    state.onMove.set(node, wakes);
   }
   const subscription = (): void => wake();
   wakes.add(subscription);

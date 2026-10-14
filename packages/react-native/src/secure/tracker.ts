@@ -2,7 +2,7 @@ import { ancestryOfInstance, clipToAncestors, clipWatchNodes, isHidden, screensH
 import type { Ancestry } from './ancestry';
 import { CoverageHold } from './hold';
 import { addFrameMeasurer, addMeasurer, addParked, watchNode, watchValue } from './measureLoop';
-import { whenNative } from './drivers';
+import { whenMoved } from './drivers';
 import { nativeMotion, throughMotion } from './nativeAnimation';
 import { clearOwner, setOwnerRectangles } from './registry';
 import { surfaceOfInstance } from './surface';
@@ -107,6 +107,9 @@ export class SecureTracker {
   /** The native values its transforms come from, watched for an animation starting. */
   // Stryker disable next-line ArrayDeclaration -- the first watch replaces it whatever it holds
   private values: object[] = [];
+  /** Whether each of `values` may be native, as last watched. */
+  // Stryker disable next-line ArrayDeclaration -- the first watch replaces it whatever it holds
+  private natives: boolean[] = [];
   private unwatchValues: Array<() => void> = [];
   /** Leaves the stacks its screens are on. */
   private leaveStacks: Array<() => void> = [];
@@ -558,22 +561,35 @@ export class SecureTracker {
     this.republish();
   }
 
-  /** Watches `nodes` (native values) and wakes the frame an animation starts on one. */
+  /**
+   * Watches `nodes` (the values its transforms come from): measured at once
+   * when JS moves one (where that is followed), and, for a native one, woken
+   * the frame its fields show a change native made (an animation ending).
+   */
   private watchValues(nodes: readonly object[]): void {
+    const natives = nodes.map((node) => (node as { __isNative?: unknown }).__isNative !== false);
     // Watching the same values again takes their state now as the baseline, as the frame just did: only work.
     // Stryker disable next-line ConditionalExpression,ArrowFunction,BooleanLiteral,EqualityOperator,BlockStatement
     if (nodes.length === this.values.length && nodes.every((node, index) => node === this.values[index])) {
-      return;
+      // A value made native since is polled from now on.
+      if (natives.every((native, index) => native === this.natives[index])) {
+        return;
+      }
     }
     this.unwatchValues.forEach((stop) => stop());
     this.values = [...nodes];
+    this.natives = natives;
     // Stryker disable next-line StringLiteral -- woken in any mode but tick or parked, it is measured that frame
     const wake = (): void => this.enter('active');
-    // A value driven from JS keeps no frame loop: it is woken the moment it is made native, where that is followed.
-    this.unwatchValues = this.values.map(
-      (node) =>
-        ((node as { __isNative?: unknown }).__isNative === false && whenNative(node, wake)) || watchValue(node, wake),
-    );
+    const now = (): void => {
+      wake();
+      this.measure();
+    };
+    this.unwatchValues = this.values.flatMap((node, index) => {
+      const told = whenMoved(node, now);
+      // Driven from JS, it keeps no frame loop where JS moving it is followed.
+      return told === undefined ? [watchValue(node, wake)] : natives[index] ? [told, watchValue(node, wake)] : [told];
+    });
   }
 
   private next(clipped: boolean): Mode {
