@@ -9,7 +9,9 @@ import {
   carriedCover,
   carrierEntering,
   carrierLeaving,
-  carrierOf,
+  bounding,
+  carriedCovers,
+  carriersOf,
   deletionRoot,
 } from '../transition';
 import type { FiberLike } from '../../viewtree/fiber';
@@ -46,43 +48,96 @@ const inModal = (props: unknown): FiberLike =>
 const indexOf = (fiber: FiberLike, type: string): number =>
   ancestryOfFiber(fiber).path.findIndex((ancestor) => ancestor.type === type);
 
-describe('carrierOf', () => {
+describe('carriersOf', () => {
   it('a screen in a stack carries the view', () => {
     const fiber = onScreen('RNSScreenStack');
 
-    expect(carrierOf(ancestryOfFiber(fiber))).toEqual({ kind: 'screen', index: indexOf(fiber, SCREEN_HOST_TYPE) });
+    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([{ kind: 'screen', index: indexOf(fiber, SCREEN_HOST_TYPE) }]);
   });
 
   it('so does a modal screen in a stack', () => {
     const fiber = onScreen('RNSScreenStack', MODAL_SCREEN_HOST_TYPE);
 
-    expect(carrierOf(ancestryOfFiber(fiber))?.kind).toBe('screen');
+    expect(carriersOf(ancestryOfFiber(fiber)).map((carrier) => carrier.kind)).toEqual(['screen']);
+  });
+
+  it('only the nearest stack screen', () => {
+    const inner = fabricHost('RNSScreenStack', null, {}, [fabricHost(SCREEN_HOST_TYPE, SCREEN, {}, [self()])]);
+    const fiber = selfIn(
+      root([fabricHost('RNSScreenStack', null, {}, [fabricHost(SCREEN_HOST_TYPE, SCREEN, {}, [inner])])]),
+    );
+
+    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([{ kind: 'screen', index: 0 }]);
   });
 
   it('a screen in a tab container does not; nothing else does either', () => {
-    expect(carrierOf(ancestryOfFiber(onScreen('RNSScreenContainer')))).toBeNull();
+    expect(carriersOf(ancestryOfFiber(onScreen('RNSScreenContainer')))).toEqual([]);
   });
 
   it('a Modal carries a view on a screen that does not', () => {
     const fiber = inModal({});
 
-    expect(carrierOf(ancestryOfFiber(fiber))).toEqual({ kind: 'modal', index: indexOf(fiber, 'RCTModalHostView') });
+    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([{ kind: 'modal', index: indexOf(fiber, 'RCTModalHostView') }]);
+  });
+
+  it('a stack screen inside a Modal and the Modal both carry it', () => {
+    const fiber = selfIn(
+      root([
+        fabricHost('RCTModalHostView', null, {}, [
+          fabricHost('RNSScreenStack', null, {}, [fabricHost(SCREEN_HOST_TYPE, SCREEN, {}, [self()])]),
+        ]),
+      ]),
+    );
+
+    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([
+      { kind: 'screen', index: 0 },
+      { kind: 'modal', index: 2 },
+    ]);
   });
 
   it('a screen with no host above it carries nothing, without throwing', () => {
     const fiber = selfIn(root([fabricHost(SCREEN_HOST_TYPE, SCREEN, {}, [self()])]));
 
-    expect(carrierOf(ancestryOfFiber(fiber))).toBeNull();
+    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([]);
   });
 
   it('a Modal right above the view carries it', () => {
     const fiber = selfIn(root([fabricHost('RCTModalHostView', null, {}, [self()])]));
 
-    expect(carrierOf(ancestryOfFiber(fiber))).toEqual({ kind: 'modal', index: 0 });
+    expect(carriersOf(ancestryOfFiber(fiber))).toEqual([{ kind: 'modal', index: 0 }]);
   });
 
   it('nothing above the view: nothing carries it', () => {
-    expect(carrierOf(noAncestry())).toBeNull();
+    expect(carriersOf(noAncestry())).toEqual([]);
+  });
+});
+
+describe('carriedCovers and bounding', () => {
+  it('joins what each carrier covers, and is null when none covers anything', () => {
+    const fiber = selfIn(
+      root([
+        fabricHost('RCTModalHostView', null, { animationType: 'slide' }, [
+          fabricHost('RNSScreenStack', null, {}, [fabricHost(SCREEN_HOST_TYPE, rect(0, 50, 400, 300), {}, [self()])]),
+        ]),
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    const carriers = carriersOf(ancestry);
+
+    const joined = { x: 0, y: 50, width: 400, height: WHOLE_SURFACE.height - 50 };
+    expect(carriedCovers(ancestry, carriers, SELF)).toEqual(joined);
+    expect(carriedCovers(ancestry, [carriers[1] as never], null)).toBeNull();
+    expect(carriedCovers(ancestry, [], SELF)).toBeNull();
+  });
+
+  it('the bounding box of two rectangles, either way round', () => {
+    const a = rect(10, 20, 30, 40);
+    const b = rect(0, 30, 100, 5);
+
+    expect(bounding(a, b)).toEqual(rect(0, 20, 100, 40));
+    expect(bounding(b, a)).toEqual(rect(0, 20, 100, 40));
+    expect(bounding(a, null)).toBe(a);
+    expect(bounding(a, undefined)).toBe(a);
   });
 });
 

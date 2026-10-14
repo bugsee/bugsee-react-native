@@ -506,6 +506,30 @@ describe('C3: a Modal sliding in and out', () => {
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
   });
 
+  it('a stack inside a slide Modal opening covers the band as well as the screen', () => {
+    const fiber = onScreenInModal('RNSScreenStack', 2, { animationType: 'slide', visible: true });
+    // The Modal and everything in it are new; what opened it was there.
+    const host = ancestorOfType(fiber, 'RCTModalHostView');
+    for (let current: FiberLike | null = host; current !== null; current = current.child) {
+      current.alternate = null;
+    }
+    render(fiber);
+
+    const joined = { x: 0, y: 0, width: 400, height: WHOLE_SURFACE.height };
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(joined), ...px(selfRect)]]);
+  });
+
+  it('a stack inside a slide Modal closing covers the band as well as the screen', () => {
+    const fiber = onScreenInModal('RNSScreenStack', 2, { animationType: 'slide', visible: true });
+    const testRenderer = render(fiber);
+
+    deleting(ancestorOfType(fiber, 'RCTModalHostView'));
+    unmount(testRenderer);
+
+    const joined = { x: 0, y: 0, width: 400, height: WHOLE_SURFACE.height };
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(joined), ...px(selfRect)]]);
+  });
+
   it('a Modal without animation holds only the view as it closes', () => {
     const fiber = existing(inModal({ animationType: 'none' }));
     const testRenderer = render(fiber);

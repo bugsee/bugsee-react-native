@@ -7,10 +7,12 @@ import { clearOwner, setOwnerRectangles } from './registry';
 import { surfaceOfInstance } from './surface';
 import {
   SECURE_TRANSITION_HOLD_MS,
+  bounding,
   carriedCover,
+  carriedCovers,
   carrierEntering,
   carrierLeaving,
-  carrierOf,
+  carriersOf,
   modalOf,
 } from './transition';
 import type { Carrier } from './transition';
@@ -51,20 +53,6 @@ export function monotonicNow(): number {
   return typeof perf?.now === 'function' ? perf.now() : Date.now();
 }
 
-/** The bounding box of `a` and `b` (when there is one). */
-function bounding(a: WindowRect, b: WindowRect | undefined): WindowRect {
-  if (b === undefined) {
-    return a;
-  }
-  const left = Math.min(a.x, b.x);
-  const top = Math.min(a.y, b.y);
-  const right = Math.max(a.x + a.width, b.x + b.width);
-  // Only slide bands are joined, and they all end at the same bottom.
-  // Stryker disable next-line MethodExpression,ArithmeticOperator -- so any of the two bottoms is it
-  const bottom = Math.max(a.y + a.height, b.y + b.height);
-  return { x: left, y: top, width: right - left, height: bottom - top };
-}
-
 function where(rect: WindowRect | null): string {
   // Stryker disable next-line StringLiteral -- any marker no rectangle reads as does
   return rect === null ? 'none' : `${rect.x},${rect.y},${rect.width},${rect.height}`;
@@ -93,7 +81,7 @@ export class SecureTracker {
   // Stryker disable next-line BooleanLiteral -- `start` clears it before anything reads it
   private closing = false;
   /** A transition carrying the view in, until `until`. */
-  private carried: { readonly carrier: Carrier; readonly until: number } | null = null;
+  private carried: { readonly carriers: readonly Carrier[]; readonly until: number } | null = null;
   /** Where a transition can carry the view, published with the rest until `until`. */
   private cover: { readonly rect: WindowRect; readonly until: number } | null = null;
   /** Mounted by the commit now running: its first measurement looks for a transition carrying it in. */
@@ -154,9 +142,9 @@ export class SecureTracker {
     let cover: WindowRect | null = null;
     // The fiber tree and props are read as they are: a getter can throw.
     try {
-      const carrier = above === null ? null : carrierOf(above);
-      if (carrier !== null && carrierLeaving(above as Ancestry, carrier)) {
-        cover = carriedCover(above as Ancestry, carrier, last);
+      if (above !== null) {
+        const leaving = carriersOf(above).filter((carrier) => carrierLeaving(above, carrier));
+        cover = carriedCovers(above, leaving, last);
       }
     } catch (error) {
       this.failed(error);
@@ -300,9 +288,9 @@ export class SecureTracker {
     this.arriving = false;
     // As in `depart`: a read that throws carries nothing, and the view is still published.
     try {
-      const carrier = carrierOf(above);
-      if (carrier !== null && carrierEntering(above, carrier)) {
-        this.carried = { carrier, until: now + SECURE_TRANSITION_HOLD_MS };
+      const carriers = carriersOf(above).filter((carrier) => carrierEntering(above, carrier));
+      if (carriers.length > 0) {
+        this.carried = { carriers, until: now + SECURE_TRANSITION_HOLD_MS };
         // A Modal's content is laid out again once its dialog is up: within a frame.
         this.settling = true;
       }
@@ -354,7 +342,7 @@ export class SecureTracker {
    * content laid out again moves the band), until the transition hold ends.
    */
   private carry(self: WindowRect, above: Ancestry, now: number): void {
-    const { carrier, until } = this.carried as { carrier: Carrier; until: number };
+    const { carriers, until } = this.carried as { carriers: readonly Carrier[]; until: number };
     // Past it, the cover set below would be dropped as soon as it is published.
     // Stryker disable next-line ConditionalExpression,BlockStatement -- so carrying on changes nothing
     if (until <= now) {
@@ -367,7 +355,7 @@ export class SecureTracker {
     }
     let cover: WindowRect | null;
     try {
-      cover = carriedCover(above, carrier, self);
+      cover = carriedCovers(above, carriers, self);
     } catch (error) {
       this.failed(error);
       return;

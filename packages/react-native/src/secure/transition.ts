@@ -59,16 +59,54 @@ export interface Carrier {
 }
 
 /**
- * The nearest screen in a stack above the view, or else the `<Modal>` it is
- * in; `null` when neither carries it.
+ * What can carry the view through a native transition: its nearest screen in
+ * a stack, and the `<Modal>` it is in, each independently (a stack inside a
+ * Modal slides in with the Modal, and pushes within it on its own).
  */
-export function carrierOf(ancestry: Ancestry): Carrier | null {
-  for (const host of ancestry.hosts) {
-    if (host.screen && STACK_HOST_TYPES.has(ancestry.path[host.above]?.type)) {
-      return { kind: 'screen', index: host.index };
+export function carriersOf(ancestry: Ancestry): Carrier[] {
+  const carriers: Carrier[] = [];
+  const screen = ancestry.hosts.find(
+    (host) => host.screen && STACK_HOST_TYPES.has(ancestry.path[host.above]?.type),
+  );
+  if (screen !== undefined) {
+    carriers.push({ kind: 'screen', index: screen.index });
+  }
+  const modal = modalOf(ancestry);
+  if (modal !== null) {
+    carriers.push(modal);
+  }
+  return carriers;
+}
+
+/**
+ * Where the `carriers` can draw a view that rests at `self`, joined, or
+ * `null` when none of them moves it.
+ */
+export function carriedCovers(
+  ancestry: Ancestry,
+  carriers: readonly Carrier[],
+  self: WindowRect | null,
+): WindowRect | null {
+  let joined: WindowRect | null = null;
+  for (const carrier of carriers) {
+    const cover = carriedCover(ancestry, carrier, self);
+    if (cover !== null) {
+      joined = bounding(cover, joined);
     }
   }
-  return modalOf(ancestry);
+  return joined;
+}
+
+/** The bounding box of `a` and `b` (when there is one). */
+export function bounding(a: WindowRect, b: WindowRect | null | undefined): WindowRect {
+  if (b == null) {
+    return a;
+  }
+  const left = Math.min(a.x, b.x);
+  const top = Math.min(a.y, b.y);
+  const right = Math.max(a.x + a.width, b.x + b.width);
+  const bottom = Math.max(a.y + a.height, b.y + b.height);
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 /** The `<Modal>` the view is in, or `null`. */
