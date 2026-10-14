@@ -710,6 +710,8 @@ describe('N4: a screen replaced by another on its stack', () => {
     const fiber = onOnlyScreen({ stackAnimation: 'fade' });
     const testRenderer = render(fiber);
     wait(212);
+    // Whichever fiber of the stack's pair the commit has: here, with no other.
+    ancestorOfType(fiber, 'RNSScreenStack').alternate = null;
 
     replace(fiber, testRenderer, { stackAnimation: 'slide_from_right' });
 
@@ -722,12 +724,61 @@ describe('N4: a screen replaced by another on its stack', () => {
     const fiber = onOnlyScreen({ stackAnimation: 'none' });
     const testRenderer = render(fiber);
     wait(212);
-    // Whichever fiber of the stack's pair the commit has: here, with no other.
-    ancestorOfType(fiber, 'RNSScreenStack').alternate = null;
 
     replace(fiber, testRenderer, {});
 
     expect(firstPublished()).toEqual(px(SCREEN));
+  });
+
+  it('replaced by a screen sliding up over it: as the screen below, it stays put', () => {
+    const fiber = onOnlyScreen({ stackAnimation: 'fade' });
+    const testRenderer = render(fiber);
+    wait(212);
+
+    replace(fiber, testRenderer, { stackAnimation: 'slide_from_bottom' });
+
+    expect(firstPublished()).toEqual(px(selfRect));
+  });
+
+  it('on iOS, replaced by a card presented over it: the whole screen (the card scales it)', () => {
+    mockPlatform.OS = 'ios';
+    try {
+      const fiber = onOnlyScreen({ stackAnimation: 'fade' });
+      const testRenderer = render(fiber);
+      wait(212);
+
+      replace(fiber, testRenderer, { stackPresentation: 'formSheet' });
+
+      // iOS takes points.
+      expect((lastPublished() as [number, number[]])[1].slice(0, 4)).toEqual([0, 0, 400, 800]);
+    } finally {
+      mockPlatform.OS = 'android';
+    }
+  });
+
+  it('replaced while nothing of it is on screen: nothing to cover, nothing thrown', () => {
+    // Scrolled out of its ScrollView: seen nowhere.
+    selfRect = rect(10, 500, 200, 50);
+    const fiber = existing(
+      selfIn(
+        root([
+          fabricHost('RNSScreenStack', null, { children: 1 }, [
+            fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, stackAnimation: 'fade' }, [
+              scrollView(rect(0, 0, 400, 300), [view([self()])]),
+            ]),
+          ]),
+        ]),
+      ),
+    );
+    const testRenderer = render(fiber);
+    wait(212);
+
+    replace(fiber, testRenderer, {});
+
+    expect(console.warn).not.toHaveBeenCalled();
+    // Nothing on screen to publish, if anything at all.
+    const published = (lastPublished() as [number, number[]] | undefined)?.[1] ?? [];
+    expect(published.join()).not.toContain(px(SCREEN).join());
   });
 
   it('popped alone, nothing new on its stack: its own animation', () => {
@@ -1090,6 +1141,20 @@ describe('C3: a Modal sliding in and out', () => {
     wait(17);
 
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(selfRect), ...px(before)]]);
+    // Carried with no cover from it: nothing to join, nothing thrown.
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, WindowRect]>([
+    ['no width', rect(10, 100, 0, 50)],
+    ['no height', rect(10, 100, 200, 0)],
+  ])('a view laid out with %s while carried covers no band', (_, laidOut) => {
+    selfRect = laidOut;
+    render(inModal({ animationType: 'slide' }));
+    wait(17);
+
+    const published = (lastOnSurface() as [number, number, number[]] | undefined)?.[2] ?? [];
+    expect(published.join()).not.toContain(px(band(laidOut)).join());
   });
 
   it('a view mounted in a Modal that was already open is not carried', () => {
@@ -1119,6 +1184,8 @@ describe('C3: a Modal sliding in and out', () => {
     deleting(ancestorOfType(fiber, 'RCTModalHostView'));
     unmount(testRenderer);
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
+    // A Modal has no stack to look for a replacement on.
+    expect(console.warn).not.toHaveBeenCalled();
     wait(SECURE_SHRINK_HOLD_MS + 100);
 
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, []]);

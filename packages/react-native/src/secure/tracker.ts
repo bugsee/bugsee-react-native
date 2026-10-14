@@ -172,6 +172,8 @@ export class SecureTracker {
     this.leave();
     if (cover !== null) {
       // Joined with a cover still running (a push it was carried in by), the later end kept.
+      // Only drops a cover run out: what it returns is not used.
+      // Stryker disable next-line ArrayDeclaration
       this.covering([], now);
       const until = Math.max(now + SECURE_TRANSITION_HOLD_MS, this.cover?.until ?? 0);
       this.cover = { rect: bounding(cover, this.cover?.rect), until };
@@ -208,6 +210,8 @@ export class SecureTracker {
           // As the screen below a push: a slide up leaves it where it is; anything not known, the whole screen.
           // Its stack was read, so it was measured.
           const moved = screenCover(stackMotionOf(props, false), screen, this.seen as WindowRect | null, false);
+          // Null only for a view seen nowhere, and then for every screen: the cover stays null either way.
+          // Stryker disable next-line ConditionalExpression
           if (moved !== null) {
             cover = bounding(moved, cover);
           }
@@ -384,6 +388,8 @@ export class SecureTracker {
         this.settling = true;
       }
     } catch (error) {
+      // `checkStacks`, just before, reads the same tree and warns first: once a view, this warns nothing more.
+      // Stryker disable next-line all
       this.failed(error);
     }
   }
@@ -435,7 +441,7 @@ export class SecureTracker {
   private carry(self: WindowRect | null, above: Ancestry, now: number): void {
     const { carriers, until } = this.carried as { carriers: readonly Carrier[]; until: number };
     // Past it, the cover set below would be dropped as soon as it is published.
-    // Stryker disable next-line ConditionalExpression,BlockStatement -- so carrying on changes nothing
+    // Stryker disable next-line ConditionalExpression,BlockStatement,EqualityOperator -- so carrying on changes nothing
     if (until <= now) {
       this.carried = null;
       return;

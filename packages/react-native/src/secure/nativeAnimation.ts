@@ -172,6 +172,8 @@ export function followEventAttachments(eventClass: unknown): boolean {
     return result;
   };
   (prototype as EventPrototype).__detach = function (this: EventPrototype, ...args) {
+    // Detached with nothing attached: nothing to count. (A string in either list counts no object.)
+    // Stryker disable next-line ArrayDeclaration
     const [values = [], ...rest] = attachments.get(this) ?? [];
     attachments.set(this, rest);
     count(values, -1);
@@ -518,21 +520,26 @@ function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number
     return reanimatedMoves(fiber.memoizedProps) ? UNBOUNDED_LEVEL : NOT_NATIVE;
   }
   const entries = transformOf(fiber.memoizedProps);
-  const nodes = (entries ?? []).filter(([, value]) => isNode(value));
+  if (entries === null) {
+    return NOT_NATIVE;
+  }
+  const nodes = entries.filter(([, value]) => isNode(value));
   if (nodes.length === 0) {
     return NOT_NATIVE;
   }
   if (!nodes.some(([, value]) => isNativeNode(value))) {
     const roots = nodes.flatMap(([, value]) => nodeBound(value).roots);
-    return { running: roots.length === 0, roots, move: undefined, scaled: false };
+    return { running: roots.length === 0, roots, move: undefined };
   }
   const host = hostBelow(ancestry, fibers, index);
   // By place: a function can come twice (`translateX` twice), each with its own value.
+  // A string in place of the list, or of an entry, names no transform function.
+  // Stryker disable next-line ArrayDeclaration
   const rendered = transformOf(host.memoizedProps) ?? [];
   const steps: Step[] = [];
   const bounds: NodeBound[] = [];
   let bounded = true;
-  for (const [place, [name, value]] of (entries as Array<[string, unknown]>).entries()) {
+  for (const [place, [name, value]] of entries.entries()) {
     const bound = nodeBound(value);
     bounds.push(bound);
     const axes = TRANSLATE_AXES[name] !== undefined ? [TRANSLATE_AXES[name]] : SCALE_AXES[name];
@@ -543,6 +550,7 @@ function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number
     // Without this, sweeping a missing range throws, which reads as unbounded too.
     // Stryker disable next-line AssignmentOperator,ConditionalExpression -- so its mutants are equivalent
     bounded &&= bound.range !== undefined;
+    // Stryker disable next-line ArrayDeclaration -- as above
     const [renderedName, at] = rendered[place] ?? [];
     const now = isNode(value) ? value.__getValue() : value;
     for (const axis of axes) {
@@ -582,7 +590,6 @@ interface Pending {
   running: boolean;
   roots: readonly AnimatedNodeLike[];
   move: undefined;
-  scaled: false;
 }
 type NotNative = null;
 const NOT_NATIVE: NotNative = null;
@@ -650,6 +657,8 @@ function sharedValueLike(value: unknown): boolean {
 }
 
 /** CSS animations and transitions (Reanimated 4) can move the view without a commit. */
+// No React Native style name has these words anywhere but at its start.
+// Stryker disable next-line Regex
 const CSS_MOTION = /^(transition|animation)/;
 
 /**
@@ -668,9 +677,9 @@ function reanimatedMoves(props: unknown): boolean {
     if (!('viewDescriptors' in animated)) {
       const fields = Object.entries(animated as Record<string, unknown>);
       const transform = (animated as { transform?: unknown }).transform;
-      const functions = Array.isArray(transform)
-        ? transform.flatMap((step) => (step !== null && typeof step === 'object' ? Object.values(step) : [step]))
-        : [];
+      // Not a list: no shared value in it. (A string in its place is none either.)
+      // Stryker disable next-line ArrayDeclaration
+      const functions = Array.isArray(transform) ? transform.flatMap((step) => Object.values(Object(step))) : [];
       return (
         fields.some(([key, value]) => CSS_MOTION.test(key) || sharedValueLike(value)) || functions.some(sharedValueLike)
       );

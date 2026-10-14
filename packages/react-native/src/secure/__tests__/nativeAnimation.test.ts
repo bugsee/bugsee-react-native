@@ -195,7 +195,13 @@ describe('nodeBound', () => {
       const [x, y, deep, tooDeep] = [still(), still(), still(), still()];
       const nest = (inner: unknown, levels: number): unknown =>
         levels === 0 ? inner : { a: nest(inner, levels - 1) };
-      const nativeEvent = { offset: { x, y, __getValue: () => 0 }, deep: nest(deep, 6), tooDeep: nest(tooDeep, 7), n: 1 };
+      const nativeEvent = {
+        offset: { x, y, __getValue: () => 0 },
+        deep: nest(deep, 6),
+        tooDeep: nest(tooDeep, 7),
+        n: 1,
+        none: null,
+      };
       new AnimatedEvent([{ nativeEvent }]).__attach();
 
       expect([x, y, deep, tooDeep].map((node) => nodeBound(node).range)).toEqual([
@@ -221,6 +227,14 @@ describe('nodeBound', () => {
       expect(nodeBound(scroll).range).toBeUndefined();
       first.__detach();
       expect(nodeBound(scroll).range).toEqual({ lo: 0, hi: 0 });
+      // Another event on the value, detached more often than it was attached: the first still drives it.
+      const other = new AnimatedEvent([{ nativeEvent: { y: scroll } }]);
+      first.__attach();
+      other.__attach();
+      other.__detach();
+      other.__detach();
+      expect(nodeBound(scroll).range).toBeUndefined();
+      first.__detach();
       // Detached more often than attached, or never attached, or with no mapping: nothing goes below none.
       first.__detach();
       new AnimatedEvent([{ nativeEvent: { y: scroll } }]).__detach();
@@ -671,8 +685,16 @@ describe('nativeMotion', () => {
       rect(10, 100, 250, 50),
     );
     // Rendered with other functions in its places: only the value it holds now is a base.
-    expect(moved(under({ transform }, { transform: [{ translateY: 10 }, { translateX: 0 }] }))).toEqual(
+    expect(moved(under({ transform }, { transform: [{ translateY: 40 }, { translateX: 0 }] }))).toEqual(
       rect(10, 100, 250, 50),
+    );
+  });
+
+  it('N1: one native node among nodes not native yet is a level', () => {
+    const transform = [{ translateX: { ...value(0), __isNative: false } }, { translateY: value(0, timing(0, 20)) }];
+
+    expect(moved(under({ transform }, { transform: [{ translateX: 0 }, { translateY: 0 }] }))).toEqual(
+      rect(10, 100, 200, 70),
     );
   });
 
@@ -714,6 +736,7 @@ describe('nativeMotion', () => {
     // Not rendered with a scale: the one its value holds now is enough.
     expect(moved(scaledOuter(value(2), undefined as never, slide()))).toBeUndefined();
     expect(moved(scaledOuter(value(0.5), 0.5, slide()))).toEqual(rect(10, 100, 250, 50));
+    expect(moved(scaledOuter(value(1), 1, slide()))).toEqual(rect(10, 100, 250, 50));
     // The outer level itself is bounded either way.
     expect(nativeMotion(scaledOuter(value(2), 2, slide()))?.levels[1]?.move(SELF)).toBeDefined();
   });
@@ -1067,18 +1090,24 @@ describe('transform geometry', () => {
   }
 
   it.each<[string, unknown]>([
-    ['a CSS transition (Reanimated 4)', { transitionProperty: 'transform', transitionDuration: 300 }],
+    ['a CSS transition (Reanimated 4)', { opacity: 1, transitionProperty: 'transform', transitionDuration: 300 }],
     ['a CSS animation (Reanimated 4)', [{ animationName: { from: {}, to: {} } }]],
     ['a shared value set inline', { opacity: { value: 1, _isReanimatedSharedValue: true } }],
+    ['a shared value (by its modify) set inline', { opacity: { value: 1, modify: () => undefined } }],
     ['a shared value in its transform', { transform: [{ translateX: { value: 0, modify: () => undefined } }] }],
   ])('P3-d: %s moves the view: the whole surface', (_, style) => {
-    expect(nativeMotion(underReanimated(style))?.levels[0]?.move(SELF)).toBeUndefined();
+    const motion = nativeMotion(underReanimated(style));
+
+    expect(motion?.levels).toHaveLength(1);
+    expect(motion?.levels[0]?.move(SELF)).toBeUndefined();
   });
 
   it.each<[string, unknown]>([
     ['plain values', { opacity: 1, transform: [{ translateX: 3 }, 'x', null] }],
     ['a transform that is not a list', { transform: 'none', modify: 1 }],
     ['an object that is not a shared value', { shadowOffset: { width: 1, height: 1 } }],
+    ['a function with a modify', { opacity: Object.assign(() => 1, { modify: () => undefined }) }],
+    ['a value marked shared with false', { opacity: { value: 1, _isReanimatedSharedValue: false, modify: 1 } }],
   ])('P3-d: a Reanimated component with %s moves nothing', (_, style) => {
     expect(nativeMotion(underReanimated(style))).toBeNull();
   });

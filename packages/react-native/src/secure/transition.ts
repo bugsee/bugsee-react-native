@@ -147,10 +147,11 @@ export function carrierEntering(ancestry: Ancestry, carrier: Carrier, now: numbe
   const fiber = path[carrier.index] as FiberLike;
   const key = keyOf(fiber);
   if (!births.has(key)) {
-    // Nothing below a created carrier can have been there before it.
-    // Stryker disable next-line MethodExpression -- so looking from the bottom finds the same
     const mountedWhole =
-      fiber.alternate == null && !path.slice(carrier.index + 1).some((above) => above.alternate != null);
+      fiber.alternate == null &&
+      // Nothing below a created carrier can have been there before it.
+      // Stryker disable next-line MethodExpression -- so looking from the bottom finds the same
+      !path.slice(carrier.index + 1).some((above) => above.alternate != null);
     births.set(key, mountedWhole ? -Infinity : now);
   }
   const born = births.get(key) as number;
