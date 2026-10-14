@@ -409,6 +409,7 @@ const records = new WeakMap<object, StackRecord>();
 function recordOf(stack: object): StackRecord {
   let record = records.get(stack);
   if (record === undefined) {
+    // Stryker disable next-line ArrayDeclaration -- its changes are filtered before they are read
     record = { screens: undefined, changes: [], views: new Set() };
     records.set(stack, record);
   }
@@ -432,18 +433,18 @@ export function joinStack(stack: object, neighbour: StackNeighbour): () => void 
 }
 
 /**
- * A view on the screen `change.moving` saw it pushed (`leaving` false, with
- * its `props`) or popped: records it for the stack, and tells every view on
- * it now; a view that reads the stack later in the hold learns it then.
+ * A view on the screen `change.moving` saw it pushed or popped (`leaving`):
+ * records it for the stack, and tells every view on it now; a view that
+ * reads the stack later in the hold learns it then. A popped screen is off
+ * the stack's screens from now: its views, gone, read the stack no more (a
+ * pushed one's view reads the stack itself).
  */
-export function stackMoving(stack: object, change: StackChange, leaving: boolean, props?: unknown): void {
+export function stackMoving(stack: object, change: StackChange, leaving: boolean): void {
   const record = recordOf(stack);
   current(record, change.until - SECURE_TRANSITION_HOLD_MS);
   record.changes.push(change);
   if (leaving) {
     record.screens?.delete(change.moving);
-  } else {
-    record.screens?.set(change.moving, props);
   }
   for (const neighbour of [...record.views]) {
     neighbour(change);

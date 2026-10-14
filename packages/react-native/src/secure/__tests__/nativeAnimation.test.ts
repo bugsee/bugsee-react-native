@@ -280,6 +280,10 @@ describe('nodeBound', () => {
       ['one output', { outputRange: [4], extrapolate: 'clamp' }],
       ['an easing that is not a function', { outputRange: [0, 1], extrapolate: 'clamp', easing: 'linear' }],
       ['an easing that answers no number', { outputRange: [0, 1], extrapolate: 'clamp', easing: () => Number.NaN }],
+      [
+        'an easing with no number at its end',
+        { outputRange: [0, 1], extrapolate: 'clamp', easing: (t: number) => (t < 1 ? t : Number.NaN) },
+      ],
     ])('%s: unbounded', (_, config) => {
       expect(of(config)).toBeUndefined();
     });

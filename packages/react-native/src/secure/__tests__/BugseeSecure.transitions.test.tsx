@@ -15,9 +15,10 @@ import type { ReactElement } from 'react';
 import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 import { BugseeSecure } from '../BugseeSecure';
-import { SCREEN_HOST_TYPE } from '../ancestry';
+import { SCREEN_HOST_TYPE, ancestryOfFiber } from '../ancestry';
 import { SECURE_SHRINK_HOLD_MS } from '../hold';
-import { SCROLL_OVERRUN } from '../nativeAnimation';
+import { SCROLL_OVERRUN, nativeMotion, nodeBound } from '../nativeAnimation';
+import { followDrivers, forgetDrivers } from '../drivers';
 import { SECURE_TRANSITION_HOLD_MS, WHOLE_SURFACE, keyOf, noteBirth, stackMoving } from '../transition';
 import { native } from '../../__mocks__/native';
 import { FiberTag } from '../../viewtree/fiber';
@@ -40,7 +41,7 @@ import {
   view,
 } from './fakeAncestors';
 import type { FakeRenderer } from './fakeAncestors';
-import { FakeAnimatedEvent, FakeAnimatedValue, implementation, madeNative } from './fakeAnimated';
+import { FakeAnimatedEvent, FakeAnimatedValue, animated, implementation, madeNative } from './fakeAnimated';
 
 // Android, but for the tests that switch it to iOS (read at use, after this file's imports).
 const mockPlatform = { OS: 'android' };
@@ -1951,6 +1952,49 @@ describe('R3-3: content uncovered by a pop', () => {
     expect(firstPublished()).toEqual(px(SCREEN));
   });
 
+  /** The rectangles of the last publish, each as [left, top, right, bottom]. */
+  const publishedRects = (): number[][] => {
+    const flat = (lastPublished() as [number, number[]] | undefined)?.[1] ?? [];
+    return Array.from({ length: flat.length / 4 }, (_, index) => flat.slice(4 * index, 4 * index + 4));
+  };
+
+  it('a pop its view told the stack of is not found again by a view that comes after its hold', () => {
+    const { a, screenA, screenB, stack } = stackOfTwo({ activityState: 2 }, { activityState: 2 }, [view([self()])]);
+    const onB = render(existing((screenB.child as FiberLike).child as FiberLike));
+    wait(212);
+    deleting(screenB);
+    unmount(onB);
+    popB(stack, screenA);
+    wait(SECURE_TRANSITION_HOLD_MS + 200);
+
+    render(a);
+
+    expect(publishedRects()).not.toContainEqual(px(SCREEN));
+  });
+
+  it('a push its view told the stack of is not found again by a view that comes after its hold', () => {
+    const tree = root([
+      fabricHost('RNSScreenStack', null, { children: 2 }, [
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()])]),
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()])]),
+      ]),
+    ]);
+    const selves = selvesIn(tree);
+    const stack = ancestorOfType(selves[0] as FiberLike, 'RNSScreenStack');
+    const screenA = stack.child as FiberLike;
+    const onA = selves.find((fiber) => ancestorOfType(fiber, SCREEN_HOST_TYPE) === screenA) as FiberLike;
+    const onC = selves.find((fiber) => fiber !== onA) as FiberLike;
+    existing(onA);
+    // The commit pushes C: the stack rendered before with A alone.
+    stack.alternate = { ...stack, alternate: stack, child: { ...screenA, sibling: null } } as FiberLike;
+    render(onC);
+    wait(SECURE_TRANSITION_HOLD_MS + 200);
+
+    render(onA);
+
+    expect(publishedRects()).not.toContainEqual(px(SCREEN));
+  });
+
   it('a pop that uncovers another screen than the view\'s covers nothing of it', () => {
     const { a, screenA, stack } = stackOfTwo({ activityState: 2 });
     render(a);
@@ -2283,5 +2327,180 @@ describe('R3-1, R3-4: values driven by a ScrollView\'s offset', () => {
     render(underAnimated([{ translateY: header }], [{ translateY: 0 }]));
 
     expect(lastPublished()).toEqual([0, px(rect(10, 40, 200, 110))]);
+  });
+});
+
+describe('R3-4: a ScrollView\'s reach, value by value', () => {
+  let tag = 5000;
+  const offsetY = (scrollY: object): unknown[] => [{ nativeEvent: { contentOffset: { y: scrollY } } }];
+
+  /** The view under a header whose transform reads `scrollY`, beside ScrollViews built from `specs`. */
+  function tree(scrollY: object, specs: FiberSpec[]): FiberLike {
+    return existing(
+      selfIn(
+        root([
+          view([
+            {
+              tag: FiberTag.FunctionComponent,
+              type: AnimatedView,
+              memoizedProps: { style: { transform: [{ translateY: scrollY }] } },
+              children: [fabricHost('RCTView', rect(0, 0, 400, 100), {}, [view([self()])])],
+            },
+            ...specs,
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  /** A ScrollView 800 tall, its content `content` (1000 tall unless given), its host's state `state`. */
+  function port(state: Record<string, unknown> | null, content: WindowRect | null = rect(0, 0, 400, 1000)): FiberSpec {
+    return {
+      ...fabricHost('RCTScrollView', rect(0, 0, 400, 800), {}, [fabricHost('RCTScrollContentView', content, {}, [])]),
+      stateNode: state,
+    };
+  }
+  const fabric = (nativeTag: number, measured: WindowRect | null = rect(0, 0, 400, 800)): Record<string, unknown> => ({
+    rect: measured,
+    canonical: { currentProps: {}, nativeTag },
+  });
+
+  /** `scrollY`'s bound as a view in `fiber`'s tree measures it (which looks for hosts in that tree). */
+  function boundIn(fiber: FiberLike, scrollY: object): ReturnType<typeof nodeBound> {
+    nativeMotion(ancestryOfFiber(fiber));
+    return nodeBound(scrollY);
+  }
+
+  const REACH = { lo: -SCROLL_OVERRUN, hi: 200 + SCROLL_OVERRUN };
+
+  it('a still value a scroll drives: its reach, offset included, and not running', () => {
+    const scrollY = animatedValue(0);
+    scrollY._offset = 10;
+    tag += 1;
+    const fiber = tree(scrollY, [port(fabric(tag))]);
+    new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll');
+
+    expect(boundIn(fiber, scrollY)).toEqual({
+      range: { lo: REACH.lo + 10, hi: REACH.hi + 10 },
+      running: false,
+      roots: [scrollY],
+    });
+  });
+
+  it('a scroll value an animation also drives is unbounded, and running', () => {
+    const scrollY = animatedValue(0);
+    scrollY._animation = timing(0, 100);
+    tag += 1;
+    const fiber = tree(scrollY, [port(fabric(tag))]);
+    new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll');
+
+    expect(boundIn(fiber, scrollY)).toEqual({ range: undefined, running: true, roots: [scrollY] });
+  });
+
+  it('nothing followed: unbounded, without looking for a ScrollView', () => {
+    const scrollY = animatedValue(0);
+    tag += 1;
+    const fiber = tree(scrollY, [port(fabric(tag))]);
+    forgetDrivers();
+    try {
+      expect(boundIn(fiber, scrollY)).toEqual({ range: undefined, running: false, roots: [scrollY] });
+    } finally {
+      followDrivers({
+        eventClass: FakeAnimatedEvent,
+        implementation,
+        exported: animated,
+        valueClass: FakeAnimatedValue,
+      });
+    }
+  });
+
+  it.each<[string, (scrollY: object, at: number) => void, (at: number) => FiberSpec[]]>([
+    ['a scroll and a gesture', (scrollY, at) => {
+      new FakeAnimatedEvent(offsetY(scrollY)).__attach(at, 'onScroll');
+      new FakeAnimatedEvent([{ nativeEvent: { translationY: scrollY } }]).__attach(at, 'onGestureEvent');
+    }, (at) => [port(fabric(at))]],
+    ['an offset along no axis', (scrollY, at) => {
+      new FakeAnimatedEvent([{ nativeEvent: { contentOffset: { z: scrollY } } }]).__attach(at, 'onScroll');
+    }, (at) => [port(fabric(at))]],
+    ['content that cannot be measured', (scrollY, at) => {
+      new FakeAnimatedEvent(offsetY(scrollY)).__attach(at, 'onScroll');
+    }, (at) => [port(fabric(at), null)]],
+    ['a viewport that cannot be measured', (scrollY, at) => {
+      new FakeAnimatedEvent(offsetY(scrollY)).__attach(at, 'onScroll');
+    }, (at) => [port(fabric(at, null))]],
+    ['no view', (scrollY) => {
+      implementation.attachNativeEvent(null, 'onScroll', offsetY(scrollY));
+    }, (at) => [port(fabric(at))]],
+    ['a view with no tag, beside a ScrollView with none', (scrollY) => {
+      implementation.attachNativeEvent({}, 'onScroll', offsetY(scrollY));
+    }, () => [port({ rect: rect(0, 0, 400, 800), canonical: { currentProps: {} } })]],
+  ])('%s: unbounded', (_, attach, specs) => {
+    const scrollY = animatedValue(0);
+    tag += 1;
+    const fiber = tree(scrollY, specs(tag));
+    attach(scrollY, tag);
+
+    expect(boundIn(fiber, scrollY).range).toBeUndefined();
+  });
+
+  it.each<[string, (at: number) => unknown, (at: number) => FiberSpec[]]>([
+    ['a public instance whose handle is no fiber', (at) => ({ __internalInstanceHandle: {}, __nativeTag: at }),
+      (at) => [port(fabric(at))],
+    ],
+    ['a public instance with no handle', (at) => ({ __internalInstanceHandle: null, __nativeTag: at }), (at) => [
+      port(fabric(at)),
+    ]],
+    ['a Paper host, by its tag', (at) => at, (at) => [port({ rect: rect(0, 0, 400, 800), _nativeTag: at })]],
+    ['a tag found past a host with no state', (at) => at, (at) => [
+      port(fabric(at)),
+      { tag: FiberTag.HostComponent, type: 'RCTView', stateNode: null, memoizedProps: {} },
+    ]],
+    // Looked at first: a component is no host, whatever its state holds.
+    ['a tag also on a component', (at) => at, (at) => [
+      port(fabric(at)),
+      { ...composite([]), stateNode: { canonical: { nativeTag: at } } },
+    ]],
+  ])('found from %s: bounded by its reach', (_, viewOf, specs) => {
+    const scrollY = animatedValue(0);
+    tag += 1;
+    const fiber = tree(scrollY, specs(tag));
+    implementation.attachNativeEvent(viewOf(tag), 'onScroll', offsetY(scrollY));
+
+    expect(boundIn(fiber, scrollY).range).toEqual(REACH);
+  });
+
+  it('a ScrollView found once is remembered, by attachment and by tag; a tag that moved is looked for again', () => {
+    const scrollY = animatedValue(0);
+    tag += 1;
+    const fiber = tree(scrollY, [port(fabric(tag))]);
+    const event = new FakeAnimatedEvent(offsetY(scrollY));
+    event.__attach(tag, 'onScroll');
+    expect(boundIn(fiber, scrollY).range).toEqual(REACH);
+    const scroller = ancestorOfType(fiber, AnimatedView).sibling as FiberLike;
+
+    // Out of the tree (its events are detached as it unmounts; here, not yet): still found, by both.
+    scroller.sibling = null;
+    (ancestorOfType(fiber, AnimatedView).sibling as FiberLike | null) = null;
+    expect(boundIn(fiber, scrollY).range).toEqual(REACH);
+    event.__detach(tag, 'onScroll');
+    event.__attach(tag, 'onScroll');
+    expect(boundIn(fiber, scrollY).range).toEqual(REACH);
+
+    // A host remembered by a tag it no longer has: looked for again, and not found.
+    event.__detach(tag, 'onScroll');
+    (scroller.stateNode as { canonical: { nativeTag: number } }).canonical.nativeTag = -2;
+    event.__attach(tag, 'onScroll');
+    expect(boundIn(fiber, scrollY).range).toBeUndefined();
+  });
+
+  it('a tree that runs in a circle is searched, and given up on', () => {
+    const scrollY = animatedValue(0);
+    tag += 1;
+    const fiber = tree(scrollY, [port(fabric(tag))]);
+    const top = ancestorOfType(fiber, AnimatedView).return as FiberLike;
+    (top.child as FiberLike).sibling = top;
+    new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag + 1000, 'onScroll');
+
+    expect(boundIn(fiber, scrollY).range).toBeUndefined();
   });
 });

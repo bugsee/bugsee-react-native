@@ -465,10 +465,29 @@ describe('stack motion and covers', () => {
       // B's own view saw it leave: the screens read now match, and its change is the one kept.
       expect(observeStack(stack, screensOn(stack), 200)).toEqual([popped]);
       const pushed = { motion: 'still' as const, until: 1100, moving: bKey as object, below: undefined };
-      stackMoving(key, pushed, false, { stackAnimation: 'fade' });
+      stackMoving(key, pushed, false);
       (stack.child as FiberLike).sibling = { ...buildFiberTree(screen('b')), stateNode: { canonical: bKey } };
       expect(observeStack(stack, screensOn(stack), 300)).toEqual([popped, pushed]);
       expect(keys(stack)).toEqual([aKey, bKey]);
+    });
+
+    it('a screen told leaving is not found popped again once its hold is over', () => {
+      const stack = stackOf([screen('a'), screen('b')]);
+      const [, bKey] = keys(stack);
+      observeStack(stack, screensOn(stack), 0);
+      stackMoving(keyOf(stack), { motion: 'any', until: 800, moving: bKey as object, below: undefined }, true);
+      (stack.child as FiberLike).sibling = null;
+
+      expect(observeStack(stack, screensOn(stack), 900)).toEqual([]);
+    });
+
+    it('a pop told before any view read the stack is not recorded again from its render before', () => {
+      const stack = stackOf([screen('a')], [screen('a'), screen('b')]);
+      const [, bKey] = keys(stack.alternate as FiberLike);
+      const change = { motion: 'any' as const, until: 800, moving: bKey as object, below: undefined };
+      stackMoving(keyOf(stack), change, true);
+
+      expect(observeStack(stack, screensOn(stack), 100)).toEqual([change]);
     });
 
     it('a change told before any view read the stack is kept for the first that does', () => {

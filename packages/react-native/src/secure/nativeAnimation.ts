@@ -28,15 +28,20 @@ import type { FiberLike, WindowRect } from '../viewtree/fiber';
  *  - an `Animated.Value` in a timing animation: its whole path, easing
  *    overshoot included; still: its value, but only when JS provably has it.
  *    Natively, only animations (which JS starts, and which hand JS their end
- *    value) and native `Animated.event`s (a scroll, a gesture, whose values
- *    JS never sees) move a value. This module follows `Animated` components
- *    attaching and detaching those events: a value one is attached to is
- *    unbounded for as long as it is attached, animated or not. Where it
- *    cannot follow them (React Native moved its `AnimatedEvent`), any value
- *    is trusted only while the app listens to it;
+ *    value) and native events (a scroll, a gesture, whose values JS never
+ *    sees) move a value; `drivers.ts` follows which events are attached to
+ *    which value, and which values were made native while it followed. A
+ *    value an event is attached to is wherever the event takes it, animated
+ *    or not: on Android, a ScrollView's `contentOffset` within the offsets
+ *    that ScrollView can reach; anything else, anywhere. A value whose driver
+ *    is not known (made native before the package loaded, or left where its
+ *    last event took it, and not seen animating since) is anywhere too, and
+ *    so is every native value where nothing can be followed;
  *  - `diffClamp` between its bounds; `add`, `subtract`, `multiply`, `divide`
  *    and `modulo` from their operands; an interpolation through its mapping,
- *    or within its output range when it clamps both ends, whatever its input.
+ *    or, whatever its input, within its outputs (each segment as far as its
+ *    easing takes it) when neither end runs on with its input: both clamp,
+ *    or extend a flat last segment.
  *
  * A transform of translations and scales (in any order, about its
  * `transformOrigin`) is then bounded exactly: the view's measured rectangle is
@@ -48,10 +53,11 @@ import type { FiberLike, WindowRect } from '../viewtree/fiber';
  * Anything else is unbounded and covers the whole surface, cut by the
  * clipping ancestors above it: a rotation, skew or matrix; a node of a kind,
  * or with fields, this module does not know (React Native renamed something);
- * a spring or decay; a value a native `Animated.event` is attached to; a
- * Reanimated component whose style can move the view (an animated style
- * that sets a transform, a shared value set inline, a CSS animation or
- * transition: Reanimated keeps its values on the UI thread).
+ * a spring or decay; a value a native event is attached to, or whose
+ * driver is not known, beyond what is said above; a Reanimated component
+ * whose style can move the view (an animated style that sets a transform, a
+ * shared value set inline, a CSS animation or transition: Reanimated keeps
+ * its values on the UI thread).
  * Masking too much beats drawing the view where nothing masks it.
  *
  * A JS-driven animation needs none of this: Fabric commits its values to the
@@ -223,10 +229,15 @@ function scrollRange(events: readonly Attachment[]): Range | undefined {
   if (platformOS() !== 'android') {
     return undefined;
   }
-  const reaches = events.map(scrollReach);
-  return reaches.every((reach) => reach !== undefined)
-    ? hull(reaches.flatMap((reach) => [reach.lo, reach.hi]))
-    : undefined;
+  let range: Range | undefined;
+  for (const event of events) {
+    const reach = scrollReach(event);
+    if (reach === undefined) {
+      return undefined;
+    }
+    range = hull([reach.lo, reach.hi, range?.lo ?? reach.lo, range?.hi ?? reach.hi]);
+  }
+  return range;
 }
 
 function scrollReach(attachment: Attachment): Range | undefined {
@@ -303,9 +314,13 @@ function hostWithTag(tag: number): FiberLike | null | undefined {
     return undefined;
   }
   const pending: FiberLike[] = [top];
+  // One fiber more or less before giving up on a malformed tree changes nothing.
+  // Stryker disable next-line EqualityOperator
   for (let visited = 0; pending.length > 0 && visited < MAX_SEARCH; visited += 1) {
     const fiber = pending.pop() as FiberLike;
     if (fiber.tag === FiberTag.HostComponent && tagOf(fiber) === tag) {
+      // Bounds the memory alone: forgetting them all, or one more or less, only costs searching again.
+      // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement,CallExpression
       if (tagged.size >= TAGGED_MAX) {
         tagged.clear();
       }
@@ -319,12 +334,13 @@ function hostWithTag(tag: number): FiberLike | null | undefined {
   return null;
 }
 
-/** How an interpolation extends past an end of its input range, as React Native reads its config. */
+/**
+ * How an interpolation extends past an end of its input range, as React
+ * Native reads its config: anything but `clamp` and `identity` (`undefined`
+ * included, its default) extends.
+ */
 function extrapolation(config: Record<string, unknown>, side: 'extrapolateLeft' | 'extrapolateRight'): unknown {
-  if (config[side] !== undefined) {
-    return config[side];
-  }
-  return config.extrapolate !== undefined ? config.extrapolate : 'extend';
+  return config[side] !== undefined ? config[side] : config.extrapolate;
 }
 
 /** Where an easing takes a segment, from its start (0) to its end (1); `undefined` when it cannot be read. */
@@ -366,9 +382,10 @@ function outputHull(config: Record<string, unknown>): Range | undefined {
   ) {
     return undefined;
   }
-  const values = (outputs as number[]).flatMap((from, index) => {
-    const to = outputs[index + 1] as number | undefined;
-    return to === undefined ? [from] : [from + eased.lo * (to - from), from + eased.hi * (to - from)];
+  // Each segment, from its start: a flat one gives that output, eased or not; an end held gives its segment's.
+  const values = (outputs as number[]).slice(0, -1).flatMap((from, index) => {
+    const to = outputs[index + 1] as number;
+    return [from + eased.lo * (to - from), from + eased.hi * (to - from)];
   });
   return hull(values);
 }

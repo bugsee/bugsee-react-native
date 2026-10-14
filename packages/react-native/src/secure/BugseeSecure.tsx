@@ -65,27 +65,47 @@ export interface BugseeSecureProps extends ViewProps {
  * that mounts, or is shown, in a screen or Modal still within the hold from
  * its push or opening is covered too (content that arrives after a spinner),
  * and re-measured every frame until it settles, so a Modal laid out again
- * once its dialog is up is followed within a frame. When that screen or
- * Modal came is known only if a `<BugseeSecure>` saw it come (one on it, or
- * on the screen below it in its stack); otherwise the first view to see it
- * takes it as coming then, once per screen or Modal.
+ * once its dialog is up is followed within a frame; so is a view first shown
+ * on the screen a pop uncovers (mounted while that screen was hidden, or
+ * during the pop), for the rest of the pop's hold. Each stack keeps what any
+ * view saw of its recent pushes and pops. When a screen or Modal came or
+ * went is known only if a `<BugseeSecure>` saw it (one on it, or on another
+ * screen of its stack); otherwise the first view to look takes it as
+ * happening then, once per change (a stack read for the first time is
+ * compared with its render before).
  *
  * A native-driven `Animated` transform above it (`useNativeDriver: true`)
  * never reaches the shadow tree, so it also covers every place that
  * transform can draw it, joined with where it is measured: translations and
  * scales (about `transformOrigin`) bounded from the animated value, its
  * running timing animation, interpolations, `diffClamp` and arithmetic
- * nodes. A value a native `Animated.event` is attached to (an
- * `Animated.ScrollView`'s `onScroll`, a gesture handler's `onGestureEvent`,
- * attached through an `Animated` component's props) moves wherever the
- * scroll or the gesture takes it, so for as long as it is attached it is
- * not bounded, whatever animated it before. What cannot be bounded (that, a
- * rotation, a spring, a node React Native renamed) covers the whole surface,
- * cut by the clipping ancestors above it. A view under a running native
- * animation is re-measured every frame; under a still one, or under values
- * not native yet (the first animation with the native driver makes them
- * native, and commits nothing), it is woken by the JS frame an animation
- * starts on one.
+ * nodes. A value a native event is attached to (an `Animated.event` in an
+ * `Animated` component's props, such as an `Animated.ScrollView`'s
+ * `onScroll` or a gesture handler's `onGestureEvent`, or one attached with
+ * `Animated.attachNativeEvent`, as React Native's ScrollView does for its
+ * sticky headers) moves wherever the scroll or the gesture takes it, for as
+ * long as it is attached, idle or not, whatever animated it before. It is
+ * bounded only where that is provable: through an interpolation that clamps,
+ * or extends a flat last segment, at both ends (within its outputs, eased);
+ * through `diffClamp`; and, on Android, as a ScrollView's `contentOffset`,
+ * within the offsets the ScrollView can reach (from its measured content and
+ * viewport, and a fling's overrun past either end). What cannot be bounded
+ * (any other event's value, an iOS ScrollView's offset, a rotation, a
+ * spring, a node React Native renamed) covers the whole surface, cut by the
+ * clipping ancestors above it, for as long as it cannot be. A view under a
+ * running native animation is re-measured every frame; under a still one it
+ * is woken by the JS frame an animation starts on it; under values not native
+ * yet (the first animation with the native driver makes them native, and
+ * commits nothing), the moment one is made native, with no frame loop meanwhile.
+ *
+ * What drives a native value is followed from when the package is first
+ * imported (its entry imports `secure/followEvents` for that, so Metro's
+ * `inlineRequires` does not defer it to the first `<BugseeSecure>`): the
+ * events attached to it, and its being made native. A native value made
+ * native before that, or left wherever its last event took it, is unbounded
+ * until it next animates. Where React Native's internals cannot be followed
+ * (React Native moved them), no still native value is trusted: every one is
+ * unbounded.
  *
  * Known limits: Reanimated runs its animations on the UI thread, out of
  * JS's sight; a Reanimated component whose style sets a transform through
@@ -96,10 +116,9 @@ export interface BugseeSecureProps extends ViewProps {
  * transitions) is not seen. An interactive back gesture moves a mounted
  * screen with nothing JS sees. A native animation's first frame can be drawn
  * by the UI thread before JS's next frame publishes the cover (about one
- * frame). An event attached with `Animated.attachNativeEvent` directly, not
- * through props, is not seen, and its value is bounded where it rests; where
- * React Native's `AnimatedEvent` cannot be loaded, no attachment is seen,
- * and every native value the app does not listen to is unbounded instead.
+ * frame). A native event attached without `Animated` (code that calls React
+ * Native's native Animated module itself) is not seen, and its value is
+ * taken where JS last had it.
  *
  * Fails closed: a measurement that throws or is rejected leaves the last
  * rectangle published, and an ancestor that cannot be read or measured cuts

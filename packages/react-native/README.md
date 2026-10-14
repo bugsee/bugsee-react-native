@@ -93,15 +93,32 @@ view.
 Known limits:
 
 - Content that mounts in a pushed screen or an opening `<Modal>` after it
-  came (behind a spinner) is masked for the rest of the transition. When the
-  screen or Modal came is known only if a `<BugseeSecure>` saw it come;
-  otherwise the first one in it masks as if it came then (the whole screen,
-  or the Modal's band, for under a second), once per screen or Modal.
-- A value a native `Animated.event` drives (through an `Animated`
-  component's `onScroll`, `onGestureEvent`, …) moves with the gesture, so
-  anything it transforms masks the whole surface around it while the event
-  is attached. An event attached with `Animated.attachNativeEvent` directly is
-  not seen.
+  came (behind a spinner), or that is first shown on the screen a pop
+  uncovers, is masked for the rest of the transition. When a screen came or
+  went is known only if a `<BugseeSecure>` saw it; otherwise the first one to
+  look masks as if it happened then (the whole screen, or the Modal's band,
+  for under a second).
+- A value a native event drives (an `Animated.event` in an `Animated`
+  component's `onScroll` or `onGestureEvent`, or `Animated.attachNativeEvent`,
+  which React Native's own ScrollView uses for `stickyHeaderIndices`) moves
+  with the scroll or the gesture. What it transforms is masked wherever it can
+  be drawn, for as long as the event is attached, idle or not:
+  - a clamped interpolation, one whose ends are flat (a swipeable row without
+    overshoot), or a `diffClamp`: over its output range;
+  - on Android, a ScrollView's `contentOffset` (a collapsing or parallax
+    header, a sticky header): over the offsets the ScrollView can reach, from
+    its measured content and viewport, plus a fling's overrun (32 dp). A
+    sticky header is masked from where it rests down to the bottom of the
+    list's viewport;
+  - anything else (a gesture's translation through an interpolation that
+    extends, an iOS ScrollView, which bounces and can be scrolled anywhere by
+    `scrollTo`, a ScrollView in another React root): the whole surface around
+    it, cut by the clipping ancestors above it (a list's viewport, say).
+- Events attached before `@bugsee/react-native` is first imported are not
+  seen: a value made native that early is masked as if anything could drive
+  it, until it next animates. A native event attached without `Animated`
+  (code that calls React Native's native Animated module itself) is not seen
+  at all, and the value it drives is taken to be where JS last had it.
 - Reanimated runs its animations on the UI thread, out of JS's sight. A
   Reanimated component whose style sets a transform through an animated
   style, sets a shared value inline, or uses a CSS animation or transition

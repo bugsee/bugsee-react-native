@@ -112,8 +112,6 @@ export class SecureTracker {
   private leaveStacks: Array<() => void> = [];
   /** The screens on each stack its screens are on, by the stack's place in the path, as last seen. */
   private stackScreens = new Map<number, Map<object, unknown>>();
-  /** The stack changes it has covered (or that covered it), each once. */
-  private applied = new WeakSet<StackChange>();
   /** Frames (or checks) in a row the visible rectangle stayed put. */
   private steady = 0;
   private lastVisible: string | undefined;
@@ -251,8 +249,6 @@ export class SecureTracker {
     // Stryker disable next-line all -- so its mutants are equivalent
     this.leaveStacks.forEach((leave) => leave());
     this.leaveStacks = [];
-    this.stackScreens.clear();
-    this.applied = new WeakSet();
     this.steady = 0;
     this.lastVisible = undefined;
     this.lastSelf = undefined;
@@ -294,11 +290,12 @@ export class SecureTracker {
         this.joinStacks(above);
       }
       if (isHidden(above)) {
-        // Not drawn while hidden: whatever carries it in is looked for once it is shown, and its stacks are
-        // read, so a pop that uncovers it is seen, whoever else sees it.
-        this.noteBirths(above);
-        this.attempt(() => this.checkStacks(above, monotonicNow(), false));
+        // Not drawn while hidden (seen nowhere: no stack change covers anything): whatever carries it in is
+        // looked for once it is shown, and its stacks are read, so a pop that uncovers it is seen, whoever else
+        // sees it.
         this.seen = null;
+        this.noteBirths(above);
+        this.attempt(() => this.checkStacks(above, monotonicNow()));
         this.publish(this.covering(this.hold.update(null, monotonicNow()), monotonicNow()));
         this.watch([]);
         this.enter('hidden');
@@ -346,7 +343,7 @@ export class SecureTracker {
     // Warned about once a view: the same unreadable tree warns from wherever it is read first.
     // Stryker disable all
     try {
-      this.checkStacks(above, now, true);
+      this.checkStacks(above, now);
     } catch (error) {
       this.failed(error);
     }
@@ -387,6 +384,8 @@ export class SecureTracker {
       });
       if (carriers.length > 0) {
         this.carried = { carriers, until };
+        // Read by its own view before and after (as it is carried in): telling it leaving changes nothing it keeps.
+        // Stryker disable next-line BooleanLiteral
         this.tellStacks(above, carriers, until, false);
         // A Modal's content is laid out again once its dialog is up: within a frame.
         this.settling = true;
@@ -503,7 +502,7 @@ export class SecureTracker {
         const screen = fibers[carrier.index] as FiberLike;
         const stack = keyOf(above.path[carrier.stack] as FiberLike);
         const motion = stackMotionOf(screen.memoizedProps, false);
-        stackMoving(stack, { motion, until, moving: keyOf(screen), below: undefined }, leaving, screen.memoizedProps);
+        stackMoving(stack, { motion, until, moving: keyOf(screen), below: undefined }, leaving);
       }
     }
   }
@@ -511,11 +510,11 @@ export class SecureTracker {
   /**
    * Reads the stacks its screens are on: a screen pushed onto, or popped
    * off, one (with or without a `<BugseeSecure>` of its own) since any view
-   * last read it is recorded for it. Shown, it covers every change still in
-   * its hold that moves its own screen, uncovered or covered, once: also one
-   * made before it mounted, or while it was hidden.
+   * last read it is recorded for it. Seen on screen, it covers every change
+   * still in its hold that moves its own screen, uncovered or covered, from
+   * where it is now: also one made before it mounted, or while it was hidden.
    */
-  private checkStacks(above: Ancestry, now: number, shown: boolean): void {
+  private checkStacks(above: Ancestry, now: number): void {
     const fibers = above.resolved ?? above.path;
     for (const carrier of carriersOf(above)) {
       if (carrier.stack === undefined) {
@@ -524,34 +523,30 @@ export class SecureTracker {
       const stack = fibers[carrier.stack] as FiberLike;
       const screens = screensOn(stack);
       this.stackScreens.set(carrier.stack, screens);
-      const changes = observeStack(stack, screens, now);
-      if (shown) {
-        changes.forEach((change) => this.screenMoved(carrier, change));
-      }
+      observeStack(stack, screens, now).forEach((change) => this.screenMoved(carrier, change));
     }
   }
 
   /**
    * Another screen on a stack its screen is on is pushed or popped: its own
    * screen, uncovered or covered, moves too, as `change.motion` until
-   * `change.until`. Covered once a change, and only once seen on screen.
+   * `change.until`. Covered from where it is seen now, joined with where it
+   * was: every measurement in the hold follows it.
    */
   private screenMoved(carrier: Carrier, change: StackChange): void {
     const above = this.ancestry as Ancestry;
     const screen = above.path[carrier.index] as FiberLike;
     const key = keyOf(screen);
-    // A stopped view has left its stacks; a view on the moving screen covers it already, more; a change that
-    // uncovers or covers another screen does not move its own.
-    if (
-      !this.running ||
-      this.seen == null ||
-      this.applied.has(change) ||
-      change.moving === key ||
-      (change.below !== undefined && change.below !== key)
-    ) {
+    // A stopped view has left its stacks; a view on the moving screen is carried, over as much (each motion
+    // covers the screen moving at least as much as the one below).
+    // Stryker disable next-line ConditionalExpression,LogicalOperator -- so these tests only spare work
+    if (!this.running || change.moving === key) {
       return;
     }
-    this.applied.add(change);
+    // Seen nowhere, nothing to cover; a change that uncovers or covers another screen does not move its own.
+    if (this.seen == null || (change.below !== undefined && change.below !== key)) {
+      return;
+    }
     // Seen on screen, so covered somewhere.
     const cover = screenCover(change.motion, screenRect(screen), this.seen, false) as WindowRect;
     // Whatever cover is still running is joined, not replaced; one run out is dropped first.

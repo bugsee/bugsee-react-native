@@ -53,6 +53,7 @@ interface DriverState {
 }
 
 /** Where the state is kept on every object patched, and on every function that wraps one. */
+// Stryker disable next-line StringLiteral -- any key nothing else uses
 const KEY = Symbol.for('@bugsee/react-native/secure-drivers');
 
 /** The state, while everything is followed; `null`: nothing can be trusted. */
@@ -103,13 +104,11 @@ function add(state: DriverState, attachments: readonly Attached[]): void {
 function remove(state: DriverState, attachments: readonly Attached[]): void {
   for (const attachment of attachments) {
     // Each attachment is removed once, after it was added.
-    const left = (state.attached.get(attachment.value) as Attached[]).filter((each) => each !== attachment);
-    if (left.length > 0) {
-      state.attached.set(attachment.value, left);
-    } else {
-      // Where the event left it, JS may not know: unknown until an animation moves it.
-      state.attached.delete(attachment.value);
-    }
+    // Where the last event left it, JS may not know: it stays unknown until an animation moves it.
+    state.attached.set(
+      attachment.value,
+      (state.attached.get(attachment.value) as Attached[]).filter((each) => each !== attachment),
+    );
   }
 }
 
@@ -126,12 +125,13 @@ function read(state: DriverState, mapping: () => unknown, view: unknown, event: 
 type Method = (this: unknown, ...args: unknown[]) => unknown;
 
 function mark<T extends object>(target: T, state: DriverState): T {
-  Object.defineProperty(target, KEY, { value: state, enumerable: false, configurable: true });
+  // Not enumerable (the default): spreading the object copies no state.
+  Object.defineProperty(target, KEY, { value: state });
   return target;
 }
 
-function stateOn(target: object): DriverState | undefined {
-  return (target as { [KEY]?: DriverState })[KEY];
+function stateOn(target: object | undefined): DriverState | undefined {
+  return (target as { [KEY]?: DriverState } | undefined)?.[KEY];
 }
 
 function wrapEvents(prototype: Record<string, unknown>, state: DriverState): void {
@@ -164,12 +164,9 @@ function wrapAttach(target: Record<string, unknown>, state: DriverState): void {
     // A handle that cannot be wrapped keeps them counted for good: covered, never trusted.
     try {
       const detach = (handle as { detach: Method }).detach;
-      let detached = false;
       (handle as { detach: Method }).detach = function (this: unknown, ...rest: unknown[]) {
-        if (!detached) {
-          detached = true;
-          remove(state, attachments);
-        }
+        // Detached again: its attachments are gone already, and removing them again removes nothing.
+        remove(state, attachments);
         return detach.apply(this, rest);
       };
     } catch {
@@ -187,13 +184,13 @@ function wrapNative(prototype: Record<string, unknown>, state: DriverState): voi
     const result = makeNative.apply(this, args);
     if (becoming) {
       state.known.add(this);
-      for (const wake of [...(state.onNative.get(this) ?? [])]) {
+      state.onNative.get(this)?.forEach((wake) => {
         try {
           wake();
         } catch {
           // A watcher's failure is its own; React Native's animation goes on.
         }
-      }
+      });
     }
     return result;
   }, state);
@@ -236,8 +233,7 @@ export function followDrivers(sources: DriverSources): boolean {
     return false;
   }
   const exported = withMethods(sources.exported, 'attachNativeEvent');
-  const targets = [events, values, implementation, ...(exported === undefined ? [] : [exported])];
-  const state = targets.map(stateOn).find((found) => found !== undefined) ?? {
+  const state = [events, values, implementation, exported].map(stateOn).find((found) => found !== undefined) ?? {
     attached: new WeakMap(),
     events: new WeakMap(),
     known: new WeakSet(),
@@ -251,6 +247,7 @@ export function followDrivers(sources: DriverSources): boolean {
     wrapNative(values, state);
   }
   for (const target of [implementation, exported]) {
+    // Once per object: a function set over the wrapper since (an app's own, calling ours) is not wrapped again.
     // The public object may hold the wrapper already, spread from `AnimatedImplementation` once it was wrapped.
     const unwrapped = target !== undefined && stateOn(target.attachNativeEvent as object) === undefined;
     if (unwrapped && stateOn(target) === undefined) {

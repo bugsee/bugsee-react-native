@@ -95,6 +95,7 @@ describe('followDrivers', () => {
     new rn.eventClass([{ nativeEvent }]).__attach();
 
     expect([x, y, deep, tooDeep].map((node) => eventsOn(node)?.length)).toEqual([1, 1, 1, 0]);
+    expect(eventsOn(x)?.[0]?.path).toEqual(['nativeEvent', 'offset', 'x']);
     expect(eventsOn(y)?.[0]?.path).toEqual(['nativeEvent', 'offset', 'y']);
     // Detached more often than attached, or never attached, or with no mapping: nothing goes below none.
     const twice = new rn.eventClass([{ nativeEvent: { y: other } }]);
@@ -153,8 +154,49 @@ describe('followDrivers', () => {
 
     expect((rn.eventClass.prototype as { __attach: unknown }).__attach).toBe(attach);
     expect(eventsOn(scrollY)).toHaveLength(1);
+    // Made native once, woken once: not wrapped twice.
+    const node = new rn.valueClass();
+    const woken = jest.fn();
+    whenNative(node, woken);
+    node.__makeNative();
+    expect(woken).toHaveBeenCalledTimes(1);
+    rn.implementation.attachNativeEvent('host', 'onScroll', [{ nativeEvent: { y: scrollY } }]);
+    expect(eventsOn(scrollY)).toHaveLength(2);
     // Not enumerable: spreading the object copies no state.
     expect(Object.getOwnPropertySymbols({ ...rn.implementation })).toEqual([]);
+  });
+
+  it('a second React Native copy\'s AnimatedEvent joins what the rest already follow', () => {
+    const rn = sources();
+    followDrivers(rn);
+    const scrollY = value();
+    rn.implementation.attachNativeEvent('host', 'onScroll', [{ nativeEvent: { y: scrollY } }]);
+
+    followDrivers({ ...rn, eventClass: sources().eventClass });
+
+    expect(eventsOn(scrollY)).toHaveLength(1);
+  });
+
+  it('a function an app set over the wrapper (calling it) is not wrapped again: each attachment counted once', () => {
+    const rn = sources();
+    followDrivers(rn);
+    const ours = rn.implementation.attachNativeEvent;
+    rn.implementation.attachNativeEvent = jest.fn((...args: unknown[]) => ours(...args));
+    const scrollY = value();
+
+    followDrivers(rn);
+    rn.implementation.attachNativeEvent('host', 'onScroll', [{ nativeEvent: { y: scrollY } }]);
+
+    expect(eventsOn(scrollY)).toHaveLength(1);
+  });
+
+  it('forgotten (a test resetting it), nothing is followed', () => {
+    followDrivers(sources());
+    forgetDrivers();
+
+    expect(eventsOn(value())).toBeUndefined();
+    expect(() => noteAnimating(value())).not.toThrow();
+    expect(knownDriven(value())).toBe(false);
   });
 
   it('P3-2: a mapping that cannot be read still attaches, and then no value is trusted', () => {
