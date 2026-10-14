@@ -69,6 +69,18 @@ describe('carrierOf', () => {
     expect(carrierOf(ancestryOfFiber(fiber))).toEqual({ kind: 'modal', index: indexOf(fiber, 'RCTModalHostView') });
   });
 
+  it('a screen with no host above it carries nothing, without throwing', () => {
+    const fiber = selfIn(root([fabricHost(SCREEN_HOST_TYPE, SCREEN, {}, [self()])]));
+
+    expect(carrierOf(ancestryOfFiber(fiber))).toBeNull();
+  });
+
+  it('a Modal right above the view carries it', () => {
+    const fiber = selfIn(root([fabricHost('RCTModalHostView', null, {}, [self()])]));
+
+    expect(carrierOf(ancestryOfFiber(fiber))).toEqual({ kind: 'modal', index: 0 });
+  });
+
   it('nothing above the view: nothing carries it', () => {
     expect(carrierOf(noAncestry())).toBeNull();
   });
@@ -124,6 +136,13 @@ describe('deletionRoot and carrierLeaving', () => {
     expect(deletionRoot(ancestry)).toBe(1);
     expect(carrierLeaving(ancestry, { kind: 'screen', index: 1 })).toBe(true);
     expect(carrierLeaving(ancestry, { kind: 'screen', index: 2 })).toBe(false);
+  });
+
+  it('a deletions list left from an earlier commit, naming other fibers, deletes nothing here', () => {
+    const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
+    deleting(ancestry.path[2] as FiberLike, [{ ...(ancestry.path[1] as FiberLike) }]);
+
+    expect(deletionRoot(ancestry)).toBeUndefined();
   });
 
   it('a view with no fiber has nothing deleted', () => {

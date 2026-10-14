@@ -88,6 +88,10 @@ export interface BugseeSecureProps extends ViewProps {
  * A plain function component on purpose (no `memo`, no `forwardRef`): the view
  * tree walk recognises it by identity.
  */
+/** No dependencies: an effect that runs once per mount. */
+// Stryker disable next-line ArrayDeclaration -- any constant list runs it once per mount alike
+const ONCE_PER_MOUNT: readonly unknown[] = [];
+
 export function BugseeSecure(props: BugseeSecureProps): ReactElement {
   const { enabled = true, onLayout, ...rest } = props;
   const ref = useRef<ComponentRef<typeof View>>(null);
@@ -108,8 +112,7 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
     return () => {
       unmounting.current = true;
     };
-    // Stryker disable next-line ArrayDeclaration -- any constant list runs it once per mount alike
-  }, []);
+  }, ONCE_PER_MOUNT);
 
   // A layout effect, not a passive one: it runs in the commit, so on Fabric
   // the first rectangle is registered before the first frame is painted

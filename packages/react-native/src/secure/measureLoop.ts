@@ -218,7 +218,8 @@ function frame(): void {
 export function watchNode(fiber: FiberLike, moved: () => void, geometry = true): () => void {
   let node = watched.get(fiber);
   if (node === undefined) {
-    // Measured at once: a move before the next frame is a move.
+    // Measured at once: a move before the next frame is a move. Unmeasured, `last` never changes.
+    // Stryker disable next-line StringLiteral -- so any constant is as good
     node = { subscribers: new Set(), geometry, last: geometry ? whereNow(fiber) : '', props: propsOf(fiber) };
     watched.set(fiber, node);
   } else if (geometry && !node.geometry) {

@@ -59,6 +59,8 @@ function bounding(a: WindowRect, b: WindowRect | undefined): WindowRect {
   const left = Math.min(a.x, b.x);
   const top = Math.min(a.y, b.y);
   const right = Math.max(a.x + a.width, b.x + b.width);
+  // Only slide bands are joined, and they all end at the same bottom.
+  // Stryker disable next-line MethodExpression,ArithmeticOperator -- so any of the two bottoms is it
   const bottom = Math.max(a.y + a.height, b.y + b.height);
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
@@ -88,6 +90,7 @@ export class SecureTracker {
   /** The `<Modal>` the view is in (`null`: none), read once a mount; `undefined` until then. */
   private modal: Carrier | null | undefined;
   /** Its `<Modal>` was last seen committed as not visible: closing, and already covered. */
+  // Stryker disable next-line BooleanLiteral -- `start` clears it before anything reads it
   private closing = false;
   /** A transition carrying the view in, until `until`. */
   private carried: { readonly carrier: Carrier; readonly until: number } | null = null;
@@ -313,14 +316,15 @@ export class SecureTracker {
    * props, which change the commit that hides it: woken within a frame.
    */
   private watchModal(above: Ancestry): void {
+    this.modal = null;
     try {
       this.modal = modalOf(above);
-    } catch (error) {
-      this.modal = null;
-      this.failed(error);
+    } catch {
+      // A tree that cannot be read: no Modal to watch (the measurement says why, once).
     }
     if (this.modal) {
       const host = above.path[this.modal.index] as FiberLike;
+      // Stryker disable next-line StringLiteral -- woken in any mode but tick or parked, it is measured that frame
       this.unwatchModal = watchNode(host, () => this.enter('active'), false);
     }
   }
@@ -351,6 +355,8 @@ export class SecureTracker {
    */
   private carry(self: WindowRect, above: Ancestry, now: number): void {
     const { carrier, until } = this.carried as { carrier: Carrier; until: number };
+    // Past it, the cover set below would be dropped as soon as it is published.
+    // Stryker disable next-line ConditionalExpression,BlockStatement -- so carrying on changes nothing
     if (until <= now) {
       this.carried = null;
       return;

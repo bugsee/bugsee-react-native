@@ -492,6 +492,15 @@ describe('watched nodes and parked views', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it('cancels the pending frame the moment the last watched node is unwatched', () => {
+    const stop = loop.watchNode(node(), jest.fn());
+    expect(jest.getTimerCount()).toBe(1);
+
+    stop();
+
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it('a stale unwatch leaves a node watched again under the same fiber alone', () => {
     const content = node();
     const stop = loop.watchNode(content, jest.fn());

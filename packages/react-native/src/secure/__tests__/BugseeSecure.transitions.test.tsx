@@ -335,6 +335,24 @@ describe('C3: a Modal sliding in and out', () => {
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(band(before)), ...px(selfRect), ...px(before)]]);
   });
 
+  it('a band that moves as the content is laid out again covers both, joined', () => {
+    render(inModal({ animationType: 'slide' }));
+
+    const before = selfRect;
+    selfRect = rect(5, 60, 200, 50);
+    wait(17);
+
+    // From the left of the second to the right of the first, from the top of the second down.
+    const joined = { x: 5, y: 60, width: 205, height: WHOLE_SURFACE.height - 60 };
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(joined), ...px(selfRect), ...px(before)]]);
+
+    // And again, further right: the join grows to its right edge.
+    selfRect = rect(40, 60, 200, 50);
+    wait(17);
+    const wider = { ...joined, width: 235 };
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(wider));
+  });
+
   it('a fade Modal opening covers only the view, still followed every frame', () => {
     render(inModal({ animationType: 'fade' }));
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
@@ -439,6 +457,53 @@ describe('C3: a Modal sliding in and out', () => {
     wait(17);
 
     expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(band(selfRect)));
+  });
+
+  it('a view mounted in a Modal already closing (iOS) covers the band at once', () => {
+    render(existing(inModal({ animationType: 'slide', visible: false })));
+
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(band(selfRect)), ...px(selfRect)]]);
+  });
+
+  it('re-enabled while its Modal closes, it covers the band again', () => {
+    const fiber = existing(inModal({ animationType: 'slide', visible: true }));
+    const testRenderer = render(fiber);
+    ancestorOfType(fiber, 'RCTModalHostView').memoizedProps = { animationType: 'slide', visible: false };
+    wait(17);
+
+    act(() => testRenderer.update(<BugseeSecure enabled={false} />));
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, []]);
+    act(() => testRenderer.update(<BugseeSecure enabled />));
+
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(band(selfRect)), ...px(selfRect)]]);
+  });
+
+  it('a fading Modal hidden while mounted adds no band, and the view is still followed', () => {
+    const fiber = existing(inModal({ animationType: 'fade', visible: true }));
+    render(fiber);
+    ancestorOfType(fiber, 'RCTModalHostView').memoizedProps = { animationType: 'fade', visible: false };
+    wait(17);
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
+
+    const before = selfRect;
+    selfRect = rect(10, 300, 200, 50);
+    wait(100);
+
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(selfRect), ...px(before)]]);
+  });
+
+  it('a view hidden as a Modal opens is not carried in once shown later', () => {
+    const fiber = onScreenInModal('RNSScreenContainer', 0, { animationType: 'slide', visible: true });
+    // The Modal was created by the commit that mounted the view; the screen that opened it was there.
+    const host = ancestorOfType(fiber, 'RCTModalHostView');
+    for (let current: FiberLike | null = host; current !== null; current = current.child) {
+      current.alternate = null;
+    }
+    render(fiber);
+    ancestorOfType(fiber, SCREEN_HOST_TYPE).memoizedProps = { activityState: 2 };
+    wait(17);
+
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
   });
 
   it('a Modal without animation holds only the view as it closes', () => {

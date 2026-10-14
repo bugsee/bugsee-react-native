@@ -1,7 +1,6 @@
 import { measureFiber } from './ancestry';
 import type { Ancestry } from './ancestry';
 import { MODAL_HOST_TYPE } from './surface';
-import { FiberTag } from '../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../viewtree/fiber';
 
 /**
@@ -75,7 +74,8 @@ export function carrierOf(ancestry: Ancestry): Carrier | null {
 /** The `<Modal>` the view is in, or `null`. */
 export function modalOf(ancestry: Ancestry): Carrier | null {
   const index = ancestry.path.findIndex(
-    (fiber) => fiber.tag === FiberTag.HostComponent && fiber.type === MODAL_HOST_TYPE,
+    // Only a host has a string type.
+    (fiber) => fiber.type === MODAL_HOST_TYPE,
   );
   return index < 0 ? null : { kind: 'modal', index };
 }
@@ -91,7 +91,9 @@ export function modalOf(ancestry: Ancestry): Carrier | null {
  */
 export function carrierEntering(ancestry: Ancestry, carrier: Carrier): boolean {
   const { path } = ancestry;
-  const created = path[carrier.index]?.alternate == null;
+  const created = (path[carrier.index] as FiberLike).alternate == null;
+  // Nothing below a created carrier can have been there before it.
+  // Stryker disable next-line MethodExpression -- so looking from the bottom finds the same
   return created && path.slice(carrier.index + 1).some((fiber) => fiber.alternate != null);
 }
 
@@ -107,10 +109,8 @@ function deletes(parent: FiberLike | null | undefined, child: FiberLike): boolea
  */
 export function deletionRoot(ancestry: Ancestry): number | undefined {
   const { self, path } = ancestry;
-  if (self === null) {
-    return undefined;
-  }
-  let child = self;
+  // Only an ancestry with no fiber has no self, and it has no path either.
+  let child = self as FiberLike;
   for (let index = -1; index < path.length - 1; index += 1) {
     const parent = path[index + 1] as FiberLike;
     // Either fiber of the parent's pair may be the one this commit finished.
@@ -124,8 +124,8 @@ export function deletionRoot(ancestry: Ancestry): number | undefined {
 
 /** Whether the running commit deletes the carrier itself, or something above it. */
 export function carrierLeaving(ancestry: Ancestry, carrier: Carrier): boolean {
-  const deleted = deletionRoot(ancestry);
-  return deleted !== undefined && deleted >= carrier.index;
+  // Nothing deleted (`undefined`) is never at or above anything.
+  return Number(deletionRoot(ancestry)) >= carrier.index;
 }
 
 /**
@@ -143,7 +143,7 @@ export function carriedCover(
     try {
       screen = measureFiber(fiber);
     } catch {
-      screen = undefined;
+      // Unmeasurable: covered as the whole surface below.
     }
     return screen ?? WHOLE_SURFACE;
   }

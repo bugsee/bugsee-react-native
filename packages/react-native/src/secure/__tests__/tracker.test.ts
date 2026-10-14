@@ -614,6 +614,48 @@ describe('SecureTracker', () => {
       expect(warn).toHaveBeenCalledTimes(1);
     });
 
+    it('publishes what is left as it runs out: the cover outlasting the view\'s own hold', () => {
+      const selfFiber = { type: 'Self' };
+      const screen = { type: 'RNSScreen', alternate: { type: 'RNSScreen' } };
+      const stack = { type: 'RNSScreenStack', alternate: { type: 'RNSScreenStack' }, deletions: [screen] };
+      mockState.ancestry = {
+        self: selfFiber,
+        path: [screen, stack],
+        hosts: [{ index: 0, above: 1, screen: true }],
+        screens: [],
+        animated: [],
+        readable: true,
+      };
+      later(50);
+      tracker.start();
+
+      // Popped: the screen (unmeasurable here, so the whole surface) and the view.
+      tracker.depart();
+      expect((last() as WindowRect[]).length).toBe(2);
+      // The view's own hold has run out (600 ms); the cover lasts until 650.
+      later(570);
+      runTick();
+      expect((last() as WindowRect[]).length).toBe(1);
+      later(100);
+      runTick();
+      expect(mockState.cleared).toBe(1);
+    });
+
+    it('a tree that throws only where a transition is looked for still publishes the view, and warns once', () => {
+      const ancestry = { self: null, path: [], screens: [], animated: [], readable: true };
+      Object.defineProperty(ancestry, 'hosts', {
+        get(): never {
+          throw new Error('torn');
+        },
+      });
+      mockState.ancestry = ancestry;
+
+      tracker.start();
+
+      expect(last()).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
     it('a parked view drops a transition cover on the tick once it runs out', () => {
       const stack = { type: 'RNSScreenStack' };
       // A screen with no alternate: pushed by the commit that mounts the view.
