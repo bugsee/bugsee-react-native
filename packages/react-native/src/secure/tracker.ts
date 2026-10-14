@@ -5,7 +5,14 @@ import { addFrameMeasurer, addMeasurer, addParked, watchNode } from './measureLo
 import { nativeMotion } from './nativeAnimation';
 import { clearOwner, setOwnerRectangles } from './registry';
 import { surfaceOfInstance } from './surface';
-import { SECURE_TRANSITION_HOLD_MS, carriedCover, carrierEntering, carrierLeaving, carrierOf } from './transition';
+import {
+  SECURE_TRANSITION_HOLD_MS,
+  carriedCover,
+  carrierEntering,
+  carrierLeaving,
+  carrierOf,
+  modalOf,
+} from './transition';
 import type { Carrier } from './transition';
 import { errorName } from '../errorName';
 import type { FiberLike, WindowRect } from '../viewtree/fiber';
@@ -78,8 +85,8 @@ export class SecureTracker {
   private surface: number | null = null;
   private ancestry: Ancestry | null = null;
   private readonly hold = new CoverageHold();
-  /** What a transition can carry the view with, read on its first measurement. */
-  private carrier: Carrier | null = null;
+  /** The `<Modal>` the view is in (`null`: none), read once a mount; `undefined` until then. */
+  private modal: Carrier | null | undefined;
   /** Its `<Modal>` was last seen committed as not visible: closing, and already covered. */
   private closing = false;
   /** A transition carrying the view in, until `until`. */
@@ -172,7 +179,7 @@ export class SecureTracker {
     this.hold.clear();
     this.cover = null;
     this.carried = null;
-    this.carrier = null;
+    this.modal = undefined;
     this.closing = false;
     this.lastRect = null;
   }
@@ -223,6 +230,9 @@ export class SecureTracker {
       this.surface ??= surfaceOfInstance(view);
       this.ancestry ??= ancestryOfInstance(view);
       const above = this.ancestry;
+      if (this.modal === undefined) {
+        this.watchModal(above);
+      }
       if (isHidden(above)) {
         // Hidden as it mounts: whatever carried it in is not drawn.
         this.arriving = false;
@@ -264,10 +274,7 @@ export class SecureTracker {
     if (this.carried !== null) {
       this.carry(self, above, now);
     }
-    if (this.carrier?.kind === 'modal') {
-      // Its host's props change the commit that hides it: woken within a frame.
-      const host = above.path[this.carrier.index] as FiberLike;
-      this.unwatchModal ??= watchNode(host, () => this.enter('active'), false);
+    if (this.modal) {
       this.watchClosing(self, above, now);
     }
     // Where a native-driven animation can draw it, which the shadow tree never sees.
@@ -291,7 +298,6 @@ export class SecureTracker {
     // As in `depart`: a read that throws carries nothing, and the view is still published.
     try {
       const carrier = carrierOf(above);
-      this.carrier = carrier;
       if (carrier !== null && carrierEntering(above, carrier)) {
         this.carried = { carrier, until: now + SECURE_TRANSITION_HOLD_MS };
         // A Modal's content is laid out again once its dialog is up: within a frame.
@@ -303,13 +309,30 @@ export class SecureTracker {
   }
 
   /**
+   * Finds the `<Modal>` the view is in, hidden or not, and watches its host's
+   * props, which change the commit that hides it: woken within a frame.
+   */
+  private watchModal(above: Ancestry): void {
+    try {
+      this.modal = modalOf(above);
+    } catch (error) {
+      this.modal = null;
+      this.failed(error);
+    }
+    if (this.modal) {
+      const host = above.path[this.modal.index] as FiberLike;
+      this.unwatchModal = watchNode(host, () => this.enter('active'), false);
+    }
+  }
+
+  /**
    * A `<Modal>` set `visible={false}` and still mounted (iOS keeps it until
    * `onDismiss`) slides out with the view in it: from the commit that hides
    * it, covers the band below the view for the transition hold, as an
    * unmount does where the Modal is removed at once (Android).
    */
   private watchClosing(self: WindowRect, above: Ancestry, now: number): void {
-    const carrier = this.carrier as Carrier;
+    const carrier = this.modal as Carrier;
     const host = (above.resolved ?? above.path)[carrier.index];
     const hidden = (host?.memoizedProps as { visible?: unknown } | null | undefined)?.visible === false;
     if (hidden && !this.closing) {

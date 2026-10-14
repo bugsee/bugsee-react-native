@@ -69,6 +69,11 @@ export function carrierOf(ancestry: Ancestry): Carrier | null {
       return { kind: 'screen', index: host.index };
     }
   }
+  return modalOf(ancestry);
+}
+
+/** The `<Modal>` the view is in, or `null`. */
+export function modalOf(ancestry: Ancestry): Carrier | null {
   const index = ancestry.path.findIndex(
     (fiber) => fiber.tag === FiberTag.HostComponent && fiber.type === MODAL_HOST_TYPE,
   );

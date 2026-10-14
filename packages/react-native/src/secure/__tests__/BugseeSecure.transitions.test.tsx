@@ -394,6 +394,53 @@ describe('C3: a Modal sliding in and out', () => {
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
   });
 
+  /** The view on a screen of a `container` inside a `<Modal>` with `props`, every ancestor there before. */
+  function onScreenInModal(container: string, activityState: number, props: Record<string, unknown>): FiberLike {
+    const screen = fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState }, [view([self()])]);
+    return existing(
+      selfIn(
+        root([
+          view([
+            {
+              tag: FiberTag.HostComponent,
+              type: 'RCTModalHostView',
+              memoizedProps: props,
+              stateNode: { rect: null, tag: MODAL_TAG, canonical: { currentProps: props } },
+              children: [fabricHost('RCTView', rect(0, 0, 400, 800), {}, [fabricHost(container, null, {}, [screen])])],
+            },
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  it('a Modal hidden on a still-mounted host is covered even for a view hidden as it mounted', () => {
+    const fiber = onScreenInModal('RNSScreenContainer', 0, { animationType: 'slide', visible: true });
+    render(fiber);
+    // Its screen shown later: no arrival ran while it was hidden.
+    const screen = ancestorOfType(fiber, SCREEN_HOST_TYPE);
+    screen.memoizedProps = { activityState: 2 };
+    wait(17);
+    wait(16 * 20);
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
+
+    ancestorOfType(fiber, 'RCTModalHostView').memoizedProps = { animationType: 'slide', visible: false };
+    wait(17);
+
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(band(selfRect)));
+  });
+
+  it('a Modal hidden on a still-mounted host is covered for a view on a stack inside it', () => {
+    const fiber = onScreenInModal('RNSScreenStack', 2, { animationType: 'slide', visible: true });
+    render(fiber);
+    wait(16 * 20);
+
+    ancestorOfType(fiber, 'RCTModalHostView').memoizedProps = { animationType: 'slide', visible: false };
+    wait(17);
+
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(band(selfRect)));
+  });
+
   it('a Modal without animation holds only the view as it closes', () => {
     const fiber = existing(inModal({ animationType: 'none' }));
     const testRenderer = render(fiber);
