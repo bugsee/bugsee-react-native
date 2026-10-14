@@ -1,5 +1,4 @@
 @import XCTest;
-@import Bugsee;
 @import BugseeRNSupport;
 
 /// Pins the iOS half of the exception-options wire shape and the backend
@@ -9,9 +8,9 @@
 
 @implementation BGSRNExceptionsTests
 
-- (BugseeExceptionLoggingOptions *)optionsFrom:(NSString *_Nullable)json {
+- (BGSRNExceptionOptions *)optionsFrom:(NSString *_Nullable)json {
   NSError *error = nil;
-  BugseeExceptionLoggingOptions *opts = [BGSRNExceptions loggingOptionsFromJSON:json error:&error];
+  BGSRNExceptionOptions *opts = [BGSRNExceptions loggingOptionsFromJSON:json error:&error];
   XCTAssertNotNil(opts, @"rejected %@: %@", json, error);
   XCTAssertNil(error);
   return opts;
@@ -28,27 +27,14 @@
   XCTAssertEqualObjects(BGSRNReactNativeExceptionName, @"ReactNativeWebException");
 }
 
-- (void)testDomainBecomesExceptionDomain {
-  BugseeExceptionLoggingOptions *opts = [self optionsFrom:@"{\"domain\":\"auth\"}"];
-  XCTAssertEqualObjects(opts.exceptionDomain, @"auth");
+- (void)testDomainIsKept {
+  BGSRNExceptionOptions *opts = [self optionsFrom:@"{\"domain\":\"auth\"}"];
+  XCTAssertEqualObjects(opts.domain, @"auth");
 }
 
-- (void)testIncludeVideoDefaultsToYes {
-  BugseeExceptionLoggingOptions *empty = [self optionsFrom:@"{}"];
-  XCTAssertTrue(empty.includeVideo, @"SDK defaults to NO; the wrapper must force YES");
-
-  BugseeExceptionLoggingOptions *domainOnly = [self optionsFrom:@"{\"domain\":\"x\"}"];
-  XCTAssertTrue(domainOnly.includeVideo);
-}
-
-- (void)testIncludeVideoFalseIsKept {
-  BugseeExceptionLoggingOptions *opts = [self optionsFrom:@"{\"includeVideo\":false}"];
-  XCTAssertFalse(opts.includeVideo);
-}
-
-- (void)testLabelsAreKept {
-  BugseeExceptionLoggingOptions *opts = [self optionsFrom:@"{\"labels\":[\"a\",\"b\"]}"];
-  XCTAssertEqualObjects(opts.labels, (@[ @"a", @"b" ]));
+- (void)testAnEmptyObjectHasNoDomain {
+  BGSRNExceptionOptions *opts = [self optionsFrom:@"{}"];
+  XCTAssertNil(opts.domain);
 }
 
 - (void)testNilJsonIsNilOptions {
@@ -65,20 +51,16 @@
   [self assertBad:@"not json"];
 }
 
-- (void)testANonStringLabelIsAnError {
-  [self assertBad:@"{\"labels\":[\"a\",1]}"];
-  [self assertBad:@"{\"labels\":\"a\"}"];
+- (void)testANonStringDomainIsAnError {
   [self assertBad:@"{\"domain\":3}"];
-  [self assertBad:@"{\"includeVideo\":1}"];
 }
 
+/// labels and includeVideo are not options any more (bugsee-cocoa#233): any
+/// value, of any type, is ignored like every other unknown key.
 - (void)testUnknownKeysAreIgnored {
-  BugseeExceptionLoggingOptions *opts =
-      [self optionsFrom:@"{\"domain\":\"d\",\"skipFrames\":2,\"mergingRules\":{},\"extra\":true}"];
-  XCTAssertEqualObjects(opts.exceptionDomain, @"d");
-  XCTAssertTrue(opts.includeVideo);
-  XCTAssertNil(opts.labels);
-  XCTAssertNil(opts.mergingRules);
+  BGSRNExceptionOptions *opts = [self optionsFrom:
+      @"{\"domain\":\"d\",\"labels\":[1],\"skipFrames\":2,\"mergingRules\":{},\"includeVideo\":1,\"extra\":true}"];
+  XCTAssertEqualObjects(opts.domain, @"d");
 }
 
 /// Malformed options say so in the bridge's own words, never the system

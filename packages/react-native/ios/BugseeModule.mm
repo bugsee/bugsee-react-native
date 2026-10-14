@@ -1342,21 +1342,23 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 }
 
 /// A handled JS exception. `payloadJson` is the Task 7.1a payload, forwarded
-/// verbatim as the reason; `optionsJson` is `{domain?, labels?, includeVideo?}`
-/// or null. Unparseable options are logged and the exception is still sent
-/// with nil options — a void method has no promise to reject.
+/// verbatim as the reason; `optionsJson` is `{domain?}` or null.
+/// Unparseable options are logged and the exception is still sent without
+/// them — a void method has no promise to reject.
 - (void)logException:(NSString *)payloadJson
          optionsJson:(NSString * _Nullable)optionsJson {
   BGSRNRunOnMain(^{
     NSError *error = nil;
-    BugseeExceptionLoggingOptions *opts =
+    BGSRNExceptionOptions *opts =
         [BGSRNExceptions loggingOptionsFromJSON:optionsJson error:&error];
     if (optionsJson != nil && opts == nil) {
       NSLog(@"BugseeRN exception options unparseable: %@", BGSRNErrorMessage(error));
     }
     const NSUInteger bytes = [payloadJson lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
-    // WORKAROUND for bugsee-cocoa#227: held while the SDK is Launching, which
-    // would drop it silently (BGSRNLaunchHold).
+    // WORKAROUND for bugsee-cocoa#227: held while the SDK is Launching
+    // (BGSRNLaunchHold). 7.0.0-beta7 accepts logException then
+    // (bugsee-cocoa#234); the hold stays for createReport and showReportDialog,
+    // which still need Launched, and keeps the calls in order.
     NSString *label = [NSString stringWithFormat:@"exception handled bytes=%lu", (unsigned long)bytes];
     [BGSRNLaunchHold.shared submit:label call:^(BGSRNGatedRun run) {
       if (run == BGSRNGatedRunDrop) {
@@ -1364,12 +1366,16 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
         return;
       }
       const BugseeStatus status = BGSRNCurrentStatus();
+      // skipFrames 0: it leaves top native frames out of the report's
+      // signature, and an RN report is keyed on the JS signature in the payload.
       [Bugsee logException:BGSRNReactNativeExceptionName
                     reason:payloadJson
-                   options:opts
+                    domain:opts.domain
+                skipFrames:0
                 completion:nil];
       // "sent" only for a call the SDK accepts: it drops one made when it is
-      // not Launched (before launch(), or after stop()).
+      // not Launched (before launch(), or after stop()). The hold never runs a
+      // call while the SDK is Launching.
       if (status == BugseeStatusLaunched) {
         NSLog(@"BugseeRN exception handled sent bytes=%lu", (unsigned long)bytes);
       } else {
@@ -1385,9 +1391,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// `live_report.plcrash` (bugsee-cocoa #177; beta3 claimed only the live
 /// file and dropped this report); beta4 still missed some relaunches on an
 /// iPhone XS, which 7.0.0-beta5 fixes (bugsee-cocoa #191: the report is
-/// claimed by the build that armed the reporter). Do not copy one file onto the other. The completion is wrapped in `BGSRNSettleOnce`: on the
-/// simulator the SDK compiles `logUnhandledException` out and never calls
-/// this completion (verified facts), and a promise must still settle.
+/// claimed by the build that armed the reporter). Do not copy one file onto the other. The completion is wrapped in `BGSRNSettleOnce`: before
+/// 7.0.0-beta7 the simulator SDK compiled `logUnhandledException` out and never
+/// called this completion (bugsee-cocoa#225); beta7 calls it and files nothing
+/// (bugsee-cocoa#232).
+/// The guard stays: a promise must settle exactly once, whatever the SDK does.
 - (void)logUnhandledException:(NSString *)payloadJson
                       resolve:(RCTPromiseResolveBlock)resolve
                        reject:(RCTPromiseRejectBlock)reject {

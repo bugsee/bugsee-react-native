@@ -953,7 +953,7 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
         | undefined;
       expect(opts).toBeDefined();
       expect(opts!.exceptionDomain).toBe(`e2e-${nonce}`);
-      expect(opts!.includeVideo).toBe(true);
+      expect(opts).not.toHaveProperty('includeVideo');
     });
 
     itIosDevice('the client signature carries the JS signature', () => {
