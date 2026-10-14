@@ -5,13 +5,23 @@
  * never move a mask off the view.
  */
 import { ancestryOfFiber, isAnimatedComponent, isHidden, isReanimatedComponent, measurePass } from '../ancestry';
-import { followEventAttachments, nativeMotion, nodeBound, originOf, throughMotion } from '../nativeAnimation';
+import { nativeMotion, nodeBound, originOf, throughMotion } from '../nativeAnimation';
 import { WHOLE_SURFACE } from '../transition';
 import { FiberTag } from '../../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../../viewtree/fiber';
 import type { FiberSpec } from '../../viewtree/__tests__/fakeFibers';
 import { composite, fabricHost, fakeRenderer, rect, root, scrollView, self, selfIn, view } from './fakeAncestors';
 import type { FakeRenderer } from './fakeAncestors';
+import { FakeAnimatedEvent, implementation, madeNative } from './fakeAnimated';
+
+// React Native's Animated internals, followed as the package follows an app's.
+jest.mock('react-native/Libraries/Animated/AnimatedEvent', () => require('./fakeAnimated').eventModule);
+jest.mock(
+  'react-native/Libraries/Animated/AnimatedImplementation',
+  () => require('./fakeAnimated').implementationModule,
+);
+jest.mock('react-native/Libraries/Animated/Animated', () => require('./fakeAnimated').animatedModule);
+jest.mock('react-native/Libraries/Animated/nodes/AnimatedValue', () => require('./fakeAnimated').valueModule);
 
 let renderer: FakeRenderer;
 jest.mock('react-native/Libraries/ReactNative/RendererProxy', () => ({
@@ -35,8 +45,11 @@ interface Value {
   hasListeners: () => boolean;
 }
 
-/** A native `Animated.Value`; `synced`: JS holds its native value (the app listens). */
-function value(at: unknown, animation: unknown = null, offset: unknown = 0, synced = true): Value {
+/**
+ * A native `Animated.Value`; `known`: made native after the package loaded,
+ * so what drives it is followed; otherwise anything may.
+ */
+function value(at: unknown, animation: unknown = null, offset: unknown = 0, known = true): Value {
   const node: Value = {
     __isNative: true,
     _value: at,
@@ -45,9 +58,9 @@ function value(at: unknown, animation: unknown = null, offset: unknown = 0, sync
     _tracking: null,
     __getValue: () =>
       typeof node._value === 'number' && typeof node._offset === 'number' ? node._value + node._offset : node._value,
-    hasListeners: () => synced,
+    hasListeners: () => known,
   };
-  return node;
+  return known ? madeNative(node) : node;
 }
 
 const timing = (from: unknown, to: unknown, easing: unknown = linear): object => ({
@@ -106,67 +119,34 @@ describe('nodeBound', () => {
     expect(nodeBound(node)).toEqual({ range: { lo: 5, hi: 5 }, running: false, roots: [node] });
   });
 
-  it('a still value nobody animated from JS, with no listener, is unbounded (an Animated.event may drive it)', () => {
+  it('R3-1: a still native value whose driver is not known (made native before the package) is unbounded', () => {
     const node = value(3, null, 0, false);
 
     expect(nodeBound(node)).toEqual({ range: undefined, running: false, roots: [node] });
   });
 
-  it('N2: a still value seen animating before, with no listener, is unbounded where events are not followed', () => {
-    // Its last animation's end is known; whether a native Animated.event drives it since is not.
+  it('a value driven from JS (not native) is where JS has it, whatever is followed', () => {
+    const node = { ...value(3, null, 0, false), __isNative: false };
+
+    expect(nodeBound(node).range).toEqual({ lo: 3, hi: 3 });
+  });
+
+  it('R3-1: a value of unknown driver seen animating is known from then on: still, at its end', () => {
     const node = value(0, timing(0, 10), 0, false);
     expect(nodeBound(node).running).toBe(true);
 
     node._animation = null;
     node._value = 10;
-    expect(nodeBound(node).range).toBeUndefined();
+    expect(nodeBound(node).range).toEqual({ lo: 10, hi: 10 });
   });
 
-  describe('N2: native Animated.event attachments, followed', () => {
-    /** React Native's `AnimatedEvent`, as far as attaching goes. */
-    function eventClass(): {
-      new (mapping: unknown[]): {
-        _argMapping: unknown[];
-        __attach: (...args: unknown[]) => unknown;
-        __detach: (...args: unknown[]) => unknown;
-      };
-      attach: jest.Mock;
-      detach: jest.Mock;
-    } {
-      const attach = jest.fn(() => 'attached');
-      const detach = jest.fn(() => 'detached');
-      class AnimatedEvent {
-        static attach = attach;
-        static detach = detach;
-        constructor(readonly _argMapping: unknown[]) {}
-        __attach(...args: unknown[]): unknown {
-          return attach.apply(this, args as []);
-        }
-        __detach(...args: unknown[]): unknown {
-          return detach.apply(this, args as []);
-        }
-      }
-      return AnimatedEvent as never;
-    }
+  describe('native events attached', () => {
+    const still = (): Value => value(0);
 
-    afterEach(() => {
-      followEventAttachments(undefined);
-    });
-
-    const still = (): Value => value(0, null, 0, false);
-
-    it('a still value no event drives is where it is, listened to or not', () => {
-      expect(followEventAttachments(eventClass())).toBe(true);
-
-      expect(nodeBound(still()).range).toEqual({ lo: 0, hi: 0 });
-    });
-
-    it('drag, spring back, drag again: unbounded throughout, until the event is detached', () => {
-      const AnimatedEvent = eventClass();
-      followEventAttachments(AnimatedEvent);
+    it('N2: drag, spring back, drag again: unbounded throughout; detached, unknown until an animation', () => {
       const drag = still();
       // The gesture's Animated.event, attached as the Animated component mounts.
-      const event = new AnimatedEvent([{ nativeEvent: { translationX: drag } }]);
+      const event = new FakeAnimatedEvent([{ nativeEvent: { translationX: drag } }]);
       expect(event.__attach('view', 'onGestureEvent')).toBe('attached');
       expect(nodeBound(drag).range).toBeUndefined();
 
@@ -180,103 +160,25 @@ describe('nodeBound', () => {
       drag._animation = null;
       expect(nodeBound(drag).range).toBeUndefined();
 
+      // Where the event left it, JS may not know.
       expect(event.__detach('view', 'onGestureEvent')).toBe('detached');
+      expect(nodeBound(drag).range).toBeUndefined();
+      drag._animation = timing(0, 0);
+      nodeBound(drag);
+      drag._animation = null;
       expect(nodeBound(drag).range).toEqual({ lo: 0, hi: 0 });
-      // React Native's own methods ran, on the event, with what they were given.
-      expect(AnimatedEvent.attach).toHaveBeenCalledWith('view', 'onGestureEvent');
-      expect(AnimatedEvent.attach.mock.contexts[0]).toBe(event);
-      expect(AnimatedEvent.detach).toHaveBeenCalledWith('view', 'onGestureEvent');
-      expect(AnimatedEvent.detach.mock.contexts[0]).toBe(event);
     });
 
-    it('finds every value of a mapping (an Animated.ValueXY\'s two), however nested, not too deep', () => {
-      const AnimatedEvent = eventClass();
-      followEventAttachments(AnimatedEvent);
-      const [x, y, deep, tooDeep] = [still(), still(), still(), still()];
-      const nest = (inner: unknown, levels: number): unknown =>
-        levels === 0 ? inner : { a: nest(inner, levels - 1) };
-      const nativeEvent = {
-        offset: { x, y, __getValue: () => 0 },
-        deep: nest(deep, 6),
-        tooDeep: nest(tooDeep, 7),
-        n: 1,
-        none: null,
-      };
-      new AnimatedEvent([{ nativeEvent }]).__attach();
+    it('R3-1: a value React Native\'s ScrollView attaches directly (sticky headers) is unbounded', () => {
+      const scrollY = still();
+      const sticky = interpolated(
+        scrollY,
+        { inputRange: [-1, 0, 300, 301], outputRange: [0, 0, 0, 1] },
+        (input: number) => Math.max(0, input - 300),
+      );
+      implementation.attachNativeEvent({}, 'onScroll', [{ nativeEvent: { contentOffset: { y: scrollY } } }]);
 
-      expect([x, y, deep, tooDeep].map((node) => nodeBound(node).range)).toEqual([
-        undefined,
-        undefined,
-        undefined,
-        { lo: 0, hi: 0 },
-      ]);
-    });
-
-    it('counts attachments: one detached leaves the value driven by the others', () => {
-      const AnimatedEvent = eventClass();
-      followEventAttachments(AnimatedEvent);
-      const scroll = still();
-      const first = new AnimatedEvent([{ nativeEvent: { y: scroll } }]);
-      const second = new AnimatedEvent([{ nativeEvent: { y: scroll } }]);
-      first.__attach();
-      first.__attach();
-      second.__attach();
-
-      first.__detach();
-      second.__detach();
-      expect(nodeBound(scroll).range).toBeUndefined();
-      first.__detach();
-      expect(nodeBound(scroll).range).toEqual({ lo: 0, hi: 0 });
-      // Another event on the value, detached more often than it was attached: the first still drives it.
-      const other = new AnimatedEvent([{ nativeEvent: { y: scroll } }]);
-      first.__attach();
-      other.__attach();
-      other.__detach();
-      other.__detach();
-      expect(nodeBound(scroll).range).toBeUndefined();
-      first.__detach();
-      // Detached more often than attached, or never attached, or with no mapping: nothing goes below none.
-      first.__detach();
-      new AnimatedEvent([{ nativeEvent: { y: scroll } }]).__detach();
-      new AnimatedEvent(undefined as never).__attach();
-      expect(nodeBound(scroll).range).toEqual({ lo: 0, hi: 0 });
-    });
-
-    it('loading, follows React Native\'s own AnimatedEvent; where it cannot be loaded, nothing', () => {
-      const AnimatedEvent = eventClass();
-      jest.isolateModules(() => {
-        jest.doMock('react-native/Libraries/Animated/AnimatedEvent', () => ({ AnimatedEvent }));
-        const isolated = require('../nativeAnimation') as { nodeBound: typeof nodeBound };
-        const scroll = still();
-        new AnimatedEvent([{ nativeEvent: { y: scroll } }]).__attach();
-
-        expect(isolated.nodeBound(scroll).range).toBeUndefined();
-        expect(isolated.nodeBound(still()).range).toEqual({ lo: 0, hi: 0 });
-      });
-      jest.isolateModules(() => {
-        jest.doMock(
-          'react-native/Libraries/Animated/AnimatedEvent',
-          () => {
-            throw new Error('moved');
-          },
-        );
-        const isolated = require('../nativeAnimation') as { nodeBound: typeof nodeBound };
-
-        expect(isolated.nodeBound(still()).range).toBeUndefined();
-      });
-    });
-
-    it.each<[string, unknown]>([
-      ['nothing', undefined],
-      ['a class without attaching', class {}],
-      ['a class that only attaches', class { __attach(): void {} }],
-      ['a class that only detaches', class { __detach(): void {} }],
-    ])('given %s, events are not followed: a still value is trusted only while listened to', (_, AnimatedEvent) => {
-      followEventAttachments(eventClass());
-
-      expect(followEventAttachments(AnimatedEvent)).toBe(false);
-      expect(nodeBound(still()).range).toBeUndefined();
-      expect(nodeBound(value(3)).range).toEqual({ lo: 3, hi: 3 });
+      expect(nodeBound(sticky).range).toBeUndefined();
     });
   });
 
@@ -356,6 +258,53 @@ describe('nodeBound', () => {
     ['with no outputs', { extrapolate: 'clamp' }],
   ])('an interpolation of an unbounded input %s is unbounded', (_, config) => {
     expect(nodeBound(interpolated(value(0, null, 0, false), config, linear)).range).toBeUndefined();
+  });
+
+  describe('R3-4: an interpolation of an unbounded input, by its ends', () => {
+    const of = (config: Record<string, unknown>): unknown =>
+      nodeBound(interpolated(value(0, null, 0, false), config, linear)).range;
+
+    it('extending past both ends along flat last segments (a swipeable row): within its outputs', () => {
+      expect(of({ inputRange: [-101, -100, 80, 81], outputRange: [-100, -100, 80, 80] })).toEqual({ lo: -100, hi: 80 });
+      // Flat on one side, clamped on the other.
+      expect(of({ outputRange: [3, 3, 9], extrapolateRight: 'clamp' })).toEqual({ lo: 3, hi: 9 });
+    });
+
+    it.each<[string, Record<string, unknown>]>([
+      ['extending a sloped end', { outputRange: [0, 0, 1] }],
+      ['extending a sloped first end', { outputRange: [0, 1, 1] }],
+      ['passing its input through at a flat end', { outputRange: [0, 0, 1, 1], extrapolateLeft: 'identity' }],
+      ['passing it through at the other', { outputRange: [0, 0, 1, 1], extrapolateRight: 'identity' }],
+      // React Native reads a side set to null as set, and extends it.
+      ['a side null under an overall clamp', { outputRange: [0, 1], extrapolate: 'clamp', extrapolateLeft: null }],
+      ['one output', { outputRange: [4], extrapolate: 'clamp' }],
+      ['an easing that is not a function', { outputRange: [0, 1], extrapolate: 'clamp', easing: 'linear' }],
+      ['an easing that answers no number', { outputRange: [0, 1], extrapolate: 'clamp', easing: () => Number.NaN }],
+    ])('%s: unbounded', (_, config) => {
+      expect(of(config)).toBeUndefined();
+    });
+
+    it('a side set to undefined takes the overall setting', () => {
+      expect(of({ outputRange: [0, 1], extrapolate: 'clamp', extrapolateLeft: undefined })).toEqual({ lo: 0, hi: 1 });
+    });
+
+    it('eased, each sloped segment spans what its easing reaches, overshoot included; a flat one stays put', () => {
+      // An easing that dips below its start (a "back" ease), sampled and widened as it turns.
+      const back = (t: number): number => t * t * (2.2 * t - 1.2);
+      const range = of({ outputRange: [10, 10, 20], extrapolate: 'clamp', easing: back }) as { lo: number; hi: number };
+
+      // Its dip (-0.05 of the segment), padded by a tenth of its span as the curve turns back.
+      expect(range.lo).toBeLessThan(9.5);
+      expect(range.lo).toBeGreaterThan(8);
+      expect(range.hi).toBeGreaterThan(20);
+      expect(range.hi).toBeLessThan(21.5);
+      expect(of({ outputRange: [10, 20], extrapolate: 'clamp', easing: null })).toEqual({ lo: 10, hi: 20 });
+      // An easing whose span starts above 0: a falling segment is reached from its own start.
+      expect(of({ outputRange: [20, 10], extrapolate: 'clamp', easing: (t: number) => 0.5 + t / 2 })).toEqual({
+        lo: 10,
+        hi: 15,
+      });
+    });
   });
 
   it('an interpolation answering something that is not a number falls back to its clamp, or nothing', () => {

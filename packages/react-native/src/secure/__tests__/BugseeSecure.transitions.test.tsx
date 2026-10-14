@@ -17,16 +17,19 @@ import type { ReactTestRenderer } from 'react-test-renderer';
 import { BugseeSecure } from '../BugseeSecure';
 import { SCREEN_HOST_TYPE } from '../ancestry';
 import { SECURE_SHRINK_HOLD_MS } from '../hold';
-import { SECURE_TRANSITION_HOLD_MS, WHOLE_SURFACE, keyOf, noteBirth } from '../transition';
+import { SCROLL_OVERRUN } from '../nativeAnimation';
+import { SECURE_TRANSITION_HOLD_MS, WHOLE_SURFACE, keyOf, noteBirth, stackMoving } from '../transition';
 import { native } from '../../__mocks__/native';
 import { FiberTag } from '../../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../../viewtree/fiber';
 import type { FiberSpec } from '../../viewtree/__tests__/fakeFibers';
 import {
   ancestorOfType,
+  commitProps,
   composite,
   fabricHost,
   fakeRenderer,
+  moveTo,
   pairWith,
   rect,
   root,
@@ -37,6 +40,7 @@ import {
   view,
 } from './fakeAncestors';
 import type { FakeRenderer } from './fakeAncestors';
+import { FakeAnimatedEvent, FakeAnimatedValue, implementation, madeNative } from './fakeAnimated';
 
 // Android, but for the tests that switch it to iOS (read at use, after this file's imports).
 const mockPlatform = { OS: 'android' };
@@ -50,6 +54,14 @@ jest.mock('react-native', () => ({
   },
 }));
 jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
+// React Native's Animated internals, followed as the package follows an app's.
+jest.mock('react-native/Libraries/Animated/AnimatedEvent', () => require('./fakeAnimated').eventModule);
+jest.mock(
+  'react-native/Libraries/Animated/AnimatedImplementation',
+  () => require('./fakeAnimated').implementationModule,
+);
+jest.mock('react-native/Libraries/Animated/Animated', () => require('./fakeAnimated').animatedModule);
+jest.mock('react-native/Libraries/Animated/nodes/AnimatedValue', () => require('./fakeAnimated').valueModule);
 
 let renderer: FakeRenderer;
 jest.mock('react-native/Libraries/ReactNative/RendererProxy', () => ({
@@ -493,7 +505,7 @@ describe('P2-6: a screen with no secure view of its own pushed or popped over on
     expect(firstPublished()).toEqual(px(SCREEN));
   });
 
-  it('forgets the screens it saw once disabled: enabled again, nothing has moved', () => {
+  it('R3-3: a push nobody saw (it was disabled), found as it is enabled again, is taken as coming then', () => {
     const below = belowOf();
     const testRenderer = render(below);
     wait(212);
@@ -503,6 +515,9 @@ describe('P2-6: a screen with no secure view of its own pushed or popped over on
     wait(SECURE_TRANSITION_HOLD_MS + 100);
     act(() => testRenderer.update(<BugseeSecure enabled />));
 
+    // When it came is not known: covered for one hold from now, as for a screen first seen.
+    expect(firstPublished()).toEqual(px(SCREEN));
+    wait(SECURE_TRANSITION_HOLD_MS + 100);
     expect(lastPublished()).toEqual([0, px(selfRect)]);
   });
 
@@ -1463,8 +1478,11 @@ interface FakeValue {
   hasListeners: () => boolean;
 }
 
-/** `synced`: JS provably holds its native value (the app listens to it). */
-function animatedValue(value: number, isNative = true, synced = true): FakeValue {
+/**
+ * `known`: made native after the package loaded, so what drives it is known;
+ * otherwise (made native before, or by what is not followed) anything may.
+ */
+function animatedValue(value: number, isNative = true, known = true): FakeValue {
   const node: FakeValue = {
     __isNative: isNative,
     _value: value,
@@ -1472,9 +1490,14 @@ function animatedValue(value: number, isNative = true, synced = true): FakeValue
     _animation: null,
     _tracking: null,
     __getValue: () => node._value + node._offset,
-    hasListeners: () => synced,
+    hasListeners: () => known,
   };
-  return node;
+  if (!known) {
+    return node;
+  }
+  // Made native as an app's would be: by its first animation or event with the native driver.
+  Object.setPrototypeOf(node, FakeAnimatedValue.prototype);
+  return isNative ? madeNative(node) : node;
 }
 
 const linear = (t: number): number => t;
@@ -1617,7 +1640,7 @@ describe('B6: a native-driven Animated transform above the view', () => {
     expect(firstPublished()).toEqual(px(rect(10, 100, 200, 20)));
 
     // `start()` with the native driver: made native, and the animation set; nothing committed.
-    value.__isNative = true;
+    (value as unknown as FakeAnimatedValue).__makeNative();
     value._animation = timing(0, -100);
     wait(17);
 
@@ -1630,7 +1653,7 @@ describe('B6: a native-driven Animated transform above the view', () => {
     // To 212 ms: past the tick at 200, so only the value's watch can measure it within the next frame.
     wait(212);
 
-    value.__isNative = true;
+    (value as unknown as FakeAnimatedValue).__makeNative();
     value._animation = timing(0, -100);
     wait(17);
 
@@ -1840,5 +1863,425 @@ describe('P2-7: Reanimated', () => {
     render(underReanimated([{ viewDescriptors: {}, initial: { value: { opacity: 1 } } }, null, { margin: 2 }]));
 
     expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
+});
+
+describe('R3-3: content uncovered by a pop', () => {
+  /** A stack of screen A (holding the view) under screen B (`bProps`, its children `bChildren`). */
+  function stackOfTwo(
+    aProps: Record<string, unknown>,
+    bProps: Record<string, unknown> = { activityState: 2 },
+    bChildren: FiberSpec[] = [],
+  ): { a: FiberLike; screenA: FiberLike; screenB: FiberLike; stack: FiberLike } {
+    const tree = root([
+      fabricHost('RNSScreenStack', null, { children: 2 }, [
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, aProps, [view([self()])]),
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, bProps, bChildren),
+      ]),
+    ]);
+    const selves = selvesIn(tree);
+    const a = selves.find((fiber) => (ancestorOfType(fiber, SCREEN_HOST_TYPE).sibling ?? null) !== null) as FiberLike;
+    const screenA = ancestorOfType(a, SCREEN_HOST_TYPE);
+    existing(a);
+    return { a, screenA, screenB: screenA.sibling as FiberLike, stack: ancestorOfType(a, 'RNSScreenStack') };
+  }
+
+  /** Commits the pop of B: off the stack, A active, in one commit. */
+  function popB(stack: FiberLike, screenA: FiberLike): void {
+    screenA.sibling = null;
+    commitProps(screenA, { activityState: 2 });
+    stack.memoizedProps = { children: 1 };
+  }
+
+  it('PROBE-N3a: content mounted while its screen was hidden, then the screen above popped: the whole screen', () => {
+    const { a, screenA, stack } = stackOfTwo({ activityState: 0 });
+    render(a);
+    wait(2000);
+    expect((lastPublished() as [number, number[]] | undefined)?.[1] ?? []).toEqual([]);
+
+    // B has no secure view, and the default animation.
+    popB(stack, screenA);
+    wait(17);
+
+    expect(firstPublished()).toEqual(px(SCREEN));
+    wait(SECURE_TRANSITION_HOLD_MS + 100);
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
+
+  it('PROBE-N3b: content mounting during a pop its popped screen\'s view saw: covered for the rest of the pop', () => {
+    const { a, screenA, screenB, stack } = stackOfTwo({ activityState: 2 }, {
+      activityState: 2,
+      stackAnimation: 'slide_from_left',
+    }, [view([self()])]);
+    const b = existing((screenB.child as FiberLike).child as FiberLike);
+    selfRect = rect(10, 400, 200, 50);
+    const onB = render(b);
+    wait(212);
+
+    // Popped: B's view departs with it.
+    deleting(screenB);
+    unmount(onB);
+    popB(stack, screenA);
+    wait(100);
+    selfRect = rect(10, 100, 200, 50);
+    render(a);
+    const published = (): number[][] => {
+      const flat = (lastPublished() as [number, number[]])[1];
+      return Array.from({ length: flat.length / 4 }, (_, index) => flat.slice(4 * index, 4 * index + 4));
+    };
+
+    // The slide's band across the screen, at the new view.
+    expect(published()).toContainEqual(px(rect(0, 100, 400, 50)));
+    // For the rest of the pop's hold, not one from the mount.
+    wait(SECURE_TRANSITION_HOLD_MS - 100 + 50);
+    expect(published()).not.toContainEqual(px(rect(0, 100, 400, 50)));
+  });
+
+  it('PROBE-N3b: content mounting just after a pop no view saw is covered, from the stack\'s render before', () => {
+    const { a, screenA, screenB, stack } = stackOfTwo({ activityState: 2 });
+    // The stack's render before the pop, B still on it.
+    const before = { ...stack, alternate: stack, memoizedProps: { children: 2 } } as FiberLike;
+    before.child = { ...screenA, sibling: { ...screenB, sibling: null } } as FiberLike;
+    stack.alternate = before;
+    popB(stack, screenA);
+    wait(100);
+
+    render(a);
+
+    expect(firstPublished()).toEqual(px(SCREEN));
+  });
+
+  it('a pop that uncovers another screen than the view\'s covers nothing of it', () => {
+    const { a, screenA, stack } = stackOfTwo({ activityState: 2 });
+    render(a);
+    wait(212);
+    // Seen by another view: a screen pushed over a screen not the view's, then popped.
+    const other = {};
+    stackMoving(keyOf(stack), { motion: 'any', until: 10_000, moving: other, below: {} }, true);
+    wait(17);
+
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+    expect(screenA).toBeDefined();
+  });
+});
+
+describe('P3-3: a view under a JS-driven Animated value', () => {
+  it('keeps no frame loop running, and is woken the moment its value is made native', () => {
+    const value = animatedValue(0, false);
+    render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
+    wait(16 * 20);
+
+    // The 100 ms tick alone.
+    expect(jest.getTimerCount()).toBe(1);
+
+    (value as unknown as FakeAnimatedValue).__makeNative();
+    value._animation = timing(0, 100);
+    wait(17);
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 150)));
+  });
+});
+
+/** A stand-in for `value.interpolate(config)` with React Native's own `map`. */
+function interpolationOf(parent: object, config: Record<string, unknown>, map: (input: number) => number): object {
+  return {
+    __isNative: true,
+    _parent: parent,
+    _config: config,
+    _getInterpolation: () => map,
+    __getValue: () => map((parent as FakeValue).__getValue()),
+  };
+}
+
+describe('R3-1, R3-4: values driven by a ScrollView\'s offset', () => {
+  /** Native tags are never reused: a new one for each ScrollView. */
+  let nextTag = 1000;
+
+  /** A ScrollView (viewport at `viewport`, content `content`) whose content holds `inner`, its host tagged `tag`. */
+  function scroller(viewport: WindowRect, content: WindowRect, inner: FiberSpec[], tag = nextTag): FiberSpec {
+    return {
+      ...fabricHost('RCTScrollView', viewport, {}, [fabricHost('RCTScrollContentView', content, {}, inner)]),
+      stateNode: { rect: viewport, canonical: { currentProps: {}, nativeTag: tag } },
+    };
+  }
+
+  /** React Native's sticky header: an Animated.View translated by `scrollY.interpolate(...)` past `at`. */
+  function stickyHeader(scrollY: object, at: number): FiberSpec {
+    const sticky = interpolationOf(
+      scrollY,
+      { inputRange: [-1, 0, at, at + 1], outputRange: [0, 0, 0, 1] },
+      (input) => Math.max(0, input - at),
+    );
+    return {
+      tag: FiberTag.FunctionComponent,
+      type: AnimatedView,
+      memoizedProps: { style: { transform: [{ translateY: sticky }] } },
+      children: [fabricHost('RCTView', rect(0, 300, 400, 50), { style: { transform: [{ translateY: 0 }] } }, [
+        view([self()]),
+      ])],
+    };
+  }
+
+  function sticky(): { fiber: FiberLike; content: FiberLike; scrollY: FakeValue } {
+    const scrollY = animatedValue(0);
+    const fiber = existing(
+      selfIn(root([scroller(rect(0, 100, 400, 600), rect(0, 100, 400, 3000), [stickyHeader(scrollY, 200)])])),
+    );
+    // React Native's ScrollView, with stickyHeaderIndices, attaches its scroll to its own value directly.
+    implementation.attachNativeEvent({ __internalInstanceHandle: ancestorOfType(fiber, 'RCTScrollView') }, 'onScroll', [
+      { nativeEvent: { contentOffset: { y: scrollY } } },
+    ]);
+    return { fiber, content: ancestorOfType(fiber, 'RCTScrollContentView'), scrollY };
+  }
+
+  it('R3-1: a sticky header holding the view is covered while it is pinned and the list scrolls', () => {
+    const { fiber, content } = sticky();
+    selfRect = rect(10, 300, 200, 50);
+    render(fiber);
+    // At rest: wherever the header can be pinned as the list scrolls, below where it rests, in the viewport.
+    expect(lastPublished()).toEqual([0, px(rect(10, 300, 200, 400))]);
+
+    // Scrolled 500 past its place: the shadow tree's content moved up; native pins the header at the top.
+    moveTo(content, rect(0, -400, 400, 3000));
+    selfRect = rect(10, -100, 200, 50);
+    wait(17);
+
+    // Drawn at the top of the viewport (100 to 150): covered (with where it rested, held).
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 600)));
+  });
+
+  it('R3-1: on iOS, where a ScrollView bounces and scrollTo goes anywhere, the whole viewport', () => {
+    mockPlatform.OS = 'ios';
+    try {
+      const { fiber } = sticky();
+      selfRect = rect(10, 300, 200, 50);
+      render(fiber);
+
+      // iOS takes points.
+      expect(lastPublished()).toEqual([0, [0, 100, 400, 700]]);
+    } finally {
+      mockPlatform.OS = 'android';
+    }
+  });
+
+  /** A header over an `Animated.ScrollView` (tag 77) whose `onScroll` drives `translateY` through `header`. */
+  function collapsing(header: (scrollY: object) => unknown, content = rect(0, 0, 400, 1000)): FiberLike {
+    const scrollY = animatedValue(0);
+    const fiber = existing(
+      selfIn(
+        root([
+          view([
+            {
+              tag: FiberTag.FunctionComponent,
+              type: AnimatedView,
+              memoizedProps: { style: { transform: [{ translateY: header(scrollY) }] } },
+              children: [fabricHost('RCTView', rect(0, 0, 400, 100), { style: { transform: [{ translateY: 0 }] } }, [
+                view([self()]),
+              ])],
+            },
+            scroller(rect(0, 0, 400, 800), content, []),
+          ]),
+        ]),
+      ),
+    );
+    // An Animated.ScrollView attaches its onScroll event to its scrollable node's tag.
+    new FakeAnimatedEvent([{ nativeEvent: { contentOffset: { y: scrollY } } }]).__attach(nextTag, 'onScroll');
+    nextTag += 1;
+    return fiber;
+  }
+
+  const parallax = (scrollY: object): unknown =>
+    interpolationOf(scrollY, { inputRange: [0, 100], outputRange: [0, -100] }, (input) => -input);
+
+  it('R3-4: a header moved by a scroll it does not clamp is covered over the scroll\'s reach alone', () => {
+    selfRect = rect(10, 20, 200, 50);
+    render(collapsing(parallax));
+
+    // Content 1000 in a viewport of 800: offsets 0 to 200, and a fling's overrun either way.
+    expect(lastPublished()).toEqual([
+      0,
+      px(rect(10, 20 - 200 - SCROLL_OVERRUN, 200, 50 + 200 + 2 * SCROLL_OVERRUN)),
+    ]);
+  });
+
+  it('R3-4: content shorter than its viewport scrolls only by the overrun', () => {
+    selfRect = rect(10, 20, 200, 50);
+    render(collapsing(parallax, rect(0, 0, 400, 300)));
+
+    expect(lastPublished()).toEqual([0, px(rect(10, 20 - SCROLL_OVERRUN, 200, 50 + 2 * SCROLL_OVERRUN))]);
+  });
+
+  it.each<[string, (scrollY: object) => object]>([
+    ['a ScrollView not found by its tag', (scrollY) => scrollY],
+    ['an event that is not the scroll', (scrollY) => scrollY],
+  ])('R3-4: the unbounded fallback: %s covers the whole surface', (name, header) => {
+    selfRect = rect(10, 20, 200, 50);
+    const fiber = collapsing(header);
+    const { style } = ancestorOfType(fiber, AnimatedView).memoizedProps as {
+      style: { transform: [{ translateY: object }] };
+    };
+    const scrollY = style.transform[0].translateY;
+    // Another attachment on the same value, which bounds nothing.
+    new FakeAnimatedEvent([{ nativeEvent: { contentOffset: { y: scrollY } } }]).__attach(
+      name.startsWith('a ScrollView') ? -1 : nextTag - 1,
+      name.startsWith('a ScrollView') ? 'onScroll' : 'onMomentumScrollEnd',
+    );
+    render(fiber);
+
+    expect(firstPublished()).toEqual(px(WHOLE_SURFACE));
+  });
+
+  /** The header over a ScrollView, its offset attached as `attach` does it. */
+  function headerOver(
+    attach: (scrollY: object, tag: number, scroller: FiberLike) => void,
+    content: WindowRect | null = rect(0, 0, 400, 1000),
+    type = 'RCTScrollView',
+  ): FiberLike {
+    const scrollY = animatedValue(0);
+    const tag = nextTag;
+    nextTag += 1;
+    const port = { ...scroller(rect(0, 0, 400, 800), rect(0, 0, 400, 1000), [], tag), type };
+    (port.children as FiberSpec[])[0] = fabricHost('RCTScrollContentView', content, {}, []);
+    const fiber = existing(
+      selfIn(
+        root([
+          view([
+            {
+              tag: FiberTag.FunctionComponent,
+              type: AnimatedView,
+              memoizedProps: { style: { transform: [{ translateY: parallax(scrollY) }] } },
+              children: [fabricHost('RCTView', rect(0, 0, 400, 100), {}, [view([self()])])],
+            },
+            port,
+          ]),
+        ]),
+      ),
+    );
+    attach(scrollY, tag, ancestorOfType(fiber, AnimatedView).sibling as FiberLike);
+    return fiber;
+  }
+
+  const offsetY = (scrollY: object): unknown[] => [{ nativeEvent: { contentOffset: { y: scrollY } } }];
+  const BOUNDED = px(rect(10, 20 - 200 - SCROLL_OVERRUN, 200, 50 + 200 + 2 * SCROLL_OVERRUN));
+
+  it.each<[string, (scrollY: object, tag: number, host: FiberLike) => void]>([
+    ['its host, by its fiber', (scrollY, _, host) => {
+      implementation.attachNativeEvent({ __internalInstanceHandle: host }, 'onScroll', offsetY(scrollY));
+    }],
+    ['its public instance, by its tag', (scrollY, tag) => {
+      implementation.attachNativeEvent({ __nativeTag: tag, __internalInstanceHandle: 7 }, 'onScroll', offsetY(scrollY));
+    }],
+    ['its tag, twice (found once)', (scrollY, tag) => {
+      new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll');
+      new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll');
+    }],
+  ])('R3-4: a scroll attached to %s is bounded by its reach', (_, attach) => {
+    selfRect = rect(10, 20, 200, 50);
+    render(headerOver(attach));
+
+    expect(lastPublished()).toEqual([0, BOUNDED]);
+  });
+
+  it.each<[string, (scrollY: object, tag: number) => void, WindowRect | null, string]>([
+    ['content that cannot be measured', (scrollY, tag) => {
+      new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll');
+    }, null, 'RCTScrollView'],
+    ['a host that is not a ScrollView', (scrollY, tag) => {
+      new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll');
+    }, rect(0, 0, 400, 1000), 'RCTView'],
+    ['an offset along no axis', (scrollY, tag) => {
+      new FakeAnimatedEvent([{ nativeEvent: { contentOffset: { z: scrollY } } }]).__attach(tag, 'onScroll');
+    }, rect(0, 0, 400, 1000), 'RCTScrollView'],
+    ['something else of the event', (scrollY, tag) => {
+      new FakeAnimatedEvent([{ nativeEvent: { contentInset: { y: scrollY } } }]).__attach(tag, 'onScroll');
+    }, rect(0, 0, 400, 1000), 'RCTScrollView'],
+    ['an offset deeper in the event', (scrollY, tag) => {
+      new FakeAnimatedEvent([{ nativeEvent: { contentOffset: { y: { y: scrollY } } } }]).__attach(tag, 'onScroll');
+    }, rect(0, 0, 400, 1000), 'RCTScrollView'],
+    ['an offset not in nativeEvent', (scrollY, tag) => {
+      new FakeAnimatedEvent([{ event: { contentOffset: { y: scrollY } } }]).__attach(tag, 'onScroll');
+    }, rect(0, 0, 400, 1000), 'RCTScrollView'],
+    ['a view that names no host', (scrollY) => {
+      new FakeAnimatedEvent(offsetY(scrollY)).__attach({}, 'onScroll');
+    }, rect(0, 0, 400, 1000), 'RCTScrollView'],
+  ])('R3-4: the unbounded fallback: a scroll with %s covers the whole surface', (_, attach, content, type) => {
+    selfRect = rect(10, 20, 200, 50);
+    render(headerOver(attach, content, type));
+
+    expect(firstPublished()).toEqual(px(WHOLE_SURFACE));
+  });
+
+  it('R3-4: a horizontal offset reaches along the content\'s width', () => {
+    selfRect = rect(10, 20, 200, 50);
+    // Content as wide as its viewport: only a fling's overrun.
+    render(
+      headerOver((scrollY, tag) =>
+        new FakeAnimatedEvent([{ nativeEvent: { contentOffset: { x: scrollY } } }]).__attach(tag, 'onScroll'),
+      ),
+    );
+
+    expect(lastPublished()).toEqual([0, px(rect(10, 20 - SCROLL_OVERRUN, 200, 50 + 2 * SCROLL_OVERRUN))]);
+  });
+
+  it('R3-4: a content container that is not a host (no ScrollView content) bounds nothing', () => {
+    selfRect = rect(10, 20, 200, 50);
+    const fiber = headerOver((scrollY, tag) => new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll'));
+    const host = ancestorOfType(fiber, AnimatedView).sibling as FiberLike;
+    (host.child as FiberLike).tag = FiberTag.FunctionComponent;
+    render(fiber);
+
+    expect(firstPublished()).toEqual(px(WHOLE_SURFACE));
+  });
+
+  it('R3-4: one value scrolled by 40 ScrollViews: each found by its tag, however many are remembered', () => {
+    const scrollY = animatedValue(0);
+    const tags = Array.from({ length: 40 }, (_, index) => nextTag + index);
+    nextTag += 40;
+    const fiber = existing(
+      selfIn(
+        root([
+          view([
+            {
+              tag: FiberTag.FunctionComponent,
+              type: AnimatedView,
+              memoizedProps: { style: { transform: [{ translateY: parallax(scrollY) }] } },
+              children: [fabricHost('RCTView', rect(0, 0, 400, 100), {}, [view([self()])])],
+            },
+            ...tags.map((tag) => scroller(rect(0, 0, 400, 800), rect(0, 0, 400, 1000), [], tag)),
+          ]),
+        ]),
+      ),
+    );
+    tags.forEach((tag) => new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll'));
+    selfRect = rect(10, 20, 200, 50);
+
+    render(fiber);
+
+    expect(lastPublished()).toEqual([0, BOUNDED]);
+  });
+
+  it('R3-4: a swipeable row whose interpolation is flat past both ends is covered over its outputs', () => {
+    // RNGH's Swipeable without overshoot: the drag (a gesture event, unbounded) held within -100 to 80.
+    const dragX = animatedValue(0);
+    new FakeAnimatedEvent([{ nativeEvent: { translationX: dragX } }]).__attach(5, 'onGestureEvent');
+    const translateX = interpolationOf(
+      dragX,
+      { inputRange: [-101, -100, 80, 81], outputRange: [-100, -100, 80, 80] },
+      (input) => Math.min(80, Math.max(-100, input)),
+    );
+
+    render(underAnimated([{ translateX }], [{ translateX: 0 }]));
+
+    expect(lastPublished()).toEqual([0, px(rect(10 - 100, 100, 200 + 180, 50))]);
+  });
+
+  it('R3-4: a diffClamp header over an unbounded scroll is covered over its clamp', () => {
+    const scrollY = animatedValue(0);
+    new FakeAnimatedEvent([{ nativeEvent: { contentOffset: { y: scrollY } } }]).__attach(5, 'onScroll');
+    const clamp = { __isNative: true, _a: scrollY, _min: 0, _max: 60, __getValue: () => 0 };
+    const header = interpolationOf(clamp, { inputRange: [0, 60], outputRange: [0, -60] }, (input) => -input);
+
+    render(underAnimated([{ translateY: header }], [{ translateY: 0 }]));
+
+    expect(lastPublished()).toEqual([0, px(rect(10, 40, 200, 110))]);
   });
 });

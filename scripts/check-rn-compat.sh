@@ -298,7 +298,8 @@ echo "    the commit and pairing, hidden Offscreen hosts, RootNodeKind hosts, Sc
 #   `_parent`, `_config` and `_getInterpolation()`, and a native node
 #   `__isNative`; a value its `_value`, `_offset` and `hasListeners()`; diffClamp,
 #   modulo and division their own fields; Modal its `animationType` prop;
-# - native Animated.events attached through AnimatedEvent.__attach/__detach.
+# - native Animated.events attached through AnimatedEvent.__attach/__detach,
+#   or attachNativeEvent, and values made native through __makeNative.
 for RENDERER_BUNDLE in \
   "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-dev.js" \
   "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-prod.js"
@@ -343,6 +344,30 @@ done
 # A call with the view and the prop name (nodes' own `super.__attach()` takes none).
 grep -rqE '\.__attach\([A-Za-z_]+, *[A-Za-z_]+\)' --exclude=AnimatedEvent.js "$RN_SRC/src/private/animated" "$ANIMATED" \
   || { echo "FAIL: no Animated component attaches its native events with __attach any more"; exit 1; }
+# Events attached with attachNativeEvent directly (React Native's ScrollView for
+# its sticky headers, or an app through Animated) are followed by wrapping it on
+# AnimatedImplementation's default export, which ScrollView calls it on, and on
+# the public Animated object, which spreads that export; the handle's detach
+# ends the attachment. A value is made native through AnimatedValue's own
+# __makeNative (an animation's start, an event's attach), the module's default
+# export.
+grep -qE '^export default \{' "$ANIMATED/AnimatedImplementation.js" \
+  && grep -qE '^  attachNativeEvent: attachNativeEventImpl,' "$ANIMATED/AnimatedImplementation.js" \
+  || { echo "FAIL: AnimatedImplementation.js no longer exports attachNativeEvent on its default object"; exit 1; }
+grep -qE 'AnimatedImplementation\.attachNativeEvent\(' "$RN_SRC/Libraries/Components/ScrollView/ScrollView.js" \
+  || { echo "FAIL: ScrollView.js no longer calls AnimatedImplementation.attachNativeEvent"; exit 1; }
+grep -qE '^export function attachNativeEventImpl\(' "$ANIMATED/AnimatedEvent.js" \
+  && grep -qE '^    detach\(\) \{' "$ANIMATED/AnimatedEvent.js" \
+  || { echo "FAIL: AnimatedEvent.js attachNativeEventImpl no longer returns a handle that detaches"; exit 1; }
+grep -qE '^  \.\.\.Animated,' "$ANIMATED/AnimatedExports.js" \
+  && grep -qE "require\('\./AnimatedExports'\)" "$ANIMATED/Animated.js" \
+  || { echo "FAIL: the public Animated object is no longer AnimatedExports' spread of AnimatedImplementation"; exit 1; }
+grep -qE '^export default class AnimatedValue ' "$ANIMATED/nodes/AnimatedValue.js" \
+  && grep -qE '^  __makeNative\(' "$ANIMATED/nodes/AnimatedValue.js" \
+  || { echo "FAIL: AnimatedValue.js no longer default-exports a class with its own __makeNative"; exit 1; }
+grep -qE 'animatedValue\.__makeNative\(' "$ANIMATED/animations/Animation.js" \
+  && grep -qE 'value\.__makeNative\(' "$ANIMATED/AnimatedEvent.js" \
+  || { echo "FAIL: an animation or an event no longer makes its value native through __makeNative"; exit 1; }
 grep -qE 'animationType=\{animationType\}' "$RN_SRC/Libraries/Modal/Modal.js" \
   || { echo "FAIL: Modal.js no longer passes animationType to its host"; exit 1; }
 # Tracked, not required: with C++ Animated on, the shadow tree holds a native animation's end value.

@@ -1,5 +1,15 @@
-import { clipToAncestors, isReanimatedComponent, measureFiber, passMemo, styleValue } from './ancestry';
-import { WHOLE_SURFACE } from './transition';
+import {
+  SCROLL_HOST_TYPES,
+  clipToAncestors,
+  isReanimatedComponent,
+  measureFiber,
+  passMemo,
+  styleValue,
+} from './ancestry';
+import { eventsOn, isNode, knownDriven, noteAnimating } from './drivers';
+import type { Attachment } from './drivers';
+import './followEvents';
+import { WHOLE_SURFACE, platformOS } from './transition';
 import type { Ancestry } from './ancestry';
 import { FiberTag } from '../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../viewtree/fiber';
@@ -108,105 +118,6 @@ export interface AnimatedNodeLike {
 }
 
 /**
- * The values native `Animated.event`s are attached to, with how many each;
- * `null` when attachments cannot be followed. Followed from when this module
- * loads (an app attaches its events as its components mount, after that).
- */
-let attachedEvents: WeakMap<object, number> | null = null;
-
-/** How deep in an event's mapping its values are looked for (`{ nativeEvent: { contentOffset: { y } } }`). */
-const MAPPING_DEPTH = 8;
-
-/** The `Animated.Value`s in an `Animated.event` mapping (an `Animated.ValueXY`'s two included). */
-function valuesIn(mapping: unknown, depth = 0): object[] {
-  if (mapping === null || typeof mapping !== 'object' || depth > MAPPING_DEPTH) {
-    return [];
-  }
-  if (isNode(mapping) && '_value' in mapping) {
-    return [mapping];
-  }
-  return Object.values(mapping).flatMap((inner) => valuesIn(inner, depth + 1));
-}
-
-interface EventPrototype {
-  __attach: (...args: unknown[]) => unknown;
-  __detach: (...args: unknown[]) => unknown;
-  _argMapping?: unknown;
-}
-
-/**
- * Follows the native attachments of every `eventClass` (React Native's
- * `AnimatedEvent`) from now on: an `Animated` component attaches each native
- * event in its props as it mounts, and detaches it as it unmounts or the prop
- * changes. Its prototype is wrapped. Anything else stops following them: a
- * still value is then trusted only while the app listens to it. Returns
- * whether they are followed.
- */
-export function followEventAttachments(eventClass: unknown): boolean {
-  const prototype = (eventClass as { prototype?: Partial<EventPrototype> } | null | undefined)?.prototype;
-  const attach = prototype?.__attach;
-  const detach = prototype?.__detach;
-  if (typeof attach !== 'function' || typeof detach !== 'function') {
-    attachedEvents = null;
-    return false;
-  }
-  const counts = new WeakMap<object, number>();
-  attachedEvents = counts;
-  // Per event, the values of each attachment still in place, oldest first.
-  const attachments = new WeakMap<object, object[][]>();
-  const count = (values: readonly object[], by: number): void => {
-    for (const value of values) {
-      const next = (counts.get(value) ?? 0) + by;
-      if (next > 0) {
-        counts.set(value, next);
-      } else {
-        counts.delete(value);
-      }
-    }
-  };
-  (prototype as EventPrototype).__attach = function (this: EventPrototype, ...args) {
-    const result = attach.apply(this, args);
-    const values = valuesIn((this._argMapping as unknown[] | undefined)?.[0]);
-    count(values, 1);
-    attachments.set(this, [...(attachments.get(this) ?? []), values]);
-    return result;
-  };
-  (prototype as EventPrototype).__detach = function (this: EventPrototype, ...args) {
-    // Detached with nothing attached: nothing to count. (A string in either list counts no object.)
-    // Stryker disable next-line ArrayDeclaration
-    const [values = [], ...rest] = attachments.get(this) ?? [];
-    attachments.set(this, rest);
-    count(values, -1);
-    return detach.apply(this, args);
-  };
-  return true;
-}
-
-// React Native's own class, where an app has it (not under Jest's mocks): an empty catch follows nothing.
-// Stryker disable all
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports -- React Native's internals, where they are
-  const module = require('react-native/Libraries/Animated/AnimatedEvent') as { AnimatedEvent?: unknown };
-  followEventAttachments(module.AnimatedEvent);
-} catch {
-  attachedEvents = null;
-}
-// Stryker restore all
-
-/** Whether a native `Animated.event` is attached to `node`: as far as is known, it may be. */
-function eventDriven(node: AnimatedNodeLike): boolean {
-  if (attachedEvents === null) {
-    // Not known: only the app's listener streams its native value to JS.
-    return (node.hasListeners as (() => boolean) | undefined)?.() !== true;
-  }
-  return attachedEvents.has(node);
-}
-
-function isNode(value: unknown): value is AnimatedNodeLike {
-  return typeof (value as AnimatedNodeLike | null | undefined)?.__getValue === 'function';
-}
-
-/**
  * Whether `node` may be driven natively. A node without the flag at all is
  * of a kind this module does not know: taken as native.
  */
@@ -227,8 +138,8 @@ function hull(values: readonly number[]): Range {
  * span when an extreme is not at an end: the curve turns back, and its peak
  * can fall between samples.
  */
-function sampled(values: readonly number[]): Range {
-  const range = hull(values);
+function sampled(values: readonly unknown[]): Range {
+  const range = hull(values as number[]);
   const ends = hull([values[0] as number, values[values.length - 1] as number]);
   if (range.lo === ends.lo && range.hi === ends.hi) {
     return range;
@@ -239,7 +150,12 @@ function sampled(values: readonly number[]): Range {
 
 const UNBOUNDED: NodeBound = { range: undefined, running: false, roots: [] };
 
-/** An `Animated.Value`: its running timing animation's path, or its value if JS provably has it. */
+/**
+ * An `Animated.Value`: its running timing animation's path, or its value if
+ * JS provably has it. A native value is wherever the events attached to it
+ * take it (within a ScrollView's reach, for its offset; otherwise anywhere),
+ * and anywhere when what drives it is not known (`drivers.ts`).
+ */
 function valueBound(node: AnimatedNodeLike): NodeBound {
   // Fields this module depends on, by name: renamed, nothing here can be trusted.
   if (!('_value' in node) || !('_offset' in node) || !('_animation' in node)) {
@@ -251,9 +167,21 @@ function valueBound(node: AnimatedNodeLike): NodeBound {
     return { ...UNBOUNDED, roots: [node] };
   }
   const animation = node._animation as Record<string, unknown> | null;
-  // An event moves it as well as any animation, wherever the gesture or the scroll takes it.
-  if (eventDriven(node)) {
-    return { range: undefined, running: animation != null, roots: [node] };
+  // Driven from JS, it is in the shadow tree already: what JS holds is the truth.
+  if (node.__isNative !== false) {
+    const events = eventsOn(node);
+    if (events === undefined || events.length > 0) {
+      // An event moves it as well as any animation, wherever the gesture or the scroll takes it.
+      const reach = events !== undefined && animation == null ? scrollRange(events) : undefined;
+      const range = reach === undefined ? undefined : hull([now, reach.lo + offset, reach.hi + offset]);
+      return { range, running: animation != null, roots: [node] };
+    }
+    if (animation != null) {
+      noteAnimating(node);
+    } else if (!knownDriven(node)) {
+      // Made native before the package loaded, or left where an event took it: anything may drive it.
+      return { range: undefined, running: false, roots: [node] };
+    }
   }
   if (animation == null) {
     return { range: { lo: now, hi: now }, running: false, roots: [node] };
@@ -276,20 +204,186 @@ function valueBound(node: AnimatedNodeLike): NodeBound {
   return { range: hull(values), running: true, roots: [node] };
 }
 
-/** An interpolation: through its mapping, or within its output range when it clamps both ends. */
+/**
+ * How far past either end of its content an Android ScrollView can be
+ * scrolled: a fling runs on past an end by the overfling distance (6 dp in
+ * AOSP's `ViewConfiguration`) before it springs back; a drag, a fling's end,
+ * `scrollTo` and `contentOffset` are held within the content.
+ */
+export const SCROLL_OVERRUN = 32;
+
+/**
+ * Where native scroll events can set a value they are attached to: within
+ * the reach of each ScrollView, for its `contentOffset`, measured now; or
+ * `undefined` when any of them is something else, or cannot be measured.
+ * On Android only: an iOS ScrollView bounces past its ends, and its
+ * `scrollTo` goes wherever it is told.
+ */
+function scrollRange(events: readonly Attachment[]): Range | undefined {
+  if (platformOS() !== 'android') {
+    return undefined;
+  }
+  const reaches = events.map(scrollReach);
+  return reaches.every((reach) => reach !== undefined)
+    ? hull(reaches.flatMap((reach) => [reach.lo, reach.hi]))
+    : undefined;
+}
+
+function scrollReach(attachment: Attachment): Range | undefined {
+  const { event, path } = attachment;
+  const along = path[2] === 'x' ? 'width' : path[2] === 'y' ? 'height' : undefined;
+  if (event !== 'onScroll' || path.length !== 3 || path[0] !== 'nativeEvent' || path[1] !== 'contentOffset') {
+    return undefined;
+  }
+  const scroller = scrollHostOf(attachment);
+  const content = scroller?.child;
+  if (along === undefined || content == null || content.tag !== FiberTag.HostComponent) {
+    return undefined;
+  }
+  const viewport = measureFiber(scroller as FiberLike);
+  const inner = measureFiber(content);
+  if (viewport == null || inner == null) {
+    return undefined;
+  }
+  return { lo: -SCROLL_OVERRUN, hi: Math.max(0, inner[along] - viewport[along]) + SCROLL_OVERRUN };
+}
+
+/** The ScrollView host each attachment was made to (`null`: none found), looked for once. */
+const scrollHosts = new WeakMap<Attachment, FiberLike | null>();
+
+/** The fiber root the running measure searches for a host by its tag; `null` outside one. */
+let searchRoot: { current?: unknown } | null = null;
+
+function scrollHostOf(attachment: Attachment): FiberLike | undefined {
+  let host = scrollHosts.get(attachment);
+  if (host === undefined) {
+    const { view } = attachment;
+    const handle = (view as { __internalInstanceHandle?: unknown } | null | undefined)?.__internalInstanceHandle;
+    // An `Animated.ScrollView` attaches its events to its scrollable node's tag; RN's own ScrollView, to its host.
+    const tag = typeof view === 'number' ? view : (view as { __nativeTag?: unknown } | null | undefined)?.__nativeTag;
+    const found = isFiber(handle) ? handle : typeof tag === 'number' ? hostWithTag(tag) : null;
+    if (found === undefined) {
+      // No tree to look in yet: looked for again next time.
+      return undefined;
+    }
+    host = found !== null && SCROLL_HOST_TYPES.has(found.type) ? found : null;
+    scrollHosts.set(attachment, host);
+  }
+  return host ?? undefined;
+}
+
+function isFiber(value: unknown): value is FiberLike {
+  return value !== null && typeof value === 'object' && typeof (value as { tag?: unknown }).tag === 'number';
+}
+
+/** A host's native tag: Fabric's `canonical.nativeTag`, or Paper's `_nativeTag`. */
+function tagOf(fiber: FiberLike): unknown {
+  const node = fiber.stateNode as { canonical?: { nativeTag?: unknown }; _nativeTag?: unknown } | null | undefined;
+  return node?.canonical?.nativeTag ?? node?._nativeTag;
+}
+
+/** Hosts found by tag, while they still carry it. */
+const tagged = new Map<number, FiberLike>();
+/** How many hosts are remembered by tag; past it, they are looked for again. */
+const TAGGED_MAX = 32;
+/** A cycle in a malformed tree must not spin forever. */
+const MAX_SEARCH = 100_000;
+
+/**
+ * The committed host with native tag `tag` in the tree being measured;
+ * `null` when it is not there, `undefined` when there is no tree to look in.
+ */
+function hostWithTag(tag: number): FiberLike | null | undefined {
+  const known = tagged.get(tag);
+  if (known !== undefined && tagOf(known) === tag) {
+    return known;
+  }
+  const top = searchRoot?.current;
+  if (!isFiber(top)) {
+    return undefined;
+  }
+  const pending: FiberLike[] = [top];
+  for (let visited = 0; pending.length > 0 && visited < MAX_SEARCH; visited += 1) {
+    const fiber = pending.pop() as FiberLike;
+    if (fiber.tag === FiberTag.HostComponent && tagOf(fiber) === tag) {
+      if (tagged.size >= TAGGED_MAX) {
+        tagged.clear();
+      }
+      tagged.set(tag, fiber);
+      return fiber;
+    }
+    for (let child = fiber.child; child != null; child = child.sibling) {
+      pending.push(child);
+    }
+  }
+  return null;
+}
+
+/** How an interpolation extends past an end of its input range, as React Native reads its config. */
+function extrapolation(config: Record<string, unknown>, side: 'extrapolateLeft' | 'extrapolateRight'): unknown {
+  if (config[side] !== undefined) {
+    return config[side];
+  }
+  return config.extrapolate !== undefined ? config.extrapolate : 'extend';
+}
+
+/** Where an easing takes a segment, from its start (0) to its end (1); `undefined` when it cannot be read. */
+function easedSpan(easing: unknown): Range | undefined {
+  if (easing == null) {
+    return { lo: 0, hi: 1 };
+  }
+  if (typeof easing !== 'function') {
+    return undefined;
+  }
+  const values: unknown[] = [];
+  for (let step = 0; step <= SAMPLES; step += 1) {
+    values.push((easing as (t: number) => unknown)(step / SAMPLES));
+  }
+  return values.every(finiteNumber) ? sampled(values) : undefined;
+}
+
+/**
+ * Every output an interpolation can give, whatever its input, when neither
+ * end runs on with its input: an end that clamps, or that extends a flat
+ * last segment (React Native gives a segment whose two outputs are equal
+ * that output, eased or not); `undefined` otherwise. Within each segment,
+ * the whole span of its easing.
+ */
+function outputHull(config: Record<string, unknown>): Range | undefined {
+  const outputs = config.outputRange;
+  if (!Array.isArray(outputs) || outputs.length < 2 || !outputs.every(finiteNumber)) {
+    return undefined;
+  }
+  const last = outputs.length - 1;
+  // An end that extends (React Native does for anything but these two) runs on unless its segment is flat.
+  const holds = (how: unknown, from: number, to: number): boolean =>
+    how === 'clamp' || (how !== 'identity' && from === to);
+  const eased = easedSpan(config.easing);
+  if (
+    eased === undefined ||
+    !holds(extrapolation(config, 'extrapolateLeft'), outputs[0] as number, outputs[1] as number) ||
+    !holds(extrapolation(config, 'extrapolateRight'), outputs[last - 1] as number, outputs[last] as number)
+  ) {
+    return undefined;
+  }
+  const values = (outputs as number[]).flatMap((from, index) => {
+    const to = outputs[index + 1] as number | undefined;
+    return to === undefined ? [from] : [from + eased.lo * (to - from), from + eased.hi * (to - from)];
+  });
+  return hull(values);
+}
+
+/**
+ * An interpolation: through its mapping; or, whatever its input, within its
+ * outputs when neither end runs on with its input (`outputHull`).
+ */
 function interpolationBound(node: AnimatedNodeLike): NodeBound {
   const input = nodeBound(node._parent as AnimatedNodeLike);
   const config = (node._config ?? {}) as Record<string, unknown>;
-  const outputs = config.outputRange;
-  const left = config.extrapolateLeft ?? config.extrapolate;
-  const right = config.extrapolateRight ?? config.extrapolate;
-  const clamped =
-    left === 'clamp' && right === 'clamp' && Array.isArray(outputs) && outputs.length > 0 && outputs.every(finiteNumber)
-      ? hull(outputs as number[])
-      : undefined;
+  const held = outputHull(config);
   const interpolate = (node._getInterpolation as (() => unknown) | undefined)?.();
   if (input.range === undefined || typeof interpolate !== 'function') {
-    return { ...input, range: clamped };
+    return { ...input, range: held };
   }
   const { lo, hi } = input.range;
   // Stryker disable next-line ArrayDeclaration -- the filter below drops anything that is not a number
@@ -303,7 +397,7 @@ function interpolationBound(node: AnimatedNodeLike): NodeBound {
   samples.sort((a, b) => a - b);
   const values = samples.map((sample) => (interpolate as (input: number) => unknown)(sample));
   if (!values.every(finiteNumber)) {
-    return { ...input, range: clamped };
+    return { ...input, range: held };
   }
   return { ...input, range: sampled(values as number[]) };
 }
@@ -702,6 +796,8 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
     return null;
   }
   const fibers = ancestry.resolved ?? ancestry.path;
+  // A ScrollView an event was attached to by its tag is looked for in the view's own tree.
+  searchRoot = ancestry.root;
   const levels: MotionLevel[] = [];
   let running = false;
   const roots: AnimatedNodeLike[] = [];

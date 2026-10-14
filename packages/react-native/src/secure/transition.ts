@@ -243,7 +243,7 @@ const MODAL_PRESENTATIONS: ReadonlySet<unknown> = new Set([
 
 // A missing Platform throws, and is caught; an empty catch returns undefined all the same.
 // Stryker disable all
-function platformOS(): unknown {
+export function platformOS(): unknown {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy: only an app has it
     return (require('react-native') as { Platform?: { OS?: unknown } }).Platform?.OS;
@@ -376,32 +376,110 @@ export function carriedCover(
   return null;
 }
 
-/** A view on a stack's screen, told when another screen on that stack is pushed or popped. */
-export type StackNeighbour = (motion: StackMotion, until: number, moving: object) => void;
+/**
+ * A screen pushed onto, or popped off, a stack, as the screens left on it
+ * move with it until `until`.
+ */
+export interface StackChange {
+  /** How the screens below it move: the pushed or popped screen's `stackMotionOf(props, false)`. */
+  readonly motion: StackMotion;
+  readonly until: number;
+  /** The screen pushed or popped, by {@link keyOf}. */
+  readonly moving: object;
+  /** The screen it covers (a push) or uncovers (a pop), by {@link keyOf}; `undefined`: not known. */
+  readonly below: object | undefined;
+}
 
-/** The views on each stack's screens, by the stack's {@link keyOf}. */
-const stacks = new WeakMap<object, Set<StackNeighbour>>();
+/** A view on a stack's screen, told when another screen on that stack is pushed or popped. */
+export type StackNeighbour = (change: StackChange) => void;
+
+/** What is known of a stack: kept by the stack, so a view that comes later still learns it. */
+interface StackRecord {
+  /** Its screens as last read by any view, by {@link keyOf}, with their props; `undefined`: never read. */
+  screens: Map<object, unknown> | undefined;
+  /** Its recent changes, oldest first, the ones whose hold is over dropped as it is read. */
+  changes: StackChange[];
+  /** The views on its screens, told of a change as a view on the moving screen makes it. */
+  readonly views: Set<StackNeighbour>;
+}
+
+/** Every stack's record, by the stack's {@link keyOf}. */
+const records = new WeakMap<object, StackRecord>();
+
+function recordOf(stack: object): StackRecord {
+  let record = records.get(stack);
+  if (record === undefined) {
+    record = { screens: undefined, changes: [], views: new Set() };
+    records.set(stack, record);
+  }
+  return record;
+}
+
+/** The changes still within their hold at `now`. */
+function current(record: StackRecord, now: number): StackChange[] {
+  // Stryker disable next-line EqualityOperator -- one millisecond either way, at the end of a hold
+  record.changes = record.changes.filter((change) => change.until > now);
+  return record.changes;
+}
 
 /** Adds `neighbour` to the views on `stack`'s screens, until the returned function is called. */
 export function joinStack(stack: object, neighbour: StackNeighbour): () => void {
-  let views = stacks.get(stack);
-  if (views === undefined) {
-    views = new Set();
-    stacks.set(stack, views);
-  }
+  const { views } = recordOf(stack);
   views.add(neighbour);
-  const joined = views;
   return () => {
-    joined.delete(neighbour);
+    views.delete(neighbour);
   };
 }
 
 /**
- * Tells every view on `stack` that its screen `moving` is being pushed or
- * popped as `motion`, until `until`: the screens below move with it.
+ * A view on the screen `change.moving` saw it pushed (`leaving` false, with
+ * its `props`) or popped: records it for the stack, and tells every view on
+ * it now; a view that reads the stack later in the hold learns it then.
  */
-export function stackMoving(stack: object, motion: StackMotion, until: number, moving: object): void {
-  for (const neighbour of [...(stacks.get(stack) ?? [])]) {
-    neighbour(motion, until, moving);
+export function stackMoving(stack: object, change: StackChange, leaving: boolean, props?: unknown): void {
+  const record = recordOf(stack);
+  current(record, change.until - SECURE_TRANSITION_HOLD_MS);
+  record.changes.push(change);
+  if (leaving) {
+    record.screens?.delete(change.moving);
+  } else {
+    record.screens?.set(change.moving, props);
   }
+  for (const neighbour of [...record.views]) {
+    neighbour(change);
+  }
+}
+
+/** The last of `screens` (a stack's children in order): the one on top. */
+function topOf(screens: ReadonlyMap<object, unknown>): object | undefined {
+  return [...screens.keys()].pop();
+}
+
+/**
+ * Reads `stack` (a committed stack host fiber), whose screens are `screens`
+ * now, against what any view last read of it: a screen pushed or popped
+ * since is recorded as moving from `now`, unless it is recorded already.
+ * Read for the first time, it is compared with the stack's other fiber,
+ * its render before (a pop no view on it saw may have just happened).
+ * Returns every change still within its hold.
+ */
+export function observeStack(stack: FiberLike, screens: Map<object, unknown>, now: number): readonly StackChange[] {
+  const record = recordOf(keyOf(stack));
+  const changes = current(record, now);
+  const before = record.screens ?? (stack.alternate == null ? screens : screensOn(stack.alternate));
+  record.screens = screens;
+  const pushed = [...screens].filter(([key]) => !before.has(key));
+  const popped = [...before].filter(([key]) => !screens.has(key));
+  // Seen come: a view on it that mounts later in its push is carried in from now.
+  pushed.forEach(([key]) => noteBirth(key, now));
+  const moved = [
+    ...pushed.map(([key, props]) => ({ key, props, below: topOf(before) })),
+    ...popped.map(([key, props]) => ({ key, props, below: topOf(screens) })),
+  ];
+  for (const { key, props, below } of moved) {
+    if (!changes.some((change) => change.moving === key)) {
+      changes.push({ motion: stackMotionOf(props, false), until: now + SECURE_TRANSITION_HOLD_MS, moving: key, below });
+    }
+  }
+  return changes;
 }

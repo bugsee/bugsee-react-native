@@ -17,6 +17,7 @@ import {
   joinStack,
   keyOf,
   noteBirth,
+  observeStack,
   screenCover,
   screensOn,
   stackMotionOf,
@@ -387,13 +388,97 @@ describe('stack motion and covers', () => {
     const stack = {};
     const told = jest.fn();
     const leave = joinStack(stack, told);
-    stackMoving(stack, 'sideways', 5, {});
+    const change = { motion: 'sideways' as const, until: 5, moving: {}, below: undefined };
+    stackMoving(stack, change, true);
     leave();
-    stackMoving(stack, 'sideways', 5, {});
-    stackMoving({}, 'any', 5, {});
+    stackMoving(stack, { ...change }, true);
+    stackMoving({}, { ...change, motion: 'any' }, true);
 
     expect(told).toHaveBeenCalledTimes(1);
-    expect(told).toHaveBeenCalledWith('sideways', 5, {});
+    expect(told).toHaveBeenCalledWith(change);
+  });
+
+  describe('R3-3: what a stack keeps of its recent changes', () => {
+    const screen = (name: string, props: Record<string, unknown> = {}): FiberSpec =>
+      fabricHost(SCREEN_HOST_TYPE, SCREEN, { name, ...props }, []);
+    /** A committed stack of `screens`; `before`: its render before, as its other fiber. */
+    function stackOf(screens: FiberSpec[], before?: FiberSpec[]): FiberLike {
+      const stack = buildFiberTree(fabricHost('RNSScreenStack', null, {}, screens));
+      if (before !== undefined) {
+        stack.alternate = { ...buildFiberTree(fabricHost('RNSScreenStack', null, {}, before)), alternate: stack };
+        // The same hosts in both renders: the same keys.
+        let from = stack.alternate.child;
+        for (let to = stack.child; to !== null && from !== null; to = to.sibling, from = from.sibling) {
+          from.stateNode = to.stateNode;
+        }
+      }
+      return stack;
+    }
+    const keys = (stack: FiberLike): object[] => [...screensOn(stack).keys()];
+
+    it('read first, is compared with its render before: a pop no view saw is recorded from now', () => {
+      const stack = stackOf([screen('a')], [screen('a'), screen('b', { stackAnimation: 'slide_from_left' })]);
+      const [, bKey] = keys(stack.alternate as FiberLike);
+
+      const changes = observeStack(stack, screensOn(stack), 1000);
+
+      expect(changes).toEqual([
+        { motion: 'sideways', until: 1000 + SECURE_TRANSITION_HOLD_MS, moving: bKey, below: keys(stack)[0] },
+      ]);
+      // Read again: nothing new, the change kept within its hold, and dropped once it is over.
+      expect(observeStack(stack, screensOn(stack), 1500)).toEqual(changes);
+      expect(observeStack(stack, screensOn(stack), 1000 + SECURE_TRANSITION_HOLD_MS)).toEqual([]);
+    });
+
+    it('read first with no render before (mounted whole), records nothing', () => {
+      const stack = stackOf([screen('a'), screen('b')]);
+
+      expect(observeStack(stack, screensOn(stack), 0)).toEqual([]);
+    });
+
+    it('a push since the last read: the screen it covers is the top before; its birth is noted', () => {
+      const stack = stackOf([screen('a')]);
+      const [aKey] = keys(stack);
+      observeStack(stack, screensOn(stack), 0);
+      (stack.child as FiberLike).sibling = { ...buildFiberTree(screen('c')), return: stack };
+      const [, cKey] = keys(stack);
+
+      expect(observeStack(stack, screensOn(stack), 100)).toEqual([
+        { motion: 'any', until: 100 + SECURE_TRANSITION_HOLD_MS, moving: cKey, below: aKey },
+      ]);
+      // Born at the push.
+      const anyFiber = { stateNode: { canonical: cKey } } as never;
+      expect(carrierEntering({ path: [anyFiber] } as never, { kind: 'screen', index: 0 }, 300)).toBe(
+        100 + SECURE_TRANSITION_HOLD_MS,
+      );
+    });
+
+    it('a change recorded by the moving screen\'s view is not recorded again; its screens are updated', () => {
+      const stack = stackOf([screen('a'), screen('b')]);
+      const [aKey, bKey] = keys(stack);
+      const key = keyOf(stack);
+      observeStack(stack, screensOn(stack), 0);
+      const popped = { motion: 'any' as const, until: 900, moving: bKey as object, below: undefined };
+      stackMoving(key, popped, true);
+      (stack.child as FiberLike).sibling = null;
+
+      // B's own view saw it leave: the screens read now match, and its change is the one kept.
+      expect(observeStack(stack, screensOn(stack), 200)).toEqual([popped]);
+      const pushed = { motion: 'still' as const, until: 1100, moving: bKey as object, below: undefined };
+      stackMoving(key, pushed, false, { stackAnimation: 'fade' });
+      (stack.child as FiberLike).sibling = { ...buildFiberTree(screen('b')), stateNode: { canonical: bKey } };
+      expect(observeStack(stack, screensOn(stack), 300)).toEqual([popped, pushed]);
+      expect(keys(stack)).toEqual([aKey, bKey]);
+    });
+
+    it('a change told before any view read the stack is kept for the first that does', () => {
+      const stack = stackOf([screen('a')]);
+      const change = { motion: 'any' as const, until: 800, moving: {}, below: undefined };
+      stackMoving(keyOf(stack), change, true);
+
+      expect(observeStack(stack, screensOn(stack), 100)).toEqual([change]);
+      expect(observeStack(stack, screensOn(stack), 800)).toEqual([]);
+    });
   });
 
   it('keys a host by its shared canonical, on Paper by its shared instance, or else the fiber itself', () => {
