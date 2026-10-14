@@ -448,6 +448,19 @@ describe('B6: a native-driven Animated transform above the view', () => {
     expect(measureInWindow.mock.calls.length - measures).toBeGreaterThanOrEqual(20);
   });
 
+  it('follows a still value that jumps (a loop restarting), within a frame', () => {
+    const value = animatedValue(160);
+    render(underAnimated([{ translateX: value }], [{ translateX: 0 }]));
+    wait(16 * 20);
+    expect(lastPublished()).toEqual([0, px(rect(170, 100, 200, 50))]);
+
+    // `Animated.loop` resets the value before each iteration: native draws it there at once.
+    value._value = 0;
+    wait(17);
+
+    expect((lastPublished() as [number, number[]])[1].slice(0, 4)).toEqual(px(selfRect));
+  });
+
   it('includes what an easing overshoots', () => {
     const value = animatedValue(0);
     value._animation = { _fromValue: 0, _toValue: 100, _easing: (t) => t * (1.2 - 0.2 * t) * (t < 0.5 ? 1 : 1.25) };

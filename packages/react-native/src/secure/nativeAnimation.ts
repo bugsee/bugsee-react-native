@@ -41,8 +41,6 @@ export interface NativeMotion {
   readonly rect: WindowRect;
   /** The outermost `Animated` component in `Ancestry.path`: clipping below it is moved with it. */
   readonly above: number;
-  /** A native animation is running: where the view can be keeps changing. */
-  readonly running: boolean;
 }
 
 /** How finely an easing is sampled to find how far past its ends it can go. */
@@ -82,14 +80,6 @@ function finiteNumber(value: unknown): value is number {
 function widen(range: Range, value: number): void {
   range.lo = Math.min(range.lo, value);
   range.hi = Math.max(range.hi, value);
-}
-
-/** Whether `node`, or the value it interpolates, is in a running animation. */
-function isRunning(node: AnimatedNodeLike): boolean {
-  if (isNode(node._parent)) {
-    return isRunning(node._parent);
-  }
-  return node._animation != null;
 }
 
 /**
@@ -282,7 +272,6 @@ export function nativeMotion(self: WindowRect, ancestry: Ancestry): NativeMotion
   const fibers = ancestry.resolved ?? ancestry.path;
   let rect = self;
   let above = -1;
-  let running = false;
   for (const index of ancestry.animated) {
     let next: WindowRect | undefined;
     // Props and nodes are the app's: a getter on one can throw.
@@ -292,15 +281,14 @@ export function nativeMotion(self: WindowRect, ancestry: Ancestry): NativeMotion
         continue;
       }
       above = index;
-      running ||= entries.some(([, value]) => isNativeNode(value) && isRunning(value));
       next = moved(rect, entries, hostBelow(ancestry, fibers, index));
     } catch {
       // Unbounded: `next` stays undefined.
     }
     if (next === undefined) {
-      return { rect: WHOLE_SURFACE, above: ancestry.animated[ancestry.animated.length - 1] as number, running };
+      return { rect: WHOLE_SURFACE, above: ancestry.animated[ancestry.animated.length - 1] as number };
     }
     rect = next;
   }
-  return above < 0 ? null : { rect, above, running };
+  return above < 0 ? null : { rect, above };
 }

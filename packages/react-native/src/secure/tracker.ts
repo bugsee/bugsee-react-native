@@ -18,9 +18,10 @@ type MeasureInWindow = (callback: (x: number, y: number, width: number, height: 
  * How a mounted, enabled view is kept measured:
  *  - `tick`: wholly visible; re-measured on the 100 ms tick, as on main.
  *  - `active`: moving, or just shown, clipped or carried in by a transition,
- *    or under a running native-driven animation; re-measured every frame
- *    until its rectangle has stayed put for {@link STEADY_FRAMES} frames (and
- *    no native animation runs).
+ *    or under a native-driven transform; re-measured every frame until its
+ *    rectangle has stayed put for {@link STEADY_FRAMES} frames (under a
+ *    native-driven transform, always: an animation can start, or the value
+ *    jump, any frame, and only the nodes tell).
  *  - `parked`: clipped and still. Its clipping nodes (a ScrollView and its
  *    content, a clipping view) are watched every frame, shared with every
  *    view under them, and a move wakes it; each frame also asks whether its
@@ -72,7 +73,7 @@ export class SecureTracker {
   /** Carried in by a transition: re-measured every frame until it settles, whatever mode it was in. */
   // Stryker disable next-line BooleanLiteral -- `start` clears it before anything reads it
   private settling = false;
-  /** Under a running native-driven animation: re-measured every frame. Set by every measurement. */
+  /** Under a native-driven transform: re-measured every frame. Set by every measurement. */
   // Stryker disable next-line BooleanLiteral -- every measurement sets it before `next` reads it
   private animating = false;
   /** The view's last measured rectangle, unclipped. */
@@ -237,7 +238,7 @@ export class SecureTracker {
     }
     // Where a native-driven animation can draw it, which the shadow tree never sees.
     const motion = nativeMotion(self, above);
-    this.animating = motion?.running ?? false;
+    this.animating = motion !== null;
     const drawn = motion?.rect ?? self;
     const visible = clipToAncestors(drawn, above, motion?.above);
     this.publish(this.covering(this.hold.update(visible, now), now));

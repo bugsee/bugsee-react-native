@@ -222,14 +222,6 @@ describe('nativeMotion', () => {
     expect(nativeMotion(SELF, ancestry)?.rect).toEqual(rect(-40, 100, 300, 50));
   });
 
-  it('counts a native animation running beside a static function', () => {
-    const ancestry = under(
-      { transform: [{ translateX: value(0, timing(0, 50)) }, { translateY: 5 }] },
-      { transform: [{ translateX: 0 }, { translateY: 5 }] },
-    );
-
-    expect(nativeMotion(SELF, ancestry)?.running).toBe(true);
-  });
 
   it('moves the view by the translations a still value adds to what was rendered', () => {
     const ancestry = under({ transform: [{ translateX: value(30) }, { translateY: value(-5) }] }, {
@@ -239,7 +231,6 @@ describe('nativeMotion', () => {
     expect(nativeMotion(SELF, ancestry)).toEqual({
       rect: rect(30, 95, 200, 50),
       above: ancestry.animated[0],
-      running: false,
     });
   });
 
@@ -258,16 +249,9 @@ describe('nativeMotion', () => {
     expect(nativeMotion(SELF, ancestry)).toEqual({
       rect: rect(-30, 100, 280, 50),
       above: ancestry.animated[0],
-      running: true,
     });
   });
 
-  it('a running interpolation counts as running', () => {
-    const moving = interpolated(value(0, timing(0, 1)), [0, 1], (x: number) => x);
-    const ancestry = under({ transform: [{ translateX: moving }] }, { transform: [{ translateX: 0 }] });
-
-    expect(nativeMotion(SELF, ancestry)?.running).toBe(true);
-  });
 
   it('scales each axis about the transformed view’s centre', () => {
     const ancestry = under(
@@ -372,7 +356,6 @@ describe('nativeMotion', () => {
     expect(nativeMotion(SELF, ancestry)).toEqual({
       rect: rect(15, 200, 200, 50),
       above: ancestry.animated[1],
-      running: false,
     });
   });
 
