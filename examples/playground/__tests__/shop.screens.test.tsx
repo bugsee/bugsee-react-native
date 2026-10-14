@@ -74,10 +74,7 @@ test('checkout declined logs the handled exception', async () => {
   await render(<Checkout />);
   await fireEvent.press(screen.getByText('Declined'));
   await fireEvent.press(screen.getByText('Pay'));
-  await waitFor(() => expect(bugsee.logException).toHaveBeenCalledWith(expect.any(Error), {
-    labels: ['checkout', 'payment'],
-    domain: 'payment',
-  }));
+  await waitFor(() => expect(bugsee.logException).toHaveBeenCalledWith(expect.any(Error), { domain: 'payment' }));
   expect(alert).toHaveBeenCalledWith('Checkout', 'Payment declined');
 });
 

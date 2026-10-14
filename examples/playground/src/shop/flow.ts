@@ -82,10 +82,7 @@ export async function pay(
   try {
     if (outcome === 'declined') {
       await fetch(DEMO.STATUS(402));
-      Bugsee.logException(new Error('Payment declined'), {
-        labels: ['checkout', 'payment'],
-        domain: 'payment',
-      });
+      Bugsee.logException(new Error('Payment declined'), { domain: 'payment' });
       step?.finish(SpanStatus.Error);
       finishFlow(SpanStatus.Error);
       resetCart();

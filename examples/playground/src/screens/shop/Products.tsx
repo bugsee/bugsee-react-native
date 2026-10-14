@@ -34,7 +34,7 @@ export default function Products() {
       status = SpanStatus.Error;
       if (e instanceof DemoHttpError) {
         setError(`Could not load products (HTTP ${e.status})`);
-        Bugsee.logException(e, { labels: ['shop', 'products'] });
+        Bugsee.logException(e, { domain: 'products' });
       } else {
         setError(`Could not load products: ${e instanceof Error ? e.message : String(e)}`);
       }

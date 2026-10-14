@@ -523,7 +523,7 @@ export interface Spec extends TurboModule {
   /** Uploads the created report. The handle is dead afterwards, whatever the result. */
   createdReportUpload(handleId: string): Promise<boolean>;
 
-  /** A handled JS exception. `payloadJson` is the Task 7.1a payload; `optionsJson` is `{domain?, labels?, includeVideo?}` or null. */
+  /** A handled JS exception. `payloadJson` is the Task 7.1a payload; `optionsJson` is `{domain?}` or null. */
   logException(payloadJson: string, optionsJson: string | null): void;
   /** An unhandled JS exception. Resolves once the SDK has the report; never rejects. */
   logUnhandledException(payloadJson: string): Promise<void>;

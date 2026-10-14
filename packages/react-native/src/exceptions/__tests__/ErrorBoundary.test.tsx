@@ -223,7 +223,7 @@ describe('ErrorBoundary', () => {
 
   it('options reach the report', () => {
     const error = new Error('boom');
-    const options = { domain: 'auth', labels: ['a'] as const };
+    const options = { domain: 'auth' };
     render(
       <ErrorBoundary options={options}>
         <ThrowOnce error={error} armed={{ value: true }} />
