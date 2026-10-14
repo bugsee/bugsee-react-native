@@ -705,7 +705,7 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
   const levels: MotionLevel[] = [];
   let running = false;
   const roots: AnimatedNodeLike[] = [];
-  // Scaled levels' places in `levels`, to unbound the levels inside them.
+  // Where in the path a level the shadow tree scales up is, to unbound the levels inside it.
   const scaledAt: number[] = [];
   for (const index of ancestry.animated) {
     let level: Level | Pending | null;
@@ -724,7 +724,7 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
       continue;
     }
     if (level.scaled) {
-      scaledAt.push(levels.length);
+      scaledAt.push(index);
     }
     const { move } = level;
     levels.push({
@@ -741,12 +741,42 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
       // Stryker restore all
     });
   }
-  // A level inside one the shadow tree scales is bounded in units that scale does not apply to.
-  const outermost = Math.max(0, ...scaledAt);
-  for (let inner = 0; inner < outermost; inner += 1) {
-    levels[inner] = { index: (levels[inner] as MotionLevel).index, move: () => undefined };
+  if (levels.length === 0 && roots.length === 0 && !running) {
+    return null;
   }
-  return levels.length === 0 && roots.length === 0 && !running ? null : { levels, running, roots };
+  // A level inside a scale up (a level's, or any host's committed one) is bounded in units that scale
+  // does not apply to.
+  const outermost = Math.max(-1, ...scaledAt, scaledHostAbove(fibers, levels[0]?.index));
+  return {
+    levels: levels.map((level) => (level.index < outermost ? { index: level.index, move: () => undefined } : level)),
+    running,
+    roots,
+  };
+}
+
+/** Whether a host's committed transform scales by more than 1 (or less than -1), or by what cannot be read. */
+function hostScalesUp(props: unknown): boolean {
+  return (transformOf(props) ?? []).some(([name, value]) => {
+    if (SCALE_AXES[name] === undefined) {
+      return false;
+    }
+    const by = isNode(value) ? value.__getValue() : value;
+    return !(Math.abs(by as number) <= 1);
+  });
+}
+
+/** The outermost host above `index` in the path whose committed transform scales up; -1 when none. */
+function scaledHostAbove(fibers: readonly FiberLike[], index: number | undefined): number {
+  if (index === undefined) {
+    return -1;
+  }
+  for (let above = fibers.length - 1; above > index; above -= 1) {
+    const fiber = fibers[above] as FiberLike;
+    if (fiber.tag === FiberTag.HostComponent && hostScalesUp(fiber.memoizedProps)) {
+      return above;
+    }
+  }
+  return -1;
 }
 
 

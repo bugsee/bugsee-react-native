@@ -690,6 +690,40 @@ describe('nativeMotion', () => {
     );
   });
 
+  it.each<[string, unknown, boolean]>([
+    ['scaled up', 2, false],
+    ['mirrored and scaled up', -2, false],
+    ['scaled by a value now at 2', value(2), false],
+    ['scaled by what cannot be read', 'big', false],
+    ['scaled down', 0.5, true],
+    ['not scaled', 1, true],
+  ])('inside a plain host %s, a native level is bounded only if that scale is not up', (_, scale, bounded) => {
+    const fiber = selfIn(
+      root([
+        fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [{ translateY: 5 }, { scale }] } }, [
+          {
+            tag: FiberTag.FunctionComponent,
+            type: AnimatedView,
+            memoizedProps: { style: { transform: [{ translateX: value(0, timing(0, 50)) }] } },
+            children: [
+              // Its own host: inside the level, its transform is the level's own business.
+              fabricHost(
+                'RCTView',
+                rect(0, 0, 400, 400),
+                { style: { transform: [{ translateX: 0 }, { scaleX: 1 }] } },
+                [view([self()])],
+              ),
+            ],
+          },
+        ]),
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
+
+    expect(moved(ancestry)).toEqual(bounded ? rect(10, 100, 250, 50) : undefined);
+  });
+
   it('P3-b: inside a Reanimated level (unbounded anyway), an inner level keeps its own bound', () => {
     const fiber = selfIn(
       root([
@@ -772,6 +806,10 @@ describe('nativeMotion', () => {
     expect(moved(scaledOuter(value(1), 1, slide()))).toEqual(rect(10, 100, 250, 50));
     // Scaled up after a translation: still scaled.
     expect(moved(scaledOuter(value(2), 2, slide(), true))).toBeUndefined();
+    // Scaled up only by the value it holds now (C++ Animated keeps an animation's end in the shadow tree,
+    // not in props).
+    expect(moved(scaledOuter(value(2), 1, slide()))).toBeUndefined();
+    expect(moved(scaledOuter(value(2), 1, slide(), true))).toBeUndefined();
     // The outer level itself is bounded either way.
     expect(nativeMotion(scaledOuter(value(2), 2, slide()))?.levels[1]?.move(SELF)).toBeDefined();
   });

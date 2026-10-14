@@ -340,7 +340,8 @@ for FIELD in '__attach\(viewRef' '__detach\(viewTag' 'this\._argMapping = argMap
   grep -qE "$FIELD" "$ANIMATED/AnimatedEvent.js" \
     || { echo "FAIL: AnimatedEvent.js no longer has $FIELD"; exit 1; }
 done
-grep -rqE 'propValue\.__attach\(|\.__attach\(' "$RN_SRC/src/private/animated" "$ANIMATED" \
+# A call with the view and the prop name (nodes' own `super.__attach()` takes none).
+grep -rqE '\.__attach\([A-Za-z_]+, *[A-Za-z_]+\)' --exclude=AnimatedEvent.js "$RN_SRC/src/private/animated" "$ANIMATED" \
   || { echo "FAIL: no Animated component attaches its native events with __attach any more"; exit 1; }
 grep -qE 'animationType=\{animationType\}' "$RN_SRC/Libraries/Modal/Modal.js" \
   || { echo "FAIL: Modal.js no longer passes animationType to its host"; exit 1; }
