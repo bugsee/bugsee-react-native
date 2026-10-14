@@ -230,9 +230,9 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
  */
 export function ancestryOfInstance(instance: object): Ancestry {
   try {
-    // No fiber (or not an object) has no `.return`, or throws on reading it.
+    // No fiber (or not an object) has no `.return`; `null` throws on reading it.
     const fiber = (instance as { __internalInstanceHandle?: unknown }).__internalInstanceHandle;
-    if (fiber === null || typeof fiber !== 'object') {
+    if (typeof fiber !== 'object') {
       return noAncestry();
     }
     return ancestryOfFiber(fiber as FiberLike);
@@ -525,6 +525,8 @@ export function clipToAncestors(rect: WindowRect, ancestry: Ancestry, above = -1
   const clips: Array<WindowRect | null | undefined> = [];
   try {
     for (const host of ancestry.hosts) {
+      // `above` is an Animated component's index, never a host's.
+      // Stryker disable next-line EqualityOperator -- so `>=` picks the same hosts
       if (host.clips && host.index > above) {
         clips.push(measureHost(host, ancestry.path[host.index] as FiberLike));
       }

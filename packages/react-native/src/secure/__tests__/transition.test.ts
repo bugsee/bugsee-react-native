@@ -146,6 +146,13 @@ describe('carriedCover', () => {
     expect(carriedCover(fresh, { kind: 'screen', index: 1 }, SELF, false)).toEqual(WHOLE_SURFACE);
   });
 
+  it('a Modal view never measured covers nothing more', () => {
+    const fiber = inModal({ animationType: 'slide' });
+    const carrier = { kind: 'modal' as const, index: indexOf(fiber, 'RCTModalHostView') };
+
+    expect(carriedCover(ancestryOfFiber(fiber), carrier, null, true)).toBeNull();
+  });
+
   it.each([
     ['slides in', { animationType: 'slide' }, false, { ...SELF, height: WHOLE_SURFACE.height - SELF.y }],
     ['slides out', { animationType: 'slide' }, true, { ...SELF, height: WHOLE_SURFACE.height - SELF.y }],

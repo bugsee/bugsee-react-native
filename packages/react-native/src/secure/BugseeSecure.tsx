@@ -99,12 +99,14 @@ export function BugseeSecure(props: BugseeSecureProps): ReactElement {
 
   // Set while the instance unmounts. Declared before the effect below, so on
   // unmount its cleanup runs first; a change of `enabled` alone never runs it.
+  // Stryker disable next-line BooleanLiteral -- the effect below sets it before any cleanup can read it
   const unmounting = useRef(false);
   useLayoutEffect(() => {
     unmounting.current = false;
     return () => {
       unmounting.current = true;
     };
+    // Stryker disable next-line ArrayDeclaration -- any constant list runs it once per mount alike
   }, []);
 
   // A layout effect, not a passive one: it runs in the commit, so on Fabric

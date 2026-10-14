@@ -67,10 +67,13 @@ export class SecureTracker {
   /** Where a transition can carry the view, published with the rest until `until`. */
   private cover: { readonly rect: WindowRect; readonly until: number } | null = null;
   /** Mounted by the commit now running: its first measurement looks for a transition carrying it in. */
+  // Stryker disable next-line BooleanLiteral -- `start` sets it before anything reads it
   private arriving = false;
   /** Carried in by a transition: re-measured every frame until it settles, whatever mode it was in. */
+  // Stryker disable next-line BooleanLiteral -- `start` clears it before anything reads it
   private settling = false;
-  /** Under a running native-driven animation: re-measured every frame. */
+  /** Under a running native-driven animation: re-measured every frame. Set by every measurement. */
+  // Stryker disable next-line BooleanLiteral -- every measurement sets it before `next` reads it
   private animating = false;
   /** The view's last measured rectangle, unclipped. */
   private lastRect: WindowRect | null = null;
@@ -121,8 +124,8 @@ export class SecureTracker {
     // The fiber tree and props are read as they are: a getter can throw.
     try {
       const carrier = above === null ? null : carrierOf(above);
-      if (above !== null && carrier !== null && last !== null && carrierLeaving(above, carrier)) {
-        cover = carriedCover(above, carrier, last, true);
+      if (carrier !== null && carrierLeaving(above as Ancestry, carrier)) {
+        cover = carriedCover(above as Ancestry, carrier, last, true);
       }
     } catch (error) {
       this.failed(error);
@@ -133,7 +136,6 @@ export class SecureTracker {
     }
     const rectangles = this.covering(this.hold.update(null, now), now);
     if (rectangles.length === 0) {
-      this.forget();
       clearOwner(this.token);
       return;
     }
@@ -154,9 +156,7 @@ export class SecureTracker {
   /** Stops measuring: off every loop, as if never started. */
   private leave(): void {
     this.running = false;
-    this.arriving = false;
     this.settling = false;
-    this.animating = false;
     this.removeTick?.();
     this.removeTick = undefined;
     // Stryker disable next-line StringLiteral -- any mode but active, hidden or parked leaves every loop
@@ -180,6 +180,7 @@ export class SecureTracker {
 
   /** `rectangles` and, while it lasts, the transition's cover. */
   private covering(rectangles: WindowRect[], now: number): WindowRect[] {
+    // Stryker disable next-line EqualityOperator -- one millisecond either way, at the end of a second
     if (this.cover !== null && this.cover.until <= now) {
       this.cover = null;
     }

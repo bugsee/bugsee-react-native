@@ -106,6 +106,25 @@ describe('nodeRange', () => {
     expect(nodeRange(node as never)).toEqual({ lo: 0, hi: 100 });
   });
 
+  it('a breakpoint outside what its input can take does not widen it', () => {
+    const node = interpolated(value(0, timing(0, 1)), [-5, 0, 1, 5], (x: number) => x * 10);
+
+    expect(nodeRange(node as never)).toEqual({ lo: 0, hi: 10 });
+  });
+
+  it('samples between where its input starts and ends, away from zero', () => {
+    expect(nodeRange(interpolated(value(2, timing(2, 4)), [0, 10], (x: number) => x) as never)).toEqual({
+      lo: 2,
+      hi: 4,
+    });
+  });
+
+  it('an interpolation with no config still samples its input', () => {
+    const node = { ...interpolated(value(0, timing(0, 1)), [], (x: number) => x), _config: undefined };
+
+    expect(nodeRange(node as never)).toEqual({ lo: 0, hi: 1 });
+  });
+
   it('an interpolation with no breakpoints still samples its input', () => {
     expect(nodeRange(interpolated(value(0, timing(0, 2)), undefined, (x: number) => x * 10) as never)).toEqual({
       lo: 0,
@@ -117,6 +136,7 @@ describe('nodeRange', () => {
     ['an input it cannot bound', interpolated(value(0, { _toValue: 1 }), [0, 1], linear)],
     ['no interpolation function', interpolated(value(0), [0, 1], undefined)],
     ['a string output', interpolated(value(0), [0, 1], () => '10deg')],
+    ['one output that is not finite', interpolated(value(0, timing(0, 1)), [0, 1], (x: number) => (x > 0.5 ? NaN : x))],
   ])('cannot bound an interpolation with %s', (_, node) => {
     expect(nodeRange(node as never)).toBeUndefined();
   });
@@ -176,10 +196,39 @@ describe('nativeMotion', () => {
     ['a transform of plain numbers', { transform: [{ translateX: 10 }] }],
     ['a JS-driven transform', { transform: [{ translateX: { ...value(10), __isNative: false } }] }],
     ['a transform that is not a list', { transform: 'translateX(10px)' }],
+    ['a transform function with no value', { transform: [{ translateX: null }] }],
+    ['a value that only says it is native', { transform: [{ translateX: { __isNative: true } }] }],
+    ['a transform entry that is a number', { transform: [{ translateX: value(1) }, 5] }],
     // React Native rejects it before anything is drawn.
     ['a transform entry that is not an object', { transform: [{ translateX: value(1) }, null] }],
   ])('an Animated component with %s moves nothing natively', (_, style) => {
     expect(nativeMotion(SELF, under(style))).toBeNull();
+  });
+
+  it('an Animated component with no props moves nothing', () => {
+    const ancestry = under(undefined);
+    (ancestry.path[ancestry.animated[0] as number] as FiberLike).memoizedProps = null;
+    ancestry.resolved = undefined;
+
+    expect(nativeMotion(SELF, ancestry)).toBeNull();
+  });
+
+  it('a rendered transform without that function covers the whole span either way', () => {
+    const ancestry = under(
+      { transform: [{ translateX: value(0, timing(0, 50)) }] },
+      { transform: [{ translateY: 0 }] },
+    );
+
+    expect(nativeMotion(SELF, ancestry)?.rect).toEqual(rect(-40, 100, 300, 50));
+  });
+
+  it('counts a native animation running beside a static function', () => {
+    const ancestry = under(
+      { transform: [{ translateX: value(0, timing(0, 50)) }, { translateY: 5 }] },
+      { transform: [{ translateX: 0 }, { translateY: 5 }] },
+    );
+
+    expect(nativeMotion(SELF, ancestry)?.running).toBe(true);
   });
 
   it('moves the view by the translations a still value adds to what was rendered', () => {
@@ -204,10 +253,10 @@ describe('nativeMotion', () => {
   });
 
   it('without the rendered value, covers the whole span either way', () => {
-    const ancestry = under({ transform: [{ translateX: value(0, timing(0, 50)) }] }, { transform: 'none' });
+    const ancestry = under({ transform: [{ translateX: value(10, timing(10, 50)) }] }, { transform: 'none' });
 
     expect(nativeMotion(SELF, ancestry)).toEqual({
-      rect: rect(-40, 100, 300, 50),
+      rect: rect(-30, 100, 280, 50),
       above: ancestry.animated[0],
       running: true,
     });
@@ -222,13 +271,19 @@ describe('nativeMotion', () => {
 
   it('scales each axis about the transformed view’s centre', () => {
     const ancestry = under(
-      { transform: [{ scaleX: value(0.5, timing(0.5, 1)) }, { scaleY: value(3) }] },
+      { transform: [{ scaleX: value(1, timing(1, 2)) }, { scaleY: value(3) }] },
       { transform: [{ scaleX: 1 }, { scaleY: 1.5 }] },
       rect(0, 0, 400, 400),
     );
 
-    // x 10..210 about 200, by 0.5 to 1: 10..210 or 105..205; y 100..150 about 200, by 2: 0..100.
-    expect(nativeMotion(SELF, ancestry)?.rect).toEqual(rect(10, 0, 200, 100));
+    // x 10..210 about 200, by 1 to 2: as far as -180..220; y 100..150 about 200, by 2: 0..100.
+    expect(nativeMotion(SELF, ancestry)?.rect).toEqual(rect(-180, 0, 400, 100));
+  });
+
+  it('a scale down to nothing shrinks the view to the centre', () => {
+    const ancestry = under({ transform: [{ scale: value(0, timing(0, 1)) }] }, { transform: [{ scale: 1 }] });
+
+    expect(nativeMotion(SELF, ancestry)?.rect).toEqual(rect(10, 100, 200, 100));
   });
 
   it('a uniform scale scales both axes', () => {
@@ -248,6 +303,11 @@ describe('nativeMotion', () => {
 
   it.each<[string, unknown, unknown]>([
     ['a rotation', { transform: [{ rotate: value(1) }] }, {}],
+    [
+      'a scale mixed with a rotation',
+      { transform: [{ scale: value(1) }, { rotate: '10deg' }] },
+      { transform: [{ scale: 1 }] },
+    ],
     ['a translation mixed with a rotation', { transform: [{ translateX: value(1) }, { rotate: '10deg' }] }, {}],
     ['a translation it cannot bound', { transform: [{ translateX: value(0, { _toValue: 1 }) }] }, {}],
     ['a scale it cannot bound', { transform: [{ scale: value(0, { _toValue: 1 }) }] }, { transform: [{ scale: 1 }] }],

@@ -71,6 +71,7 @@ jest.mock('../registry', () => ({
 }));
 
 import { SECURE_SHRINK_HOLD_MS } from '../hold';
+import { SECURE_TRANSITION_HOLD_MS } from '../transition';
 import { STEADY_FRAMES, SecureTracker, monotonicNow } from '../tracker';
 
 const rect = (x: number, y: number, width: number, height: number): WindowRect => ({ x, y, width, height });
@@ -540,21 +541,75 @@ describe('SecureTracker', () => {
       expect(mockState.cleared).toBe(0);
     });
 
-    it('a tree that throws while read for a transition still publishes the view, and warns once', () => {
-      const throwing = { self: null, hosts: [], screens: [], animated: [], readable: true };
-      Object.defineProperty(throwing, 'path', {
-        get(): never {
-          throw new Error('torn');
+    /** An ancestry whose `path` throws while `throwing()` says so. */
+    function tornAncestry(throwing: () => boolean): object {
+      const ancestry = { self: null, hosts: [], screens: [], animated: [], readable: true };
+      Object.defineProperty(ancestry, 'path', {
+        get(): unknown[] {
+          if (throwing()) {
+            throw new Error('torn');
+          }
+          return [];
         },
       });
-      mockState.ancestry = throwing;
+      return ancestry;
+    }
+
+    it('a tree that throws as it mounts still publishes the view, and warns once', () => {
+      let torn = true;
+      mockState.ancestry = tornAncestry(() => torn);
       tracker.start();
+      torn = false;
+
       expect(last()).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      tracker.depart();
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('a tree that throws as it unmounts still holds the view, and warns once', () => {
+      let torn = false;
+      mockState.ancestry = tornAncestry(() => torn);
+      tracker.start();
+      torn = true;
 
       tracker.depart();
 
       expect(last()).toEqual([self]);
       expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('nothing carrying it, or never measured: nothing to warn about', () => {
+      tracker.start();
+      tracker.depart();
+      const unmeasured = new SecureTracker(() => null, {});
+      unmeasured.start();
+      unmeasured.depart();
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('a parked view drops a transition cover on the tick once it runs out', () => {
+      const stack = { type: 'RNSScreenStack' };
+      // A screen with no alternate: pushed by the commit that mounts the view.
+      mockState.ancestry = {
+        self: null,
+        path: [{ type: 'RNSScreen', alternate: null }, stack],
+        hosts: [{ index: 0, above: 1, screen: true }],
+        screens: [],
+        animated: [],
+        readable: true,
+      };
+      mockState.clipTo = cutAt120;
+      tracker.start();
+      runFrames(STEADY_FRAMES + 2);
+      expect(mockLoop.parked).toHaveLength(1);
+      expect((last() as WindowRect[]).length).toBe(2);
+
+      later(SECURE_TRANSITION_HOLD_MS + 100);
+      runTick();
+
+      expect(last()).toEqual([cutAt120(self)]);
     });
   });
 

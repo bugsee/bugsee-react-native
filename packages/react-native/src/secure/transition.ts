@@ -121,7 +121,7 @@ export function carrierLeaving(ancestry: Ancestry, carrier: Carrier): boolean {
 export function carriedCover(
   ancestry: Ancestry,
   carrier: Carrier,
-  self: WindowRect,
+  self: WindowRect | null,
   leaving: boolean,
 ): WindowRect | null {
   const fiber = ancestry.path[carrier.index] as FiberLike;
@@ -135,6 +135,10 @@ export function carriedCover(
     return screen ?? WHOLE_SURFACE;
   }
   const animationType = (fiber.memoizedProps as { animationType?: unknown } | null | undefined)?.animationType;
+  // Never measured (no answer yet): it is drawn nowhere it was measured either.
+  if (self === null) {
+    return null;
+  }
   if (animationType === 'slide') {
     return { x: self.x, y: self.y, width: self.width, height: WHOLE_SURFACE.height - self.y };
   }

@@ -75,7 +75,8 @@ function isNativeNode(value: unknown): value is AnimatedNodeLike {
 }
 
 function finiteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
+  // Never coerces: a string or a missing value is not finite.
+  return Number.isFinite(value as number);
 }
 
 function widen(range: Range, value: number): void {
@@ -128,8 +129,11 @@ function interpolationRange(node: AnimatedNodeLike, parent: AnimatedNodeLike): R
   if (input === undefined || typeof interpolate !== 'function') {
     return undefined;
   }
+  // Stryker disable next-line ArrayDeclaration -- the filter below drops anything that is not a number
   const breakpoints = Array.isArray(node._config?.inputRange) ? (node._config.inputRange as unknown[]) : [];
   const samples = breakpoints.filter(
+    // The ends are sampled anyway, and a value that is not a number never compares greater.
+    // Stryker disable next-line EqualityOperator,ConditionalExpression -- so these mutants sample the same
     (point): point is number => finiteNumber(point) && point > input.lo && point < input.hi,
   );
   for (let step = 0; step <= EASING_SAMPLES; step += 1) {
@@ -210,6 +214,8 @@ function moved(rect: WindowRect, entries: Array<[string, unknown]>, host: FiberL
         continue;
       }
       const range = nodeRange(value);
+      // Without this, reading the missing range throws, which reads as unbounded too.
+      // Stryker disable next-line ConditionalExpression,BlockStatement -- so its mutants are equivalent
       if (range === undefined) {
         return undefined;
       }
@@ -234,6 +240,7 @@ function moved(rect: WindowRect, entries: Array<[string, unknown]>, host: FiberL
       }
       const range = nodeRange(value);
       const at = rendered(host, name);
+      // Stryker disable next-line ConditionalExpression -- as above: a missing range throws, read as unbounded
       if (range === undefined || at === undefined || at <= 0 || range.lo < 0) {
         return undefined;
       }
@@ -243,6 +250,8 @@ function moved(rect: WindowRect, entries: Array<[string, unknown]>, host: FiberL
       }
     }
     const box = measureFiber(host);
+    // Without this, reading the missing box throws, which reads as unbounded too.
+    // Stryker disable next-line ConditionalExpression,BlockStatement -- so its mutants are equivalent
     if (box == null) {
       return undefined;
     }
@@ -286,7 +295,7 @@ export function nativeMotion(self: WindowRect, ancestry: Ancestry): NativeMotion
       running ||= entries.some(([, value]) => isNativeNode(value) && isRunning(value));
       next = moved(rect, entries, hostBelow(ancestry, fibers, index));
     } catch {
-      next = undefined;
+      // Unbounded: `next` stays undefined.
     }
     if (next === undefined) {
       return { rect: WHOLE_SURFACE, above: ancestry.animated[ancestry.animated.length - 1] as number, running };
