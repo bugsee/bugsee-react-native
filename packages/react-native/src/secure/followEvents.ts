@@ -12,21 +12,25 @@
  */
 import { followDrivers } from './drivers';
 
-// Each require may throw; an empty catch leaves nothing followed, as the missing source does.
+type Module = Record<string, unknown>;
+
+// Each require may throw; an empty catch leaves nothing followed, as the missing source does. Metro bundles
+// only literal requires, so each is spelled out.
 // Stryker disable all
-function load(path: string, field: string): unknown {
+/* eslint-disable @typescript-eslint/no-require-imports -- React Native's internals, where they are */
+function load(get: () => unknown): unknown {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- React Native's internals, where they are
-    return (require(path) as Record<string, unknown>)[field];
+    return get();
   } catch {
     return undefined;
   }
 }
 
 followDrivers({
-  eventClass: load('react-native/Libraries/Animated/AnimatedEvent', 'AnimatedEvent'),
-  implementation: load('react-native/Libraries/Animated/AnimatedImplementation', 'default'),
-  exported: load('react-native/Libraries/Animated/Animated', 'default'),
-  valueClass: load('react-native/Libraries/Animated/nodes/AnimatedValue', 'default'),
+  eventClass: load(() => (require('react-native/Libraries/Animated/AnimatedEvent') as Module).AnimatedEvent),
+  implementation: load(() => (require('react-native/Libraries/Animated/AnimatedImplementation') as Module).default),
+  exported: load(() => (require('react-native/Libraries/Animated/Animated') as Module).default),
+  valueClass: load(() => (require('react-native/Libraries/Animated/nodes/AnimatedValue') as Module).default),
 });
+/* eslint-enable @typescript-eslint/no-require-imports */
 // Stryker restore all
