@@ -386,6 +386,38 @@ describe('watched nodes and parked views', () => {
     expect(moved).toHaveBeenCalledTimes(2);
   });
 
+  it('a node watched for its props alone is never measured, and wakes when its props change', () => {
+    const host = { memoizedProps: { visible: true } } as never as { memoizedProps: unknown };
+    where.set(host, { x: 0, y: 0, width: 10, height: 10 });
+    const changed = jest.fn();
+    loop.watchNode(host as never, changed, false);
+    frame();
+    where.set(host, { x: 0, y: 5, width: 10, height: 10 });
+    frame();
+    expect(measured).toEqual([]);
+    expect(changed).not.toHaveBeenCalled();
+
+    host.memoizedProps = { visible: false };
+    frame();
+
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it('a props-only node is measured from when another subscriber wants its geometry', () => {
+    const content = node();
+    where.set(content, { x: 0, y: 0, width: 10, height: 10 });
+    loop.watchNode(content, jest.fn(), false);
+    const moved = jest.fn();
+    loop.watchNode(content, moved);
+    loop.watchNode(content, jest.fn(), false);
+    expect(measured).toEqual([content]);
+
+    where.set(content, { x: 0, y: 5, width: 10, height: 10 });
+    frame();
+
+    expect(moved).toHaveBeenCalledTimes(1);
+  });
+
   it('measures a node as soon as it is watched: a move before the next frame wakes', () => {
     const content = node();
     where.set(content, { x: 0, y: 0, width: 10, height: 10 });

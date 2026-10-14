@@ -378,6 +378,22 @@ describe('C3: a Modal sliding in and out', () => {
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, []]);
   });
 
+  it('covers the band from the commit that hides a Modal still mounted (iOS), within a frame', () => {
+    const fiber = existing(inModal({ animationType: 'slide', visible: true }));
+    render(fiber);
+    wait(16 * 20);
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
+
+    // visible={false}: the host stays mounted until onDismiss, sliding out.
+    ancestorOfType(fiber, 'RCTModalHostView').memoizedProps = { animationType: 'slide', visible: false };
+    wait(17);
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(band(selfRect)), ...px(selfRect)]]);
+
+    // Covered once per close, until the transition hold runs out.
+    wait(SECURE_TRANSITION_HOLD_MS + 100);
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
+  });
+
   it('a Modal without animation holds only the view as it closes', () => {
     const fiber = existing(inModal({ animationType: 'none' }));
     const testRenderer = render(fiber);

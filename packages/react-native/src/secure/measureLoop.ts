@@ -129,7 +129,9 @@ function requestFrame(callback: () => void): () => void {
 interface WatchedNode {
   /** What moved callbacks to call; a callback per subscription. */
   readonly subscribers: Set<{ readonly moved: () => void }>;
-  /** Where the node was at the last frame (or when first watched). */
+  /** Whether any subscriber wants its geometry; one watching its props alone does not measure it. */
+  geometry: boolean;
+  /** Where the node was at the last frame (or when first watched); unmeasured, always the same. */
   last: string;
   /** Its two fibers' props objects then: a commit that changes either may change how it clips. */
   props: readonly unknown[];
@@ -168,7 +170,7 @@ function propsOf(fiber: FiberLike): unknown[] {
  */
 function watchNodes(): void {
   for (const [fiber, node] of [...watched]) {
-    const now = whereNow(fiber);
+    const now = node.geometry ? whereNow(fiber) : node.last;
     const props = propsOf(fiber);
     const changed = now !== node.last || props.some((value, index) => value !== node.props[index]);
     node.last = now;
@@ -207,16 +209,21 @@ function frame(): void {
 
 /**
  * Measures `fiber` every frame, and calls `moved` whenever it is somewhere
- * else than the frame before, until the returned function is called. Every
- * subscriber of one fiber shares one measurement a frame, and so does every
- * fiber of one host.
+ * else than the frame before, or its props changed, until the returned
+ * function is called. Every subscriber of one fiber shares one measurement a
+ * frame, and so does every fiber of one host. With `geometry` false the
+ * subscriber wants its props alone (a `<Modal>` host hidden by a commit), and
+ * the node is measured only if another subscriber wants that.
  */
-export function watchNode(fiber: FiberLike, moved: () => void): () => void {
+export function watchNode(fiber: FiberLike, moved: () => void, geometry = true): () => void {
   let node = watched.get(fiber);
   if (node === undefined) {
     // Measured at once: a move before the next frame is a move.
-    node = { subscribers: new Set(), last: whereNow(fiber), props: propsOf(fiber) };
+    node = { subscribers: new Set(), geometry, last: geometry ? whereNow(fiber) : '', props: propsOf(fiber) };
     watched.set(fiber, node);
+  } else if (geometry && !node.geometry) {
+    node.geometry = true;
+    node.last = whereNow(fiber);
   }
   const subscription = { moved };
   node.subscribers.add(subscription);

@@ -78,6 +78,10 @@ export class SecureTracker {
   private surface: number | null = null;
   private ancestry: Ancestry | null = null;
   private readonly hold = new CoverageHold();
+  /** What a transition can carry the view with, read on its first measurement. */
+  private carrier: Carrier | null = null;
+  /** Its `<Modal>` was last seen committed as not visible: closing, and already covered. */
+  private closing = false;
   /** A transition carrying the view in, until `until`. */
   private carried: { readonly carrier: Carrier; readonly until: number } | null = null;
   /** Where a transition can carry the view, published with the rest until `until`. */
@@ -100,6 +104,7 @@ export class SecureTracker {
   // Stryker disable next-line ArrayDeclaration -- the first watch replaces it whatever it holds
   private watched: FiberLike[] = [];
   private unwatch: Array<() => void> = [];
+  private unwatchModal: (() => void) | undefined;
   private removeTick: (() => void) | undefined;
   private removeFrame: (() => void) | undefined;
   private removeParked: (() => void) | undefined;
@@ -167,6 +172,8 @@ export class SecureTracker {
     this.hold.clear();
     this.cover = null;
     this.carried = null;
+    this.carrier = null;
+    this.closing = false;
     this.lastRect = null;
   }
 
@@ -179,6 +186,8 @@ export class SecureTracker {
     // Stryker disable next-line StringLiteral -- any mode but active, hidden or parked leaves every loop
     this.enter('tick');
     this.watch([]);
+    this.unwatchModal?.();
+    this.unwatchModal = undefined;
     this.steady = 0;
     this.lastVisible = undefined;
     this.lastSelf = undefined;
@@ -255,6 +264,12 @@ export class SecureTracker {
     if (this.carried !== null) {
       this.carry(self, above, now);
     }
+    if (this.carrier?.kind === 'modal') {
+      // Its host's props change the commit that hides it: woken within a frame.
+      const host = above.path[this.carrier.index] as FiberLike;
+      this.unwatchModal ??= watchNode(host, () => this.enter('active'), false);
+      this.watchClosing(self, above, now);
+    }
     // Where a native-driven animation can draw it, which the shadow tree never sees.
     const motion = nativeMotion(self, above);
     // Under any Animated component: a native animation can start, or its value jump, on any frame.
@@ -276,6 +291,7 @@ export class SecureTracker {
     // As in `depart`: a read that throws carries nothing, and the view is still published.
     try {
       const carrier = carrierOf(above);
+      this.carrier = carrier;
       if (carrier !== null && carrierEntering(above, carrier)) {
         this.carried = { carrier, until: now + SECURE_TRANSITION_HOLD_MS };
         // A Modal's content is laid out again once its dialog is up: within a frame.
@@ -284,6 +300,25 @@ export class SecureTracker {
     } catch (error) {
       this.failed(error);
     }
+  }
+
+  /**
+   * A `<Modal>` set `visible={false}` and still mounted (iOS keeps it until
+   * `onDismiss`) slides out with the view in it: from the commit that hides
+   * it, covers the band below the view for the transition hold, as an
+   * unmount does where the Modal is removed at once (Android).
+   */
+  private watchClosing(self: WindowRect, above: Ancestry, now: number): void {
+    const carrier = this.carrier as Carrier;
+    const host = (above.resolved ?? above.path)[carrier.index];
+    const hidden = (host?.memoizedProps as { visible?: unknown } | null | undefined)?.visible === false;
+    if (hidden && !this.closing) {
+      const cover = carriedCover(above, carrier, self);
+      if (cover !== null) {
+        this.cover = { rect: bounding(cover, this.cover?.rect), until: now + SECURE_TRANSITION_HOLD_MS };
+      }
+    }
+    this.closing = hidden;
   }
 
   /**
