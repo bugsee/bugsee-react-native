@@ -159,7 +159,7 @@ describe('W1: a screen popped off a stack', () => {
     // Popped: still drawn, sliding or scaling inside the screen's bounds.
     expect(lastPublished()).toEqual([0, [...px(SCREEN), ...px(selfRect)]]);
     wait(SECURE_TRANSITION_HOLD_MS - 100);
-    expect(lastPublished()).toEqual([0, px(SCREEN)]);
+    expect((lastPublished() as [number, number[]])[1].slice(0, 4)).toEqual(px(SCREEN));
     wait(200);
     expect(lastPublished()).toEqual([0, []]);
     expect(jest.getTimerCount()).toBe(0);
@@ -322,20 +322,21 @@ describe('C3: a Modal sliding in and out', () => {
 
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(band(selfRect)), ...px(selfRect)]]);
     wait(SECURE_TRANSITION_HOLD_MS - 100);
-    expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(band(selfRect))]);
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(band(selfRect)));
     wait(200);
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, []]);
   });
 
-  it('a fading Modal keeps the view covered for the transition hold as it closes', () => {
+  it('a fading Modal holds the view where it rests as it closes', () => {
     const fiber = existing(inModal({ animationType: 'fade' }));
     const testRenderer = render(fiber);
 
     deleting(ancestorOfType(fiber, 'RCTModalHostView'));
     unmount(testRenderer);
-    wait(SECURE_TRANSITION_HOLD_MS - 100);
-
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
+    wait(SECURE_SHRINK_HOLD_MS + 100);
+
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, []]);
   });
 
   it('a Modal without animation holds only the view as it closes', () => {

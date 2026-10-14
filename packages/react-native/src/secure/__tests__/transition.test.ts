@@ -131,42 +131,38 @@ describe('carriedCover', () => {
   it('a screen covers its own rectangle', () => {
     const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
 
-    expect(carriedCover(ancestry, { kind: 'screen', index: 1 }, SELF, true)).toEqual(SCREEN);
+    expect(carriedCover(ancestry, { kind: 'screen', index: 1 }, SELF)).toEqual(SCREEN);
   });
 
   it('a screen that cannot be measured, or throws, covers the whole surface', () => {
     const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
     ((ancestry.path[1] as FiberLike).stateNode as { rect: unknown }).rect = null;
-    expect(carriedCover(ancestry, { kind: 'screen', index: 1 }, SELF, true)).toEqual(WHOLE_SURFACE);
+    expect(carriedCover(ancestry, { kind: 'screen', index: 1 }, SELF)).toEqual(WHOLE_SURFACE);
 
     renderer.getPublicInstanceFromInternalInstanceHandle = () => {
       throw new Error('gone');
     };
     const fresh = ancestryOfFiber(onScreen('RNSScreenStack'));
-    expect(carriedCover(fresh, { kind: 'screen', index: 1 }, SELF, false)).toEqual(WHOLE_SURFACE);
+    expect(carriedCover(fresh, { kind: 'screen', index: 1 }, SELF)).toEqual(WHOLE_SURFACE);
   });
 
   it('a Modal view never measured covers nothing more', () => {
     const fiber = inModal({ animationType: 'slide' });
     const carrier = { kind: 'modal' as const, index: indexOf(fiber, 'RCTModalHostView') };
 
-    expect(carriedCover(ancestryOfFiber(fiber), carrier, null, true)).toBeNull();
+    expect(carriedCover(ancestryOfFiber(fiber), carrier, null)).toBeNull();
   });
 
   it.each([
-    ['slides in', { animationType: 'slide' }, false, { ...SELF, height: WHOLE_SURFACE.height - SELF.y }],
-    ['slides out', { animationType: 'slide' }, true, { ...SELF, height: WHOLE_SURFACE.height - SELF.y }],
-    ['fades out', { animationType: 'fade' }, true, SELF],
-    ['fades in', { animationType: 'fade' }, false, null],
-    ['has no animation', { animationType: 'none' }, true, null],
-    ['has no props', null, true, null],
-  ])('a Modal that %s', (_, props, leaving, expected) => {
+    ['slides', { animationType: 'slide' }, { ...SELF, height: WHOLE_SURFACE.height - SELF.y }],
+    ['fades', { animationType: 'fade' }, null],
+    ['has no animation', { animationType: 'none' }, null],
+    ['has no props', null, null],
+  ])('a Modal that %s', (_, props, expected) => {
     const fiber = inModal(props);
     const ancestry = ancestryOfFiber(fiber);
     (ancestry.path[indexOf(fiber, 'RCTModalHostView')] as FiberLike).memoizedProps = props;
 
-    expect(carriedCover(ancestry, { kind: 'modal', index: indexOf(fiber, 'RCTModalHostView') }, SELF, leaving)).toEqual(
-      expected,
-    );
+    expect(carriedCover(ancestry, { kind: 'modal', index: indexOf(fiber, 'RCTModalHostView') }, SELF)).toEqual(expected);
   });
 });

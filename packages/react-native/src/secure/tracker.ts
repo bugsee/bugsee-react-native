@@ -125,7 +125,7 @@ export class SecureTracker {
     try {
       const carrier = above === null ? null : carrierOf(above);
       if (carrier !== null && carrierLeaving(above as Ancestry, carrier)) {
-        cover = carriedCover(above as Ancestry, carrier, last, true);
+        cover = carriedCover(above as Ancestry, carrier, last);
       }
     } catch (error) {
       this.failed(error);
@@ -259,7 +259,7 @@ export class SecureTracker {
       if (carrier === null || !carrierEntering(above, carrier)) {
         return;
       }
-      cover = carriedCover(above, carrier, self, false);
+      cover = carriedCover(above, carrier, self);
     } catch (error) {
       this.failed(error);
       return;

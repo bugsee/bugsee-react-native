@@ -26,17 +26,22 @@ import type { FiberLike, WindowRect } from '../viewtree/fiber';
  *    every stack animation (slide, scale, fade, either direction, RTL) keeps
  *    a screen inside them, so this holds whatever animation the app chose;
  *  - a `<Modal animationType="slide">` opening or closing: the band from the
- *    view's top down to the bottom of the surface, the path it slides along;
- *  - a `<Modal animationType="fade">` closing: the view's own rectangle, which
- *    stays drawn while the dialog fades.
+ *    view's top down to the bottom of the surface, the path it slides along.
+ *    A fading Modal does not move the view, and the hold every unmount gets
+ *    keeps it covered where it rests while the dialog fades.
  *
  * A transition is told apart from a view coming and going inside a screen
  * that stays by the fiber tree alone: in the commit that mounts a view, an
  * ancestor created by that same commit has no alternate yet; in the commit
  * that unmounts it, the root of what is deleted is listed in its parent's
  * `deletions`.
+ *
+ * 600 ms: react-native-screens' default Android animations run 450 ms (200 ms
+ * before Android 13), started a frame or more after the commit; the cover
+ * masks a whole screen, so each millisecond past the animation is a black
+ * screen in the video.
  */
-export const SECURE_TRANSITION_HOLD_MS = 1000;
+export const SECURE_TRANSITION_HOLD_MS = 600;
 
 /**
  * A rectangle past every edge of any surface, for a cover whose bounds cannot
@@ -122,7 +127,6 @@ export function carriedCover(
   ancestry: Ancestry,
   carrier: Carrier,
   self: WindowRect | null,
-  leaving: boolean,
 ): WindowRect | null {
   const fiber = ancestry.path[carrier.index] as FiberLike;
   if (carrier.kind === 'screen') {
@@ -142,5 +146,5 @@ export function carriedCover(
   if (animationType === 'slide') {
     return { x: self.x, y: self.y, width: self.width, height: WHOLE_SURFACE.height - self.y };
   }
-  return animationType === 'fade' && leaving ? self : null;
+  return null;
 }
