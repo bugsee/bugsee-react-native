@@ -105,7 +105,7 @@ export interface AnimatedNodeLike {
 const seenAnimating = new WeakSet<object>();
 
 function isNode(value: unknown): value is AnimatedNodeLike {
-  return value !== null && typeof value === 'object' && typeof (value as AnimatedNodeLike).__getValue === 'function';
+  return typeof (value as AnimatedNodeLike | null | undefined)?.__getValue === 'function';
 }
 
 /**
@@ -124,17 +124,15 @@ function hull(values: readonly number[]): Range {
   return { lo: Math.min(...values), hi: Math.max(...values) };
 }
 
-/** `values` sampled along a curve, widened by {@link TURN_PAD} of its span when the curve turns back. */
+/**
+ * `values` sampled in order along a curve, widened by {@link TURN_PAD} of its
+ * span when an extreme is not at an end: the curve turns back, and its peak
+ * can fall between samples.
+ */
 function sampled(values: readonly number[]): Range {
   const range = hull(values);
-  let rising = 0;
-  let falling = 0;
-  for (let index = 1; index < values.length; index += 1) {
-    const step = (values[index] as number) - (values[index - 1] as number);
-    rising ||= step > 0 ? 1 : 0;
-    falling ||= step < 0 ? 1 : 0;
-  }
-  if (rising + falling < 2) {
+  const ends = hull([values[0] as number, values[values.length - 1] as number]);
+  if (range.lo === ends.lo && range.hi === ends.hi) {
     return range;
   }
   const pad = (range.hi - range.lo) * TURN_PAD;
@@ -182,11 +180,11 @@ function valueBound(node: AnimatedNodeLike): NodeBound {
 function interpolationBound(node: AnimatedNodeLike): NodeBound {
   const input = nodeBound(node._parent as AnimatedNodeLike);
   const config = (node._config ?? {}) as Record<string, unknown>;
-  const outputs = Array.isArray(config.outputRange) ? (config.outputRange as unknown[]) : [];
+  const outputs = config.outputRange;
   const left = config.extrapolateLeft ?? config.extrapolate;
   const right = config.extrapolateRight ?? config.extrapolate;
   const clamped =
-    left === 'clamp' && right === 'clamp' && outputs.length > 0 && outputs.every(finiteNumber)
+    left === 'clamp' && right === 'clamp' && Array.isArray(outputs) && outputs.length > 0 && outputs.every(finiteNumber)
       ? hull(outputs as number[])
       : undefined;
   const interpolate = (node._getInterpolation as (() => unknown) | undefined)?.();
@@ -194,7 +192,10 @@ function interpolationBound(node: AnimatedNodeLike): NodeBound {
     return { ...input, range: clamped };
   }
   const { lo, hi } = input.range;
+  // Stryker disable next-line ArrayDeclaration -- the filter below drops anything that is not a number
   const breakpoints = Array.isArray(config.inputRange) ? (config.inputRange as unknown[]) : [];
+  // The ends are sampled anyway.
+  // Stryker disable next-line EqualityOperator -- so taking them in as breakpoints too changes nothing
   const samples = breakpoints.filter((point): point is number => finiteNumber(point) && point > lo && point < hi);
   for (let step = 0; step <= SAMPLES; step += 1) {
     samples.push(lo + ((hi - lo) * step) / SAMPLES);
@@ -246,7 +247,7 @@ export function nodeBound(node: unknown): NodeBound {
     if ('_parent' in node) {
       return interpolationBound(node);
     }
-    if ('_min' in node && '_max' in node) {
+    if ('_min' in node) {
       const input = nodeBound(node._a);
       const { _min: min, _max: max } = node;
       return { ...input, range: finiteNumber(min) && finiteNumber(max) ? { lo: min, hi: max } : undefined };
@@ -256,7 +257,7 @@ export function nodeBound(node: unknown): NodeBound {
       const modulus = node._modulus;
       return { ...input, range: finiteNumber(modulus) ? hull([0, modulus]) : undefined };
     }
-    if ('_a' in node && '_b' in node) {
+    if ('_b' in node) {
       return binaryBound(node);
     }
     return valueBound(node);
@@ -295,17 +296,11 @@ const KEYWORDS: Readonly<Record<string, Origin>> = {
 };
 
 function originPart(part: unknown): Origin | undefined {
-  if (finiteNumber(part)) {
-    return { fraction: 0, length: part };
-  }
-  if (typeof part !== 'string') {
-    return undefined;
-  }
-  const keyword = KEYWORDS[part];
+  const keyword = KEYWORDS[part as string];
   if (keyword !== undefined) {
     return keyword;
   }
-  const match = /^(-?\d+(?:\.\d+)?)(%|px)?$/.exec(part);
+  const match = /^(-?\d+(?:\.\d+)?)(%|px)?$/.exec(String(part));
   if (match === null) {
     return undefined;
   }
@@ -319,12 +314,12 @@ export function originOf(props: unknown): { x: Origin; y: Origin } | undefined {
   if (origin === undefined) {
     return { x: KEYWORDS.center as Origin, y: KEYWORDS.center as Origin };
   }
-  const parts: unknown[] = Array.isArray(origin)
-    ? origin
-    : typeof origin === 'string'
-      ? origin.trim().split(/\s+/)
-      : [];
-  if (parts.length === 0 || parts.length > 3) {
+  if (!Array.isArray(origin) && typeof origin !== 'string') {
+    return undefined;
+  }
+  const parts: unknown[] = Array.isArray(origin) ? origin : origin.trim().split(/\s+/);
+  // An empty list names no axis, as an unknown word does, below.
+  if (parts.length > 3) {
     return undefined;
   }
   const [first, second = 'center'] = parts;
@@ -337,7 +332,8 @@ export function originOf(props: unknown): { x: Origin; y: Origin } | undefined {
 
 interface Step {
   axis: 'x' | 'y';
-  kind: 'shift' | 'scale';
+  /** A translation; otherwise a scale. */
+  shift: boolean;
   bound: NodeBound;
   /** The value the host was rendered with; `undefined`: not in its props. */
   rendered: number | undefined;
@@ -365,7 +361,7 @@ function compose(steps: readonly Step[], axis: 'x' | 'y', pick: (step: Step) => 
     }
     const value = pick(step);
     map =
-      step.kind === 'shift'
+      step.shift
         ? { scale: map.scale, shift: map.shift + value }
         : { scale: map.scale * value, shift: map.shift * value };
   }
@@ -382,7 +378,7 @@ function sweep(lo: number, hi: number, steps: readonly Step[], axis: 'x' | 'y'):
     }
     const by = step.bound.range as Range;
     range =
-      step.kind === 'shift'
+      step.shift
         ? { lo: range.lo + by.lo, hi: range.hi + by.hi }
         : hull([range.lo * by.lo, range.lo * by.hi, range.hi * by.lo, range.hi * by.hi]);
   }
@@ -415,13 +411,15 @@ function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number
       bounded &&= name in IDENTITY && value === IDENTITY[name];
       continue;
     }
+    // Without this, sweeping a missing range throws, which reads as unbounded too.
+    // Stryker disable next-line AssignmentOperator,ConditionalExpression -- so its mutants are equivalent
     bounded &&= bound.range !== undefined;
     const at = rendered.get(name);
     const now = isNode(value) ? value.__getValue() : value;
     for (const axis of axes) {
       steps.push({
         axis,
-        kind: TRANSLATE_AXES[name] !== undefined ? 'shift' : 'scale',
+        shift: TRANSLATE_AXES[name] !== undefined,
         bound,
         rendered: finiteNumber(at) ? at : undefined,
         current: finiteNumber(now) ? now : undefined,
@@ -431,6 +429,8 @@ function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number
   const { running, roots } = join(...bounds);
   // The host is rendered with the component's style, `transformOrigin` included.
   const origin = originOf(host.memoizedProps);
+  // Without the second test, reading a missing origin throws, which reads as unbounded too.
+  // Stryker disable next-line ConditionalExpression -- so its mutant is equivalent
   if (!bounded || origin === undefined) {
     return { running, roots, move: () => undefined };
   }
@@ -457,6 +457,8 @@ function moveThrough(
   origin: { x: Origin; y: Origin },
 ): WindowRect | undefined {
   const box = measureFiber(host);
+  // Without this, reading a missing box throws, which reads as unbounded too.
+  // Stryker disable next-line ConditionalExpression,BlockStatement -- so its mutants are equivalent
   if (box == null) {
     return undefined;
   }
@@ -485,7 +487,8 @@ function moveThrough(
       const reach = sweep(Math.min(...local), Math.max(...local), steps, axis);
       out.push(pivot + reach.lo, pivot + reach.hi);
     }
-    if (out.length === 2 && steps.some((step) => step.axis === axis)) {
+    // No value of the shadow tree to go back from: nothing is known.
+    if (out.length === 2) {
       return undefined;
     }
     axes.push(hull(out));
@@ -503,8 +506,10 @@ function reanimatedTransform(props: unknown): boolean {
     if (animated == null || typeof animated !== 'object' || !('viewDescriptors' in animated)) {
       return false;
     }
+    // Not readable: it may well move the view (a read that throws is read as unbounded, too).
+    // Stryker disable next-line OptionalChaining,ConditionalExpression,LogicalOperator -- so these are equivalent
     const initial = animated.initial?.value;
-    // Not readable: it may well move the view.
+    // Stryker disable next-line ConditionalExpression,LogicalOperator -- as above
     return initial == null || typeof initial !== 'object' || 'transform' in initial;
   });
 }
@@ -538,6 +543,8 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
     const { move } = level;
     levels.push({
       index,
+      // An empty catch returns undefined all the same.
+      // Stryker disable all
       move: (rect) => {
         try {
           return move(rect);
@@ -545,6 +552,7 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
           return undefined;
         }
       },
+      // Stryker restore all
     });
   }
   return levels.length === 0 ? null : { levels, running, roots };

@@ -462,6 +462,111 @@ describe('P2-5: views that come later into a transition still running', () => {
   });
 });
 
+const SLIDING = { activityState: 2, stackAnimation: 'slide_from_right' };
+
+describe('round 2: what only a mounted tracker shows', () => {
+  it('a view mounted on a screen that was there before is not followed every frame', () => {
+    render(existing(onStackScreen()));
+    const before = measureInWindow.mock.calls.length;
+
+    act(() => {
+      jest.advanceTimersByTime(16 * 5);
+    });
+
+    // Five frames, no tick yet: not measured.
+    expect(measureInWindow.mock.calls.length).toBe(before);
+  });
+
+  it('a view hidden as its screen is pushed, shown after the screen rendered again, is carried in', () => {
+    const fiber = selfIn(
+      root([
+        fabricHost('RNSScreenStack', null, {}, [
+          fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 0 }, [view([self()])]),
+        ]),
+      ]),
+    );
+    existingFrom(ancestorOfType(fiber, 'RNSScreenStack'));
+    render(fiber);
+
+    // Rendered again (so no longer without an alternate), and shown.
+    const screen = ancestorOfType(fiber, SCREEN_HOST_TYPE);
+    existing(fiber);
+    screen.memoizedProps = { activityState: 2 };
+    wait(17);
+
+    expect(firstPublished()).toEqual(px(SCREEN));
+  });
+
+  it('the screen below is told the committed stackAnimation, not one in flight', () => {
+    const tree = root([
+      fabricHost('RNSScreenStack', null, {}, [
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()])]),
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, SLIDING, [view([self()])]),
+      ]),
+    ]);
+    const selves = selvesIn(tree);
+    const below = selves.find((fiber) => ancestorOfType(fiber, SCREEN_HOST_TYPE).sibling !== null) as FiberLike;
+    const top = selves.find((fiber) => fiber !== below) as FiberLike;
+    existing(below);
+    existing(top);
+    const pushed = ancestorOfType(top, SCREEN_HOST_TYPE);
+    render(below);
+    const topRenderer = render(top);
+    // A render in flight that would change the animation, never committed.
+    pairWith(pushed.alternate as FiberLike, { activityState: 2 });
+
+    deleting(pushed);
+    unmount(topRenderer);
+
+    const published = (lastPublished() as [number, number[]])[1];
+    expect(published.slice(0, 4)).toEqual(px(rect(0, 100, 400, 50)));
+  });
+
+  it('a parked view below a push drops the cover it was given once it runs out', () => {
+    const tree = root([
+      fabricHost('RNSScreenStack', null, {}, [
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [scrollView(rect(0, 0, 400, 120), [self()])]),
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, SLIDING, [view([self()])]),
+      ]),
+    ]);
+    const selves = selvesIn(tree);
+    const below = selves.find((fiber) => ancestorOfType(fiber, SCREEN_HOST_TYPE).sibling !== null) as FiberLike;
+    const top = selves.find((fiber) => fiber !== below) as FiberLike;
+    existing(below);
+    render(below);
+    wait(16 * 12);
+    // Parked, clipped to 100..120; then the other screen is pushed over it.
+    const pushed = ancestorOfType(top, SCREEN_HOST_TYPE);
+    for (let current: FiberLike | null = pushed; current !== null; current = current.child) {
+      current.alternate = null;
+    }
+    render(top);
+    wait(SECURE_TRANSITION_HOLD_MS + 200);
+
+    const published = (lastPublished() as [number, number[]])[1];
+    expect(published).toEqual([...px(rect(10, 100, 200, 20)), ...px(selfRect)]);
+  });
+
+  it('a native value replaced by another in a commit is watched instead', () => {
+    const a = animatedValue(0);
+    const b = animatedValue(0);
+    const fiber = underAnimated([{ translateX: a }, { translateY: b }], [{ translateX: 0 }, { translateY: 0 }]);
+    render(fiber);
+    wait(16 * 12);
+
+    const c = animatedValue(0);
+    const wrapper = ancestorOfType(fiber, AnimatedView);
+    wrapper.memoizedProps = { style: { transform: [{ translateX: a }, { translateY: c }] } };
+    // To 242 ms: the tick at 200 measures it with c.
+    wait(50);
+    c._animation = timing(0, 100);
+    // To 259 ms: no tick; only the watch on c can wake it.
+    wait(17);
+
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 150)));
+  });
+});
+
 describe('C3: a Modal sliding in and out', () => {
   it('a Modal mounted with the whole tree (open as the app starts) is not carried', () => {
     const fiber = inModal({ animationType: 'slide' });

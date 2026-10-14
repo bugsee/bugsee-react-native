@@ -10,4 +10,20 @@ it('a modal presentation with the default animation slides up on iOS; a push doe
   expect(stackMotionOf({ stackPresentation: 'formSheet' })).toBe('upwards');
   expect(stackMotionOf({ stackAnimation: 'default', stackPresentation: 'modal' })).toBe('upwards');
   expect(stackMotionOf({ stackPresentation: 'push' })).toBe('any');
+  // An animation of the app's own is not the default slide.
+  expect(stackMotionOf({ stackAnimation: 'custom', stackPresentation: 'modal' })).toBe('any');
+});
+
+const PRESENTATIONS = [
+  'modal',
+  'fullScreenModal',
+  'formSheet',
+  'pageSheet',
+  'transparentModal',
+  'containedModal',
+  'containedTransparentModal',
+];
+
+it.each(PRESENTATIONS)('%s slides up on iOS', (stackPresentation) => {
+  expect(stackMotionOf({ stackPresentation })).toBe('upwards');
 });

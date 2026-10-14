@@ -569,6 +569,82 @@ describe('watched nodes and parked views', () => {
     expect(jest.getTimerCount()).toBe(1);
   });
 
+  it('reads a watched value every frame, unmeasured, and wakes on an animation starting, ending or a jump', () => {
+    const value: { _animation: unknown; _value: number } = { _animation: null, _value: 0 };
+    const first = jest.fn();
+    const second = jest.fn();
+    loop.watchValue(value, first);
+    loop.watchValue(value, second);
+    frame();
+    expect(first).not.toHaveBeenCalled();
+
+    value._animation = {};
+    frame();
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+    frame();
+    expect(first).toHaveBeenCalledTimes(1);
+
+    value._animation = null;
+    value._value = 40;
+    frame();
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(measured).toEqual([]);
+  });
+
+  it('keeps frames running while a value is watched, and stops them, at once, when none is', () => {
+    const value = { _animation: null, _value: 0 };
+    const stopFirst = loop.watchValue(value, jest.fn());
+    const stopSecond = loop.watchValue(value, jest.fn());
+    frame();
+    frame();
+    expect(jest.getTimerCount()).toBe(1);
+
+    stopFirst();
+    expect(jest.getTimerCount()).toBe(1);
+    stopSecond();
+    stopSecond();
+
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('a stale unwatch leaves a value watched again alone', () => {
+    const value: { _animation: unknown; _value: number } = { _animation: null, _value: 0 };
+    const stop = loop.watchValue(value, jest.fn());
+    stop();
+    const changed = jest.fn();
+    loop.watchValue(value, changed);
+    stop();
+
+    value._value = 1;
+    frame();
+
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it('a value watched again keeps its first baseline: a change in between wakes', () => {
+    const value: { _animation: unknown; _value: number } = { _animation: null, _value: 0 };
+    loop.watchValue(value, jest.fn());
+    value._value = 5;
+    const changed = jest.fn();
+    loop.watchValue(value, changed);
+
+    frame();
+
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it('frames stop with a value unwatched while a node is still watched only once that goes too', () => {
+    const stopNode = loop.watchNode(node(), jest.fn());
+    const stopValue = loop.watchValue({ _animation: null, _value: 0 }, jest.fn());
+    stopNode();
+    expect(jest.getTimerCount()).toBe(1);
+
+    stopValue();
+
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it('re-checks every parked view every tick, however many', () => {
     loop.addMeasurer(jest.fn());
     const checks = Array.from({ length: 200 }, () => jest.fn());

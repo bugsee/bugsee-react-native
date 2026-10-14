@@ -245,6 +245,16 @@ describe('originOf', () => {
     ['an array, with a z', [5, '50%', 3], { x: at(0, 5), y: at(0.5) }],
     ['a calc()', 'calc(50% - 2px) top', undefined],
     ['words it does not know', 'middle top', undefined],
+    ['spaces around', '  left   top ', { x: at(0), y: at(0) }],
+    ['a vertical keyword first', 'top 25%', { x: at(0.25), y: at(0) }],
+    ['a horizontal keyword second', 'center left', { x: at(0), y: at(0.5) }],
+    ['a right keyword second', '10px right', { x: at(1), y: at(0, 10) }],
+    ['a length before its unit is all', 'x10px', undefined],
+    ['a length with more after it', '10pxy', undefined],
+    ['a fraction', '12.25%', { x: at(0.1225), y: at(0.5) }],
+    ['a fraction with no digits after the point', '1.x', undefined],
+    ['a plain number in a string', '10 20', { x: at(0, 10), y: at(0, 20) }],
+    ['an unknown second word', 'left blah', undefined],
     ['four values', '1 2 3 4', undefined],
     ['an empty array', [], undefined],
     ['an object', { x: 1 }, undefined],
@@ -500,6 +510,380 @@ describe('throughMotion', () => {
       undefined,
       (spec) => scrollView(rect(0, 0, 400, 50), [spec]),
     );
+
+    expect(throughMotion(SELF, ancestry, nativeMotion(ancestry)!).visible).toBeNull();
+  });
+});
+
+describe('mutation-tight bounds', () => {
+  it('UNBOUNDED is exactly that: no range, not running, no roots', () => {
+    expect(nodeBound('7')).toEqual({ range: undefined, running: false, roots: [] });
+    expect(nodeBound({})).toEqual({ range: undefined, running: false, roots: [] });
+  });
+
+  it('a value missing one field it reads, the app listening, is still unbounded, with no roots', () => {
+    const noValue = { __isNative: true, _offset: 0, _animation: null, __getValue: () => 0, hasListeners: () => true };
+    const noOffset = { __isNative: true, _value: 0, _animation: null, __getValue: () => 0, hasListeners: () => true };
+
+    expect(nodeBound(noValue)).toEqual({ range: undefined, running: false, roots: [] });
+    expect(nodeBound(noOffset)).toEqual({ range: undefined, running: false, roots: [] });
+  });
+
+  it('a non-finite value keeps itself as a root to watch', () => {
+    const node = value(Number.NaN);
+
+    expect(nodeBound(node)).toEqual({ range: undefined, running: false, roots: [node] });
+  });
+
+  it('a value with no hasListeners at all, never seen animating, is unbounded', () => {
+    const node = value(1, null, 0, false) as Partial<Value>;
+    delete node.hasListeners;
+
+    expect(nodeBound(node).range).toBeUndefined();
+  });
+
+  it('a spring keeps itself as a root; one with no easing too', () => {
+    const spring = value(0, { _toValue: 1, _easing: linear });
+    const nan = value(0, timing(0, 1, () => Number.NaN));
+
+    expect(nodeBound(spring).roots).toEqual([spring]);
+    expect(nodeBound(nan).roots).toEqual([nan]);
+  });
+
+  it('a value now outside its running animation\'s path is covered where it is too', () => {
+    expect(nodeBound(value(50, timing(0, 10))).range).toEqual({ lo: 0, hi: 50 });
+  });
+
+  it('an easing that turns back is widened by a tenth of its span on each side', () => {
+    // 0 -> 100 -> 50 over the animation: hull 0..100, which does not end at an end.
+    const turn = (t: number): number => (t <= 0.5 ? 2 * t : 1.5 - t);
+
+    expect(nodeBound(value(0, timing(0, 100, turn))).range).toEqual({ lo: -10, hi: 110 });
+  });
+
+  it('the widening is a tenth of the span, away from zero too', () => {
+    const turn = (t: number): number => (t <= 0.5 ? 2 * t : 1.5 - t);
+
+    expect(nodeBound(value(50, timing(50, 150, turn))).range).toEqual({ lo: 40, hi: 160 });
+  });
+
+  it('breakpoints outside what the input can take are not sampled', () => {
+    const map = (x: number): number => (x < 0 || x > 1 ? 1000 : x);
+    const node = interpolated(value(0, timing(0, 1)), { inputRange: [-5, 0, 0.5, 1, 5] }, map);
+
+    expect(nodeBound(node).range).toEqual({ lo: 0, hi: 1 });
+  });
+
+  it('clamped with no outputs at all is not bounded by them', () => {
+    const node = interpolated(value(0, null, 0, false), { outputRange: [], extrapolate: 'clamp' }, linear);
+
+    expect(nodeBound(node).range).toBeUndefined();
+  });
+
+  it('a division by a range that stays below zero is bounded', () => {
+    const node = binary(value(4), value(-2, timing(-2, -1)), { _warnedAboutDivideByZero: false });
+
+    expect(nodeBound(node).range).toEqual({ lo: -4, hi: -2 });
+  });
+
+  it('a division by zero keeps both operands as roots', () => {
+    const a = value(4);
+    const b = value(0, timing(-1, 1));
+
+    expect(nodeBound(binary(a, b, { _warnedAboutDivideByZero: false }))).toEqual({
+      range: undefined,
+      running: true,
+      roots: [a, b],
+    });
+  });
+
+  it('a spike at a breakpoint between samples is found, and widened', () => {
+    const spike = (x: number): number => (x === 0.33 ? 100 : 0);
+    const node = interpolated(value(0, timing(0, 1)), { inputRange: [0, 0.32, 0.33, 0.34, 1] }, spike);
+
+    expect(nodeBound(node).range).toEqual({ lo: -10, hi: 110 });
+  });
+
+  it('a monotonic interpolation with breakpoints is not widened (samples in order)', () => {
+    const node = interpolated(value(0, timing(0, 1)), { inputRange: [0, 0.5, 1] }, (x: number) => 100 * x);
+
+    expect(nodeBound(node).range).toEqual({ lo: 0, hi: 100 });
+  });
+
+  it('clamped on the right only is not clamped', () => {
+    const node = interpolated(value(0, null, 0, false), { outputRange: [0, 1], extrapolateRight: 'clamp' }, linear);
+
+    expect(nodeBound(node).range).toBeUndefined();
+  });
+
+  it('clamped with an output that is not a number is not bounded by its outputs', () => {
+    const node = interpolated(value(0, null, 0, false), { outputRange: [0, '1'], extrapolate: 'clamp' }, linear);
+
+    expect(nodeBound(node).range).toBeUndefined();
+  });
+
+  it('a bounded input with no interpolation function is unbounded, without throwing', () => {
+    expect(nodeBound(interpolated(value(0, timing(0, 1)), {}, undefined)).range).toBeUndefined();
+  });
+
+  it('an interpolation answering NaN for some inputs only is unbounded', () => {
+    const partly = (x: number): number => (x > 0.5 ? Number.NaN : x);
+
+    expect(nodeBound(interpolated(value(0, timing(0, 1)), {}, partly)).range).toBeUndefined();
+  });
+
+  it('add, subtract and multiply: every one of them is in the hull', () => {
+    // a 2..4, b 0.5: a + b 2.5..4.5, a - b 1.5..3.5, a * b 1..2.
+    expect(nodeBound(binary(value(2, timing(2, 4)), 0.5)).range).toEqual({ lo: 1, hi: 4.5 });
+  });
+
+  it('a division by a range touching zero at either end is unbounded; an unbounded divisor too', () => {
+    const division = { _warnedAboutDivideByZero: false };
+
+    expect(nodeBound(binary(value(4), value(0, timing(0, 1)), division)).range).toBeUndefined();
+    expect(nodeBound(binary(value(4), value(-1, timing(-1, 0)), division)).range).toBeUndefined();
+    expect(nodeBound(binary(value(4), value(4, null, 0, false), division)).range).toBeUndefined();
+  });
+
+  it('a binary node with an unbounded operand keeps both operands\' roots', () => {
+    const a = value(1, null, 0, false);
+    const b = value(2);
+
+    expect(nodeBound(binary(a, b))).toEqual({ range: undefined, running: false, roots: [a, b] });
+  });
+});
+
+const TX0 = [{ translateX: 0 }];
+const TY0 = [{ translateY: 0 }];
+
+describe('transform geometry', () => {
+  /** The view (rect SELF) under an Animated host at `host`, with `extra` style on both. */
+  function scaled(
+    transform: unknown[],
+    rendered: unknown[],
+    host: WindowRect,
+    extra: Record<string, unknown> = {},
+  ): WindowRect | undefined {
+    return moved(under({ transform, ...extra }, { transform: rendered, ...extra }, host));
+  }
+
+  it('scaleX and scaleY each scale their own axis, about a host that is not square', () => {
+    // Host 0,0 400x800: centre 200,400.
+    expect(scaled([{ scaleX: value(2) }], [{ scaleX: 1 }], rect(0, 0, 400, 800))).toEqual(rect(-180, 100, 400, 50));
+    expect(scaled([{ scaleY: value(2) }], [{ scaleY: 1 }], rect(0, 0, 400, 800))).toEqual(rect(10, -200, 200, 350));
+  });
+
+  it('a scale inside a translation scales the translation too', () => {
+    // Rendered: scale 2 after translateY 0; now translateY 10 inside: drawn 2 x 10 lower.
+    expect(
+      scaled([{ scale: 2 }, { translateY: value(10) }], [{ scale: 2 }, { translateY: 0 }], rect(0, 0, 400, 800)),
+    ).toEqual(rect(10, 100, 200, 70));
+  });
+
+  it('an origin set in lengths, with a translation, pivots where the host is', () => {
+    // Origin 10px,20px of a host laid out at 100,100 (drawn 50 to the right by translateX): pivot 110,120.
+    const at = scaled(
+      [{ translateX: 50 }, { scale: value(2) }],
+      [{ translateX: 50 }, { scale: 1 }],
+      rect(150, 100, 200, 200),
+      { transformOrigin: '10px 20px' },
+    );
+
+    expect(at).toEqual(rect(-140, 80, 400, 100));
+  });
+
+  it('a rendered value missing for one step goes back from the current values alone', () => {
+    expect(
+      scaled([{ translateX: value(30) }, { translateY: value(5) }], [{ translateX: 10 }], rect(0, 0, 400, 800)),
+    ).toEqual(rect(10, 100, 200, 50));
+  });
+
+  it.each(['rotate', 'rotateX', 'rotateY', 'rotateZ', 'skewX', 'skewY'])('%s of 0deg does nothing', (name) => {
+    expect(
+      moved(under({ transform: [{ translateX: value(5) }, { [name]: '0deg' }] }, { transform: [{ translateX: 0 }] })),
+    ).toEqual(rect(10, 100, 205, 50));
+  });
+
+  it('an Animated component whose host is right below it, at the bottom of the path', () => {
+    const fiber = selfIn(
+      root([
+        {
+          tag: FiberTag.FunctionComponent,
+          type: AnimatedView,
+          memoizedProps: { style: { transform: [{ translateX: value(5) }] } },
+          children: [fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: TX0 } }, [self()])],
+        },
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
+
+    expect(moved(ancestry)).toEqual(rect(10, 100, 205, 50));
+  });
+
+  it('an Animated component with a composite between it and its host finds the host', () => {
+    expect(
+      moved(
+        under({ transform: [{ scale: value(2) }] }, { transform: [{ scale: 1 }] }, rect(0, 0, 400, 400), (spec) =>
+          composite([spec]),
+        ),
+      ),
+    ).toEqual(rect(-180, 0, 400, 150));
+  });
+
+  it('an origin from the host the Animated component renders, not one above it', () => {
+    const fiber = selfIn(
+      root([
+        fabricHost('RCTView', rect(0, 0, 400, 800), {}, [
+          {
+            tag: FiberTag.FunctionComponent,
+            type: AnimatedView,
+            memoizedProps: { style: { transform: [{ scale: value(2) }] } },
+            children: [fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [{ scale: 1 }] } }, [self()])],
+          },
+        ]),
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
+
+    expect(moved(ancestry)).toEqual(rect(-180, 0, 400, 150));
+  });
+
+  it('a translation inside a scale goes back with the scaled translation: the view where it is', () => {
+    // Rendered and now the same: nothing moves.
+    expect(
+      scaled([{ scale: 2 }, { translateY: value(10) }], [{ scale: 2 }, { translateY: 10 }], rect(0, 0, 400, 800)),
+    ).toEqual(SELF);
+  });
+
+  it('an Animated component with no props moves nothing', () => {
+    const ancestry = under(undefined);
+    (ancestry.path[ancestry.animated[0] as number] as FiberLike).memoizedProps = null;
+    ancestry.resolved = undefined;
+
+    expect(nativeMotion(ancestry)).toBeNull();
+  });
+
+  it('an object in a transform that is not a node is not native', () => {
+    expect(nativeMotion(under({ transform: [{ translateX: { value: 1 } }] }))).toBeNull();
+  });
+
+  it('a level that cannot be read reports nothing running and nothing to watch', () => {
+    const throwing = value(1);
+    Object.defineProperty(throwing, '_animation', {
+      get(): never {
+        throw new Error('torn');
+      },
+    });
+    const motion = nativeMotion(under({ transform: [{ translateX: throwing }] }, { transform: [{ translateX: 0 }] }));
+
+    expect(motion).toEqual(expect.objectContaining({ running: false, roots: [] }));
+  });
+
+  it('a Reanimated style list with a number (a registered style) in it moves nothing', () => {
+    const fiber = selfIn(
+      root([
+        {
+          tag: FiberTag.FunctionComponent,
+          type: Object.assign(() => null, { displayName: 'AnimatedComponent(View)' }),
+          memoizedProps: { style: [7, { viewDescriptors: {}, initial: { value: {} } }] },
+          children: [view([self()])],
+        },
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
+
+    expect(nativeMotion(ancestry)).toBeNull();
+  });
+
+  it('a Reanimated component with no props moves nothing', () => {
+    const fiber = selfIn(
+      root([
+        {
+          tag: FiberTag.FunctionComponent,
+          type: Object.assign(() => null, { displayName: 'AnimatedComponent(View)' }),
+          children: [view([self()])],
+        },
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    (ancestry.path[ancestry.animated[0] as number] as FiberLike).memoizedProps = null;
+    isHidden(ancestry);
+
+    expect(nativeMotion(ancestry)).toBeNull();
+  });
+});
+
+describe('throughMotion, clippers', () => {
+  it('a clipper above is applied after the move: a view moved into it is seen there', () => {
+    const fiber = selfIn(
+      root([
+        scrollView(rect(0, 0, 400, 150), [
+          {
+            tag: FiberTag.FunctionComponent,
+            type: AnimatedView,
+            memoizedProps: { style: { transform: [{ translateY: value(0, timing(0, -100)) }] } },
+            children: [fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: TY0 } }, [self()])],
+          },
+        ]),
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
+    const low = rect(10, 200, 200, 50);
+
+    expect(throughMotion(low, ancestry, nativeMotion(ancestry)!).visible).toEqual(rect(10, 100, 200, 50));
+  });
+
+  it('a clipper right above the view, inside the transform, is applied before the move', () => {
+    const fiber = selfIn(
+      root([
+        {
+          tag: FiberTag.FunctionComponent,
+          type: AnimatedView,
+          memoizedProps: { style: { transform: [{ translateY: value(0, timing(0, 300)) }] } },
+          children: [
+            fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [{ translateY: 0 }] } }, [
+              scrollView(rect(0, 0, 400, 130), [self()]),
+            ]),
+          ],
+        },
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
+
+    expect(throughMotion(SELF, ancestry, nativeMotion(ancestry)!).visible).toEqual(rect(10, 100, 200, 330));
+  });
+
+  it('cut away inside a nested transform, nothing is seen whatever the outer one does', () => {
+    const fiber = selfIn(
+      root([
+        {
+          tag: FiberTag.FunctionComponent,
+          type: AnimatedView,
+          memoizedProps: { style: { transform: [{ translateY: value(0, timing(0, 300)) }] } },
+          children: [
+            fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [{ translateY: 0 }] } }, [
+              {
+                tag: FiberTag.FunctionComponent,
+                type: AnimatedView,
+                memoizedProps: { style: { transform: [{ translateX: value(0, timing(0, 5)) }] } },
+                children: [
+                  fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [{ translateX: 0 }] } }, [
+                    scrollView(rect(0, 0, 400, 50), [self()]),
+                  ]),
+                ],
+              },
+            ]),
+          ],
+        },
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
 
     expect(throughMotion(SELF, ancestry, nativeMotion(ancestry)!).visible).toBeNull();
   });

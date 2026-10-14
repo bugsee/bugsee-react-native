@@ -271,6 +271,11 @@ describe('carriedCover', () => {
 describe('stack motion and covers', () => {
   it.each<[unknown, unknown, StackMotion]>([
     ['slide_from_right', undefined, 'sideways'],
+    ['slide_from_left', undefined, 'sideways'],
+    ['ios_from_right', undefined, 'sideways'],
+    ['ios_from_left', undefined, 'sideways'],
+    ['slide_from_bottom', undefined, 'upwards'],
+    ['fade', undefined, 'still'],
     ['simple_push', 'push', 'sideways'],
     ['fade_from_bottom', undefined, 'upwards'],
     ['none', undefined, 'still'],
@@ -326,5 +331,19 @@ describe('stack motion and covers', () => {
     expect(keyOf({ stateNode: { canonical } } as never)).toBe(canonical);
     const bare = { stateNode: null } as never;
     expect(keyOf(bare)).toBe(bare);
+    const nullCanonical = { stateNode: { canonical: null } } as never;
+    expect(keyOf(nullCanonical)).toBe(nullCanonical);
+  });
+
+  it('a screen moving sideways, its view never measured, covers the whole screen', () => {
+    const fiber = selfIn(
+      root([
+        fabricHost('RNSScreenStack', null, {}, [
+          fabricHost(SCREEN_HOST_TYPE, SCREEN, { stackAnimation: 'slide_from_right' }, [view([self()])]),
+        ]),
+      ]),
+    );
+
+    expect(carriedCover(ancestryOfFiber(fiber), { kind: 'screen', index: 1 }, undefined)).toEqual(SCREEN);
   });
 });

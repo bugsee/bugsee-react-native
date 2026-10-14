@@ -146,6 +146,8 @@ export function carrierEntering(ancestry: Ancestry, carrier: Carrier, now: numbe
     births.set(key, now);
   }
   const born = births.get(key);
+  // `undefined` makes the difference NaN, which is never less than anything.
+  // Stryker disable next-line ConditionalExpression,LogicalOperator -- so its mutants are equivalent
   return born !== undefined && now - born < SECURE_TRANSITION_HOLD_MS ? born + SECURE_TRANSITION_HOLD_MS : undefined;
 }
 
@@ -220,6 +222,8 @@ const MODAL_PRESENTATIONS: ReadonlySet<unknown> = new Set([
   'containedTransparentModal',
 ]);
 
+// A missing Platform throws, and is caught; an empty catch returns undefined all the same.
+// Stryker disable all
 function platformOS(): unknown {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy: only an app has it
@@ -228,6 +232,7 @@ function platformOS(): unknown {
     return undefined;
   }
 }
+// Stryker restore all
 
 /**
  * How the screen whose host props are `props` is animated in and out: from

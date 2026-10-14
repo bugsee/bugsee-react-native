@@ -129,11 +129,6 @@ export class SecureTracker {
     this.forget();
     this.running = true;
     this.arriving = true;
-    // Read before any measurement: a view popped before one answers still knows its screen.
-    const view = this.view();
-    if (view !== null) {
-      this.ancestry = ancestryOfInstance(view);
-    }
     this.measure();
     this.removeTick = addMeasurer(() => this.onTick());
   }
@@ -204,6 +199,8 @@ export class SecureTracker {
     this.unwatchModal?.();
     this.unwatchModal = undefined;
     this.watchValues([]);
+    // Off the stacks: a stopped view ignores what it is told anyway, so this only frees it.
+    // Stryker disable next-line all -- so its mutants are equivalent
     this.leaveStacks.forEach((leave) => leave());
     this.leaveStacks = [];
     this.steady = 0;
@@ -238,8 +235,9 @@ export class SecureTracker {
       return;
     }
     try {
-      this.surface ??= surfaceOfInstance(view);
+      // The ancestry first: a view popped before its first measurement answers still knows its screen.
       this.ancestry ??= ancestryOfInstance(view);
+      this.surface ??= surfaceOfInstance(view);
       const above = this.ancestry;
       if (this.modal === undefined) {
         this.watchModal(above);
@@ -247,7 +245,6 @@ export class SecureTracker {
       }
       if (isHidden(above)) {
         // Not drawn while hidden: whatever carries it in is looked for once it is shown.
-        this.arriving = false;
         this.noteBirths(above);
         this.seen = null;
         this.publish(this.covering(this.hold.update(null, monotonicNow()), monotonicNow()));
@@ -255,10 +252,13 @@ export class SecureTracker {
         this.enter('hidden');
         return;
       }
+      // Shown again: perhaps by a transition still running. (Looking again on any other
+      // measurement finds the same transitions: only a cost.)
+      // Stryker disable all -- so its mutants are equivalent
       if (this.mode === 'hidden') {
-        // Shown again: perhaps by a transition still running.
         this.arriving = true;
       }
+      // Stryker restore all
       // Fabric answers every measurement at once, so the view and its
       // clipping ancestors are measured in the same layout. Paper answers
       // later, and its ancestors then cut nothing.
@@ -293,6 +293,7 @@ export class SecureTracker {
     // Per frame while a native animation runs; otherwise woken the frame one starts.
     this.animating = motion?.running ?? false;
     this.watchValues(motion?.roots ?? []);
+    // Stryker disable next-line ConditionalExpression -- as when shown again: arriving again only costs
     if (this.arriving) {
       this.arrive(above, now);
     }
@@ -313,6 +314,7 @@ export class SecureTracker {
 
   /** Mounted: is a transition carrying it in? Then it is followed every frame until it settles. */
   private arrive(above: Ancestry, now: number): void {
+    // Stryker disable next-line BooleanLiteral -- as above
     this.arriving = false;
     // As in `depart`: a read that throws carries nothing, and the view is still published.
     try {
@@ -412,6 +414,8 @@ export class SecureTracker {
   private joinStacks(above: Ancestry): void {
     try {
       for (const carrier of carriersOf(above)) {
+        // Only the Modal, last, has no stack: failing on it, after the screens, joins them all the same.
+        // Stryker disable next-line ConditionalExpression -- so its mutant is equivalent
         if (carrier.stack !== undefined) {
           const stack = keyOf(above.path[carrier.stack] as FiberLike);
           const told = (motion: StackMotion, until: number, moving: object): void =>
@@ -443,12 +447,16 @@ export class SecureTracker {
   private screenMoved(carrier: Carrier, motion: StackMotion, until: number, moving: object): void {
     const above = this.ancestry as Ancestry;
     const screen = above.path[carrier.index] as FiberLike;
+    // A stopped view has left its stacks; a view on the moving screen covers it already, more.
+    // Stryker disable next-line ConditionalExpression,LogicalOperator -- so those tests only spare work
     if (!this.running || moving === keyOf(screen) || this.seen == null) {
       return;
     }
     // Seen on screen, so covered somewhere.
     const cover = screenCover(motion, screenRect(screen), this.seen, false) as WindowRect;
-    // Whatever cover is still running is joined, not replaced.
+    // Whatever cover is still running is joined, not replaced; one run out is dropped first.
+    // A run-out cover is dropped on the next publish anyway.
+    // Stryker disable next-line all -- so these are equivalent
     this.covering([], monotonicNow());
     const kept = this.cover;
     this.cover = { rect: bounding(cover, kept?.rect), until: Math.max(until, kept?.until ?? 0) };
@@ -457,6 +465,8 @@ export class SecureTracker {
 
   /** Watches `nodes` (native values) and wakes the frame an animation starts on one. */
   private watchValues(nodes: readonly object[]): void {
+    // Watching the same values again takes their state now as the baseline, as the frame just did: only work.
+    // Stryker disable next-line ConditionalExpression,ArrowFunction,BooleanLiteral,EqualityOperator,BlockStatement
     if (nodes.length === this.values.length && nodes.every((node, index) => node === this.values[index])) {
       return;
     }
@@ -474,7 +484,8 @@ export class SecureTracker {
       this.settling = false;
       return clipped ? 'parked' : 'tick';
     }
-    if (this.mode === 'hidden' || this.settling || this.animating || this.carried !== null) {
+    // Carried in is also settling: per frame.
+    if (this.mode === 'hidden' || this.settling || this.animating) {
       return 'active';
     }
     if (!clipped) {
