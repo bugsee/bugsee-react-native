@@ -79,6 +79,10 @@ describe('carrierEntering', () => {
     const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
     const carrier = { kind: 'screen' as const, index: 0 };
 
+    // Mounted whole, as an app starts: nothing above it was there.
+    expect(carrierEntering(ancestry, carrier)).toBe(false);
+    const above = ancestry.path[1] as FiberLike;
+    above.alternate = { ...above, alternate: above };
     expect(carrierEntering(ancestry, carrier)).toBe(true);
     (ancestry.path[0] as FiberLike).alternate = null;
     expect(carrierEntering(ancestry, carrier)).toBe(true);
@@ -163,6 +167,7 @@ describe('carriedCover', () => {
     const ancestry = ancestryOfFiber(fiber);
     (ancestry.path[indexOf(fiber, 'RCTModalHostView')] as FiberLike).memoizedProps = props;
 
-    expect(carriedCover(ancestry, { kind: 'modal', index: indexOf(fiber, 'RCTModalHostView') }, SELF)).toEqual(expected);
+    const carrier = { kind: 'modal' as const, index: indexOf(fiber, 'RCTModalHostView') };
+    expect(carriedCover(ancestry, carrier, SELF)).toEqual(expected);
   });
 });

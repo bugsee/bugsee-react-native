@@ -115,6 +115,13 @@ function existing(fiber: FiberLike): FiberLike {
   return fiber;
 }
 
+/** Gives `ancestor` and every fiber above it an alternate: they were there before the commit running now. */
+function existingFrom(ancestor: FiberLike): void {
+  for (let current: FiberLike | null = ancestor; current !== null; current = current.return) {
+    current.alternate ??= { ...current, alternate: current };
+  }
+}
+
 /** Marks `fiber` deleted from its parent by the commit running now, as React lists it. */
 function deleting(fiber: FiberLike): void {
   (fiber.return as FiberLike & { deletions?: FiberLike[] }).deletions = [fiber];
@@ -132,7 +139,7 @@ const MODAL_TAG = 42;
 
 /** The view in a `<Modal>` with `props`, its content `content`. */
 function inModal(props: Record<string, unknown>, content = rect(0, 0, 400, 800)): FiberLike {
-  return selfIn(
+  const fiber = selfIn(
     root([
       view([
         {
@@ -145,6 +152,9 @@ function inModal(props: Record<string, unknown>, content = rect(0, 0, 400, 800))
       ]),
     ]),
   );
+  // The screen that opens it was there before.
+  existingFrom(ancestorOfType(ancestorOfType(fiber, 'RCTModalHostView'), 'RCTView'));
+  return fiber;
 }
 
 describe('W1: a screen popped off a stack', () => {
@@ -256,12 +266,19 @@ describe('W1: a screen popped off a stack', () => {
 
 describe('a screen pushed onto a stack', () => {
   it('covers the whole screen as it is carried in, then only the view', () => {
-    // Nothing above the view has an alternate: the push created the screen.
+    // The stack was there; the push created the screen.
     const fiber = onStackScreen();
+    existingFrom(ancestorOfType(fiber, 'RNSScreenStack'));
     render(fiber);
 
     expect(lastPublished()).toEqual([0, [...px(SCREEN), ...px(selfRect)]]);
     wait(SECURE_TRANSITION_HOLD_MS + 100);
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
+
+  it('the first screen of a stack mounted with it (an app starting) covers only the view', () => {
+    render(onStackScreen());
+
     expect(lastPublished()).toEqual([0, px(selfRect)]);
   });
 
@@ -274,6 +291,28 @@ describe('a screen pushed onto a stack', () => {
 });
 
 describe('C3: a Modal sliding in and out', () => {
+  it('a Modal mounted with the whole tree (open as the app starts) is not carried', () => {
+    const fiber = inModal({ animationType: 'slide' });
+    for (let current = fiber.return; current !== null; current = current.return) {
+      current.alternate = null;
+    }
+    render(fiber);
+
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
+  });
+
+  it('a view not laid out yet covers no band; the band follows it once it is', () => {
+    selfRect = rect(0, 0, 0, 0);
+    render(inModal({ animationType: 'slide' }));
+    // Nothing to publish: the lane stays as the last test left it, empty.
+    expect(native.setSecureRectanglesOnSurface).not.toHaveBeenCalled();
+
+    selfRect = rect(10, 100, 200, 50);
+    wait(17);
+
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(band(selfRect)));
+  });
+
   // The band below the view, as far as any surface reaches.
   const band = (at: WindowRect): WindowRect => ({ ...at, height: WHOLE_SURFACE.height - at.y });
 
@@ -459,6 +498,25 @@ describe('B6: a native-driven Animated transform above the view', () => {
     wait(17);
 
     expect((lastPublished() as [number, number[]])[1].slice(0, 4)).toEqual(px(selfRect));
+  });
+
+  it('a clipped, still view under an Animated component follows a native animation that starts later', () => {
+    // JS-driven so far (in the shadow tree), and the view half cut by a ScrollView above.
+    const value = animatedValue(0, false);
+    render(
+      underAnimated([{ translateY: value }], [{ translateY: 0 }], undefined, (spec) =>
+        scrollView(rect(0, 0, 400, 125), [spec]),
+      ),
+    );
+    wait(16 * 20);
+    expect(lastPublished()).toEqual([0, px(rect(10, 100, 200, 25))]);
+
+    // Now driven natively: the view slides up, into the viewport, with no layout and no scroll.
+    value.__isNative = true;
+    value._value = -60;
+    wait(17);
+
+    expect((lastPublished() as [number, number[]])[1].slice(0, 4)).toEqual(px(rect(10, 40, 200, 50)));
   });
 
   it('includes what an easing overshoots', () => {

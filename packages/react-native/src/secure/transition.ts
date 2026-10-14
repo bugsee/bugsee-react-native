@@ -79,11 +79,15 @@ export function carrierOf(ancestry: Ancestry): Carrier | null {
  * Whether the commit running now created the carrier, as a push or a Modal
  * opening does: a fiber gets its alternate the first time it is rendered
  * again, and every ancestor of a view that mounts is either created or
- * rendered again by that commit. Only meaningful while that commit's layout
- * effects run.
+ * rendered again by that commit. Something above the carrier must have been
+ * there before (the stack, the screen that opened the Modal): a tree mounted
+ * whole, as an app starts, is drawn where it is laid out, with no transition.
+ * Only meaningful while that commit's layout effects run.
  */
 export function carrierEntering(ancestry: Ancestry, carrier: Carrier): boolean {
-  return ancestry.path[carrier.index]?.alternate == null;
+  const { path } = ancestry;
+  const created = path[carrier.index]?.alternate == null;
+  return created && path.slice(carrier.index + 1).some((fiber) => fiber.alternate != null);
 }
 
 function deletes(parent: FiberLike | null | undefined, child: FiberLike): boolean {

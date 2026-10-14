@@ -6,6 +6,7 @@ import { nativeMotion } from './nativeAnimation';
 import { clearOwner, setOwnerRectangles } from './registry';
 import { surfaceOfInstance } from './surface';
 import { SECURE_TRANSITION_HOLD_MS, carriedCover, carrierEntering, carrierLeaving, carrierOf } from './transition';
+import type { Carrier } from './transition';
 import { errorName } from '../errorName';
 import type { FiberLike, WindowRect } from '../viewtree/fiber';
 
@@ -18,10 +19,10 @@ type MeasureInWindow = (callback: (x: number, y: number, width: number, height: 
  * How a mounted, enabled view is kept measured:
  *  - `tick`: wholly visible; re-measured on the 100 ms tick, as on main.
  *  - `active`: moving, or just shown, clipped or carried in by a transition,
- *    or under a native-driven transform; re-measured every frame until its
- *    rectangle has stayed put for {@link STEADY_FRAMES} frames (under a
- *    native-driven transform, always: an animation can start, or the value
- *    jump, any frame, and only the nodes tell).
+ *    or under an `Animated` component; re-measured every frame until its
+ *    rectangle has stayed put for {@link STEADY_FRAMES} frames (under an
+ *    `Animated` component, always: a native animation can start, or its value
+ *    jump, on any frame, and only its nodes tell).
  *  - `parked`: clipped and still. Its clipping nodes (a ScrollView and its
  *    content, a clipping view) are watched every frame, shared with every
  *    view under them, and a move wakes it; each frame also asks whether its
@@ -41,6 +42,18 @@ type Mode = 'tick' | 'active' | 'parked' | 'hidden';
 export function monotonicNow(): number {
   const { performance: perf } = globalThis as { performance?: { now?: () => number } };
   return typeof perf?.now === 'function' ? perf.now() : Date.now();
+}
+
+/** The bounding box of `a` and `b` (when there is one). */
+function bounding(a: WindowRect, b: WindowRect | undefined): WindowRect {
+  if (b === undefined) {
+    return a;
+  }
+  const left = Math.min(a.x, b.x);
+  const top = Math.min(a.y, b.y);
+  const right = Math.max(a.x + a.width, b.x + b.width);
+  const bottom = Math.max(a.y + a.height, b.y + b.height);
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 function where(rect: WindowRect | null): string {
@@ -65,6 +78,8 @@ export class SecureTracker {
   private surface: number | null = null;
   private ancestry: Ancestry | null = null;
   private readonly hold = new CoverageHold();
+  /** A transition carrying the view in, until `until`. */
+  private carried: { readonly carrier: Carrier; readonly until: number } | null = null;
   /** Where a transition can carry the view, published with the rest until `until`. */
   private cover: { readonly rect: WindowRect; readonly until: number } | null = null;
   /** Mounted by the commit now running: its first measurement looks for a transition carrying it in. */
@@ -73,7 +88,7 @@ export class SecureTracker {
   /** Carried in by a transition: re-measured every frame until it settles, whatever mode it was in. */
   // Stryker disable next-line BooleanLiteral -- `start` clears it before anything reads it
   private settling = false;
-  /** Under a native-driven transform: re-measured every frame. Set by every measurement. */
+  /** Under an `Animated` component: re-measured every frame. Set by every measurement. */
   // Stryker disable next-line BooleanLiteral -- every measurement sets it before `next` reads it
   private animating = false;
   /** The view's last measured rectangle, unclipped. */
@@ -151,6 +166,7 @@ export class SecureTracker {
     this.ancestry = null;
     this.hold.clear();
     this.cover = null;
+    this.carried = null;
     this.lastRect = null;
   }
 
@@ -234,11 +250,15 @@ export class SecureTracker {
     this.lastRect = self;
     const now = monotonicNow();
     if (this.arriving) {
-      this.arrive(self, above, now);
+      this.arrive(above, now);
+    }
+    if (this.carried !== null) {
+      this.carry(self, above, now);
     }
     // Where a native-driven animation can draw it, which the shadow tree never sees.
     const motion = nativeMotion(self, above);
-    this.animating = motion !== null;
+    // Under any Animated component: a native animation can start, or its value jump, on any frame.
+    this.animating = above.animated.length > 0;
     const drawn = motion?.rect ?? self;
     const visible = clipToAncestors(drawn, above, motion?.above);
     this.publish(this.covering(this.hold.update(visible, now), now));
@@ -250,26 +270,47 @@ export class SecureTracker {
     this.enter(this.next(clipped));
   }
 
-  /** Mounted with a transition carrying it in: covers where that can draw it, and follows it every frame. */
-  private arrive(self: WindowRect, above: Ancestry, now: number): void {
+  /** Mounted: is a transition carrying it in? Then it is followed every frame until it settles. */
+  private arrive(above: Ancestry, now: number): void {
     this.arriving = false;
-    let cover: WindowRect | null;
     // As in `depart`: a read that throws carries nothing, and the view is still published.
     try {
       const carrier = carrierOf(above);
-      if (carrier === null || !carrierEntering(above, carrier)) {
-        return;
+      if (carrier !== null && carrierEntering(above, carrier)) {
+        this.carried = { carrier, until: now + SECURE_TRANSITION_HOLD_MS };
+        // A Modal's content is laid out again once its dialog is up: within a frame.
+        this.settling = true;
       }
+    } catch (error) {
+      this.failed(error);
+    }
+  }
+
+  /**
+   * While a transition carries it in: covers where that can draw it from
+   * where it rests now, as well as from where it rested before (a Modal's
+   * content laid out again moves the band), until the transition hold ends.
+   */
+  private carry(self: WindowRect, above: Ancestry, now: number): void {
+    const { carrier, until } = this.carried as { carrier: Carrier; until: number };
+    if (until <= now) {
+      this.carried = null;
+      return;
+    }
+    // Not laid out yet (0x0): drawn nowhere, so nothing to cover from it.
+    if (self.width <= 0 || self.height <= 0) {
+      return;
+    }
+    let cover: WindowRect | null;
+    try {
       cover = carriedCover(above, carrier, self);
     } catch (error) {
       this.failed(error);
       return;
     }
     if (cover !== null) {
-      this.cover = { rect: cover, until: now + SECURE_TRANSITION_HOLD_MS };
+      this.cover = { rect: bounding(cover, this.cover?.rect), until };
     }
-    // A Modal's content is laid out again once its dialog is up: within a frame.
-    this.settling = true;
   }
 
   private next(clipped: boolean): Mode {

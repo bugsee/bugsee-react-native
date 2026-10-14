@@ -589,12 +589,37 @@ describe('SecureTracker', () => {
       expect(warn).not.toHaveBeenCalled();
     });
 
+    it('a tree that throws while a transition carries it still publishes the view, and warns once', () => {
+      let torn = false;
+      const stack = { type: 'RNSScreenStack' };
+      const path = [{ type: 'RNSScreen', alternate: null }, { ...stack, alternate: stack }];
+      const ancestry = { self: null, hosts: [{ index: 0, above: 1, screen: true }], screens: [], animated: [] };
+      Object.defineProperty(ancestry, 'path', {
+        get(): unknown[] {
+          if (torn) {
+            throw new Error('torn');
+          }
+          return path;
+        },
+      });
+      mockState.ancestry = { ...ancestry, readable: true };
+      Object.defineProperty(mockState.ancestry, 'path', Object.getOwnPropertyDescriptor(ancestry, 'path')!);
+      tracker.start();
+      torn = true;
+      self = rect(0, 50, 100, 50);
+
+      runFrames();
+
+      expect((last() as WindowRect[]).slice(1, 2)).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
     it('a parked view drops a transition cover on the tick once it runs out', () => {
       const stack = { type: 'RNSScreenStack' };
       // A screen with no alternate: pushed by the commit that mounts the view.
       mockState.ancestry = {
         self: null,
-        path: [{ type: 'RNSScreen', alternate: null }, stack],
+        path: [{ type: 'RNSScreen', alternate: null }, { ...stack, alternate: stack }],
         hosts: [{ index: 0, above: 1, screen: true }],
         screens: [],
         animated: [],

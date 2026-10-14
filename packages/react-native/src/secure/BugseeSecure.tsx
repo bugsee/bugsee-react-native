@@ -65,6 +65,8 @@ export interface BugseeSecureProps extends ViewProps {
  * transform can draw it, from the animated value, its running timing
  * animation and its interpolation; one it cannot bound (a rotation, a
  * spring) covers the whole surface, cut by the clipping ancestors above it.
+ * A view under any `Animated` component is re-measured every frame, since a
+ * native animation can start on any frame without React rendering.
  *
  * Fails closed: a measurement that throws or is rejected leaves the last
  * rectangle published, and an ancestor that cannot be read or measured cuts
