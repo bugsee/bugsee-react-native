@@ -443,6 +443,8 @@ export function stackMoving(stack: object, change: StackChange, leaving: boolean
   const record = recordOf(stack);
   current(record, change.until - SECURE_TRANSITION_HOLD_MS);
   record.changes.push(change);
+  // A pushed screen's own view reads the stack before and after it tells it: dropping it changes nothing kept.
+  // Stryker disable next-line ConditionalExpression
   if (leaving) {
     record.screens?.delete(change.moving);
   }

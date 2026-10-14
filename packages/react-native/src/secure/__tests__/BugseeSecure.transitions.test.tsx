@@ -2393,20 +2393,21 @@ describe('R3-4: a ScrollView\'s reach, value by value', () => {
   let tag = 5000;
   const offsetY = (scrollY: object): unknown[] => [{ nativeEvent: { contentOffset: { y: scrollY } } }];
 
-  /** The view under a header whose transform reads `scrollY`, beside ScrollViews built from `specs`. */
+  /**
+   * The view under a header whose transform reads `scrollY`, beside ScrollViews built from `specs`, at the
+   * root: the last of them is the first host a search comes to.
+   */
   function tree(scrollY: object, specs: FiberSpec[]): FiberLike {
     return existing(
       selfIn(
         root([
-          view([
-            {
-              tag: FiberTag.FunctionComponent,
-              type: AnimatedView,
-              memoizedProps: { style: { transform: [{ translateY: scrollY }] } },
-              children: [fabricHost('RCTView', rect(0, 0, 400, 100), {}, [view([self()])])],
-            },
-            ...specs,
-          ]),
+          {
+            tag: FiberTag.FunctionComponent,
+            type: AnimatedView,
+            memoizedProps: { style: { transform: [{ translateY: scrollY }] } },
+            children: [fabricHost('RCTView', rect(0, 0, 400, 100), {}, [view([self()])])],
+          },
+          ...specs,
         ]),
       ),
     );

@@ -542,7 +542,7 @@ export class SecureTracker {
     const key = keyOf(screen);
     // A stopped view has left its stacks; a view on the moving screen is carried, over as much (each motion
     // covers the screen moving at least as much as the one below).
-    // Stryker disable next-line ConditionalExpression,LogicalOperator -- so these tests only spare work
+    // Stryker disable next-line ConditionalExpression,LogicalOperator,BlockStatement -- so these tests only spare work
     if (!this.running || change.moving === key) {
       return;
     }

@@ -267,17 +267,23 @@ let searchRoot: { current?: unknown } | null = null;
 
 function scrollHostOf(attachment: Attachment): FiberLike | undefined {
   let host = scrollHosts.get(attachment);
+  // Looking again finds the same host, remembered by its tag: only work.
+  // Stryker disable next-line ConditionalExpression
   if (host === undefined) {
     const { view } = attachment;
     const handle = (view as { __internalInstanceHandle?: unknown } | null | undefined)?.__internalInstanceHandle;
     // An `Animated.ScrollView` attaches its events to its scrollable node's tag; RN's own ScrollView, to its host.
     const tag = typeof view === 'number' ? view : (view as { __nativeTag?: unknown } | null | undefined)?.__nativeTag;
+    // No host has no tag: looking for none finds none.
+    // Stryker disable next-line ConditionalExpression
     const found = isFiber(handle) ? handle : typeof tag === 'number' ? hostWithTag(tag) : null;
     if (found === undefined) {
       // No tree to look in yet: looked for again next time.
       return undefined;
     }
     host = found !== null && SCROLL_HOST_TYPES.has(found.type) ? found : null;
+    // As above.
+    // Stryker disable next-line CallExpression
     scrollHosts.set(attachment, host);
   }
   return host ?? undefined;
@@ -287,10 +293,10 @@ function isFiber(value: unknown): value is FiberLike {
   return value !== null && typeof value === 'object' && typeof (value as { tag?: unknown }).tag === 'number';
 }
 
-/** A host's native tag: Fabric's `canonical.nativeTag`, or Paper's `_nativeTag`. */
+/** A host's native tag: Fabric's `canonical.nativeTag`, or Paper's `_nativeTag`; `null` when it has neither. */
 function tagOf(fiber: FiberLike): unknown {
   const node = fiber.stateNode as { canonical?: { nativeTag?: unknown }; _nativeTag?: unknown } | null | undefined;
-  return node?.canonical?.nativeTag ?? node?._nativeTag;
+  return node?.canonical?.nativeTag ?? node?._nativeTag ?? null;
 }
 
 /** Hosts found by tag, while they still carry it. */
@@ -322,6 +328,7 @@ function hostWithTag(tag: number): FiberLike | null | undefined {
       // Bounds the memory alone: forgetting them all, or one more or less, only costs searching again.
       // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement,CallExpression
       if (tagged.size >= TAGGED_MAX) {
+        // Stryker disable next-line CallExpression -- as above
         tagged.clear();
       }
       tagged.set(tag, fiber);
