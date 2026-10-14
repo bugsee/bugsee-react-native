@@ -285,18 +285,22 @@ What changes is the payload gaining a `debug_ids` member alongside name, message
 
 | | Android 7.x | iOS 7.x |
 |---|---|---|
-| handled | `logException(Throwable, Map)` | `logException:reason:options:completion:` |
+| handled | `logException(Throwable, String domain, int skipFrames)` | `logException:reason:domain:skipFrames:completion:` |
 | unhandled | `logUnhandledException(Throwable, Map)` | `logUnhandledException:reason:completion:` |
 
 `logUnhandledException` is new on Android and is a better fit than `onUncaughtException(Thread, Throwable)`, which exists to be called from a real `UncaughtExceptionHandler`.
 
-**Both exception-logging methods are two ObjC overloads each on iOS, and the RN bridge calls the `NSString`-pair one.** Verified against `Bugsee.h:367,374,380-381` (`packages/react-native/Bugsee.xcframework/ios-arm64/Bugsee.framework/Headers/`):
+**The exception-logging methods come as `NSString`-pair and `NSException` overloads on iOS, and the RN bridge calls the `NSString`-pair ones.** Verified against `Bugsee.h` of 7.0.0-beta7 (bugsee-cocoa#233; 7.0.0-beta6 and earlier took a `BugseeExceptionLoggingOptions` object instead of `domain:skipFrames:`):
 
 ```objc
-+ (void)logException:(nonnull NSString *)name reason:(nonnull NSString *)reason options:(BugseeExceptionLoggingOptions *_Nullable)loggingOptions completion:(nullable BugseeEmptyBlock)completionBlock
-    NS_SWIFT_NAME(logException(name:reason:options:completion:));
-+ (void)logException:(nonnull NSException *)exception options:(BugseeExceptionLoggingOptions *_Nullable)loggingOptions completion:(nullable BugseeEmptyBlock)completionBlock
-    NS_SWIFT_NAME(logException(exception:options:completion:));
++ (void)logException:(nonnull NSException *)exception completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(exception:completion:));
++ (void)logException:(nonnull NSException *)exception domain:(nullable NSString *)domain skipFrames:(NSInteger)skipFrames completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(exception:domain:skipFrames:completion:));
++ (void)logException:(nonnull NSString *)name reason:(nonnull NSString *)reason completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(name:reason:completion:));
++ (void)logException:(nonnull NSString *)name reason:(nonnull NSString *)reason domain:(nullable NSString *)domain skipFrames:(NSInteger)skipFrames completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(name:reason:domain:skipFrames:completion:));
 
 + (void)logUnhandledException:(nonnull NSException *)exception completion:(nullable BugseeEmptyBlock)completionBlock
     NS_SWIFT_NAME(logUnhandledException(exception:completion:));
@@ -306,12 +310,12 @@ What changes is the payload gaining a `debug_ids` member alongside name, message
 
 The table's selectors are both the `NSString`-pair overload, which is the one the RN bridge has a name and a reason to hand it (a JS `Error`'s `name` and `message`), not a real `NSException`:
 
-- **handled** — `logException:reason:options:completion:`. Its **first** argument *is* the exception name (Swift label `name:`), the second is the reason; there is no `name:` selector segment because the first argument belongs to `logException:` itself. The `NSException`-overload's selector, `logException:options:completion:`, is the one this wrapper does not call.
+- **handled** — `logException:reason:domain:skipFrames:completion:`. Its **first** argument *is* the exception name (Swift label `name:`), the second is the reason; there is no `name:` selector segment because the first argument belongs to `logException:` itself. The `NSException` overloads (`logException:completion:`, `logException:domain:skipFrames:completion:`) are the ones this wrapper does not call.
 - **unhandled** — `logUnhandledException:reason:completion:`. Same shape: the first argument *is* the exception name (Swift label `name:` again), with no `name:` selector segment for the same reason. An `NSException`-taking overload also exists (`logUnhandledException:completion:`, Swift `logUnhandledException(exception:completion:)`), which this wrapper does not call either, since it never has a real `NSException` to hand it — only a JS error's name and message strings.
 
 (An earlier draft of this document mis-stated the unhandled selector as `logUnhandledException:name:reason:completion:` — that selector does not exist, because `name:` is a Swift argument label, not an ObjC selector segment.)
 
-The `ExceptionOptions` contract interface declares only `Domain` and `SkipFrames`, but the `logException` javadoc documents `"domain"`, `"labels"` and `"includeVideo"`. The parameter is `Map<String, Object>`, so the extra keys are accepted; the wrapper passes all three.
+JS `ExceptionOptions` is `{domain?}`. Both bridges pass the domain and `skipFrames` 0: Android to `logException(Throwable, String, int)` (bugsee-android#256 deprecated `logException(Throwable, Map)`, whose `labels` and `includeVideo` were never applied), iOS to `logException:reason:domain:skipFrames:completion:` (bugsee-cocoa#233). Neither takes labels: a report is labelled in `setReportHandler`. `skipFrames` is always 0: it leaves top native frames out of the report's signature, and an RN report is keyed on the JS signature in the payload. Neither SDK can leave the video out of one report, so there is no `includeVideo`.
 
 ### 9.2 Source maps
 
@@ -349,7 +353,7 @@ Carried over: `launch` / `relaunch` / `stop`, `log`, `trace`, `event`, `showRepo
 
 New: `setUserIdentifier` / `getUserIdentifier` / `clearUserIdentifier`, `startBlackout` / `endBlackout` / `isBlackout`, `addBreadcrumb` + `setBreadcrumbFilter`, `notify`, `addNetworkEvent`, `logUnhandledException`, `getAllAttributes`, `createReport` + `setReportHandler`, `getStatus` + `onStatusChange`, `startTransaction` / `startSpan` / `getActiveSpan`.
 
-Removed: `setEmail` / `getEmail` / `clearEmail`, `pause` / `resume`, `setKeyboardVisibility` (no replacement on either platform), `upload(…, includeVideo)`, `getDeviceId`.
+Removed: `setEmail` / `getEmail` / `clearEmail`, `pause` / `resume`, `setKeyboardVisibility` (no replacement on either platform), `upload(…, includeVideo)`, `logException`'s `labels` and `includeVideo` options (label a report in `setReportHandler`), `getDeviceId`.
 
 Two ergonomic changes: `toggleProtected(ref, bool)` becomes a `<BugseeSecure>` component that disposes on unmount, and `initialize()` becomes `attach()` for the case where Android launched itself from manifest metadata and only the JS layer needs wiring.
 
