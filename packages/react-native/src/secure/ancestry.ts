@@ -118,6 +118,8 @@ interface HostAncestor {
 }
 
 export interface Ancestry {
+  /** The view's own host fiber, as stored at mount; `null` when there is none. */
+  readonly self: FiberLike | null;
   /** Every fiber above the view, nearest first, up to and including the tree's root. */
   readonly path: readonly FiberLike[];
   /** The fiber root (`HostRoot.stateNode`), or `null` when the path has none. */
@@ -126,13 +128,43 @@ export interface Ancestry {
   readonly hosts: readonly HostAncestor[];
   /** The screens among `hosts`. */
   readonly screens: readonly HostAncestor[];
+  /**
+   * Where in `path` the `Animated` components below the nearest root-kind
+   * host are (`Animated.View` and the like, nearest first): only their props
+   * can hold a native-driven transform, which the shadow tree never sees.
+   */
+  readonly animated: readonly number[];
   /** Whether the last {@link isHidden} read everything; `false` clips nothing. */
   readable: boolean;
+  /** The current fibers of `path` as the last {@link isHidden} resolved them, if it did. */
+  resolved: readonly FiberLike[] | undefined;
 }
 
 /** Nothing above the view can be read: it is never hidden and never clipped. */
 export function noAncestry(): Ancestry {
-  return { path: [], root: null, hosts: [], screens: [], readable: false };
+  return {
+    self: null,
+    path: [],
+    root: null,
+    hosts: [],
+    screens: [],
+    animated: [],
+    readable: false,
+    resolved: undefined,
+  };
+}
+
+/**
+ * Whether `fiber` is an `Animated` component (`Animated.createAnimatedComponent`
+ * names every one `Animated(<name>)`), as a plain function or a `forwardRef`.
+ */
+export function isAnimatedComponent(fiber: FiberLike): boolean {
+  const type = fiber.type as { displayName?: unknown; render?: { displayName?: unknown } } | null | undefined;
+  if (type === null || (typeof type !== 'function' && typeof type !== 'object')) {
+    return false;
+  }
+  const name = type.displayName ?? type.render?.displayName;
+  return typeof name === 'string' && name.startsWith('Animated(');
 }
 
 /**
@@ -143,6 +175,7 @@ export function noAncestry(): Ancestry {
 export function ancestryOfFiber(fiber: FiberLike): Ancestry {
   const path: FiberLike[] = [];
   const hosts: HostAncestor[] = [];
+  const animated: number[] = [];
   let bounded = false;
   let current = fiber.return;
   for (let steps = 0; current != null && steps < MAX_ANCESTORS; steps += 1) {
@@ -166,6 +199,8 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
         });
       }
       bounded ||= boundary;
+    } else if (!bounded && isAnimatedComponent(current)) {
+      animated.push(path.length);
     }
     path.push(current);
     current = current.return;
@@ -176,7 +211,16 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
   }
   const top = path[path.length - 1];
   const root = top?.tag === FiberTag.HostRoot ? (top.stateNode as { current?: unknown } | null) : null;
-  return { path, root, hosts, screens: hosts.filter((host) => host.screen), readable: false };
+  return {
+    self: fiber,
+    path,
+    root,
+    hosts,
+    screens: hosts.filter((host) => host.screen),
+    animated,
+    readable: false,
+    resolved: undefined,
+  };
 }
 
 /**
@@ -188,6 +232,9 @@ export function ancestryOfInstance(instance: object): Ancestry {
   try {
     // No fiber (or not an object) has no `.return`, or throws on reading it.
     const fiber = (instance as { __internalInstanceHandle?: unknown }).__internalInstanceHandle;
+    if (fiber === null || typeof fiber !== 'object') {
+      return noAncestry();
+    }
     return ancestryOfFiber(fiber as FiberLike);
   } catch {
     return noAncestry();
@@ -317,6 +364,7 @@ function screenHides(screen: HostAncestor, ancestry: Ancestry, resolved: readonl
 export function isHidden(ancestry: Ancestry): boolean {
   ancestry.readable = false;
   const resolved = resolve(ancestry);
+  ancestry.resolved = resolved;
   if (resolved === undefined) {
     return false;
   }
@@ -459,7 +507,10 @@ function finite({ x, y, width, height }: WindowRect): boolean {
 
 /**
  * The part of `rect` inside every ancestor that clips now (as the last
- * {@link isHidden} read them), or `null` when none of it is.
+ * {@link isHidden} read them), or `null` when none of it is. Only the
+ * ancestors above `path` index `above` cut it: one below a native-driven
+ * transform clips where that transform moved it, not where the shadow tree
+ * has it.
  *
  * Fails closed: `rect` itself, unclipped, when it is not finite, the last
  * read was not complete, or any clipping ancestor throws, answers late or
@@ -467,14 +518,14 @@ function finite({ x, y, width, height }: WindowRect): boolean {
  * nothing. Measures nothing, and returns `rect` as it is, when nothing
  * clips.
  */
-export function clipToAncestors(rect: WindowRect, ancestry: Ancestry): WindowRect | null {
+export function clipToAncestors(rect: WindowRect, ancestry: Ancestry, above = -1): WindowRect | null {
   if (!finite(rect) || !ancestry.readable) {
     return rect;
   }
   const clips: Array<WindowRect | null | undefined> = [];
   try {
     for (const host of ancestry.hosts) {
-      if (host.clips) {
+      if (host.clips && host.index > above) {
         clips.push(measureHost(host, ancestry.path[host.index] as FiberLike));
       }
     }

@@ -2,8 +2,10 @@ import { ancestryOfInstance, clipToAncestors, clipWatchNodes, isHidden, screensH
 import type { Ancestry } from './ancestry';
 import { CoverageHold } from './hold';
 import { addFrameMeasurer, addMeasurer, addParked, watchNode } from './measureLoop';
+import { nativeMotion } from './nativeAnimation';
 import { clearOwner, setOwnerRectangles } from './registry';
 import { surfaceOfInstance } from './surface';
+import { SECURE_TRANSITION_HOLD_MS, carriedCover, carrierEntering, carrierLeaving, carrierOf } from './transition';
 import { errorName } from '../errorName';
 import type { FiberLike, WindowRect } from '../viewtree/fiber';
 
@@ -15,13 +17,15 @@ type MeasureInWindow = (callback: (x: number, y: number, width: number, height: 
 /**
  * How a mounted, enabled view is kept measured:
  *  - `tick`: wholly visible; re-measured on the 100 ms tick, as on main.
- *  - `active`: moving, or just shown or clipped; re-measured every frame
- *    until its rectangle has stayed put for {@link STEADY_FRAMES} frames.
+ *  - `active`: moving, or just shown, clipped or carried in by a transition,
+ *    or under a running native-driven animation; re-measured every frame
+ *    until its rectangle has stayed put for {@link STEADY_FRAMES} frames (and
+ *    no native animation runs).
  *  - `parked`: clipped and still. Its clipping nodes (a ScrollView and its
  *    content, a clipping view) are watched every frame, shared with every
  *    view under them, and a move wakes it; each frame also asks whether its
- *    screens hide it (once per screen a frame); the tick re-checks it, in
- *    turn, by measuring the view alone.
+ *    screens hide it (once per screen a frame); every tick re-checks it by
+ *    measuring the view alone.
  *  - `hidden`: withdrawn under an inactive screen; each frame asks only
  *    whether the screens still hide it (once a frame per screen), and
  *    measures again the frame they do not.
@@ -45,8 +49,12 @@ function where(rect: WindowRect | null): string {
 
 /**
  * One `<BugseeSecure>`'s measuring and publishing, from mount (`start`) to
- * unmount or disable (`stop`). Coverage is added at once and removed late
- * (see `SECURE_SHRINK_HOLD_MS`); `stop` removes it at once.
+ * unmount (`depart`) or disable (`stop`). Coverage is added at once and
+ * removed late (see `SECURE_SHRINK_HOLD_MS`), unmounting included: native
+ * draws the view until it mounts the commit that removed it, and a
+ * transition that carries it out draws it longer (see
+ * `SECURE_TRANSITION_HOLD_MS`). Only `stop`, an explicit disable, removes it
+ * at once.
  */
 export class SecureTracker {
   private running = false;
@@ -56,6 +64,16 @@ export class SecureTracker {
   private surface: number | null = null;
   private ancestry: Ancestry | null = null;
   private readonly hold = new CoverageHold();
+  /** Where a transition can carry the view, published with the rest until `until`. */
+  private cover: { readonly rect: WindowRect; readonly until: number } | null = null;
+  /** Mounted by the commit now running: its first measurement looks for a transition carrying it in. */
+  private arriving = false;
+  /** Carried in by a transition: re-measured every frame until it settles, whatever mode it was in. */
+  private settling = false;
+  /** Under a running native-driven animation: re-measured every frame. */
+  private animating = false;
+  /** The view's last measured rectangle, unclipped. */
+  private lastRect: WindowRect | null = null;
   /** Frames (or checks) in a row the visible rectangle stayed put. */
   private steady = 0;
   private lastVisible: string | undefined;
@@ -73,25 +91,99 @@ export class SecureTracker {
   ) {}
 
   start(): void {
+    // A remount of the same instance (StrictMode) ends what its unmount left.
+    this.forget();
     this.running = true;
+    this.arriving = true;
     this.measure();
     this.removeTick = addMeasurer(() => this.onTick());
   }
 
+  /** Disabled: nothing is covered from now on, at once. */
   stop(): void {
+    this.forget();
+    clearOwner(this.token);
+  }
+
+  /**
+   * Unmounted: covers what it covered, and where a transition carrying it out
+   * can still draw it, until that has been held long enough; then removes
+   * it. Called from the unmounting commit, so its deletions can be read.
+   */
+  depart(): void {
+    if (!this.running) {
+      return;
+    }
+    const now = monotonicNow();
+    const above = this.ancestry;
+    const last = this.lastRect;
+    let cover: WindowRect | null = null;
+    // The fiber tree and props are read as they are: a getter can throw.
+    try {
+      const carrier = above === null ? null : carrierOf(above);
+      if (above !== null && carrier !== null && last !== null && carrierLeaving(above, carrier)) {
+        cover = carriedCover(above, carrier, last, true);
+      }
+    } catch (error) {
+      this.failed(error);
+    }
+    this.leave();
+    if (cover !== null) {
+      this.cover = { rect: cover, until: now + SECURE_TRANSITION_HOLD_MS };
+    }
+    const rectangles = this.covering(this.hold.update(null, now), now);
+    if (rectangles.length === 0) {
+      this.forget();
+      clearOwner(this.token);
+      return;
+    }
+    this.publish(rectangles);
+    this.removeTick = addMeasurer(() => this.onDeparted());
+  }
+
+  /** Leaves every loop and forgets everything, without publishing. */
+  private forget(): void {
+    this.leave();
+    this.surface = null;
+    this.ancestry = null;
+    this.hold.clear();
+    this.cover = null;
+    this.lastRect = null;
+  }
+
+  /** Stops measuring: off every loop, as if never started. */
+  private leave(): void {
     this.running = false;
+    this.arriving = false;
+    this.settling = false;
+    this.animating = false;
     this.removeTick?.();
     this.removeTick = undefined;
     // Stryker disable next-line StringLiteral -- any mode but active, hidden or parked leaves every loop
     this.enter('tick');
     this.watch([]);
-    this.surface = null;
-    this.ancestry = null;
-    this.hold.clear();
     this.steady = 0;
     this.lastVisible = undefined;
     this.lastSelf = undefined;
-    clearOwner(this.token);
+  }
+
+  /** The tick after unmounting: publishes what is still held, and removes it all once nothing is. */
+  private onDeparted(): void {
+    const rectangles = this.covering(this.hold.publishable(monotonicNow()), monotonicNow());
+    if (rectangles.length === 0) {
+      this.forget();
+      clearOwner(this.token);
+    } else {
+      this.publish(rectangles);
+    }
+  }
+
+  /** `rectangles` and, while it lasts, the transition's cover. */
+  private covering(rectangles: WindowRect[], now: number): WindowRect[] {
+    if (this.cover !== null && this.cover.until <= now) {
+      this.cover = null;
+    }
+    return this.cover === null ? rectangles : [this.cover.rect, ...rectangles];
   }
 
   /** Measures the view and its clipping ancestors, and publishes what it covers. */
@@ -105,7 +197,9 @@ export class SecureTracker {
       this.ancestry ??= ancestryOfInstance(view);
       const above = this.ancestry;
       if (isHidden(above)) {
-        this.publish(this.hold.update(null, monotonicNow()));
+        // Hidden as it mounts: whatever carried it in is not drawn.
+        this.arriving = false;
+        this.publish(this.covering(this.hold.update(null, monotonicNow()), monotonicNow()));
         this.watch([]);
         this.enter('hidden');
         return;
@@ -135,24 +229,56 @@ export class SecureTracker {
       throw new RangeError('BugseeSecure measured a non-finite rectangle');
     }
     this.lastSelf = where(self);
-    const visible = clipToAncestors(self, above);
-    this.publish(this.hold.update(visible, monotonicNow()));
-    const clipped = visible === null || visible.width < self.width || visible.height < self.height;
-    const now = where(visible);
-    this.steady = now === this.lastVisible ? this.steady + 1 : 0;
-    this.lastVisible = now;
+    this.lastRect = self;
+    const now = monotonicNow();
+    if (this.arriving) {
+      this.arrive(self, above, now);
+    }
+    // Where a native-driven animation can draw it, which the shadow tree never sees.
+    const motion = nativeMotion(self, above);
+    this.animating = motion?.running ?? false;
+    const drawn = motion?.rect ?? self;
+    const visible = clipToAncestors(drawn, above, motion?.above);
+    this.publish(this.covering(this.hold.update(visible, now), now));
+    const clipped = visible === null || visible.width < drawn.width || visible.height < drawn.height;
+    const at = where(visible);
+    this.steady = at === this.lastVisible ? this.steady + 1 : 0;
+    this.lastVisible = at;
     this.watch(clipped ? clipWatchNodes(above) : []);
     this.enter(this.next(clipped));
   }
 
+  /** Mounted with a transition carrying it in: covers where that can draw it, and follows it every frame. */
+  private arrive(self: WindowRect, above: Ancestry, now: number): void {
+    this.arriving = false;
+    let cover: WindowRect | null;
+    // As in `depart`: a read that throws carries nothing, and the view is still published.
+    try {
+      const carrier = carrierOf(above);
+      if (carrier === null || !carrierEntering(above, carrier)) {
+        return;
+      }
+      cover = carriedCover(above, carrier, self, false);
+    } catch (error) {
+      this.failed(error);
+      return;
+    }
+    if (cover !== null) {
+      this.cover = { rect: cover, until: now + SECURE_TRANSITION_HOLD_MS };
+    }
+    // A Modal's content is laid out again once its dialog is up: within a frame.
+    this.settling = true;
+  }
+
   private next(clipped: boolean): Mode {
     if (this.mode === 'active') {
-      if (this.steady < STEADY_FRAMES) {
+      if (this.steady < STEADY_FRAMES || this.animating) {
         return 'active';
       }
+      this.settling = false;
       return clipped ? 'parked' : 'tick';
     }
-    if (this.mode === 'hidden') {
+    if (this.mode === 'hidden' || this.settling || this.animating) {
       return 'active';
     }
     if (!clipped) {
@@ -164,9 +290,19 @@ export class SecureTracker {
   private onTick(): void {
     if (this.mode === 'tick') {
       this.measure();
-    } else if (this.mode === 'parked' && this.hold.holding()) {
-      this.publish(this.hold.publishable(monotonicNow()));
+    } else if (this.mode === 'parked' && this.changing()) {
+      this.republish();
     }
+  }
+
+  /** Whether what is published will change on its own: something held, or a cover, runs out. */
+  private changing(): boolean {
+    return this.hold.holding() || this.cover !== null;
+  }
+
+  private republish(): void {
+    const now = monotonicNow();
+    this.publish(this.covering(this.hold.publishable(now), now));
   }
 
   private onFrame(): void {
@@ -185,8 +321,8 @@ export class SecureTracker {
     // Hidden: once its screens stop hiding it, measure (which checks fully).
     if (!hides) {
       this.measure();
-    } else if (this.hold.holding()) {
-      this.publish(this.hold.publishable(monotonicNow()));
+    } else if (this.changing()) {
+      this.republish();
     }
   }
 

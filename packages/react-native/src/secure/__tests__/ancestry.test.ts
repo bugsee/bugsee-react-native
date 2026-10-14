@@ -219,7 +219,16 @@ describe('ancestryOfInstance', () => {
   it('noAncestry hides nothing and clips nothing', () => {
     const none = noAncestry();
 
-    expect(none).toEqual({ path: [], root: null, hosts: [], screens: [], readable: false });
+    expect(none).toEqual({
+      self: null,
+      path: [],
+      root: null,
+      hosts: [],
+      screens: [],
+      animated: [],
+      readable: false,
+      resolved: undefined,
+    });
     expect(isHidden(none)).toBe(false);
     expect(clipToAncestors(rect(1, 2, 3, 4), none)).toEqual(rect(1, 2, 3, 4));
     expect(noAncestry()).not.toBe(none);

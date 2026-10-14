@@ -21,6 +21,7 @@ const mockState = {
   nodes: [] as unknown[],
   published: [] as unknown[][],
   cleared: 0,
+  ancestry: null as object | null,
 };
 
 /** Registers `fn` in `list`, and records its removal under `name`. */
@@ -49,7 +50,8 @@ jest.mock('../measureLoop', () => ({
   },
 }));
 jest.mock('../ancestry', () => ({
-  ancestryOfInstance: () => ({ readable: true }),
+  ancestryOfInstance: () =>
+    mockState.ancestry ?? { self: null, path: [], hosts: [], screens: [], animated: [], readable: true },
   isHidden: () => mockState.hidden,
   screensHide: () => mockState.screensHide,
   clipToAncestors: (rect: WindowRect) => (mockState.clipTo === null ? rect : mockState.clipTo(rect)),
@@ -68,6 +70,7 @@ jest.mock('../registry', () => ({
   },
 }));
 
+import { SECURE_SHRINK_HOLD_MS } from '../hold';
 import { STEADY_FRAMES, SecureTracker, monotonicNow } from '../tracker';
 
 const rect = (x: number, y: number, width: number, height: number): WindowRect => ({ x, y, width, height });
@@ -93,7 +96,15 @@ const view = {
 beforeEach(() => {
   jest.useFakeTimers();
   Object.assign(mockLoop, { tick: [], frame: [], parked: [], watched: [], removed: [] });
-  Object.assign(mockState, { hidden: false, screensHide: false, clipTo: null, nodes: [], published: [], cleared: 0 });
+  Object.assign(mockState, {
+    hidden: false,
+    screensHide: false,
+    clipTo: null,
+    nodes: [],
+    published: [],
+    cleared: 0,
+    ancestry: null,
+  });
   self = rect(0, 100, 100, 50);
   measures = 0;
   pending = null;
@@ -472,6 +483,78 @@ describe('SecureTracker', () => {
       runFrames();
 
       expect(mockLoop.watched).toEqual([]);
+    });
+  });
+
+  describe('unmounted', () => {
+    const later = (ms: number): void => {
+      jest.advanceTimersByTime(ms);
+    };
+
+    it('holds what it covered on the tick, then removes it all and leaves the tick', () => {
+      tracker.start();
+      mockState.published = [];
+
+      tracker.depart();
+      expect(last()).toEqual([self]);
+      expect(mockLoop.tick).toHaveLength(1);
+      expect(mockState.cleared).toBe(0);
+
+      later(SECURE_SHRINK_HOLD_MS - 100);
+      runTick();
+      expect(last()).toEqual([self]);
+
+      later(300);
+      runTick();
+      expect(mockState.cleared).toBe(1);
+      expect(mockLoop.tick).toHaveLength(0);
+    });
+
+    it('with nothing published, removes it at once', () => {
+      mockState.clipTo = () => null;
+      tracker.start();
+
+      tracker.depart();
+
+      expect(mockState.cleared).toBe(1);
+      expect(mockLoop.tick).toHaveLength(0);
+    });
+
+    it('not started, does nothing', () => {
+      tracker.depart();
+
+      expect(mockState.published).toEqual([]);
+      expect(mockState.cleared).toBe(0);
+    });
+
+    it('a remount ends what the unmount left, and starts afresh', () => {
+      tracker.start();
+      tracker.depart();
+
+      tracker.start();
+
+      expect(mockLoop.tick).toHaveLength(1);
+      later(SECURE_SHRINK_HOLD_MS + 200);
+      runTick();
+      expect(last()).toEqual([self]);
+      expect(mockState.cleared).toBe(0);
+    });
+
+    it('a tree that throws while read for a transition still publishes the view, and warns once', () => {
+      const throwing = { self: null, hosts: [], screens: [], animated: [], readable: true };
+      Object.defineProperty(throwing, 'path', {
+        get(): never {
+          throw new Error('torn');
+        },
+      });
+      mockState.ancestry = throwing;
+      tracker.start();
+      expect(last()).toEqual([self]);
+
+      tracker.depart();
+
+      expect(last()).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
     });
   });
 
