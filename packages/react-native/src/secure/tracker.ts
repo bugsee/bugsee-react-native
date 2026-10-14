@@ -379,7 +379,9 @@ export class SecureTracker {
     if (hidden && !this.closing) {
       const cover = carriedCover(above, carrier, self);
       if (cover !== null) {
-        this.cover = { rect: bounding(cover, this.cover?.rect), until: now + SECURE_TRANSITION_HOLD_MS };
+        // A later deadline already set (a neighbour's push) is kept: the later transition still runs.
+        const until = Math.max(now + SECURE_TRANSITION_HOLD_MS, this.cover?.until ?? 0);
+        this.cover = { rect: bounding(cover, this.cover?.rect), until };
       }
     }
     this.closing = hidden;
@@ -412,7 +414,8 @@ export class SecureTracker {
       return;
     }
     if (cover !== null) {
-      this.cover = { rect: bounding(cover, this.cover?.rect), until };
+      // A later deadline (a neighbour's push or pop, a close) is kept: that transition still runs.
+      this.cover = { rect: bounding(cover, this.cover?.rect), until: Math.max(until, this.cover?.until ?? 0) };
     }
   }
 

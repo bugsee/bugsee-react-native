@@ -216,15 +216,12 @@ describeDevice(`<BugseeSecure> cost under Animated components on ${TARGET_NAME}`
     it('timed 52 views', () => {
       const result = results.get(mode)!;
       expect(result.secures).toBe('52');
-      const ticks = mode.endsWith('-frames') ? 0 : MIN_TICKS;
-      expect(Number(result.ticks)).toBeGreaterThanOrEqual(ticks);
+      // The frames too: the header's watched value keeps the frame loop running (2300-2400 frames a run).
+      expect(Number(result.ticks)).toBeGreaterThanOrEqual(MIN_TICKS);
     });
 
     it(`keeps p95 under ${P95_BUDGET_MS} ms in Release, ${ANIMATED_DEBUG_BUDGET_MS} ms in Debug`, () => {
       const result = results.get(mode)!;
-      if (result.ticks === '0') {
-        return;
-      }
       const budget = result.dev === 'true' ? ANIMATED_DEBUG_BUDGET_MS : P95_BUDGET_MS;
       expect(Number(result.p95)).toBeLessThan(budget);
     });

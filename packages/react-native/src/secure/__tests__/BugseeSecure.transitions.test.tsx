@@ -555,6 +555,30 @@ describe('P2-6: a screen with no secure view of its own pushed or popped over on
 
     expect(firstPublished()).toEqual(px(SCREEN));
   });
+
+  it('a screen pushed over it while it is still being pushed keeps it covered for the hold from that push', () => {
+    const below = selfIn(
+      root([
+        fabricHost('RNSScreenStack', null, { children: 1 }, [
+          fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()])]),
+        ]),
+      ]),
+    );
+    // Its own screen is pushed by the commit that mounts it.
+    existingFrom(ancestorOfType(below, 'RNSScreenStack'));
+    render(below);
+    expect(firstPublished()).toEqual(px(SCREEN));
+    wait(400);
+
+    commitScreens(below, [pushedScreen()]);
+    wait(17);
+    // Past its own push's hold (800 ms from the mount), inside the second push's (800 ms from it).
+    wait(SECURE_TRANSITION_HOLD_MS - 300);
+    expect(firstPublished()).toEqual(px(SCREEN));
+
+    wait(400);
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
 });
 
 describe('P2-8: the cover follows the screen\'s stackAnimation', () => {
@@ -874,6 +898,21 @@ describe('C3: a Modal sliding in and out', () => {
 
     // Covered once per close, until the transition hold runs out.
     wait(SECURE_TRANSITION_HOLD_MS + 100);
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
+  });
+
+  it('a Modal hidden while it still slides in keeps the close band for the hold from the hide', () => {
+    const fiber = inModal({ animationType: 'slide', visible: true });
+    render(fiber);
+    wait(400);
+
+    ancestorOfType(fiber, 'RCTModalHostView').memoizedProps = { animationType: 'slide', visible: false };
+    wait(17);
+    // Past the open's hold (800 ms from the mount), inside the close's (800 ms from the hide).
+    wait(SECURE_TRANSITION_HOLD_MS - 300);
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(px(band(selfRect)));
+
+    wait(400);
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
   });
 
