@@ -185,13 +185,13 @@ function Thrower({ nonce }: { nonce: string }): never {
 
 /**
  * N-08: an ErrorBoundary whose fallback is a function and whose `options`
- * carry a domain and labels, around a child that throws on render.
+ * carry a domain, around a child that throws on render.
  */
 function BoundaryStage({ nonce }: { nonce: string }) {
   return (
     <View style={[StyleSheet.absoluteFill, styles.white]}>
       <ErrorBoundary
-        options={{ domain: `api-domain-${nonce}`, labels: [`api-label-${nonce}`] }}
+        options={{ domain: `api-domain-${nonce}` }}
         onError={() => mark(`boundary onError nonce=${nonce}`)}
         fallback={({ error, componentStack }) => {
           mark(

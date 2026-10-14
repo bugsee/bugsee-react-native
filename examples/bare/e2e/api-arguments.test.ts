@@ -151,7 +151,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       if (ON_SIMULATOR) {
         return;
       }
-      const result = await runFor(log!, 'api-exc-values', 'exc-values done', 5);
+      const result = await runFor(log!, 'api-exc-values', 'exc-values done', 3);
       run = result.run;
       done = result.line;
       errors = result.bundles.filter(b => b.request.type === 'error');
@@ -170,21 +170,22 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       report('payload reasons', reasons);
       expect(reasons.filter(r => r === `api-exc string ${nonce}`)).toHaveLength(1);
       expect(reasons.filter(r => r === 'Non-Error thrown: object')).toHaveLength(2);
-      // The three values plus the two includeVideo errors.
-      expect(errors).toHaveLength(5);
+      // The three values; the includeVideo calls file nothing ([API-11d]).
+      expect(errors).toHaveLength(3);
     });
 
-    // iOS ignores includeVideo too: https://github.com/bugsee/bugsee-cocoa/issues/226
-    itReports('[API-11d] includeVideo is accepted and changes nothing', () => {
+    // includeVideo is not an option: neither 7.x SDK can leave the video out of one
+    // report (https://github.com/bugsee/bugsee-cocoa/issues/226, bugsee-android#247).
+    itReports('[API-11d] includeVideo is refused and files nothing', () => {
       const nonce = run.scenario.nonce;
       const video = jsonAfter<Record<string, Settled>>(done.text, 'video');
-      expect(video.on!.ok && video.off!.ok).toBe(true);
-      const on = errors.find(b => payloadReason(b) === `api-exc video-on ${nonce}`);
-      const off = errors.find(b => payloadReason(b) === `api-exc video-off ${nonce}`);
-      expect(on).toBeDefined();
-      expect(off).toBeDefined();
-      report('includeVideo files', { on: types(on!), off: types(off!) });
-      expect(types(on!)).toEqual(types(off!));
+      report('includeVideo settled', video);
+      for (const call of [video.on!, video.off!]) {
+        expect(call.ok).toBe(false);
+        expect(call.error?.name).toBe('TypeError');
+      }
+      const reasons = [`api-exc video-on ${nonce}`, `api-exc video-off ${nonce}`];
+      expect(errors.filter(b => reasons.includes(payloadReason(b)))).toHaveLength(0);
     });
   });
 
@@ -201,7 +202,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       report('fallback', fallback.text.trim());
       if (!ON_SIMULATOR) {
         bundles = (await awaitBundles(1, 45_000)).filter(b => b.request.type === 'error');
-        report('boundary errors', bundles.map(b => ({ reason: reasonOf(b).slice(0, 160), labels: b.request.labels, crash: crashOf(b) === undefined ? '-' : 'yes' })));
+        report('boundary errors', bundles.map(b => ({ reason: reasonOf(b).slice(0, 160), crash: crashOf(b) === undefined ? '-' : 'yes' })));
       }
       await stopApp();
     });
@@ -225,13 +226,6 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       } else {
         expect((crash.exceptionLoggingOptions as { exceptionDomain?: unknown }).exceptionDomain).toBe(`api-domain-${run.scenario.nonce}`);
       }
-    });
-
-    /** Android 7.3.0 ignores logException labels (R10, exceptions.test.ts case 7): the same path.
-     * https://github.com/bugsee/bugsee-android/issues/247 */
-    (ON_ANDROID ? it.failing : itReports)('[API-13d] the options prop: labels reach the report', () => {
-      expect(bundles).toHaveLength(1);
-      expect(bundles[0]!.request.labels).toEqual(expect.arrayContaining([`api-label-${run.scenario.nonce}`]));
     });
   });
 

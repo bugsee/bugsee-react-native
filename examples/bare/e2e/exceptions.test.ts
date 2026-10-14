@@ -28,11 +28,12 @@
  *   BUGSEE_E2E exc boundary-onError / boundary-fallback
  *   BUGSEE_E2E exc app-handler fatal=<bool>
  *
- * Case 7 is `it.failing` on Android for a documented gap (labels ignored,
- * still in 7.3.1; https://github.com/bugsee/bugsee-android/issues/247). Do not weaken it. Case 10 was `it.failing` on 7.3.0, which
+ * Case 7 (labels on a handled exception) is gone: neither SDK's logException
+ * takes labels any more (bugsee-android#256, bugsee-cocoa#233); a report is
+ * labelled in setReportHandler. Case 10 was `it.failing` on 7.3.0, which
  * also filed an error report for an unhandled exception; 7.3.1 files the
  * crash only (bugsee-android d390b5203, #192), so it is a plain `it`.
- * On iOS both are plain `it` (labels apply; Debug files no second report).
+ * On iOS it is a plain `it` (Debug files no second report).
  *
  * Case 12's red-box line must stay on Android. Gated release R2/R3 (controller
  * ruling): R13's second Bugsee crash was not retained on SDK 7.3.0; logcat
@@ -399,13 +400,6 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       expect(exceptionOf(handledCrash).additional_signature).toBe(
         handledPayload.signature,
       );
-    });
-
-    // Known SDK bug (R10): https://github.com/bugsee/bugsee-android/issues/247
-    itAndroid.failing('labels reach the report', () => {
-      const labels = handled.request.labels;
-      report('case 7 actual labels', labels);
-      expect(labels).toEqual(expect.arrayContaining([`lbl-${nonce}`]));
     });
   });
 
@@ -968,11 +962,6 @@ describeDevice(`JS exceptions on ${TARGET_NAME}`, () => {
       );
     });
 
-    itIosDevice('labels reach the report', () => {
-      const labels = handled.request.labels;
-      report('case 7 iOS labels', labels);
-      expect(labels).toEqual(expect.arrayContaining([`lbl-${nonce}`]));
-    });
   });
 
   describeIosDeviceDebug('exc-rejection (iPhone)', () => {

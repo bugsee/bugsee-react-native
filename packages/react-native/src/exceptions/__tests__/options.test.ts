@@ -25,15 +25,8 @@ describe('encodeExceptionOptions', () => {
     );
   });
 
-  it('domain, labels and includeVideo encode in that order', () => {
-    const encoded = encodeExceptionOptions({
-      includeVideo: true,
-      domain: 'auth',
-      labels: ['a', 'b'],
-    });
-    expect(encoded).toBe(
-      '{"domain":"auth","labels":["a","b"],"includeVideo":true}',
-    );
+  it('a domain encodes as {domain}', () => {
+    expect(encodeExceptionOptions({ domain: 'auth' })).toBe('{"domain":"auth"}');
   });
 
   it('accepts a domain of exactly EXCEPTION_DOMAIN_MAX_LENGTH', () => {
@@ -59,23 +52,16 @@ describe('encodeExceptionOptions', () => {
     ).toThrow(new TypeError('ExceptionOptions.domain must be a string'));
   });
 
-  it('rejects labels that are not an array of strings', () => {
+  it('rejects labels: neither SDK takes them on logException (setReportHandler does)', () => {
     expect(() =>
-      encodeExceptionOptions({ labels: 'x' as unknown as string[] }),
-    ).toThrow(
-      new TypeError('ExceptionOptions.labels must be an array of strings'),
-    );
-    expect(() =>
-      encodeExceptionOptions({ labels: [1] as unknown as string[] }),
-    ).toThrow(
-      new TypeError('ExceptionOptions.labels must be an array of strings'),
-    );
+      encodeExceptionOptions({ labels: ['a'] } as never),
+    ).toThrow(new TypeError('ExceptionOptions has unknown key "labels"'));
   });
 
-  it('rejects a non-boolean includeVideo', () => {
+  it('rejects includeVideo: neither SDK can leave the video out', () => {
     expect(() =>
-      encodeExceptionOptions({ includeVideo: 1 as unknown as boolean }),
-    ).toThrow(new TypeError('ExceptionOptions.includeVideo must be a boolean'));
+      encodeExceptionOptions({ includeVideo: true } as never),
+    ).toThrow(new TypeError('ExceptionOptions has unknown key "includeVideo"'));
   });
 
   it('rejects an unknown key, naming it', () => {
@@ -103,13 +89,6 @@ describe('encodeExceptionOptions', () => {
       throw new Error('expected throw');
     } catch (error) {
       expect((error as Error).message).not.toContain(longSecret);
-    }
-    const labelSecret = 'SECRET_LABEL_VALUE';
-    try {
-      encodeExceptionOptions({ labels: [labelSecret, 1] as unknown as string[] });
-      throw new Error('expected throw');
-    } catch (error) {
-      expect((error as Error).message).not.toContain(labelSecret);
     }
   });
 });

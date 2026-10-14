@@ -9,7 +9,7 @@ test('actions have valid call targets and unique ids', () => {
   errorsActions.forEach((a) => expect(() => callTarget(a.call)).not.toThrow());
   expect(new Set(errorsActions.map((a) => a.id)).size).toBe(errorsActions.length);
 });
-test('renders labels and the boundary demo', async () => {
+test('renders the actions and the boundary demo', async () => {
   await render(<ErrorsScreen />);
   expect(screen.getByText('Log handled string')).toBeTruthy();
   expect(screen.getByText('Throw inside ErrorBoundary')).toBeTruthy();

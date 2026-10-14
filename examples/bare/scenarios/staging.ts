@@ -142,7 +142,7 @@ export async function runStagingScenario(scenario: StagingScenario, nonce: strin
       try {
         stagingThrowSite(nonce, 'js handled');
       } catch (error) {
-        Bugsee.logException(error, { labels: ['campaign', `nonce-${nonce}`] });
+        Bugsee.logException(error);
       }
       mark(`handled-sent text="${campaignText(nonce, 'js handled')}" nonce=${nonce}`);
       return;
