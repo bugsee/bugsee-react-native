@@ -185,7 +185,7 @@ describeDevice(`<BugseeSecure> cost under Animated components on ${TARGET_NAME}`
     const run = await startRun('secure-perf-animated');
     const nonce = run.scenario.nonce;
     for (const mode of MODES_ANIMATED) {
-      const done = new RegExp(`BUGSEE_E2E secure-perf (result mode=${mode} |threw) .*nonce=${escape(nonce)}`);
+      const done = new RegExp(`BUGSEE_E2E secure-perf (result mode=${mode}|threw) .*nonce=${escape(nonce)}`);
       const line = must(await log.waitFor(done, 120_000, run.start), `the secure-perf ${mode} result`, run.start);
       const result = Object.fromEntries(
         [...line.text.matchAll(/(\w+)=(\S+)/g)].map(([, key, value]) => [key!, value!]),

@@ -656,6 +656,28 @@ describe('SecureTracker', () => {
       expect(warn).toHaveBeenCalledTimes(1);
     });
 
+    it('a screen whose alternate cannot be read as it mounts still publishes the view, and warns once', () => {
+      const screen = { type: 'RNSScreen' };
+      Object.defineProperty(screen, 'alternate', {
+        get(): never {
+          throw new Error('torn');
+        },
+      });
+      mockState.ancestry = {
+        self: null,
+        path: [screen, { type: 'RNSScreenStack' }],
+        hosts: [{ index: 0, above: 1, screen: true }],
+        screens: [],
+        animated: [],
+        readable: true,
+      };
+
+      tracker.start();
+
+      expect(last()).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
     it('a view carried in stays per-frame until the transition hold ends, then parks without the cover', () => {
       const stack = { type: 'RNSScreenStack' };
       // A screen with no alternate: pushed by the commit that mounts the view.

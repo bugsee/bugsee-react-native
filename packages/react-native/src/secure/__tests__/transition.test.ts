@@ -17,12 +17,15 @@ import {
   joinStack,
   keyOf,
   screenCover,
+  screensOn,
   stackMotionOf,
   stackMoving,
 } from '../transition';
 import type { StackMotion } from '../transition';
 import type { FiberLike, WindowRect } from '../../viewtree/fiber';
-import { fabricHost, fakeRenderer, rect, root, self, selfIn, view } from './fakeAncestors';
+import { composite, fabricHost, fakeRenderer, rect, root, self, selfIn, view } from './fakeAncestors';
+import { buildFiberTree } from '../../viewtree/__tests__/fakeFibers';
+import type { FiberSpec } from '../../viewtree/__tests__/fakeFibers';
 import type { FakeRenderer } from './fakeAncestors';
 
 let renderer: FakeRenderer;
@@ -310,6 +313,35 @@ describe('stack motion and covers', () => {
     const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
     expect(carriedCover(ancestry, { kind: 'screen', index: 1 }, null)).toBeNull();
     expect(carriedCover(ancestry, { kind: 'screen', index: 1 }, undefined)).toEqual(SCREEN);
+  });
+
+  it('finds a stack\'s screens below wrapper components, not below hosts or inside screens', () => {
+    const screen = (name: string): FiberSpec => fabricHost(SCREEN_HOST_TYPE, SCREEN, { name }, [
+      fabricHost(SCREEN_HOST_TYPE, SCREEN, { name: 'inside' }, []),
+    ]);
+    const stack = buildFiberTree(
+      fabricHost('RNSScreenStack', null, {}, [
+        screen('a'),
+        composite([screen('b')]),
+        fabricHost('RCTView', null, {}, [screen('c')]),
+      ]),
+    );
+
+    const names = [...screensOn(stack).values()].map((props) => (props as { name: string }).name);
+    expect(names).toEqual(['a', 'b', 'c']);
+  });
+
+  it('looks for screens 16 wrappers deep, and no deeper', () => {
+    const wrapped = (depth: number, name: string): FiberSpec => {
+      let spec: FiberSpec = fabricHost(SCREEN_HOST_TYPE, SCREEN, { name }, []);
+      for (let level = 0; level < depth; level += 1) {
+        spec = composite([spec]);
+      }
+      return spec;
+    };
+    const stack = buildFiberTree(fabricHost('RNSScreenStack', null, {}, [wrapped(16, 'deep'), wrapped(17, 'deeper')]));
+
+    expect([...screensOn(stack).values()].map((props) => (props as { name: string }).name)).toEqual(['deep']);
   });
 
   it('tells every view joined on a stack, until it leaves; a stack nobody joined tells nobody', () => {

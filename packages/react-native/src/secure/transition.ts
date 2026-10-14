@@ -1,6 +1,7 @@
-import { measureFiber } from './ancestry';
+import { MODAL_SCREEN_HOST_TYPE, SCREEN_HOST_TYPE, measureFiber } from './ancestry';
 import type { Ancestry } from './ancestry';
 import { MODAL_HOST_TYPE } from './surface';
+import { FiberTag } from '../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../viewtree/fiber';
 
 /**
@@ -240,7 +241,7 @@ function platformOS(): unknown {
  * (sideways on Android 13+, a scale before, sideways on iOS) and anything
  * unknown is `any`.
  */
-export function stackMotionOf(props: unknown): StackMotion {
+export function stackMotionOf(props: unknown, moving = true): StackMotion {
   const { stackAnimation: animation, stackPresentation: presentation } = (props ?? {}) as Record<string, unknown>;
   if (SIDEWAYS.has(animation)) {
     return 'sideways';
@@ -252,7 +253,38 @@ export function stackMotionOf(props: unknown): StackMotion {
     return 'still';
   }
   const defaulted = animation === undefined || animation === 'default';
-  return defaulted && MODAL_PRESENTATIONS.has(presentation) && platformOS() === 'ios' ? 'upwards' : 'any';
+  if (defaulted && MODAL_PRESENTATIONS.has(presentation) && platformOS() === 'ios') {
+    // The card slides up; iOS 13+ also scales the screen below it about its centre.
+    return moving ? 'upwards' : 'any';
+  }
+  return 'any';
+}
+
+/** react-native-screens' screen hosts, as a stack's children. */
+const SCREEN_TYPES: ReadonlySet<unknown> = new Set([SCREEN_HOST_TYPE, MODAL_SCREEN_HOST_TYPE]);
+
+/** How deep below a stack its screens can be (wrappers such as a stack item). */
+const MAX_SCREEN_DEPTH = 16;
+
+/**
+ * The screens on `stack` (a committed stack host fiber), by {@link keyOf},
+ * with their props: its descendants down to the first screen hosts.
+ */
+export function screensOn(stack: FiberLike): Map<object, unknown> {
+  const screens = new Map<object, unknown>();
+  const visit = (fiber: FiberLike | null, depth: number): void => {
+    for (let child = fiber; child != null; child = child.sibling) {
+      // Only a host has a screen's (string) type: the tag only spares a lookup.
+      // Stryker disable next-line ConditionalExpression
+      if (child.tag === FiberTag.HostComponent && SCREEN_TYPES.has(child.type)) {
+        screens.set(keyOf(child), child.memoizedProps);
+      } else if (depth < MAX_SCREEN_DEPTH) {
+        visit(child.child, depth + 1);
+      }
+    }
+  };
+  visit(stack.child, 0);
+  return screens;
 }
 
 /**

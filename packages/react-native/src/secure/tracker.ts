@@ -18,6 +18,7 @@ import {
   modalOf,
   screenCover,
   screenRect,
+  screensOn,
   stackMotionOf,
   stackMoving,
 } from './transition';
@@ -107,6 +108,8 @@ export class SecureTracker {
   private unwatchValues: Array<() => void> = [];
   /** Leaves the stacks its screens are on. */
   private leaveStacks: Array<() => void> = [];
+  /** The screens on each stack its screens are on, by the stack's place in the path, as last seen. */
+  private stackScreens = new Map<number, Map<object, unknown>>();
   /** Frames (or checks) in a row the visible rectangle stayed put. */
   private steady = 0;
   private lastVisible: string | undefined;
@@ -203,6 +206,7 @@ export class SecureTracker {
     // Stryker disable next-line all -- so its mutants are equivalent
     this.leaveStacks.forEach((leave) => leave());
     this.leaveStacks = [];
+    this.stackScreens.clear();
     this.steady = 0;
     this.lastVisible = undefined;
     this.lastSelf = undefined;
@@ -290,6 +294,15 @@ export class SecureTracker {
     const { drawn, visible } =
       motion === null ? { drawn: self, visible: clipToAncestors(self, above) } : throughMotion(self, above, motion);
     this.seen = visible;
+    // Read the stacks once seen: a cover for the screens moving above or below goes out with this publish.
+    // Warned about once a view: the same unreadable tree warns from wherever it is read first.
+    // Stryker disable all
+    try {
+      this.checkStacks(above, now);
+    } catch (error) {
+      this.failed(error);
+    }
+    // Stryker restore all
     // Per frame while a native animation runs; otherwise woken the frame one starts.
     this.animating = motion?.running ?? false;
     this.watchValues(motion?.roots ?? []);
@@ -393,6 +406,8 @@ export class SecureTracker {
     try {
       cover = carriedCovers(above, carriers, self);
     } catch (error) {
+      // Warned once, as in `measured`.
+      // Stryker disable next-line all
       this.failed(error);
       return;
     }
@@ -421,6 +436,10 @@ export class SecureTracker {
           const told = (motion: StackMotion, until: number, moving: object): void =>
             this.screenMoved(carrier, motion, until, moving);
           this.leaveStacks.push(joinStack(stack, told));
+          // A commit that pushes or pops a screen re-renders the stack: woken within a frame.
+          // Measuring the stack as well only wakes it more often; any mode but tick or parked measures that frame.
+          // Stryker disable next-line StringLiteral,BooleanLiteral
+          this.leaveStacks.push(watchNode(above.path[carrier.stack] as FiberLike, () => this.enter('active'), false));
         }
       }
     } catch {
@@ -435,7 +454,34 @@ export class SecureTracker {
       if (carrier.stack !== undefined) {
         const screen = fibers[carrier.index] as FiberLike;
         const stack = keyOf(above.path[carrier.stack] as FiberLike);
-        stackMoving(stack, stackMotionOf(screen.memoizedProps), until, keyOf(screen));
+        stackMoving(stack, stackMotionOf(screen.memoizedProps, false), until, keyOf(screen));
+      }
+    }
+  }
+
+  /**
+   * Looks for screens pushed onto, or popped off, the stacks its screens are
+   * on since it last looked (with or without a `<BugseeSecure>` of their own):
+   * its own screen, uncovered or covered, moves with them.
+   */
+  private checkStacks(above: Ancestry, now: number): void {
+    const fibers = above.resolved ?? above.path;
+    for (const carrier of carriersOf(above)) {
+      if (carrier.stack === undefined) {
+        continue;
+      }
+      const screens = screensOn(fibers[carrier.stack] as FiberLike);
+      const before = this.stackScreens.get(carrier.stack);
+      this.stackScreens.set(carrier.stack, screens);
+      if (before === undefined) {
+        continue;
+      }
+      const moved = [
+        ...[...screens].filter(([key]) => !before.has(key)),
+        ...[...before].filter(([key]) => !screens.has(key)),
+      ];
+      for (const [key, props] of moved) {
+        this.screenMoved(carrier, stackMotionOf(props, false), now + SECURE_TRANSITION_HOLD_MS, key);
       }
     }
   }

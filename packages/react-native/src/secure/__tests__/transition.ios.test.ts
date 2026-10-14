@@ -24,6 +24,13 @@ const PRESENTATIONS = [
   'containedTransparentModal',
 ];
 
-it.each(PRESENTATIONS)('%s slides up on iOS', (stackPresentation) => {
+it.each(PRESENTATIONS)('%s slides up on iOS, and scales the screen below: any motion there', (stackPresentation) => {
   expect(stackMotionOf({ stackPresentation })).toBe('upwards');
+  expect(stackMotionOf({ stackPresentation }, false)).toBe('any');
+});
+
+it('an explicit slide from the bottom leaves the screen below where it is', () => {
+  expect(stackMotionOf({ stackAnimation: 'slide_from_bottom', stackPresentation: 'formSheet' }, false)).toBe(
+    'upwards',
+  );
 });

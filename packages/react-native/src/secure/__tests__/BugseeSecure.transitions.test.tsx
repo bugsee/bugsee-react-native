@@ -38,10 +38,16 @@ import {
 } from './fakeAncestors';
 import type { FakeRenderer } from './fakeAncestors';
 
+// Android, but for the tests that switch it to iOS (read at use, after this file's imports).
+const mockPlatform = { OS: 'android' };
 jest.mock('react-native', () => ({
   View: 'View',
   PixelRatio: { get: () => 2 },
-  Platform: { OS: 'android' },
+  Platform: {
+    get OS(): string {
+      return mockPlatform.OS;
+    },
+  },
 }));
 jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMock);
 
@@ -366,6 +372,188 @@ describe('P2-6: the screen below a push or pop moves too', () => {
     unmount(top);
 
     expect(rects().filter((entry) => entry === BAND)).toHaveLength(1);
+  });
+});
+
+describe('P2-6: a screen with no secure view of its own pushed or popped over one with', () => {
+  /** The view on the first screen of a stack; `more`: further screens on it, with no secure view. */
+  function belowOf(more: FiberSpec[] = []): FiberLike {
+    const below = selfIn(
+      root([
+        fabricHost('RNSScreenStack', null, { children: 1 }, [
+          fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()])]),
+          ...more,
+        ]),
+      ]),
+    );
+    return existing(below);
+  }
+
+  /** Commits `screens` as the stack's screens, after the first, as a push or pop would. */
+  function commitScreens(below: FiberLike, screens: FiberSpec[]): void {
+    const stack = ancestorOfType(below, 'RNSScreenStack');
+    const first = stack.child as FiberLike;
+    first.sibling = null;
+    let last = first;
+    for (const spec of screens) {
+      const fiber = { ...fabricHostFiber(spec), return: stack, sibling: null } as FiberLike;
+      last.sibling = fiber;
+      last = fiber;
+    }
+    // A new children prop: the stack re-rendered.
+    stack.memoizedProps = { children: screens.length + 1 };
+  }
+
+  const fabricHostFiber = (spec: FiberSpec): Partial<FiberLike> => ({
+    tag: spec.tag,
+    type: spec.type,
+    memoizedProps: spec.memoizedProps,
+    stateNode: spec.stateNode,
+    child: null,
+  });
+
+  const pushedScreen = (props: Record<string, unknown> = {}): FiberSpec =>
+    fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, ...props }, []);
+
+  it('a push covers the view below, within a frame, for the transition hold', () => {
+    const below = belowOf();
+    render(below);
+    // To 212 ms: past the tick at 200, so only the stack's wake can measure it within the next frame.
+    wait(212);
+
+    commitScreens(below, [pushedScreen()]);
+    wait(17);
+
+    // The default animation: the whole screen below.
+    expect(firstPublished()).toEqual(px(SCREEN));
+    wait(SECURE_TRANSITION_HOLD_MS + 100);
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
+
+  it('a pop covers the view it uncovers, by the popped screen\'s animation', () => {
+    const below = belowOf([pushedScreen({ stackAnimation: 'slide_from_left' })]);
+    render(below);
+    wait(212);
+
+    commitScreens(below, []);
+    wait(17);
+
+    expect(firstPublished()).toEqual(px(rect(0, 100, 400, 50)));
+  });
+
+  it('a stack that re-renders with the same screens covers nothing', () => {
+    const below = belowOf([pushedScreen()]);
+    render(below);
+    wait(212);
+
+    ancestorOfType(below, 'RNSScreenStack').memoizedProps = { children: 2 };
+    wait(17);
+
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
+
+  it('reads the first screens without covering anything, or warning', () => {
+    render(belowOf([pushedScreen()]));
+    wait(212);
+
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('reads the committed stack, not a stale one the view was mounted under', () => {
+    const below = belowOf();
+    const stack = ancestorOfType(below, 'RNSScreenStack');
+    pairWith(stack, { children: 1 });
+    render(below);
+    wait(212);
+
+    // Pushed in front, on the committed stack fiber only.
+    const pushed = { ...fabricHostFiber(pushedScreen()), return: stack, sibling: stack.child } as FiberLike;
+    stack.child = pushed;
+    stack.memoizedProps = { children: 2 };
+    wait(17);
+
+    expect(firstPublished()).toEqual(px(SCREEN));
+  });
+
+  it('forgets the screens it saw once disabled: enabled again, nothing has moved', () => {
+    const below = belowOf();
+    const testRenderer = render(below);
+    wait(212);
+    act(() => testRenderer.update(<BugseeSecure enabled={false} />));
+
+    commitScreens(below, [pushedScreen()]);
+    wait(SECURE_TRANSITION_HOLD_MS + 100);
+    act(() => testRenderer.update(<BugseeSecure enabled />));
+
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
+
+  it('on iOS, a card presented over it scales the screen below: the whole screen', () => {
+    mockPlatform.OS = 'ios';
+    try {
+      const below = belowOf();
+      render(below);
+      wait(212);
+
+      commitScreens(below, [pushedScreen({ stackPresentation: 'formSheet' })]);
+      wait(17);
+
+      // iOS takes points.
+      expect((lastPublished() as [number, number[]])[1].slice(0, 4)).toEqual([0, 0, 400, 800]);
+    } finally {
+      mockPlatform.OS = 'android';
+    }
+  });
+
+  it('on iOS, a card presented by a view of its own tells the screen below the same', () => {
+    mockPlatform.OS = 'ios';
+    try {
+      const tree = root([
+        fabricHost('RNSScreenStack', null, {}, [
+          fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()])]),
+          fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, stackPresentation: 'formSheet' }, [
+            view([self()]),
+          ]),
+        ]),
+      ]);
+      const selves = selvesIn(tree);
+      const low = selves.find((fiber) => ancestorOfType(fiber, SCREEN_HOST_TYPE).sibling !== null) as FiberLike;
+      const card = selves.find((fiber) => fiber !== low) as FiberLike;
+      existing(low);
+      render(low);
+      const pushed = ancestorOfType(card, SCREEN_HOST_TYPE);
+      for (let current: FiberLike | null = pushed; current !== null; current = current.child) {
+        current.alternate = null;
+      }
+      native.reset();
+
+      render(card);
+
+      // The view below: its whole screen; the card's own view: its column, from where it is down.
+      const published = (lastPublished() as [number, number[]])[1];
+      const rects: string[] = [];
+      for (let index = 0; index < published.length; index += 4) {
+        rects.push(published.slice(index, index + 4).join());
+      }
+      expect(rects).toContain([0, 0, 400, 800].join());
+    } finally {
+      mockPlatform.OS = 'android';
+    }
+  });
+
+  it('screens below wrappers (a stack item) are found too', () => {
+    const below = belowOf();
+    render(below);
+    wait(212);
+
+    commitScreens(below, [composite([pushedScreen()])]);
+    const item = ancestorOfType(below, 'RNSScreenStack').child?.sibling as FiberLike;
+    const screen = { ...fabricHostFiber(pushedScreen()), return: item, sibling: null } as FiberLike;
+    item.child = screen;
+    wait(17);
+
+    expect(firstPublished()).toEqual(px(SCREEN));
   });
 });
 
@@ -813,6 +1001,13 @@ describe('C3: a Modal sliding in and out', () => {
 
     const joined = { x: 0, y: 0, width: 400, height: WHOLE_SURFACE.height };
     expect(lastOnSurface()).toEqual([0, MODAL_TAG, [...px(joined), ...px(selfRect)]]);
+  });
+
+  it('a view in a Modal on no stack reads no stack, and warns about nothing', () => {
+    render(existing(inModal({ animationType: 'slide' })));
+    wait(212);
+
+    expect(console.warn).not.toHaveBeenCalled();
   });
 
   it('a Modal without animation holds only the view as it closes', () => {
