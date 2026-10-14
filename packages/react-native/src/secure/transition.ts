@@ -1,4 +1,4 @@
-import { MODAL_SCREEN_HOST_TYPE, SCREEN_HOST_TYPE, measureFiber } from './ancestry';
+import { MODAL_SCREEN_HOST_TYPE, SCREEN_HOST_TYPE, measureFiber, passMemo } from './ancestry';
 import type { Ancestry } from './ancestry';
 import { MODAL_HOST_TYPE } from './surface';
 import { FiberTag } from '../viewtree/fiber';
@@ -75,6 +75,7 @@ export interface Carrier {
  * pushed or popped).
  */
 export function carriersOf(ancestry: Ancestry): Carrier[] {
+  // `hosts` stop at a Modal (a root of its own): the screens it was opened over move without it.
   const carriers: Carrier[] = ancestry.hosts
     .filter((host) => host.screen && STACK_HOST_TYPES.has(ancestry.path[host.above]?.type))
     .map((host) => ({ kind: 'screen' as const, index: host.index, stack: host.above }));
@@ -126,47 +127,63 @@ export function modalOf(ancestry: Ancestry): Carrier | null {
 }
 
 /**
- * Until when the carrier is being carried in (`undefined`: it is not): a
- * commit no longer ago than {@link SECURE_TRANSITION_HOLD_MS} created it, as a
- * push or a Modal opening does. A fiber gets its alternate the first time it
- * is rendered again, and every ancestor of a view that mounts is either
- * created or rendered again by that commit, so a carrier with no alternate
- * was created by the commit running now, and its time is kept for views that
- * come later. Something above the carrier must have been there before (the
- * stack, the screen that opened the Modal): a tree mounted whole, as an app
- * starts, is drawn where it is laid out, with no transition.
+ * Until when the carrier is being carried in (`undefined`: it is not): it
+ * was pushed, or opened, no longer ago than {@link SECURE_TRANSITION_HOLD_MS}.
+ * Its birth is kept for every view that comes later, by the carrier:
+ *  - a carrier with no alternate was created by the commit running now (a
+ *    fiber gets its alternate the first time it is rendered again, and every
+ *    ancestor of a view that mounts is created or rendered again by that
+ *    commit), as a push or a Modal opening does. A tree mounted whole, as an
+ *    app starts, is drawn where it is laid out, with no transition: something
+ *    above the carrier must have been there before (the stack, the screen
+ *    that opened the Modal);
+ *  - a screen another view saw pushed onto its stack ({@link noteBirth});
+ *  - otherwise it was there before, first seen now: when it came is not
+ *    known (a screen pushed with a spinner, its secure content mounting a
+ *    commit later), so it is taken as coming now. Once per carrier.
  */
 export function carrierEntering(ancestry: Ancestry, carrier: Carrier, now: number): number | undefined {
   const { path } = ancestry;
   const fiber = path[carrier.index] as FiberLike;
   const key = keyOf(fiber);
-  const created = fiber.alternate == null;
-  // Nothing below a created carrier can have been there before it.
-  // Stryker disable next-line MethodExpression -- so looking from the bottom finds the same
-  if (created && !births.has(key) && path.slice(carrier.index + 1).some((above) => above.alternate != null)) {
-    births.set(key, now);
+  if (!births.has(key)) {
+    // Nothing below a created carrier can have been there before it.
+    // Stryker disable next-line MethodExpression -- so looking from the bottom finds the same
+    const mountedWhole =
+      fiber.alternate == null && !path.slice(carrier.index + 1).some((above) => above.alternate != null);
+    births.set(key, mountedWhole ? -Infinity : now);
   }
-  const born = births.get(key);
-  // `undefined` makes the difference NaN, which is never less than anything.
-  // Stryker disable next-line ConditionalExpression,LogicalOperator -- so its mutants are equivalent
-  return born !== undefined && now - born < SECURE_TRANSITION_HOLD_MS ? born + SECURE_TRANSITION_HOLD_MS : undefined;
+  const born = births.get(key) as number;
+  return now - born < SECURE_TRANSITION_HOLD_MS ? born + SECURE_TRANSITION_HOLD_MS : undefined;
 }
 
 /**
- * When each carrier was created by a transition, by {@link keyOf}: a view
- * that mounts, or is shown, while that transition still runs is carried in
- * with it.
+ * When each carrier came, by {@link keyOf}: a view that mounts, or is shown,
+ * while it is still being pushed or opened is carried in with it.
+ * `-Infinity`: mounted with the tree it is in, as an app starts.
  */
 const births = new WeakMap<object, number>();
+
+/** A screen (by {@link keyOf}) seen pushed onto a stack at `now`, unless its birth is known already. */
+export function noteBirth(key: object, now: number): void {
+  if (!births.has(key)) {
+    births.set(key, now);
+  }
+}
 
 /**
  * What stays the same for a host across both fibers of its pair and every
  * commit: Fabric's shared `canonical` (a host's `stateNode` is cloned on
- * every update), or the fiber when there is none.
+ * every update); on Paper the `stateNode` itself, which both fibers share;
+ * the fiber when there is neither.
  */
 export function keyOf(fiber: FiberLike): object {
-  const canonical = (fiber.stateNode as { canonical?: unknown } | null | undefined)?.canonical;
-  return canonical !== null && typeof canonical === 'object' ? canonical : fiber;
+  const node = fiber.stateNode as { canonical?: unknown } | null | undefined;
+  const canonical = node?.canonical;
+  if (canonical !== null && typeof canonical === 'object') {
+    return canonical;
+  }
+  return node !== null && typeof node === 'object' ? node : fiber;
 }
 
 function deletes(parent: FiberLike | null | undefined, child: FiberLike): boolean {
@@ -271,6 +288,11 @@ const MAX_SCREEN_DEPTH = 16;
  * with their props: its descendants down to the first screen hosts.
  */
 export function screensOn(stack: FiberLike): Map<object, unknown> {
+  // Once a measure pass for every view on the stack.
+  return passMemo(stack, () => findScreens(stack));
+}
+
+function findScreens(stack: FiberLike): Map<object, unknown> {
   const screens = new Map<object, unknown>();
   const visit = (fiber: FiberLike | null, depth: number): void => {
     for (let child = fiber; child != null; child = child.sibling) {

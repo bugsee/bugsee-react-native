@@ -297,7 +297,8 @@ echo "    the commit and pairing, hidden Offscreen hosts, RootNodeKind hosts, Sc
 #   animation its `_fromValue`, `_toValue` and `_easing`, an interpolation its
 #   `_parent`, `_config` and `_getInterpolation()`, and a native node
 #   `__isNative`; a value its `_value`, `_offset` and `hasListeners()`; diffClamp,
-#   modulo and division their own fields; Modal its `animationType` prop.
+#   modulo and division their own fields; Modal its `animationType` prop;
+# - native Animated.events attached through AnimatedEvent.__attach/__detach.
 for RENDERER_BUNDLE in \
   "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-dev.js" \
   "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-prod.js"
@@ -330,6 +331,17 @@ grep -qE 'this\._modulus = modulus' "$ANIMATED/nodes/AnimatedModulo.js" \
   || { echo "FAIL: AnimatedModulo.js no longer keeps its modulus in _modulus"; exit 1; }
 grep -qE '_warnedAboutDivideByZero' "$ANIMATED/nodes/AnimatedDivision.js" \
   || { echo "FAIL: AnimatedDivision.js is no longer told apart by _warnedAboutDivideByZero"; exit 1; }
+# A native Animated.event is attached and detached through AnimatedEvent's
+# own __attach/__detach (an Animated component's props), its values in
+# _argMapping[0], and the module is reachable at its Libraries path.
+grep -qE 'export class AnimatedEvent' "$ANIMATED/AnimatedEvent.js" \
+  || { echo "FAIL: AnimatedEvent.js no longer exports the AnimatedEvent class"; exit 1; }
+for FIELD in '__attach\(viewRef' '__detach\(viewTag' 'this\._argMapping = argMapping' 'argMapping\[0\]\.nativeEvent'; do
+  grep -qE "$FIELD" "$ANIMATED/AnimatedEvent.js" \
+    || { echo "FAIL: AnimatedEvent.js no longer has $FIELD"; exit 1; }
+done
+grep -rqE 'propValue\.__attach\(|\.__attach\(' "$RN_SRC/src/private/animated" "$ANIMATED" \
+  || { echo "FAIL: no Animated component attaches its native events with __attach any more"; exit 1; }
 grep -qE 'animationType=\{animationType\}' "$RN_SRC/Libraries/Modal/Modal.js" \
   || { echo "FAIL: Modal.js no longer passes animationType to its host"; exit 1; }
 # Tracked, not required: with C++ Animated on, the shadow tree holds a native animation's end value.

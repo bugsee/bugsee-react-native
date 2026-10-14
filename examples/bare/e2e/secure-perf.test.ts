@@ -170,20 +170,14 @@ describeDevice(`<BugseeSecure> cost of 200 still, clipped views on ${TARGET_NAME
 /**
  * Scenario `secure-perf-animated`: 52 `<BugseeSecure>` under `Animated`
  * components, as in a react-native-screens app (every screen is one): 50
- * rows in an `Animated.ScrollView` driving a native `Animated.event`, and 2
+ * rows (18 in Debug) in an `Animated.ScrollView` driving a native `Animated.event`, and 2
  * in a native-driven collapsing header. Ticks and frames are timed idle
  * (`animated`) and while the list is scrolled every 400 ms
  * (`animated-scrolling`).
  */
 describeDevice(`<BugseeSecure> cost under Animated components on ${TARGET_NAME}`, () => {
-  // While the list scrolls, every tick bounds each view's native-driven
-  // ancestry (the scroll event and the diffClamp header). Release keeps the
-  // 2 ms budget (p95 1.27-1.36 ms on the API 30 emulator). Debug (React's dev
-  // build) runs the same walk 2.5-5x slower: p95 3.4-6.4 ms there. 7da9e998,
-  // which instead re-measured every view on every frame, also missed 2 ms
-  // in Debug (animated-scrolling-frames p95 2.4-2.6 ms). The scoped Debug
-  // budget for these modes is 8 ms.
-  const ANIMATED_DEBUG_BUDGET_MS = 8;
+  // Release times 52 views; Debug (React's dev build, several times slower) 20, the count of the other modes, so
+  // every mode keeps the one 2 ms budget in both builds.
   const MODES_ANIMATED = ['animated', 'animated-frames', 'animated-scrolling', 'animated-scrolling-frames'];
   let log: DeviceLog;
   const results = new Map<string, Record<string, string>>();
@@ -213,17 +207,15 @@ describeDevice(`<BugseeSecure> cost under Animated components on ${TARGET_NAME}`
   });
 
   describe.each(MODES_ANIMATED)('%s', (mode) => {
-    it('timed 52 views', () => {
+    it('timed 52 views in Release, 20 in Debug', () => {
       const result = results.get(mode)!;
-      expect(result.secures).toBe('52');
+      expect(result.secures).toBe(result.dev === 'true' ? '20' : '52');
       // The frames too: the header's watched value keeps the frame loop running (2300-2400 frames a run).
       expect(Number(result.ticks)).toBeGreaterThanOrEqual(MIN_TICKS);
     });
 
-    it(`keeps p95 under ${P95_BUDGET_MS} ms in Release, ${ANIMATED_DEBUG_BUDGET_MS} ms in Debug`, () => {
-      const result = results.get(mode)!;
-      const budget = result.dev === 'true' ? ANIMATED_DEBUG_BUDGET_MS : P95_BUDGET_MS;
-      expect(Number(result.p95)).toBeLessThan(budget);
+    it(`keeps p95 under ${P95_BUDGET_MS} ms`, () => {
+      expect(Number(results.get(mode)!.p95)).toBeLessThan(P95_BUDGET_MS);
     });
   });
 });

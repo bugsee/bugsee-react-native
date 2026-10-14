@@ -16,6 +16,7 @@ import {
   deletionRoot,
   joinStack,
   keyOf,
+  noteBirth,
   screenCover,
   screensOn,
   stackMotionOf,
@@ -157,29 +158,59 @@ describe('carriedCovers and bounding', () => {
 });
 
 describe('carrierEntering', () => {
-  it('a carrier created by the commit running now is carried in until the hold ends, and stays so', () => {
+  it('a carrier mounted whole, as an app starts, is not carried in, then or later', () => {
     const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
     const carrier = { kind: 'screen' as const, index: 0 };
 
-    // Mounted whole, as an app starts: nothing above it was there.
+    // Nothing above it was there.
     expect(carrierEntering(ancestry, carrier, 1000)).toBeUndefined();
+    for (const fiber of ancestry.path) {
+      fiber.alternate = { ...fiber, alternate: fiber };
+    }
+    expect(carrierEntering(ancestry, carrier, 1001)).toBeUndefined();
+  });
+
+  it('a carrier created by the commit running now is carried in until the hold ends, and stays so', () => {
+    const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
+    const carrier = { kind: 'screen' as const, index: 0 };
     const above = ancestry.path[1] as FiberLike;
     above.alternate = { ...above, alternate: above };
+
     expect(carrierEntering(ancestry, carrier, 1000)).toBe(1000 + SECURE_TRANSITION_HOLD_MS);
     // Rendered again since, a later view still finds it carried in, from when it was created.
     const screen = ancestry.path[0] as FiberLike;
     screen.alternate = { ...screen, alternate: screen };
     expect(carrierEntering(ancestry, carrier, 1300)).toBe(1000 + SECURE_TRANSITION_HOLD_MS);
+    expect(carrierEntering(ancestry, carrier, 1000 + SECURE_TRANSITION_HOLD_MS - 1)).toBe(
+      1000 + SECURE_TRANSITION_HOLD_MS,
+    );
     expect(carrierEntering(ancestry, carrier, 1000 + SECURE_TRANSITION_HOLD_MS)).toBeUndefined();
   });
 
-  it('a carrier there before, never seen created, is not carried in', () => {
+  it('N3: a carrier there before, first seen now, is taken as coming now: once', () => {
     const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
     for (const fiber of ancestry.path) {
       fiber.alternate = { ...fiber, alternate: fiber };
     }
+    const carrier = { kind: 'screen' as const, index: 0 };
 
-    expect(carrierEntering(ancestry, { kind: 'screen', index: 0 }, 5)).toBeUndefined();
+    // A screen pushed with a spinner, its secure content mounting a commit later.
+    expect(carrierEntering(ancestry, carrier, 5)).toBe(5 + SECURE_TRANSITION_HOLD_MS);
+    expect(carrierEntering(ancestry, carrier, 300)).toBe(5 + SECURE_TRANSITION_HOLD_MS);
+    expect(carrierEntering(ancestry, carrier, 5000)).toBeUndefined();
+  });
+
+  it('N3: a screen seen pushed is carried in from then; a birth known already stands', () => {
+    const ancestry = ancestryOfFiber(onScreen('RNSScreenStack'));
+    for (const fiber of ancestry.path) {
+      fiber.alternate = { ...fiber, alternate: fiber };
+    }
+    const carrier = { kind: 'screen' as const, index: 0 };
+    const key = keyOf(ancestry.path[0] as FiberLike);
+
+    noteBirth(key, 100);
+    noteBirth(key, 200);
+    expect(carrierEntering(ancestry, carrier, 300)).toBe(100 + SECURE_TRANSITION_HOLD_MS);
   });
 });
 
@@ -357,14 +388,18 @@ describe('stack motion and covers', () => {
     expect(told).toHaveBeenCalledWith('sideways', 5, {});
   });
 
-  it('keys a host by its shared canonical, or else the fiber itself', () => {
+  it('keys a host by its shared canonical, on Paper by its shared instance, or else the fiber itself', () => {
     const canonical = {};
 
     expect(keyOf({ stateNode: { canonical } } as never)).toBe(canonical);
     const bare = { stateNode: null } as never;
     expect(keyOf(bare)).toBe(bare);
-    const nullCanonical = { stateNode: { canonical: null } } as never;
-    expect(keyOf(nullCanonical)).toBe(nullCanonical);
+    const notAnObject = { stateNode: 7 } as never;
+    expect(keyOf(notAnObject)).toBe(notAnObject);
+    // P3-e: Paper's host instance is shared by both fibers of the pair.
+    const instance = { canonical: null };
+    expect(keyOf({ stateNode: instance } as never)).toBe(instance);
+    expect(keyOf({ stateNode: { canonical: 'x' } } as never)).toEqual({ canonical: 'x' });
   });
 
   it('a screen moving sideways, its view never measured, covers the whole screen', () => {

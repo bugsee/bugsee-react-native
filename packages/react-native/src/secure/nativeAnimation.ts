@@ -16,10 +16,14 @@ import type { FiberLike, WindowRect } from '../viewtree/fiber';
  * From them this module bounds every value a node can take until the next
  * re-measure, by interval arithmetic:
  *  - an `Animated.Value` in a timing animation: its whole path, easing
- *    overshoot included; still: its value, but only when JS provably has it
- *    (this module saw it animate, or the app listens to it). A native value
- *    nobody animated from JS may be driven by a native `Animated.event` (a
- *    scroll, a gesture) whose values JS never sees: unbounded;
+ *    overshoot included; still: its value, but only when JS provably has it.
+ *    Natively, only animations (which JS starts, and which hand JS their end
+ *    value) and native `Animated.event`s (a scroll, a gesture, whose values
+ *    JS never sees) move a value. This module follows `Animated` components
+ *    attaching and detaching those events: a value one is attached to is
+ *    unbounded for as long as it is attached, animated or not. Where it
+ *    cannot follow them (React Native moved its `AnimatedEvent`), any value
+ *    is trusted only while the app listens to it;
  *  - `diffClamp` between its bounds; `add`, `subtract`, `multiply`, `divide`
  *    and `modulo` from their operands; an interpolation through its mapping,
  *    or within its output range when it clamps both ends, whatever its input.
@@ -34,8 +38,10 @@ import type { FiberLike, WindowRect } from '../viewtree/fiber';
  * Anything else is unbounded and covers the whole surface, cut by the
  * clipping ancestors above it: a rotation, skew or matrix; a node of a kind,
  * or with fields, this module does not know (React Native renamed something);
- * a spring or decay; a Reanimated component whose animated style sets a
- * transform (Reanimated's worklets keep their values on the UI thread).
+ * a spring or decay; a value a native `Animated.event` is attached to; a
+ * Reanimated component whose style can move the view (an animated style
+ * that sets a transform, a shared value set inline, a CSS animation or
+ * transition: Reanimated keeps its values on the UI thread).
  * Masking too much beats drawing the view where nothing masks it.
  *
  * A JS-driven animation needs none of this: Fabric commits its values to the
@@ -101,8 +107,98 @@ export interface AnimatedNodeLike {
   [field: string]: unknown;
 }
 
-/** Values this module has seen in a running animation: still since, their JS value is the native one. */
-const seenAnimating = new WeakSet<object>();
+/**
+ * The values native `Animated.event`s are attached to, with how many each;
+ * `null` when attachments cannot be followed. Followed from when this module
+ * loads (an app attaches its events as its components mount, after that).
+ */
+let attachedEvents: WeakMap<object, number> | null = null;
+
+/** How deep in an event's mapping its values are looked for (`{ nativeEvent: { contentOffset: { y } } }`). */
+const MAPPING_DEPTH = 8;
+
+/** The `Animated.Value`s in an `Animated.event` mapping (an `Animated.ValueXY`'s two included). */
+function valuesIn(mapping: unknown, depth = 0): object[] {
+  if (mapping === null || typeof mapping !== 'object' || depth > MAPPING_DEPTH) {
+    return [];
+  }
+  if (isNode(mapping) && '_value' in mapping) {
+    return [mapping];
+  }
+  return Object.values(mapping).flatMap((inner) => valuesIn(inner, depth + 1));
+}
+
+interface EventPrototype {
+  __attach: (...args: unknown[]) => unknown;
+  __detach: (...args: unknown[]) => unknown;
+  _argMapping?: unknown;
+}
+
+/**
+ * Follows the native attachments of every `eventClass` (React Native's
+ * `AnimatedEvent`) from now on: an `Animated` component attaches each native
+ * event in its props as it mounts, and detaches it as it unmounts or the prop
+ * changes. Its prototype is wrapped. Anything else stops following them: a
+ * still value is then trusted only while the app listens to it. Returns
+ * whether they are followed.
+ */
+export function followEventAttachments(eventClass: unknown): boolean {
+  const prototype = (eventClass as { prototype?: Partial<EventPrototype> } | null | undefined)?.prototype;
+  const attach = prototype?.__attach;
+  const detach = prototype?.__detach;
+  if (typeof attach !== 'function' || typeof detach !== 'function') {
+    attachedEvents = null;
+    return false;
+  }
+  const counts = new WeakMap<object, number>();
+  attachedEvents = counts;
+  // Per event, the values of each attachment still in place, oldest first.
+  const attachments = new WeakMap<object, object[][]>();
+  const count = (values: readonly object[], by: number): void => {
+    for (const value of values) {
+      const next = (counts.get(value) ?? 0) + by;
+      if (next > 0) {
+        counts.set(value, next);
+      } else {
+        counts.delete(value);
+      }
+    }
+  };
+  (prototype as EventPrototype).__attach = function (this: EventPrototype, ...args) {
+    const result = attach.apply(this, args);
+    const values = valuesIn((this._argMapping as unknown[] | undefined)?.[0]);
+    count(values, 1);
+    attachments.set(this, [...(attachments.get(this) ?? []), values]);
+    return result;
+  };
+  (prototype as EventPrototype).__detach = function (this: EventPrototype, ...args) {
+    const [values = [], ...rest] = attachments.get(this) ?? [];
+    attachments.set(this, rest);
+    count(values, -1);
+    return detach.apply(this, args);
+  };
+  return true;
+}
+
+// React Native's own class, where an app has it (not under Jest's mocks): an empty catch follows nothing.
+// Stryker disable all
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- React Native's internals, where they are
+  const module = require('react-native/Libraries/Animated/AnimatedEvent') as { AnimatedEvent?: unknown };
+  followEventAttachments(module.AnimatedEvent);
+} catch {
+  attachedEvents = null;
+}
+// Stryker restore all
+
+/** Whether a native `Animated.event` is attached to `node`: as far as is known, it may be. */
+function eventDriven(node: AnimatedNodeLike): boolean {
+  if (attachedEvents === null) {
+    // Not known: only the app's listener streams its native value to JS.
+    return (node.hasListeners as (() => boolean) | undefined)?.() !== true;
+  }
+  return attachedEvents.has(node);
+}
 
 function isNode(value: unknown): value is AnimatedNodeLike {
   return typeof (value as AnimatedNodeLike | null | undefined)?.__getValue === 'function';
@@ -153,11 +249,13 @@ function valueBound(node: AnimatedNodeLike): NodeBound {
     return { ...UNBOUNDED, roots: [node] };
   }
   const animation = node._animation as Record<string, unknown> | null;
-  if (animation == null) {
-    const synced = seenAnimating.has(node) || (node.hasListeners as (() => boolean) | undefined)?.() === true;
-    return { range: synced ? { lo: now, hi: now } : undefined, running: false, roots: [node] };
+  // An event moves it as well as any animation, wherever the gesture or the scroll takes it.
+  if (eventDriven(node)) {
+    return { range: undefined, running: animation != null, roots: [node] };
   }
-  seenAnimating.add(node);
+  if (animation == null) {
+    return { range: { lo: now, hi: now }, running: false, roots: [node] };
+  }
   const { _fromValue: from, _toValue: to, _easing: easing } = animation;
   if (!finiteNumber(from) || !finiteNumber(to) || typeof easing !== 'function') {
     return { range: undefined, running: true, roots: [node] };
@@ -212,21 +310,43 @@ function join(...bounds: NodeBound[]): Pick<NodeBound, 'running' | 'roots'> {
   return { running: bounds.some((bound) => bound.running), roots: bounds.flatMap((bound) => bound.roots) };
 }
 
-/** `add`, `subtract`, `multiply` (which keep the same fields), `divide`: from the operands, by intervals. */
+type Operation = (x: number, y: number) => number;
+
+const divide: Operation = (x, y) => x / y;
+const OPERATIONS: readonly Operation[] = [(x, y) => x + y, (x, y) => x - y, (x, y) => x * y, divide];
+
+/**
+ * Which operations `node` (with operands `_a` and `_b`) can be: `divide` by
+ * its own field; otherwise those whose result on the operands' values now is
+ * the node's value now (`add`, `subtract` and `multiply` keep the same
+ * fields). Where several match (`x * 1` and `x / 1`), each is taken. None:
+ * a kind this module does not know.
+ */
+function operationsOf(node: AnimatedNodeLike): readonly Operation[] {
+  if ('_warnedAboutDivideByZero' in node) {
+    return [divide];
+  }
+  const x = (node._a as AnimatedNodeLike).__getValue();
+  const y = (node._b as AnimatedNodeLike).__getValue();
+  const value = node.__getValue();
+  return OPERATIONS.filter((operation) => operation(x as number, y as number) === value);
+}
+
+/** `add`, `subtract`, `multiply`, `divide`: from the operands, by intervals. */
 function binaryBound(node: AnimatedNodeLike): NodeBound {
   const a = nodeBound(node._a as AnimatedNodeLike);
   const b = nodeBound(node._b as AnimatedNodeLike);
   const both = join(a, b);
-  if (a.range === undefined || b.range === undefined) {
+  const operations = isNode(node._a) && isNode(node._b) ? operationsOf(node) : [];
+  if (a.range === undefined || b.range === undefined || operations.length === 0) {
     return { range: undefined, ...both };
   }
   const as = [a.range.lo, a.range.hi];
   const bs = [b.range.lo, b.range.hi];
-  const division = '_warnedAboutDivideByZero' in node;
-  if (division && b.range.lo <= 0 && b.range.hi >= 0) {
+  if (operations.includes(divide) && b.range.lo <= 0 && b.range.hi >= 0) {
     return { range: undefined, ...both };
   }
-  const results = as.flatMap((x) => bs.map((y) => (division ? [x / y] : [x + y, x - y, x * y])).flat());
+  const results = as.flatMap((x) => bs.flatMap((y) => operations.map((operation) => operation(x, y))));
   return { range: hull(results), ...both };
 }
 
@@ -386,24 +506,33 @@ function sweep(lo: number, hi: number, steps: readonly Step[], axis: 'x' | 'y'):
 }
 
 /**
- * The motion of one `Animated` component's transform, or `null` when it has
- * no native node in it.
+ * The motion of one `Animated` component's transform; `null` when it has no
+ * `Animated` node in it. Nodes none of which is native yet move nothing now,
+ * but the first animation with the native driver makes them native and
+ * commits nothing: they are only watched (and with nothing to watch, the view
+ * is re-measured every frame).
  */
-function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number): NotNative | Level {
+function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number): NotNative | Level | Pending {
   const fiber = fibers[index] as FiberLike;
   if (isReanimatedComponent(fiber)) {
-    return reanimatedTransform(fiber.memoizedProps) ? UNBOUNDED_LEVEL : NOT_NATIVE;
+    return reanimatedMoves(fiber.memoizedProps) ? UNBOUNDED_LEVEL : NOT_NATIVE;
   }
   const entries = transformOf(fiber.memoizedProps);
-  if (entries === null || !entries.some(([, value]) => isNativeNode(value))) {
+  const nodes = (entries ?? []).filter(([, value]) => isNode(value));
+  if (nodes.length === 0) {
     return NOT_NATIVE;
   }
+  if (!nodes.some(([, value]) => isNativeNode(value))) {
+    const roots = nodes.flatMap(([, value]) => nodeBound(value).roots);
+    return { running: roots.length === 0, roots, move: undefined, scaled: false };
+  }
   const host = hostBelow(ancestry, fibers, index);
-  const rendered = new Map(transformOf(host.memoizedProps) ?? []);
+  // By place: a function can come twice (`translateX` twice), each with its own value.
+  const rendered = transformOf(host.memoizedProps) ?? [];
   const steps: Step[] = [];
   const bounds: NodeBound[] = [];
   let bounded = true;
-  for (const [name, value] of entries) {
+  for (const [place, [name, value]] of (entries as Array<[string, unknown]>).entries()) {
     const bound = nodeBound(value);
     bounds.push(bound);
     const axes = TRANSLATE_AXES[name] !== undefined ? [TRANSLATE_AXES[name]] : SCALE_AXES[name];
@@ -414,37 +543,50 @@ function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number
     // Without this, sweeping a missing range throws, which reads as unbounded too.
     // Stryker disable next-line AssignmentOperator,ConditionalExpression -- so its mutants are equivalent
     bounded &&= bound.range !== undefined;
-    const at = rendered.get(name);
+    const [renderedName, at] = rendered[place] ?? [];
     const now = isNode(value) ? value.__getValue() : value;
     for (const axis of axes) {
       steps.push({
         axis,
         shift: TRANSLATE_AXES[name] !== undefined,
         bound,
-        rendered: finiteNumber(at) ? at : undefined,
+        rendered: renderedName === name && finiteNumber(at) ? at : undefined,
         current: finiteNumber(now) ? now : undefined,
       });
     }
   }
   const { running, roots } = join(...bounds);
+  // Scaled up in the shadow tree: the levels inside it move the view by more than their own values.
+  const scaled = steps.some(
+    (step) => !step.shift && [step.rendered, step.current].some((at) => Math.abs(at ?? 1) > 1),
+  );
   // The host is rendered with the component's style, `transformOrigin` included.
   const origin = originOf(host.memoizedProps);
   // Without the second test, reading a missing origin throws, which reads as unbounded too.
   // Stryker disable next-line ConditionalExpression -- so its mutant is equivalent
   if (!bounded || origin === undefined) {
-    return { running, roots, move: () => undefined };
+    return { running, roots, move: () => undefined, scaled };
   }
-  return { running, roots, move: (rect) => moveThrough(rect, host, steps, origin) };
+  return { running, roots, move: (rect) => moveThrough(rect, host, steps, origin), scaled };
 }
 
 interface Level {
   running: boolean;
   roots: readonly AnimatedNodeLike[];
   move: (rect: WindowRect) => WindowRect | undefined;
+  /** Its transform scales the view up in the shadow tree (by more than 1, or less than -1). */
+  scaled: boolean;
+}
+/** Nodes not native yet: watched, moving nothing. */
+interface Pending {
+  running: boolean;
+  roots: readonly AnimatedNodeLike[];
+  move: undefined;
+  scaled: false;
 }
 type NotNative = null;
 const NOT_NATIVE: NotNative = null;
-const UNBOUNDED_LEVEL: Level = { running: false, roots: [], move: () => undefined };
+const UNBOUNDED_LEVEL: Level = { running: false, roots: [], move: () => undefined, scaled: false };
 
 /**
  * Every place `rect` (measured with the host's transform at whichever value
@@ -497,14 +639,41 @@ function moveThrough(
   return { x: x.lo, y: y.lo, width: x.hi - x.lo, height: y.hi - y.lo };
 }
 
-/** Whether a Reanimated component's animated style sets a transform. */
-function reanimatedTransform(props: unknown): boolean {
+/** Whether `value` looks like a Reanimated shared value, which moves on the UI thread. */
+function sharedValueLike(value: unknown): boolean {
+  const shared = value as { _isReanimatedSharedValue?: unknown; modify?: unknown } | null | undefined;
+  return (
+    shared != null &&
+    typeof shared === 'object' &&
+    (shared._isReanimatedSharedValue === true || typeof shared.modify === 'function')
+  );
+}
+
+/** CSS animations and transitions (Reanimated 4) can move the view without a commit. */
+const CSS_MOTION = /^(transition|animation)/;
+
+/**
+ * Whether a Reanimated component's style can move the view natively: an
+ * animated style that sets a transform, a shared value set inline (in the
+ * style or its transform), or a CSS animation or transition.
+ */
+function reanimatedMoves(props: unknown): boolean {
   const style = (props as { style?: unknown } | null | undefined)?.style;
   const entries = Array.isArray(style) ? style.flat(Infinity) : [style];
   return entries.some((entry) => {
     const animated = entry as { viewDescriptors?: unknown; initial?: { value?: unknown } } | null | undefined;
-    if (animated == null || typeof animated !== 'object' || !('viewDescriptors' in animated)) {
+    if (animated == null || typeof animated !== 'object') {
       return false;
+    }
+    if (!('viewDescriptors' in animated)) {
+      const fields = Object.entries(animated as Record<string, unknown>);
+      const transform = (animated as { transform?: unknown }).transform;
+      const functions = Array.isArray(transform)
+        ? transform.flatMap((step) => (step !== null && typeof step === 'object' ? Object.values(step) : [step]))
+        : [];
+      return (
+        fields.some(([key, value]) => CSS_MOTION.test(key) || sharedValueLike(value)) || functions.some(sharedValueLike)
+      );
     }
     // Not readable: it may well move the view (a read that throws is read as unbounded, too).
     // Stryker disable next-line OptionalChaining,ConditionalExpression,LogicalOperator -- so these are equivalent
@@ -527,8 +696,10 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
   const levels: MotionLevel[] = [];
   let running = false;
   const roots: AnimatedNodeLike[] = [];
+  // Scaled levels' places in `levels`, to unbound the levels inside them.
+  const scaledAt: number[] = [];
   for (const index of ancestry.animated) {
-    let level: Level | null;
+    let level: Level | Pending | null;
     // Props and nodes are the app's: a getter on one can throw.
     try {
       level = levelOf(ancestry, fibers, index);
@@ -540,6 +711,12 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
     }
     running ||= level.running;
     roots.push(...level.roots);
+    if (level.move === undefined) {
+      continue;
+    }
+    if (level.scaled) {
+      scaledAt.push(levels.length);
+    }
     const { move } = level;
     levels.push({
       index,
@@ -555,7 +732,12 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
       // Stryker restore all
     });
   }
-  return levels.length === 0 ? null : { levels, running, roots };
+  // A level inside one the shadow tree scales is bounded in units that scale does not apply to.
+  const outermost = Math.max(0, ...scaledAt);
+  for (let inner = 0; inner < outermost; inner += 1) {
+    levels[inner] = { index: (levels[inner] as MotionLevel).index, move: () => undefined };
+  }
+  return levels.length === 0 && roots.length === 0 && !running ? null : { levels, running, roots };
 }
 
 

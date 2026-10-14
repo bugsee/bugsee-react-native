@@ -5,7 +5,7 @@
  * never move a mask off the view.
  */
 import { ancestryOfFiber, isAnimatedComponent, isHidden, isReanimatedComponent, measurePass } from '../ancestry';
-import { nativeMotion, nodeBound, originOf, throughMotion } from '../nativeAnimation';
+import { followEventAttachments, nativeMotion, nodeBound, originOf, throughMotion } from '../nativeAnimation';
 import { WHOLE_SURFACE } from '../transition';
 import { FiberTag } from '../../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../../viewtree/fiber';
@@ -66,13 +66,32 @@ function interpolated(parent: unknown, config: Record<string, unknown>, map: unk
   };
 }
 
-const binary = (a: unknown, b: unknown, extra: Record<string, unknown> = {}): object => ({
-  __isNative: true,
-  _a: a,
-  _b: b,
-  __getValue: () => 0,
-  ...extra,
-});
+type Operation = 'add' | 'subtract' | 'multiply' | 'divide' | 'other';
+const COMPUTE: Record<Operation, (x: number, y: number) => number> = {
+  add: (x, y) => x + y,
+  subtract: (x, y) => x - y,
+  multiply: (x, y) => x * y,
+  divide: (x, y) => x / y,
+  other: (x, y) => Math.max(x, y) + 0.5,
+};
+
+/**
+ * A stand-in for `Animated.add(a, b)` (or `operation`): React Native wraps a
+ * number operand in a value, and computes the node's value from both.
+ */
+function binary(a: unknown, b: unknown, extra: Record<string, unknown> = {}, operation: Operation = 'add'): object {
+  const operand = (x: unknown): { __getValue: () => unknown } =>
+    (typeof x === 'number' ? value(x) : x) as { __getValue: () => unknown };
+  const left = operand(a);
+  const right = operand(b);
+  return {
+    __isNative: true,
+    _a: left,
+    _b: right,
+    __getValue: () => COMPUTE[operation](left.__getValue() as number, right.__getValue() as number),
+    ...extra,
+  };
+}
 
 describe('nodeBound', () => {
   it('a number is itself; anything else that is not a node is unbounded', () => {
@@ -93,13 +112,158 @@ describe('nodeBound', () => {
     expect(nodeBound(node)).toEqual({ range: undefined, running: false, roots: [node] });
   });
 
-  it('a still value seen animating before is where it is', () => {
+  it('N2: a still value seen animating before, with no listener, is unbounded where events are not followed', () => {
+    // Its last animation's end is known; whether a native Animated.event drives it since is not.
     const node = value(0, timing(0, 10), 0, false);
     expect(nodeBound(node).running).toBe(true);
 
     node._animation = null;
     node._value = 10;
-    expect(nodeBound(node).range).toEqual({ lo: 10, hi: 10 });
+    expect(nodeBound(node).range).toBeUndefined();
+  });
+
+  describe('N2: native Animated.event attachments, followed', () => {
+    /** React Native's `AnimatedEvent`, as far as attaching goes. */
+    function eventClass(): {
+      new (mapping: unknown[]): {
+        _argMapping: unknown[];
+        __attach: (...args: unknown[]) => unknown;
+        __detach: (...args: unknown[]) => unknown;
+      };
+      attach: jest.Mock;
+      detach: jest.Mock;
+    } {
+      const attach = jest.fn(() => 'attached');
+      const detach = jest.fn(() => 'detached');
+      class AnimatedEvent {
+        static attach = attach;
+        static detach = detach;
+        constructor(readonly _argMapping: unknown[]) {}
+        __attach(...args: unknown[]): unknown {
+          return attach.apply(this, args as []);
+        }
+        __detach(...args: unknown[]): unknown {
+          return detach.apply(this, args as []);
+        }
+      }
+      return AnimatedEvent as never;
+    }
+
+    afterEach(() => {
+      followEventAttachments(undefined);
+    });
+
+    const still = (): Value => value(0, null, 0, false);
+
+    it('a still value no event drives is where it is, listened to or not', () => {
+      expect(followEventAttachments(eventClass())).toBe(true);
+
+      expect(nodeBound(still()).range).toEqual({ lo: 0, hi: 0 });
+    });
+
+    it('drag, spring back, drag again: unbounded throughout, until the event is detached', () => {
+      const AnimatedEvent = eventClass();
+      followEventAttachments(AnimatedEvent);
+      const drag = still();
+      // The gesture's Animated.event, attached as the Animated component mounts.
+      const event = new AnimatedEvent([{ nativeEvent: { translationX: drag } }]);
+      expect(event.__attach('view', 'onGestureEvent')).toBe('attached');
+      expect(nodeBound(drag).range).toBeUndefined();
+
+      // Released: a spring back, then still at its end, then dragged again.
+      drag._animation = { _toValue: 0 };
+      expect(nodeBound(drag).range).toBeUndefined();
+      drag._animation = null;
+      expect(nodeBound(drag).range).toBeUndefined();
+      drag._animation = timing(0, 0);
+      expect(nodeBound(drag)).toEqual({ range: undefined, running: true, roots: [drag] });
+      drag._animation = null;
+      expect(nodeBound(drag).range).toBeUndefined();
+
+      expect(event.__detach('view', 'onGestureEvent')).toBe('detached');
+      expect(nodeBound(drag).range).toEqual({ lo: 0, hi: 0 });
+      // React Native's own methods ran, on the event, with what they were given.
+      expect(AnimatedEvent.attach).toHaveBeenCalledWith('view', 'onGestureEvent');
+      expect(AnimatedEvent.attach.mock.contexts[0]).toBe(event);
+      expect(AnimatedEvent.detach).toHaveBeenCalledWith('view', 'onGestureEvent');
+      expect(AnimatedEvent.detach.mock.contexts[0]).toBe(event);
+    });
+
+    it('finds every value of a mapping (an Animated.ValueXY\'s two), however nested, not too deep', () => {
+      const AnimatedEvent = eventClass();
+      followEventAttachments(AnimatedEvent);
+      const [x, y, deep, tooDeep] = [still(), still(), still(), still()];
+      const nest = (inner: unknown, levels: number): unknown =>
+        levels === 0 ? inner : { a: nest(inner, levels - 1) };
+      const nativeEvent = { offset: { x, y, __getValue: () => 0 }, deep: nest(deep, 6), tooDeep: nest(tooDeep, 7), n: 1 };
+      new AnimatedEvent([{ nativeEvent }]).__attach();
+
+      expect([x, y, deep, tooDeep].map((node) => nodeBound(node).range)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+        { lo: 0, hi: 0 },
+      ]);
+    });
+
+    it('counts attachments: one detached leaves the value driven by the others', () => {
+      const AnimatedEvent = eventClass();
+      followEventAttachments(AnimatedEvent);
+      const scroll = still();
+      const first = new AnimatedEvent([{ nativeEvent: { y: scroll } }]);
+      const second = new AnimatedEvent([{ nativeEvent: { y: scroll } }]);
+      first.__attach();
+      first.__attach();
+      second.__attach();
+
+      first.__detach();
+      second.__detach();
+      expect(nodeBound(scroll).range).toBeUndefined();
+      first.__detach();
+      expect(nodeBound(scroll).range).toEqual({ lo: 0, hi: 0 });
+      // Detached more often than attached, or never attached, or with no mapping: nothing goes below none.
+      first.__detach();
+      new AnimatedEvent([{ nativeEvent: { y: scroll } }]).__detach();
+      new AnimatedEvent(undefined as never).__attach();
+      expect(nodeBound(scroll).range).toEqual({ lo: 0, hi: 0 });
+    });
+
+    it('loading, follows React Native\'s own AnimatedEvent; where it cannot be loaded, nothing', () => {
+      const AnimatedEvent = eventClass();
+      jest.isolateModules(() => {
+        jest.doMock('react-native/Libraries/Animated/AnimatedEvent', () => ({ AnimatedEvent }));
+        const isolated = require('../nativeAnimation') as { nodeBound: typeof nodeBound };
+        const scroll = still();
+        new AnimatedEvent([{ nativeEvent: { y: scroll } }]).__attach();
+
+        expect(isolated.nodeBound(scroll).range).toBeUndefined();
+        expect(isolated.nodeBound(still()).range).toEqual({ lo: 0, hi: 0 });
+      });
+      jest.isolateModules(() => {
+        jest.doMock(
+          'react-native/Libraries/Animated/AnimatedEvent',
+          () => {
+            throw new Error('moved');
+          },
+        );
+        const isolated = require('../nativeAnimation') as { nodeBound: typeof nodeBound };
+
+        expect(isolated.nodeBound(still()).range).toBeUndefined();
+      });
+    });
+
+    it.each<[string, unknown]>([
+      ['nothing', undefined],
+      ['a class without attaching', class {}],
+      ['a class that only attaches', class { __attach(): void {} }],
+      ['a class that only detaches', class { __detach(): void {} }],
+    ])('given %s, events are not followed: a still value is trusted only while listened to', (_, AnimatedEvent) => {
+      followEventAttachments(eventClass());
+
+      expect(followEventAttachments(AnimatedEvent)).toBe(false);
+      expect(nodeBound(still()).range).toBeUndefined();
+      expect(nodeBound(value(3)).range).toEqual({ lo: 3, hi: 3 });
+    });
   });
 
   it('a timing animation covers from its start to its end, offset included, and runs', () => {
@@ -207,8 +371,32 @@ describe('nodeBound', () => {
     expect(nodeBound({ __isNative: true, _a: input, _modulus: null, __getValue: () => 0 }).range).toBeUndefined();
   });
 
-  it('add, subtract and multiply are bounded by intervals over both operands', () => {
-    expect(nodeBound(binary(value(1, timing(1, 2)), 3)).range).toEqual({ lo: -2, hi: 6 });
+  it('add, subtract and multiply are each bounded by intervals over both operands', () => {
+    const a = (): Value => value(1, timing(1, 2));
+
+    expect(nodeBound(binary(a(), 3)).range).toEqual({ lo: 4, hi: 5 });
+    expect(nodeBound(binary(a(), 3, {}, 'subtract')).range).toEqual({ lo: -2, hi: -1 });
+    expect(nodeBound(binary(a(), 3, {}, 'multiply')).range).toEqual({ lo: 3, hi: 6 });
+  });
+
+  it('P3-a: a division that lost its own field is told by what it computes, and bounded as one', () => {
+    // 4 / b, b from 2 down to 0.5 (now 2): 2..8, which add, subtract or multiply would bound at most at 8 - 0.5.
+    const node = binary(value(4), value(2, timing(2, 0.5)), {}, 'divide');
+
+    expect(nodeBound(node).range).toEqual({ lo: 2, hi: 8 });
+  });
+
+  it('P3-a: where several operations compute the same now, each is taken', () => {
+    // x * 1 is x / 1 is x - 0... b is 1 now, from 1 to 0.5: x * b 1..4, x / b 2..8 (x 2..4).
+    const node = binary(value(2, timing(2, 4)), value(1, timing(1, 0.5)), {}, 'multiply');
+
+    expect(nodeBound(node).range).toEqual(expect.objectContaining({ lo: expect.any(Number), hi: 8 }));
+  });
+
+  it('P3-a: a binary node computing none of them is unbounded; one with a number operand too', () => {
+    expect(nodeBound(binary(value(1), value(2), {}, 'other')).range).toBeUndefined();
+    expect(nodeBound({ __isNative: true, _a: value(1), _b: 2, __getValue: () => 3 }).range).toBeUndefined();
+    expect(nodeBound({ __isNative: true, _a: 1, _b: value(2), __getValue: () => 3 }).range).toBeUndefined();
   });
 
   it('a division is bounded unless its divisor can be zero; an unbounded operand is unbounded', () => {
@@ -324,10 +512,31 @@ describe('nativeMotion', () => {
     ['no style', undefined],
     ['a style without a transform', { opacity: value(1) }],
     ['a transform of plain numbers', { transform: [{ translateX: 10 }] }],
-    ['a JS-driven transform', { transform: [{ translateX: { ...value(10), __isNative: false } }] }],
     ['a transform that is not a list', { transform: 'translateX(10px)' }],
   ])('an Animated component with %s moves nothing natively', (_, style) => {
     expect(nativeMotion(under(style))).toBeNull();
+  });
+
+  it('N1: a transform of values not native yet moves nothing, and its values are watched', () => {
+    // The first animation with the native driver makes them native, and commits nothing.
+    const node = { ...value(10), __isNative: false };
+    const interpolatedNode = { ...interpolated(node, {}, linear), __isNative: false };
+
+    expect(nativeMotion(under({ transform: [{ translateX: node }, { translateY: interpolatedNode }] }))).toEqual({
+      levels: [],
+      running: false,
+      roots: [node, node],
+    });
+  });
+
+  it('N1: nodes not native yet with nothing to watch keep the view measured every frame', () => {
+    const unknown = { __isNative: false, __getValue: () => 0 };
+
+    expect(nativeMotion(under({ transform: [{ translateX: unknown }] }))).toEqual({
+      levels: [],
+      running: true,
+      roots: [],
+    });
   });
 
   it('a node without the native flag at all is taken as native', () => {
@@ -453,6 +662,60 @@ describe('nativeMotion', () => {
 
     expect(motion?.levels.map((level) => level.index)).toEqual(ancestry.animated);
     expect(throughMotion(SELF, ancestry, motion!).drawn).toEqual(rect(10, 100, 205, 150));
+  });
+
+  it('P3-c: a function that comes twice takes the rendered value of its own place', () => {
+    const transform = [{ translateX: value(10) }, { translateX: value(0, timing(0, 50)) }];
+
+    expect(moved(under({ transform }, { transform: [{ translateX: 10 }, { translateX: 0 }] }))).toEqual(
+      rect(10, 100, 250, 50),
+    );
+    // Rendered with other functions in its places: only the value it holds now is a base.
+    expect(moved(under({ transform }, { transform: [{ translateY: 10 }, { translateX: 0 }] }))).toEqual(
+      rect(10, 100, 250, 50),
+    );
+  });
+
+  /** A view under an inner `Animated.View` translated by `inner`, inside one scaled by `scale`, rendered at `at`. */
+  function scaledOuter(scale: unknown, at: number, inner: unknown): ReturnType<typeof ancestryOfFiber> {
+    const fiber = selfIn(
+      root([
+        {
+          tag: FiberTag.FunctionComponent,
+          type: AnimatedView,
+          memoizedProps: { style: { transform: [{ scale }] } },
+          children: [
+            fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [{ scale: at }] } }, [
+              {
+                tag: FiberTag.FunctionComponent,
+                type: AnimatedView,
+                memoizedProps: { style: { transform: [{ translateX: inner }] } },
+                children: [
+                  fabricHost('RCTView', rect(0, 0, 400, 400), { style: { transform: [{ translateX: 0 }] } }, [
+                    view([self()]),
+                  ]),
+                ],
+              },
+            ]),
+          ],
+        },
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
+    return ancestry;
+  }
+
+  it('P3-b: inside a level the shadow tree scales up, an inner level is unbounded; scaled down, bounded', () => {
+    const slide = (): Value => value(0, timing(0, 50));
+
+    expect(moved(scaledOuter(value(2), 2, slide()))).toBeUndefined();
+    expect(moved(scaledOuter(value(-1.5), -1.5, slide()))).toBeUndefined();
+    // Not rendered with a scale: the one its value holds now is enough.
+    expect(moved(scaledOuter(value(2), undefined as never, slide()))).toBeUndefined();
+    expect(moved(scaledOuter(value(0.5), 0.5, slide()))).toEqual(rect(10, 100, 250, 50));
+    // The outer level itself is bounded either way.
+    expect(nativeMotion(scaledOuter(value(2), 2, slide()))?.levels[1]?.move(SELF)).toBeDefined();
   });
 
   it('reads the stored path when the committed tree cannot be resolved', () => {
@@ -632,9 +895,14 @@ describe('mutation-tight bounds', () => {
     expect(nodeBound(interpolated(value(0, timing(0, 1)), {}, partly)).range).toBeUndefined();
   });
 
-  it('add, subtract and multiply: every one of them is in the hull', () => {
-    // a 2..4, b 0.5: a + b 2.5..4.5, a - b 1.5..3.5, a * b 1..2.
-    expect(nodeBound(binary(value(2, timing(2, 4)), 0.5)).range).toEqual({ lo: 1, hi: 4.5 });
+  it('add, subtract and multiply: the hull of every corner', () => {
+    // a 2..4, b -0.5..1 (now -0.5, where no two of them agree).
+    const a = (): Value => value(2, timing(2, 4));
+    const b = (): Value => value(-0.5, timing(-0.5, 1));
+
+    expect(nodeBound(binary(a(), b())).range).toEqual({ lo: 1.5, hi: 5 });
+    expect(nodeBound(binary(a(), b(), {}, 'subtract')).range).toEqual({ lo: 1, hi: 4.5 });
+    expect(nodeBound(binary(a(), b(), {}, 'multiply')).range).toEqual({ lo: -2, hi: 4 });
   });
 
   it('a division by a range touching zero at either end is unbounded; an unbounded divisor too', () => {
@@ -779,6 +1047,40 @@ describe('transform geometry', () => {
     const motion = nativeMotion(under({ transform: [{ translateX: throwing }] }, { transform: [{ translateX: 0 }] }));
 
     expect(motion).toEqual(expect.objectContaining({ running: false, roots: [] }));
+  });
+
+  /** The ancestry of a view under a Reanimated component styled `style`. */
+  function underReanimated(style: unknown): ReturnType<typeof ancestryOfFiber> {
+    const fiber = selfIn(
+      root([
+        {
+          tag: FiberTag.FunctionComponent,
+          type: Object.assign(() => null, { displayName: 'AnimatedComponent(View)' }),
+          memoizedProps: { style },
+          children: [view([self()])],
+        },
+      ]),
+    );
+    const ancestry = ancestryOfFiber(fiber);
+    isHidden(ancestry);
+    return ancestry;
+  }
+
+  it.each<[string, unknown]>([
+    ['a CSS transition (Reanimated 4)', { transitionProperty: 'transform', transitionDuration: 300 }],
+    ['a CSS animation (Reanimated 4)', [{ animationName: { from: {}, to: {} } }]],
+    ['a shared value set inline', { opacity: { value: 1, _isReanimatedSharedValue: true } }],
+    ['a shared value in its transform', { transform: [{ translateX: { value: 0, modify: () => undefined } }] }],
+  ])('P3-d: %s moves the view: the whole surface', (_, style) => {
+    expect(nativeMotion(underReanimated(style))?.levels[0]?.move(SELF)).toBeUndefined();
+  });
+
+  it.each<[string, unknown]>([
+    ['plain values', { opacity: 1, transform: [{ translateX: 3 }, 'x', null] }],
+    ['a transform that is not a list', { transform: 'none', modify: 1 }],
+    ['an object that is not a shared value', { shadowOffset: { width: 1, height: 1 } }],
+  ])('P3-d: a Reanimated component with %s moves nothing', (_, style) => {
+    expect(nativeMotion(underReanimated(style))).toBeNull();
   });
 
   it('a Reanimated style list with a number (a registered style) in it moves nothing', () => {

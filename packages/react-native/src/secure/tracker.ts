@@ -16,6 +16,7 @@ import {
   joinStack,
   keyOf,
   modalOf,
+  noteBirth,
   screenCover,
   screenRect,
   screensOn,
@@ -159,6 +160,10 @@ export class SecureTracker {
       if (above !== null) {
         const leaving = carriersOf(above).filter((carrier) => carrierLeaving(above, carrier));
         cover = carriedCovers(above, leaving, this.seen);
+        const replaced = this.replacedBy(above, leaving);
+        if (replaced !== null) {
+          cover = bounding(replaced, cover);
+        }
         this.tellStacks(above, leaving, now + SECURE_TRANSITION_HOLD_MS);
       }
     } catch (error) {
@@ -166,7 +171,10 @@ export class SecureTracker {
     }
     this.leave();
     if (cover !== null) {
-      this.cover = { rect: cover, until: now + SECURE_TRANSITION_HOLD_MS };
+      // Joined with a cover still running (a push it was carried in by), the later end kept.
+      this.covering([], now);
+      const until = Math.max(now + SECURE_TRANSITION_HOLD_MS, this.cover?.until ?? 0);
+      this.cover = { rect: bounding(cover, this.cover?.rect), until };
     }
     const rectangles = this.covering(this.hold.update(null, now), now);
     if (rectangles.length === 0) {
@@ -175,6 +183,38 @@ export class SecureTracker {
     }
     this.publish(rectangles);
     this.removeTick = addMeasurer(() => this.onDeparted());
+  }
+
+  /**
+   * A screen popped as another is pushed onto its stack in the same commit
+   * (a `replace`) is animated out by the incoming screen's animation, not its
+   * own: where that can draw the view, or `null` when no screen came.
+   */
+  private replacedBy(above: Ancestry, leaving: readonly Carrier[]): WindowRect | null {
+    let cover: WindowRect | null = null;
+    for (const carrier of leaving) {
+      // A Modal (no stack), or a stack never read: nothing to compare with.
+      const before = this.stackScreens.get(carrier.stack as number);
+      if (before === undefined) {
+        continue;
+      }
+      const stack = above.path[carrier.stack as number] as FiberLike;
+      // The commit's own stack fiber may be either of the pair.
+      const now = [stack, stack.alternate].flatMap((fiber) => (fiber == null ? [] : [...screensOn(fiber)]));
+      // Either fiber of the pair measures the same host.
+      const screen = screenRect(above.path[carrier.index] as FiberLike);
+      for (const [key, props] of now) {
+        if (!before.has(key)) {
+          // As the screen below a push: a slide up leaves it where it is; anything not known, the whole screen.
+          // Its stack was read, so it was measured.
+          const moved = screenCover(stackMotionOf(props, false), screen, this.seen as WindowRect | null, false);
+          if (moved !== null) {
+            cover = bounding(moved, cover);
+          }
+        }
+      }
+    }
+    return cover;
   }
 
   /** Leaves every loop and forgets everything, without publishing. */
@@ -479,10 +519,10 @@ export class SecureTracker {
       if (before === undefined) {
         continue;
       }
-      const moved = [
-        ...[...screens].filter(([key]) => !before.has(key)),
-        ...[...before].filter(([key]) => !screens.has(key)),
-      ];
+      const pushed = [...screens].filter(([key]) => !before.has(key));
+      // Seen come: a view on it that mounts later in its push is carried in from now.
+      pushed.forEach(([key]) => noteBirth(key, now));
+      const moved = [...pushed, ...[...before].filter(([key]) => !screens.has(key))];
       for (const [key, props] of moved) {
         this.screenMoved(carrier, stackMotionOf(props, false), now + SECURE_TRANSITION_HOLD_MS, key);
       }

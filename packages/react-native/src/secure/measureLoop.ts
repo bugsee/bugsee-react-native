@@ -246,12 +246,17 @@ interface WatchedValue {
   state: readonly unknown[];
 }
 
-/** Native `Animated` values watched for an animation starting, by node. */
+/** `Animated` values watched for an animation starting, or becoming native, by node. */
 const watchedValues = new Map<object, WatchedValue>();
 
 function stateOf(node: object): unknown[] {
-  const { _animation: animation, _value: value } = node as { _animation?: unknown; _value?: unknown };
-  return [animation, value];
+  const {
+    _animation: animation,
+    _value: value,
+    __isNative: native,
+  } = node as { _animation?: unknown; _value?: unknown; __isNative?: unknown };
+  // Made native by its first animation with the native driver, which commits nothing.
+  return [animation, value, native];
 }
 
 /** Wakes the subscribers of every watched value whose animation or value changed. */
@@ -269,8 +274,8 @@ function watchValues(): void {
 }
 
 /**
- * Reads `node` (a native `Animated.Value`) every frame, and calls `changed`
- * whenever an animation starts or ends on it, or its value moves, until the
+ * Reads `node` (an `Animated.Value`) every frame, and calls `changed`
+ * whenever an animation starts or ends on it, it is made native, or its value moves, until the
  * returned function is called: a view under a still native transform needs no
  * measuring until then. A few property reads a frame for every subscriber.
  */

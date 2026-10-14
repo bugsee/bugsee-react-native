@@ -92,14 +92,26 @@ view.
 
 Known limits:
 
+- Content that mounts in a pushed screen or an opening `<Modal>` after it
+  came (behind a spinner) is masked for the rest of the transition. When the
+  screen or Modal came is known only if a `<BugseeSecure>` saw it come;
+  otherwise the first one in it masks as if it came then (the whole screen,
+  or the Modal's band, for under a second), once per screen or Modal.
+- A value a native `Animated.event` drives (through an `Animated`
+  component's `onScroll`, `onGestureEvent`, …) moves with the gesture, so
+  anything it transforms masks the whole surface around it while the event
+  is attached. An event attached with `Animated.attachNativeEvent` directly is
+  not seen.
 - Reanimated runs its animations on the UI thread, out of JS's sight. A
-  Reanimated component whose animated style sets a transform masks the whole
-  surface around it; other Reanimated motion (layout animations,
+  Reanimated component whose style sets a transform through an animated
+  style, sets a shared value inline, or uses a CSS animation or transition
+  masks the whole surface around it; other Reanimated motion (an animated
+  style that adds a transform only later, layout animations,
   `entering`/`exiting`, shared element transitions) is not followed.
 - An interactive back gesture (iOS swipe-back, Android predictive back) moves
   a mounted screen without anything JS can see.
-- A native animation's first frame or two may be drawn before the mask
-  follows it.
+- A native animation's first frame can be drawn before the mask follows it
+  (about one frame).
 
 ## Expo config plugin
 

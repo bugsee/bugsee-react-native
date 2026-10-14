@@ -17,7 +17,7 @@ import type { ReactTestRenderer } from 'react-test-renderer';
 import { BugseeSecure } from '../BugseeSecure';
 import { SCREEN_HOST_TYPE } from '../ancestry';
 import { SECURE_SHRINK_HOLD_MS } from '../hold';
-import { SECURE_TRANSITION_HOLD_MS, WHOLE_SURFACE } from '../transition';
+import { SECURE_TRANSITION_HOLD_MS, WHOLE_SURFACE, keyOf, noteBirth } from '../transition';
 import { native } from '../../__mocks__/native';
 import { FiberTag } from '../../viewtree/fiber';
 import type { FiberLike, WindowRect } from '../../viewtree/fiber';
@@ -114,13 +114,30 @@ const px = ({ x, y, width, height }: WindowRect): number[] => [2 * x, 2 * y, 2 *
 const lastPublished = (): unknown => native.setSecureRectangles.mock.lastCall;
 const lastOnSurface = (): unknown => native.setSecureRectanglesOnSurface.mock.lastCall;
 
-/** Gives every fiber on the way up from `fiber` an alternate: it existed before the commit running now. */
+/**
+ * Gives every fiber on the way up from `fiber` an alternate: it existed
+ * before the commit running now; and its screens and Modal long before, as
+ * a view that measured them when they came would have seen.
+ */
 function existing(fiber: FiberLike): FiberLike {
+  for (let current = fiber.return; current !== null; current = current.return) {
+    current.alternate ??= { ...current, alternate: current };
+    if (CARRIER_TYPES.has(current.type)) {
+      noteBirth(keyOf(current), -Infinity);
+    }
+  }
+  return fiber;
+}
+
+/** Gives every fiber on the way up from `fiber` an alternate, its screens and Modal never seen come. */
+function unseen(fiber: FiberLike): FiberLike {
   for (let current = fiber.return; current !== null; current = current.return) {
     current.alternate ??= { ...current, alternate: current };
   }
   return fiber;
 }
+
+const CARRIER_TYPES: ReadonlySet<unknown> = new Set([SCREEN_HOST_TYPE, 'RCTModalHostView']);
 
 /** Gives `ancestor` and every fiber above it an alternate: they were there before the commit running now. */
 function existingFrom(ancestor: FiberLike): void {
@@ -581,6 +598,228 @@ describe('P2-6: a screen with no secure view of its own pushed or popped over on
   });
 });
 
+describe('N3: content that mounts after its screen or Modal came, still in the transition', () => {
+  /** A stack of a screen below and a second screen, `b`'s view on the second; `a`'s on the first. */
+  function twoScreens(): { a: FiberLike; b: FiberLike; stack: FiberLike; first: FiberLike; second: FiberLike } {
+    const tree = root([
+      fabricHost('RNSScreenStack', null, { children: 2 }, [
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()])]),
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [view([self()])]),
+      ]),
+    ]);
+    const selves = selvesIn(tree);
+    const stack = ancestorOfType(selves[0] as FiberLike, 'RNSScreenStack');
+    const first = stack.child as FiberLike;
+    const second = first.sibling as FiberLike;
+    const on = (screen: FiberLike): FiberLike =>
+      selves.find((fiber) => ancestorOfType(fiber, SCREEN_HOST_TYPE) === screen) as FiberLike;
+    return { a: on(first), b: on(second), stack, first, second };
+  }
+
+  it('a screen pushed with a spinner: its secure content, mounting 200 ms later, is carried in', () => {
+    const { b } = twoScreens();
+    // The push commit had no secure view; the screen has rendered again since.
+    unseen(b);
+    wait(200);
+
+    render(b);
+
+    // The default animation: the whole screen, for the hold.
+    expect(firstPublished()).toEqual(px(SCREEN));
+    wait(SECURE_TRANSITION_HOLD_MS - 100);
+    expect(firstPublished()).toEqual(px(SCREEN));
+    wait(200);
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
+  });
+
+  it('seen pushed by a view on the screen below, the late content is carried in from the push, not its mount', () => {
+    const { a, b, stack, first, second } = twoScreens();
+    // Sliding up: the screen below stays put, so only the pushed screen's own view covers its column.
+    second.memoizedProps = { activityState: 2, stackAnimation: 'slide_from_bottom' };
+    // Not pushed yet.
+    first.sibling = null;
+    stack.memoizedProps = { children: 1 };
+    existing(a);
+    unseen(b);
+    render(a);
+    wait(212);
+
+    first.sibling = second;
+    stack.memoizedProps = { children: 2 };
+    wait(17);
+    wait(200);
+    render(b);
+    const column = px({ ...selfRect, height: SCREEN.height - selfRect.y }).join();
+    const published = (): string => (lastPublished() as [number, number[]])[1].join();
+    expect(published()).toContain(column);
+
+    // Past the push's hold (800 ms from it, and the tick that publishes its end), inside one from the mount.
+    wait(SECURE_TRANSITION_HOLD_MS - 200 + 150);
+    expect(published()).not.toContain(column);
+  });
+
+  it('a slide Modal opened with a spinner: its secure content, mounting 200 ms later, gets the band', () => {
+    const fiber = unseen(inModal({ animationType: 'slide' }));
+    const host = ancestorOfType(fiber, 'RCTModalHostView');
+    host.alternate = { ...host, alternate: host };
+    wait(200);
+
+    render(fiber);
+
+    expect((lastOnSurface() as [number, number, number[]])[2].slice(0, 4)).toEqual(
+      px({ ...selfRect, height: WHOLE_SURFACE.height - selfRect.y }),
+    );
+  });
+});
+
+describe('N4: a screen replaced by another on its stack', () => {
+  /** The view on a stack's only screen, `props` its screen's. */
+  function onOnlyScreen(props: Record<string, unknown>): FiberLike {
+    return existing(
+      selfIn(
+        root([
+          fabricHost('RNSScreenStack', null, { children: 1 }, [
+            fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, ...props }, [view([self()])]),
+          ]),
+        ]),
+      ),
+    );
+  }
+
+  /** Replaces the view's screen with a new one with `props`, in one commit, and unmounts the view. */
+  function replace(fiber: FiberLike, testRenderer: ReactTestRenderer, props: Record<string, unknown>): void {
+    const stack = ancestorOfType(fiber, 'RNSScreenStack');
+    const leaving = ancestorOfType(fiber, SCREEN_HOST_TYPE);
+    const spec = fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, ...props }, []);
+    stack.child = {
+      tag: spec.tag,
+      type: spec.type,
+      memoizedProps: spec.memoizedProps,
+      stateNode: spec.stateNode,
+      child: null,
+      sibling: null,
+      return: stack,
+      alternate: null,
+    } as FiberLike;
+    stack.memoizedProps = { children: 1 };
+    deleting(leaving);
+    unmount(testRenderer);
+  }
+
+  it('a login screen set to fade, replaced by a Home that slides in, is covered by the slide\'s band', () => {
+    const fiber = onOnlyScreen({ stackAnimation: 'fade' });
+    const testRenderer = render(fiber);
+    wait(212);
+
+    replace(fiber, testRenderer, { stackAnimation: 'slide_from_right' });
+
+    expect(firstPublished()).toEqual(px(rect(0, 100, 400, 50)));
+    wait(SECURE_TRANSITION_HOLD_MS - 100);
+    expect(firstPublished()).toEqual(px(rect(0, 100, 400, 50)));
+  });
+
+  it('replaced by a screen with the default animation (not known): the whole screen', () => {
+    const fiber = onOnlyScreen({ stackAnimation: 'none' });
+    const testRenderer = render(fiber);
+    wait(212);
+    // Whichever fiber of the stack's pair the commit has: here, with no other.
+    ancestorOfType(fiber, 'RNSScreenStack').alternate = null;
+
+    replace(fiber, testRenderer, {});
+
+    expect(firstPublished()).toEqual(px(SCREEN));
+  });
+
+  it('popped alone, nothing new on its stack: its own animation', () => {
+    const fiber = onOnlyScreen({ stackAnimation: 'fade' });
+    const testRenderer = render(fiber);
+    wait(212);
+
+    deleting(ancestorOfType(fiber, SCREEN_HOST_TYPE));
+    unmount(testRenderer);
+
+    // Its fade's cover (the view where it rests), and the view held.
+    expect(lastPublished()).toEqual([0, [...px(selfRect), ...px(selfRect)]]);
+  });
+
+  it('a cover still running is joined, not replaced: the later end kept', () => {
+    // On a fading screen below; a push over it covers it whole, then its screen is removed (a reset).
+    const tree = root([
+      fabricHost('RNSScreenStack', null, { children: 1 }, [
+        fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2, stackAnimation: 'fade' }, [view([self()])]),
+      ]),
+    ]);
+    const fiber = existing(selvesIn(tree)[0] as FiberLike);
+    const testRenderer = render(fiber);
+    wait(212);
+    const stack = ancestorOfType(fiber, 'RNSScreenStack');
+    const spec = fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, []);
+    (stack.child as FiberLike).sibling = {
+      tag: spec.tag,
+      type: spec.type,
+      memoizedProps: spec.memoizedProps,
+      stateNode: spec.stateNode,
+      child: null,
+      sibling: null,
+      return: stack,
+    } as FiberLike;
+    stack.memoizedProps = { children: 2 };
+    wait(17);
+    expect(firstPublished()).toEqual(px(SCREEN));
+    wait(200);
+
+    deleting(ancestorOfType(fiber, SCREEN_HOST_TYPE));
+    unmount(testRenderer);
+
+    expect(firstPublished()).toEqual(px(SCREEN));
+    // The push's hold has run out (800 ms from it); the removal's has not.
+    wait(SECURE_TRANSITION_HOLD_MS - 150);
+    expect(firstPublished()).toEqual(px(SCREEN));
+  });
+});
+
+describe('P3-g: a Modal opened over a stack screen', () => {
+  // A Modal is a root of its own: the screens it was opened over are not the view's carriers (as on c812b12).
+  it('a push on that stack, under the Modal, covers nothing on the Modal', () => {
+    const fiber = existing(
+      selfIn(
+        root([
+          fabricHost('RNSScreenStack', null, { children: 1 }, [
+            fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, [
+              view([
+                {
+                  tag: FiberTag.HostComponent,
+                  type: 'RCTModalHostView',
+                  memoizedProps: { animationType: 'slide' },
+                  stateNode: { rect: null, tag: MODAL_TAG, canonical: { currentProps: {} } },
+                  children: [fabricHost('RCTView', rect(0, 0, 400, 800), {}, [view([self()])])],
+                },
+              ]),
+            ]),
+          ]),
+        ]),
+      ),
+    );
+    render(fiber);
+    wait(212);
+    const stack = ancestorOfType(fiber, 'RNSScreenStack');
+    const spec = fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState: 2 }, []);
+    (stack.child as FiberLike).sibling = {
+      tag: spec.tag,
+      type: spec.type,
+      memoizedProps: spec.memoizedProps,
+      stateNode: spec.stateNode,
+      child: null,
+      sibling: null,
+      return: stack,
+    } as FiberLike;
+    stack.memoizedProps = { children: 2 };
+    wait(17);
+
+    expect(lastOnSurface()).toEqual([0, MODAL_TAG, px(selfRect)]);
+  });
+});
+
 describe('P2-8: the cover follows the screen\'s stackAnimation', () => {
   function pushed(stackAnimation: unknown, extra: Record<string, unknown> = {}): void {
     const fiber = selfIn(
@@ -917,9 +1156,15 @@ describe('C3: a Modal sliding in and out', () => {
   });
 
   /** The view on a screen of a `container` inside a `<Modal>` with `props`, every ancestor there before. */
-  function onScreenInModal(container: string, activityState: number, props: Record<string, unknown>): FiberLike {
+  /** `opening`: the Modal and what is in it come with the commit that mounts the view. */
+  function onScreenInModal(
+    container: string,
+    activityState: number,
+    props: Record<string, unknown>,
+    opening = false,
+  ): FiberLike {
     const screen = fabricHost(SCREEN_HOST_TYPE, SCREEN, { activityState }, [view([self()])]);
-    return existing(
+    return (opening ? unseen : existing)(
       selfIn(
         root([
           view([
@@ -997,7 +1242,7 @@ describe('C3: a Modal sliding in and out', () => {
   });
 
   it('P2-5: a view hidden as a Modal opens, shown while it still slides in, is carried in; shown later, not', () => {
-    const fiber = onScreenInModal('RNSScreenContainer', 0, { animationType: 'slide', visible: true });
+    const fiber = onScreenInModal('RNSScreenContainer', 0, { animationType: 'slide', visible: true }, true);
     // The Modal was created by the commit that mounted the view; the screen that opened it was there.
     const host = ancestorOfType(fiber, 'RCTModalHostView');
     for (let current: FiberLike | null = host; current !== null; current = current.child) {
@@ -1019,7 +1264,7 @@ describe('C3: a Modal sliding in and out', () => {
   });
 
   it('a stack inside a slide Modal opening covers the band as well as the screen', () => {
-    const fiber = onScreenInModal('RNSScreenStack', 2, { animationType: 'slide', visible: true });
+    const fiber = onScreenInModal('RNSScreenStack', 2, { animationType: 'slide', visible: true }, true);
     // The Modal and everything in it are new; what opened it was there.
     const host = ancestorOfType(fiber, 'RCTModalHostView');
     for (let current: FiberLike | null = host; current !== null; current = current.child) {
@@ -1214,6 +1459,38 @@ describe('B6: a native-driven Animated transform above the view', () => {
     expect(firstPublished()).toEqual(px(rect(10, 100, 200, 150)));
   });
 
+  it('N1: a clipped view whose value is not native yet is covered from the frame its first native slide starts', () => {
+    // A list row partly scrolled out (so parked), swiped away on a fresh value.
+    const value = animatedValue(0, false);
+    render(
+      underAnimated([{ translateY: value }], [{ translateY: 0 }], undefined, (spec) =>
+        scrollView(rect(0, 0, 400, 120), [spec]),
+      ),
+    );
+    wait(16 * 20);
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 20)));
+
+    // `start()` with the native driver: made native, and the animation set; nothing committed.
+    value.__isNative = true;
+    value._animation = timing(0, -100);
+    wait(17);
+
+    expect(firstPublished()).toEqual(px(rect(10, 0, 200, 120)));
+  });
+
+  it('N1: a wholly visible view whose value is not native yet is covered within a frame, not a tick', () => {
+    const value = animatedValue(0, false);
+    render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
+    // To 212 ms: past the tick at 200, so only the value's watch can measure it within the next frame.
+    wait(212);
+
+    value.__isNative = true;
+    value._animation = timing(0, -100);
+    wait(17);
+
+    expect(firstPublished()).toEqual(px(rect(10, 0, 200, 150)));
+  });
+
   it('P2-3: under an Animated component with no native transform, a view parks like any other', () => {
     render(
       underAnimated([{ translateX: 5 }], [{ translateX: 5 }], undefined, undefined, (spec) =>
@@ -1327,9 +1604,9 @@ describe('B6: a native-driven Animated transform above the view', () => {
     );
 
     const [left, top, right, bottom] = firstPublished();
-    // Never the whole surface; reaches 20 up and the 10% growth about the centre.
+    // Never the whole surface; reaches 20 up (the sum from 10 down to -10) and the 10% growth about the centre.
     expect(right! - left!).toBeLessThan(2 * 400);
-    expect(top).toBeLessThanOrEqual(2 * (100 - 20 - 10 - 1));
+    expect(top).toBeLessThanOrEqual(2 * (100 - 20 - 10));
     expect(bottom).toBeGreaterThanOrEqual(2 * 150);
   });
 

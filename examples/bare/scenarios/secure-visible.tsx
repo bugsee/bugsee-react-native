@@ -459,8 +459,12 @@ function SecurePerfManyProbe({ nonce }: { nonce: string }) {
   return <View style={styles.stage}>{mountedSecures && <ManySecures />}</View>;
 }
 
-/** secure-perf-animated: secure rows, and secure views in a native-driven header. */
-const ANIMATED_ROWS = 50;
+/**
+ * secure-perf-animated: secure rows, and secure views in a native-driven
+ * header. 52 views in Release; in Debug (React's dev build, several times
+ * slower) 20, the count of the other modes, under the same 2 ms budget.
+ */
+const ANIMATED_ROWS = __DEV__ ? 18 : 50;
 const HEADER_SECURES = 2;
 const HEADER_HEIGHT = 60;
 
@@ -471,7 +475,7 @@ const AnimatedScreen = Animated.createAnimatedComponent(View);
  * secure-perf-animated: what views under `Animated` components cost, as in a
  * react-native-screens app (every screen is an `Animated` component). One
  * stand-in screen holds an `Animated.ScrollView` whose `onScroll` drives a
- * native `Animated.event`, with 50 `<BugseeSecure>` rows, and a collapsing
+ * native `Animated.event`, with 50 `<BugseeSecure>` rows (18 in Debug), and a collapsing
  * header (`diffClamp` of the scroll, interpolated and clamped, native) with
  * 2 more. Ticks and frames are timed for 40 s idle (`animated`), then for
  * 40 s while the list is scrolled every 400 ms (`animated-scrolling`).

@@ -60,29 +60,46 @@ export interface BugseeSecureProps extends ViewProps {
  * for a fade, and the whole screen for the platform default or anything
  * else. A view in a `<Modal animationType="slide">` covers the band below
  * it while the Modal slides in or out (also when `visible` turns false on a
- * Modal that stays mounted). A view mounted, or shown, while such a
- * transition still runs is covered too, and re-measured every frame until it
- * settles, so a Modal laid out again once its dialog is up is followed
- * within a frame.
+ * Modal that stays mounted). A screen replaced on its stack (`replace`) is
+ * animated out by the incoming screen's animation, and covered by it. A view
+ * that mounts, or is shown, in a screen or Modal still within the hold from
+ * its push or opening is covered too (content that arrives after a spinner),
+ * and re-measured every frame until it settles, so a Modal laid out again
+ * once its dialog is up is followed within a frame. When that screen or
+ * Modal came is known only if a `<BugseeSecure>` saw it come (one on it, or
+ * on the screen below it in its stack); otherwise the first view to see it
+ * takes it as coming then, once per screen or Modal.
  *
  * A native-driven `Animated` transform above it (`useNativeDriver: true`)
  * never reaches the shadow tree, so it also covers every place that
  * transform can draw it, joined with where it is measured: translations and
  * scales (about `transformOrigin`) bounded from the animated value, its
  * running timing animation, interpolations, `diffClamp` and arithmetic
- * nodes. What cannot be bounded (a rotation, a spring, a native value that
- * an `Animated.event` may drive, a node React Native renamed) covers the
- * whole surface, cut by the clipping ancestors above it. A view under a
- * running native animation is re-measured every frame; under a still one,
- * it is woken the frame an animation starts.
+ * nodes. A value a native `Animated.event` is attached to (an
+ * `Animated.ScrollView`'s `onScroll`, a gesture handler's `onGestureEvent`,
+ * attached through an `Animated` component's props) moves wherever the
+ * scroll or the gesture takes it, so for as long as it is attached it is
+ * not bounded, whatever animated it before. What cannot be bounded (that, a
+ * rotation, a spring, a node React Native renamed) covers the whole surface,
+ * cut by the clipping ancestors above it. A view under a running native
+ * animation is re-measured every frame; under a still one, or under values
+ * not native yet (the first animation with the native driver makes them
+ * native, and commits nothing), it is woken by the JS frame an animation
+ * starts on one.
  *
  * Known limits: Reanimated runs its animations on the UI thread, out of
- * JS's sight; a Reanimated component whose animated style sets a transform
- * covers the whole surface, cut by the clipping ancestors above it, and
- * anything else Reanimated moves (layout animations, `entering`/`exiting`,
- * shared transitions) is not seen. An interactive back gesture moves a
- * mounted screen with nothing JS sees. The first frame or two of a native
- * animation, before JS's next frame sees it running, are not covered.
+ * JS's sight; a Reanimated component whose style sets a transform through
+ * an animated style, sets a shared value inline, or uses a CSS animation or
+ * transition covers the whole surface, cut by the clipping ancestors above
+ * it; anything else Reanimated moves (an animated style that adds a
+ * transform only later, layout animations, `entering`/`exiting`, shared
+ * transitions) is not seen. An interactive back gesture moves a mounted
+ * screen with nothing JS sees. A native animation's first frame can be drawn
+ * by the UI thread before JS's next frame publishes the cover (about one
+ * frame). An event attached with `Animated.attachNativeEvent` directly, not
+ * through props, is not seen, and its value is bounded where it rests; where
+ * React Native's `AnimatedEvent` cannot be loaded, no attachment is seen,
+ * and every native value the app does not listen to is unbounded instead.
  *
  * Fails closed: a measurement that throws or is rejected leaves the last
  * rectangle published, and an ancestor that cannot be read or measured cuts
