@@ -43,7 +43,7 @@ import {
   stopDeviceLog,
 } from './harness';
 import { type DeviceLog, adb, resetScenario } from './scenario';
-import { bundleBySummary, displaySize } from './screen';
+import { bundleBySummary, effectiveDisplaySize } from './screen';
 
 jest.setTimeout(6 * 60_000);
 
@@ -103,7 +103,8 @@ describeDevice(`touch capture on ${TARGET_NAME}`, () => {
       run.start,
     );
 
-    const { width, height } = await displaySize();
+    // The override, when set, is the space injected touches and the app use.
+    const { width, height } = await effectiveDisplaySize();
     density = await densityScale();
     taps = TAPS.map(([fx, fy]) => ({ px: Math.round(fx * width), py: Math.round(fy * height) }));
     report('display', { width, height, density, taps });
@@ -165,9 +166,11 @@ describeDevice(`touch capture on ${TARGET_NAME}`, () => {
       const ends = ofType('end');
       expect(begins.length).toBeGreaterThanOrEqual(TAPS.length + 1);
       expect(ends.length).toBeGreaterThanOrEqual(TAPS.length + 1);
-      // Every gesture that began also ended, under one id.
+      // Every gesture that began also ended, under one id (a missing id on
+      // both sides would otherwise match).
       const endIds = new Set(ends.map(e => e.id));
       for (const begin of begins) {
+        expect(begin.id).toEqual(expect.anything());
         expect(endIds.has(begin.id)).toBe(true);
       }
       // The swipe moved.
