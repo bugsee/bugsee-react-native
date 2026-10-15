@@ -9,14 +9,13 @@
  * show them: a `begin` and an `end` per tap, `move`s for the swipe, and
  * coordinates in dp (the pixel divided by the display density).
  *
- * Android: known SDK bug https://github.com/bugsee/bugsee-android/issues/267.
- * The SDK decides its touch overlay is already installed with
- * `findViewById(View.generateViewId())`, and React Native's root view has the
- * id 1 as well, so the overlay is never added and the bundle has no `input`
- * capture at all. The touch case is `it.failing` there until a fixed SDK is
- * pinned: a fix then shows up as "it.failing passed". The preconditions (the
- * bundle exists, the video was recorded) are plain `it`, so the pin cannot
- * hide a broken run.
+ * Android: a plain `it`. Before 7.4.1 the SDK decided its touch overlay was
+ * already installed with `findViewById(View.generateViewId())`, and React
+ * Native's root view has the id 1 as well, so the overlay was never added and
+ * the bundle had no `input` capture at all
+ * (https://github.com/bugsee/bugsee-android/issues/267, fixed in 7.4.1). The
+ * preconditions (the bundle exists, the video was recorded) are their own
+ * test, so a broken run shows as such rather than as missing touches.
  *
  * iOS: skipped. Nothing in this harness can drive a tap on the simulator (no
  * idb, no XCUITest runner; operator.ts says the harness never taps), and
@@ -77,9 +76,8 @@ async function densityScale(): Promise<number> {
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
-// Android's touch capture is broken for React Native apps (bugsee-android#267).
 // iOS cannot be driven here at all: skip, do not pin.
-const itTouches = ON_IOS ? it.skip : ON_ANDROID ? it.failing : it;
+const itTouches = ON_IOS ? it.skip : it;
 
 describeDevice(`touch capture on ${TARGET_NAME}`, () => {
   let log: DeviceLog;
@@ -171,8 +169,8 @@ describeDevice(`touch capture on ${TARGET_NAME}`, () => {
 
   itTouches(
     `the report holds the taps and the swipe as input events${
-      ON_ANDROID ? ' [known: SDK never installs its touch overlay in RN apps (bugsee-android#267, https://github.com/bugsee/bugsee-android/issues/267)]' : ''
-    }${ON_IOS ? ' [skipped on iOS: the harness has no way to tap the simulator]' : ''}`,
+      ON_IOS ? ' [skipped on iOS: the harness has no way to tap the simulator]' : ''
+    }`,
     () => {
       expect(bundle.manifest.files.some(f => f.type === 'input')).toBe(true);
 
