@@ -120,13 +120,19 @@ describeDevice(`touch capture on ${TARGET_NAME}`, () => {
     const swipe = [x1, y1, x2, y2, SWIPE.ms].map(String);
     await adb('shell', 'input', 'touchscreen', 'swipe', ...swipe);
     // The scenario uploads a fixed window after `ready`: every touch must be
-    // in before it, or the report could miss the last of them.
+    // in before it, or the report could miss the last of them. Both ends are
+    // timed on the device: a marker logged there after the last touch, against
+    // the `ready` line's logcat stamp (host arrival times can lag either).
+    await adb('shell', 'log', '-t', 'BugseeE2EHost', `touches input-sent nonce=${nonce}`);
+    const sent = must(
+      await log.waitFor(new RegExp(`BugseeE2EHost.*touches input-sent nonce=${escape(nonce)}`), 10_000, ready.index),
+      'the input-sent marker',
+      run.start,
+    );
     const windowMs = Number(/window=(\d+)/.exec(ready.text)?.[1]);
-    // `hostMs` is when the line reached this Mac, a little after the app wrote it.
-    const elapsed = ready.hostMs === undefined ? 0 : Date.now() - ready.hostMs;
-    const early = log.all(new RegExp(`BUGSEE_E2E touches uploaded nonce=${escape(nonce)}`), ready.index);
+    const elapsed = sent.deviceMs - ready.deviceMs;
     report('input sent', { elapsedMs: elapsed, windowMs });
-    if (!(elapsed < windowMs - INPUT_MARGIN_MS) || early.length > 0) {
+    if (!(elapsed < windowMs - INPUT_MARGIN_MS)) {
       throw new Error(`the taps and swipe took ${elapsed} ms of the scenario's ${windowMs} ms window`);
     }
 
