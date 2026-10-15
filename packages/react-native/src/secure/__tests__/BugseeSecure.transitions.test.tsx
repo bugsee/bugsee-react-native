@@ -2648,7 +2648,7 @@ describe('R3-4: a ScrollView\'s reach, value by value', () => {
     expect(boundIn(fiber, scrollY).range).toEqual(bounded ? REACH : undefined);
   });
 
-  it('P3-5: a component above a ScrollView styled with a scale is not a host: what it commits is read off hosts', () => {
+  it('P3-5: a component above a ScrollView styled with a scale is no host: committed scales are read off hosts', () => {
     const scrollY = animatedValue(0);
     tag += 1;
     const scaler = { ...composite([port(fabric(tag))]), memoizedProps: { style: { transform: [{ scale: 0.5 }] } } };
