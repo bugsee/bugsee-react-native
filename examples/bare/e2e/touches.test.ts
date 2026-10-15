@@ -57,6 +57,9 @@ const TAPS: ReadonlyArray<readonly [number, number]> = [
 ];
 const SWIPE = { from: [0.5, 0.75], to: [0.5, 0.3], ms: 400 } as const;
 
+/** How much of the scenario's window must be left when the last touch is sent. */
+const INPUT_MARGIN_MS = 5_000;
+
 /** How far a recorded coordinate may be from tap pixel / density, in dp. */
 const TOLERANCE_DP = 1;
 
@@ -114,7 +117,18 @@ describeDevice(`touch capture on ${TARGET_NAME}`, () => {
     }
     const [x1, y1] = SWIPE.from.map((f, i) => Math.round(f * (i === 0 ? width : height)));
     const [x2, y2] = SWIPE.to.map((f, i) => Math.round(f * (i === 0 ? width : height)));
-    await adb('shell', 'input', 'touchscreen', 'swipe', String(x1), String(y1), String(x2), String(y2), String(SWIPE.ms));
+    const swipe = [x1, y1, x2, y2, SWIPE.ms].map(String);
+    await adb('shell', 'input', 'touchscreen', 'swipe', ...swipe);
+    // The scenario uploads a fixed window after `ready`: every touch must be
+    // in before it, or the report could miss the last of them.
+    const windowMs = Number(/window=(\d+)/.exec(ready.text)?.[1]);
+    // `hostMs` is when the line reached this Mac, a little after the app wrote it.
+    const elapsed = ready.hostMs === undefined ? 0 : Date.now() - ready.hostMs;
+    const early = log.all(new RegExp(`BUGSEE_E2E touches uploaded nonce=${escape(nonce)}`), ready.index);
+    report('input sent', { elapsedMs: elapsed, windowMs });
+    if (!(elapsed < windowMs - INPUT_MARGIN_MS) || early.length > 0) {
+      throw new Error(`the taps and swipe took ${elapsed} ms of the scenario's ${windowMs} ms window`);
+    }
 
     must(
       await log.waitFor(new RegExp(`BUGSEE_E2E touches uploaded nonce=${escape(nonce)}`), 40_000, ready.index),
