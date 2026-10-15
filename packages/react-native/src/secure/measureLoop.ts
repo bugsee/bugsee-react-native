@@ -129,7 +129,9 @@ function requestFrame(callback: () => void): () => void {
 interface WatchedNode {
   /** What moved callbacks to call; a callback per subscription. */
   readonly subscribers: Set<{ readonly moved: () => void }>;
-  /** Where the node was at the last frame (or when first watched). */
+  /** Whether any subscriber wants its geometry; one watching its props alone does not measure it. */
+  geometry: boolean;
+  /** Where the node was at the last frame (or when first watched); unmeasured, always the same. */
   last: string;
   /** Its two fibers' props objects then: a commit that changes either may change how it clips. */
   props: readonly unknown[];
@@ -168,7 +170,7 @@ function propsOf(fiber: FiberLike): unknown[] {
  */
 function watchNodes(): void {
   for (const [fiber, node] of [...watched]) {
-    const now = whereNow(fiber);
+    const now = node.geometry ? whereNow(fiber) : node.last;
     const props = propsOf(fiber);
     const changed = now !== node.last || props.some((value, index) => value !== node.props[index]);
     node.last = now;
@@ -188,6 +190,7 @@ function frame(): void {
     measurePass(() =>
       publishTogether(() => {
         watchNodes();
+        watchValues();
         for (const { measure } of [...frameMeasurers]) {
           try {
             measure();
@@ -199,7 +202,7 @@ function frame(): void {
     );
   } finally {
     // In a finally: nothing thrown above (a warn included) may stop the loop.
-    if (frameMeasurers.size > 0 || watched.size > 0) {
+    if (frameMeasurers.size > 0 || watched.size > 0 || watchedValues.size > 0) {
       cancelFrame ??= requestFrame(frame);
     }
   }
@@ -207,16 +210,22 @@ function frame(): void {
 
 /**
  * Measures `fiber` every frame, and calls `moved` whenever it is somewhere
- * else than the frame before, until the returned function is called. Every
- * subscriber of one fiber shares one measurement a frame, and so does every
- * fiber of one host.
+ * else than the frame before, or its props changed, until the returned
+ * function is called. Every subscriber of one fiber shares one measurement a
+ * frame, and so does every fiber of one host. With `geometry` false the
+ * subscriber wants its props alone (a `<Modal>` host hidden by a commit), and
+ * the node is measured only if another subscriber wants that.
  */
-export function watchNode(fiber: FiberLike, moved: () => void): () => void {
+export function watchNode(fiber: FiberLike, moved: () => void, geometry = true): () => void {
   let node = watched.get(fiber);
   if (node === undefined) {
-    // Measured at once: a move before the next frame is a move.
-    node = { subscribers: new Set(), last: whereNow(fiber), props: propsOf(fiber) };
+    // Measured at once: a move before the next frame is a move. Unmeasured, `last` never changes.
+    // Stryker disable next-line StringLiteral -- so any constant is as good
+    node = { subscribers: new Set(), geometry, last: geometry ? whereNow(fiber) : '', props: propsOf(fiber) };
     watched.set(fiber, node);
+  } else if (geometry && !node.geometry) {
+    node.geometry = true;
+    node.last = whereNow(fiber);
   }
   const subscription = { moved };
   node.subscribers.add(subscription);
@@ -231,8 +240,66 @@ export function watchNode(fiber: FiberLike, moved: () => void): () => void {
   };
 }
 
+interface WatchedValue {
+  readonly subscribers: Set<{ readonly changed: () => void }>;
+  /** The node's running animation and value at the last frame. */
+  state: readonly unknown[];
+}
+
+/** `Animated` values watched for an animation starting, or becoming native, by node. */
+const watchedValues = new Map<object, WatchedValue>();
+
+function stateOf(node: object): unknown[] {
+  const {
+    _animation: animation,
+    _value: value,
+    __isNative: native,
+  } = node as { _animation?: unknown; _value?: unknown; __isNative?: unknown };
+  // Made native by its first animation with the native driver, which commits nothing.
+  return [animation, value, native];
+}
+
+/** Wakes the subscribers of every watched value whose animation or value changed. */
+function watchValues(): void {
+  for (const [node, entry] of [...watchedValues]) {
+    const state = stateOf(node);
+    const changed = state.some((part, index) => part !== entry.state[index]);
+    entry.state = state;
+    if (changed) {
+      for (const { changed: wake } of [...entry.subscribers]) {
+        wake();
+      }
+    }
+  }
+}
+
+/**
+ * Reads `node` (an `Animated.Value`) every frame, and calls `changed`
+ * whenever an animation starts or ends on it, it is made native, or its value moves, until the
+ * returned function is called: a view under a still native transform needs no
+ * measuring until then. A few property reads a frame for every subscriber.
+ */
+export function watchValue(node: object, changed: () => void): () => void {
+  let entry = watchedValues.get(node);
+  if (entry === undefined) {
+    entry = { subscribers: new Set(), state: stateOf(node) };
+    watchedValues.set(node, entry);
+  }
+  const subscription = { changed };
+  entry.subscribers.add(subscription);
+  cancelFrame ??= requestFrame(frame);
+  const target = entry;
+  return () => {
+    target.subscribers.delete(subscription);
+    if (target.subscribers.size === 0 && watchedValues.get(node) === target) {
+      watchedValues.delete(node);
+    }
+    stopFramesIfIdle();
+  };
+}
+
 function stopFramesIfIdle(): void {
-  if (frameMeasurers.size === 0 && watched.size === 0) {
+  if (frameMeasurers.size === 0 && watched.size === 0 && watchedValues.size === 0) {
     cancelFrame?.();
     cancelFrame = undefined;
   }

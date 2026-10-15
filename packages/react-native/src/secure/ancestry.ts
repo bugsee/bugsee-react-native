@@ -118,6 +118,8 @@ interface HostAncestor {
 }
 
 export interface Ancestry {
+  /** The view's own host fiber, as stored at mount; `null` when there is none. */
+  readonly self: FiberLike | null;
   /** Every fiber above the view, nearest first, up to and including the tree's root. */
   readonly path: readonly FiberLike[];
   /** The fiber root (`HostRoot.stateNode`), or `null` when the path has none. */
@@ -126,13 +128,57 @@ export interface Ancestry {
   readonly hosts: readonly HostAncestor[];
   /** The screens among `hosts`. */
   readonly screens: readonly HostAncestor[];
+  /**
+   * Where in `path` the `Animated` components below the nearest root-kind
+   * host are (`Animated.View` and the like, nearest first): only their props
+   * can hold a native-driven transform, which the shadow tree never sees.
+   */
+  readonly animated: readonly number[];
   /** Whether the last {@link isHidden} read everything; `false` clips nothing. */
   readable: boolean;
+  /** The current fibers of `path` as the last {@link isHidden} resolved them, if it did. */
+  resolved: readonly FiberLike[] | undefined;
 }
 
 /** Nothing above the view can be read: it is never hidden and never clipped. */
 export function noAncestry(): Ancestry {
-  return { path: [], root: null, hosts: [], screens: [], readable: false };
+  return {
+    self: null,
+    path: [],
+    root: null,
+    hosts: [],
+    screens: [],
+    animated: [],
+    readable: false,
+    resolved: undefined,
+  };
+}
+
+function displayNameOf(fiber: FiberLike): unknown {
+  const type = fiber.type as { displayName?: unknown; render?: { displayName?: unknown } } | null | undefined;
+  if (type === null || (typeof type !== 'function' && typeof type !== 'object')) {
+    return undefined;
+  }
+  return type.displayName ?? type.render?.displayName;
+}
+
+/**
+ * Whether `fiber` is a Reanimated component (`createAnimatedComponent` of
+ * react-native-reanimated names every one `AnimatedComponent(<name>)`).
+ */
+export function isReanimatedComponent(fiber: FiberLike): boolean {
+  const name = displayNameOf(fiber);
+  return typeof name === 'string' && name.startsWith('AnimatedComponent(');
+}
+
+/**
+ * Whether `fiber` is an `Animated` component (`Animated.createAnimatedComponent`
+ * names every one `Animated(<name>)`), as a plain function or a `forwardRef`,
+ * or a Reanimated one.
+ */
+export function isAnimatedComponent(fiber: FiberLike): boolean {
+  const name = displayNameOf(fiber);
+  return (typeof name === 'string' && name.startsWith('Animated(')) || isReanimatedComponent(fiber);
 }
 
 /**
@@ -143,6 +189,7 @@ export function noAncestry(): Ancestry {
 export function ancestryOfFiber(fiber: FiberLike): Ancestry {
   const path: FiberLike[] = [];
   const hosts: HostAncestor[] = [];
+  const animated: number[] = [];
   let bounded = false;
   let current = fiber.return;
   for (let steps = 0; current != null && steps < MAX_ANCESTORS; steps += 1) {
@@ -166,6 +213,8 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
         });
       }
       bounded ||= boundary;
+    } else if (!bounded && isAnimatedComponent(current)) {
+      animated.push(path.length);
     }
     path.push(current);
     current = current.return;
@@ -176,7 +225,16 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
   }
   const top = path[path.length - 1];
   const root = top?.tag === FiberTag.HostRoot ? (top.stateNode as { current?: unknown } | null) : null;
-  return { path, root, hosts, screens: hosts.filter((host) => host.screen), readable: false };
+  return {
+    self: fiber,
+    path,
+    root,
+    hosts,
+    screens: hosts.filter((host) => host.screen),
+    animated,
+    readable: false,
+    resolved: undefined,
+  };
 }
 
 /**
@@ -186,8 +244,11 @@ export function ancestryOfFiber(fiber: FiberLike): Ancestry {
  */
 export function ancestryOfInstance(instance: object): Ancestry {
   try {
-    // No fiber (or not an object) has no `.return`, or throws on reading it.
+    // No fiber (or not an object) has no `.return`; `null` throws on reading it.
     const fiber = (instance as { __internalInstanceHandle?: unknown }).__internalInstanceHandle;
+    if (typeof fiber !== 'object') {
+      return noAncestry();
+    }
     return ancestryOfFiber(fiber as FiberLike);
   } catch {
     return noAncestry();
@@ -317,6 +378,7 @@ function screenHides(screen: HostAncestor, ancestry: Ancestry, resolved: readonl
 export function isHidden(ancestry: Ancestry): boolean {
   ancestry.readable = false;
   const resolved = resolve(ancestry);
+  ancestry.resolved = resolved;
   if (resolved === undefined) {
     return false;
   }
@@ -364,11 +426,18 @@ export function screensHide(ancestry: Ancestry): boolean {
 let passScreens: Map<FiberLike | null | undefined, boolean> | undefined;
 
 /**
+ * How many component fibers can stand between a ScrollView's host and its
+ * content container's host: on Android a vertical ScrollView renders its
+ * content through the `View` component (`VScrollContentViewNativeComponent`).
+ */
+export const CONTENT_DEPTH = 4;
+
+/**
  * The nodes whose movement can change how `ancestry`'s clipping ancestors
  * (as the last {@link isHidden} read them) cut the view: every clipping
  * host itself, whose bounds are the clip (a viewport that grows uncovers
  * more of the view), and a ScrollView's content container, which moves as
- * it scrolls.
+ * it scrolls: the nearest host below it on the way to the view.
  */
 export function clipWatchNodes(ancestry: Ancestry): FiberLike[] {
   if (!ancestry.readable) {
@@ -378,9 +447,28 @@ export function clipWatchNodes(ancestry: Ancestry): FiberLike[] {
     .filter((host) => host.clips)
     .flatMap((host) => {
       const clipper = ancestry.path[host.index] as FiberLike;
-      const below = ancestry.path[host.index - 1];
-      return host.scrolls && below?.tag === FiberTag.HostComponent ? [below, clipper] : [clipper];
+      const below = ancestry.path
+        .slice(Math.max(0, host.index - CONTENT_DEPTH), host.index)
+        .reverse()
+        .find((fiber) => fiber.tag === FiberTag.HostComponent);
+      return host.scrolls && below !== undefined ? [below, clipper] : [clipper];
     });
+}
+
+/**
+ * A ScrollView host's content container: the first host down its first
+ * children, through at most {@link CONTENT_DEPTH} components; `undefined`
+ * when there is none.
+ */
+export function contentOf(scroller: FiberLike): FiberLike | undefined {
+  let fiber = scroller.child;
+  for (let depth = 0; fiber != null && depth < CONTENT_DEPTH; depth += 1) {
+    if (fiber.tag === FiberTag.HostComponent) {
+      return fiber;
+    }
+    fiber = fiber.child;
+  }
+  return undefined;
 }
 
 /** Public instances of watched nodes, looked up once each. */
@@ -420,13 +508,32 @@ export function measurePass(pass: () => void): void {
   passMeasurements = new Map();
   passChildren = new Map();
   passScreens = new Map();
+  passMemos = new Map();
   try {
     pass();
   } finally {
     passMeasurements = undefined;
     passChildren = undefined;
     passScreens = undefined;
+    passMemos = undefined;
   }
+}
+
+/** What {@link passMemo} computed in the running pass, by key. */
+let passMemos: Map<object, unknown> | undefined;
+
+/**
+ * `compute()`, at most once per `key` in the running {@link measurePass}
+ * (many views under one `Animated` component read its nodes once a pass);
+ * every time outside a pass.
+ */
+export function passMemo<T>(key: object, compute: () => T): T {
+  if (passMemos?.has(key)) {
+    return passMemos.get(key) as T;
+  }
+  const value = compute();
+  passMemos?.set(key, value);
+  return value;
 }
 
 /**
@@ -459,7 +566,10 @@ function finite({ x, y, width, height }: WindowRect): boolean {
 
 /**
  * The part of `rect` inside every ancestor that clips now (as the last
- * {@link isHidden} read them), or `null` when none of it is.
+ * {@link isHidden} read them), or `null` when none of it is. Only the
+ * ancestors between `path` indices `above` and `below` cut it: a native-driven
+ * transform between two clippers moves what the lower one left, and the upper
+ * one cuts where it was moved to.
  *
  * Fails closed: `rect` itself, unclipped, when it is not finite, the last
  * read was not complete, or any clipping ancestor throws, answers late or
@@ -467,14 +577,21 @@ function finite({ x, y, width, height }: WindowRect): boolean {
  * nothing. Measures nothing, and returns `rect` as it is, when nothing
  * clips.
  */
-export function clipToAncestors(rect: WindowRect, ancestry: Ancestry): WindowRect | null {
+export function clipToAncestors(
+  rect: WindowRect,
+  ancestry: Ancestry,
+  above = -1,
+  below = Number.POSITIVE_INFINITY,
+): WindowRect | null {
   if (!finite(rect) || !ancestry.readable) {
     return rect;
   }
   const clips: Array<WindowRect | null | undefined> = [];
   try {
     for (const host of ancestry.hosts) {
-      if (host.clips) {
+      // `above` and `below` are Animated components' indices, never a host's.
+      // Stryker disable next-line EqualityOperator -- so `>=` and `<=` pick the same hosts
+      if (host.clips && host.index > above && host.index < below) {
         clips.push(measureHost(host, ancestry.path[host.index] as FiberLike));
       }
     }

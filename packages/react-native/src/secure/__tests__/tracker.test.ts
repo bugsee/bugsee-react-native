@@ -21,6 +21,7 @@ const mockState = {
   nodes: [] as unknown[],
   published: [] as unknown[][],
   cleared: 0,
+  ancestry: null as object | null,
 };
 
 /** Registers `fn` in `list`, and records its removal under `name`. */
@@ -49,7 +50,8 @@ jest.mock('../measureLoop', () => ({
   },
 }));
 jest.mock('../ancestry', () => ({
-  ancestryOfInstance: () => ({ readable: true }),
+  ancestryOfInstance: () =>
+    mockState.ancestry ?? { self: null, path: [], hosts: [], screens: [], animated: [], readable: true },
   isHidden: () => mockState.hidden,
   screensHide: () => mockState.screensHide,
   clipToAncestors: (rect: WindowRect) => (mockState.clipTo === null ? rect : mockState.clipTo(rect)),
@@ -68,6 +70,8 @@ jest.mock('../registry', () => ({
   },
 }));
 
+import { SECURE_SHRINK_HOLD_MS } from '../hold';
+import { SECURE_TRANSITION_HOLD_MS } from '../transition';
 import { STEADY_FRAMES, SecureTracker, monotonicNow } from '../tracker';
 
 const rect = (x: number, y: number, width: number, height: number): WindowRect => ({ x, y, width, height });
@@ -93,7 +97,15 @@ const view = {
 beforeEach(() => {
   jest.useFakeTimers();
   Object.assign(mockLoop, { tick: [], frame: [], parked: [], watched: [], removed: [] });
-  Object.assign(mockState, { hidden: false, screensHide: false, clipTo: null, nodes: [], published: [], cleared: 0 });
+  Object.assign(mockState, {
+    hidden: false,
+    screensHide: false,
+    clipTo: null,
+    nodes: [],
+    published: [],
+    cleared: 0,
+    ancestry: null,
+  });
   self = rect(0, 100, 100, 50);
   measures = 0;
   pending = null;
@@ -472,6 +484,222 @@ describe('SecureTracker', () => {
       runFrames();
 
       expect(mockLoop.watched).toEqual([]);
+    });
+  });
+
+  describe('unmounted', () => {
+    const later = (ms: number): void => {
+      jest.advanceTimersByTime(ms);
+    };
+
+    it('holds what it covered on the tick, then removes it all and leaves the tick', () => {
+      tracker.start();
+      mockState.published = [];
+
+      tracker.depart();
+      expect(last()).toEqual([self]);
+      expect(mockLoop.tick).toHaveLength(1);
+      expect(mockState.cleared).toBe(0);
+
+      later(SECURE_SHRINK_HOLD_MS - 100);
+      runTick();
+      expect(last()).toEqual([self]);
+
+      later(300);
+      runTick();
+      expect(mockState.cleared).toBe(1);
+      expect(mockLoop.tick).toHaveLength(0);
+    });
+
+    it('with nothing published, removes it at once', () => {
+      mockState.clipTo = () => null;
+      tracker.start();
+
+      tracker.depart();
+
+      expect(mockState.cleared).toBe(1);
+      expect(mockLoop.tick).toHaveLength(0);
+    });
+
+    it('not started, does nothing', () => {
+      tracker.depart();
+
+      expect(mockState.published).toEqual([]);
+      expect(mockState.cleared).toBe(0);
+    });
+
+    it('a remount ends what the unmount left, and starts afresh', () => {
+      tracker.start();
+      tracker.depart();
+
+      tracker.start();
+
+      expect(mockLoop.tick).toHaveLength(1);
+      later(SECURE_SHRINK_HOLD_MS + 200);
+      runTick();
+      expect(last()).toEqual([self]);
+      expect(mockState.cleared).toBe(0);
+    });
+
+    /** An ancestry whose `path` throws while `throwing()` says so. */
+    function tornAncestry(throwing: () => boolean): object {
+      const ancestry = { self: null, hosts: [], screens: [], animated: [], readable: true };
+      Object.defineProperty(ancestry, 'path', {
+        get(): unknown[] {
+          if (throwing()) {
+            throw new Error('torn');
+          }
+          return [];
+        },
+      });
+      return ancestry;
+    }
+
+    it('a tree that throws as it mounts still publishes the view, and warns once', () => {
+      let torn = true;
+      mockState.ancestry = tornAncestry(() => torn);
+      tracker.start();
+      torn = false;
+
+      expect(last()).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      tracker.depart();
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('a tree that throws as it unmounts still holds the view, and warns once', () => {
+      let torn = false;
+      mockState.ancestry = tornAncestry(() => torn);
+      tracker.start();
+      torn = true;
+
+      tracker.depart();
+
+      expect(last()).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('nothing carrying it, or never measured: nothing to warn about', () => {
+      tracker.start();
+      tracker.depart();
+      const unmeasured = new SecureTracker(() => null, {});
+      unmeasured.start();
+      unmeasured.depart();
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('a tree that throws while a transition carries it still publishes the view, and warns once', () => {
+      let torn = false;
+      const stack = { type: 'RNSScreenStack' };
+      const path = [{ type: 'RNSScreen', alternate: null }, { ...stack, alternate: stack }];
+      const ancestry = { self: null, hosts: [{ index: 0, above: 1, screen: true }], screens: [], animated: [] };
+      Object.defineProperty(ancestry, 'path', {
+        get(): unknown[] {
+          if (torn) {
+            throw new Error('torn');
+          }
+          return path;
+        },
+      });
+      mockState.ancestry = { ...ancestry, readable: true };
+      Object.defineProperty(mockState.ancestry, 'path', Object.getOwnPropertyDescriptor(ancestry, 'path')!);
+      tracker.start();
+      torn = true;
+      self = rect(0, 50, 100, 50);
+
+      runFrames();
+
+      expect((last() as WindowRect[]).slice(1, 2)).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('publishes what is left as it runs out: the cover outlasting the view\'s own hold', () => {
+      const selfFiber = { type: 'Self' };
+      const screen = { type: 'RNSScreen', alternate: { type: 'RNSScreen' } };
+      const stack = { type: 'RNSScreenStack', alternate: { type: 'RNSScreenStack' }, deletions: [screen] };
+      mockState.ancestry = {
+        self: selfFiber,
+        path: [screen, stack],
+        hosts: [{ index: 0, above: 1, screen: true }],
+        screens: [],
+        animated: [],
+        readable: true,
+      };
+      later(50);
+      tracker.start();
+
+      // Popped: the screen (unmeasurable here, so the whole surface) and the view.
+      tracker.depart();
+      expect((last() as WindowRect[]).length).toBe(2);
+      // The view's own hold has run out (600 ms); the cover lasts until 850.
+      later(570);
+      runTick();
+      expect((last() as WindowRect[]).length).toBe(1);
+      later(250);
+      runTick();
+      expect(mockState.cleared).toBe(1);
+    });
+
+    it('a tree that throws only where a transition is looked for still publishes the view, and warns once', () => {
+      const ancestry = { self: null, path: [], screens: [], animated: [], readable: true };
+      Object.defineProperty(ancestry, 'hosts', {
+        get(): never {
+          throw new Error('torn');
+        },
+      });
+      mockState.ancestry = ancestry;
+
+      tracker.start();
+
+      expect(last()).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('a screen whose alternate cannot be read as it mounts still publishes the view, and warns once', () => {
+      const screen = { type: 'RNSScreen' };
+      Object.defineProperty(screen, 'alternate', {
+        get(): never {
+          throw new Error('torn');
+        },
+      });
+      mockState.ancestry = {
+        self: null,
+        path: [screen, { type: 'RNSScreenStack' }],
+        hosts: [{ index: 0, above: 1, screen: true }],
+        screens: [],
+        animated: [],
+        readable: true,
+      };
+
+      tracker.start();
+
+      expect(last()).toEqual([self]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('a view carried in stays per-frame until the transition hold ends, then parks without the cover', () => {
+      const stack = { type: 'RNSScreenStack' };
+      // A screen with no alternate: pushed by the commit that mounts the view.
+      mockState.ancestry = {
+        self: null,
+        path: [{ type: 'RNSScreen', alternate: null }, { ...stack, alternate: stack }],
+        hosts: [{ index: 0, above: 1, screen: true }],
+        screens: [],
+        animated: [],
+        readable: true,
+      };
+      mockState.clipTo = cutAt120;
+      tracker.start();
+      runFrames(STEADY_FRAMES + 2);
+      expect(mockLoop.parked).toHaveLength(0);
+      expect((last() as WindowRect[]).length).toBe(2);
+
+      later(SECURE_TRANSITION_HOLD_MS + 100);
+      runFrames(STEADY_FRAMES + 2);
+
+      expect(mockLoop.parked).toHaveLength(1);
+      expect(last()).toEqual([cutAt120(self)]);
     });
   });
 

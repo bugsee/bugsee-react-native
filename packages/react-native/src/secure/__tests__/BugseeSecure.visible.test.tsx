@@ -12,6 +12,7 @@ import type { ReactElement } from 'react';
 import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 import { BugseeSecure } from '../BugseeSecure';
+import { SECURE_TRANSITION_HOLD_MS } from '../transition';
 import { SCREEN_HOST_TYPE } from '../ancestry';
 import { SECURE_SHRINK_HOLD_MS } from '../hold';
 import { MODAL_HOST_TYPE } from '../surface';
@@ -72,6 +73,10 @@ beforeEach(() => {
 afterEach(() => {
   act(() => mounted.forEach((mountedRenderer) => mountedRenderer.unmount()));
   mounted = [];
+  // What an unmount leaves held runs out on the tick.
+  act(() => {
+    jest.advanceTimersByTime(SECURE_TRANSITION_HOLD_MS + 200);
+  });
   expect(jest.getTimerCount()).toBe(0);
   jest.useRealTimers();
   jest.restoreAllMocks();
@@ -329,6 +334,9 @@ describe('<BugseeSecure> ancestors cost and failures', () => {
     // The instance is looked up once; a fresh mount looks it up again.
     act(() => mounted.forEach((mountedRenderer) => mountedRenderer.unmount()));
     mounted = [];
+    act(() => {
+      jest.advanceTimersByTime(SECURE_TRANSITION_HOLD_MS + 200);
+    });
     render(selfIn(root([scrollView(rect(0, 0, 400, 130), [self()])])));
 
     expect(lastPublished()).toEqual([0, px(selfRect)]);

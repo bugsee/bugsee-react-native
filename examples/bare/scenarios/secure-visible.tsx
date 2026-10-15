@@ -34,13 +34,20 @@
  * baseline is taken.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { PixelRatio, ScrollView, StyleSheet, View } from 'react-native';
+import { Animated, PixelRatio, ScrollView, StyleSheet, View } from 'react-native';
 import { BugseeSecure } from '@bugsee/react-native';
 // Deep-imported for secure-perf's `watch` mode only: the full hidden check,
 // timed on the same views (as scenarios/channel.ts does).
 import { ancestryOfInstance, isHidden } from '@bugsee/react-native/src/secure/ancestry';
+import { SECURE_TRANSITIONS_SCENARIO, SecureTransitionsProbe } from './secure-transitions';
 
-export const SECURE_VISIBLE_SCENARIOS = ['secure-visible', 'secure-perf', 'secure-perf-many'] as const;
+export const SECURE_VISIBLE_SCENARIOS = [
+  'secure-visible',
+  'secure-perf',
+  'secure-perf-many',
+  'secure-perf-animated',
+  SECURE_TRANSITIONS_SCENARIO,
+] as const;
 
 export type SecureVisibleScenario = (typeof SECURE_VISIBLE_SCENARIOS)[number];
 
@@ -452,9 +459,155 @@ function SecurePerfManyProbe({ nonce }: { nonce: string }) {
   return <View style={styles.stage}>{mountedSecures && <ManySecures />}</View>;
 }
 
+/**
+ * secure-perf-animated: secure rows, and secure views in a native-driven
+ * header. 52 views in Release; in Debug (React's dev build, several times
+ * slower) 20, the count of the other modes, under the same 2 ms budget.
+ */
+const ANIMATED_ROWS = __DEV__ ? 18 : 50;
+const HEADER_SECURES = 2;
+const HEADER_HEIGHT = 60;
+
+/** A stand-in for react-native-screens' `Animated(RNSScreen)`: an Animated component with no transform. */
+const AnimatedScreen = Animated.createAnimatedComponent(View);
+
+/**
+ * secure-perf-animated: what views under `Animated` components cost, as in a
+ * react-native-screens app (every screen is an `Animated` component). One
+ * stand-in screen holds an `Animated.ScrollView` whose `onScroll` drives a
+ * native `Animated.event`, with 50 `<BugseeSecure>` rows (18 in Debug), and a collapsing
+ * header (`diffClamp` of the scroll, interpolated and clamped, native) with
+ * 2 more. Ticks and frames are timed for 40 s idle (`animated`), then for
+ * 40 s while the list is scrolled every 400 ms (`animated-scrolling`).
+ */
+function SecurePerfAnimatedProbe({ nonce }: { nonce: string }) {
+  const [mountedSecures, setMountedSecures] = useState(false);
+  const list = useRef<ScrollView>(null);
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const headerY = useRef(
+    Animated.diffClamp(scrollY, 0, HEADER_HEIGHT).interpolate({
+      inputRange: [0, HEADER_HEIGHT],
+      outputRange: [0, -HEADER_HEIGHT],
+      extrapolate: 'clamp',
+    }),
+  ).current;
+
+  useEffect(() => {
+    endTimingWindow = timeLoopIntervals();
+    setMountedSecures(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mountedSecures) {
+      return undefined;
+    }
+    let cancelled = false;
+    let scroller: ReturnType<typeof setInterval> | undefined;
+    const f = (value: number) => value.toFixed(3);
+    const report = (mode: string, durations: readonly number[]) => {
+      const sorted = [...durations].sort((a, b) => a - b);
+      const mean = sorted.reduce((sum, value) => sum + value, 0) / sorted.length;
+      mark(
+        `secure-perf result mode=${mode} ticks=${sorted.length} intervals=${timedIntervals} ` +
+          `secures=${ANIMATED_ROWS + HEADER_SECURES} p50=${f(percentile(sorted, 50))} ` +
+          `p95=${f(percentile(sorted, 95))} p99=${f(percentile(sorted, 99))} ` +
+          `max=${f(sorted[sorted.length - 1] ?? Number.NaN)} mean=${f(mean)} dev=${String(__DEV__)} nonce=${nonce}`,
+      );
+    };
+    const timeFor = async (mode: string) => {
+      tickDurations.length = 0;
+      const frameDurations: number[] = [];
+      const realFrame = globalThis.requestAnimationFrame;
+      globalThis.requestAnimationFrame = (callback =>
+        realFrame(timestamp => {
+          const start = performance.now();
+          callback(timestamp);
+          frameDurations.push(performance.now() - start);
+        })) as typeof requestAnimationFrame;
+      try {
+        await sleep(PERF_MS);
+      } finally {
+        globalThis.requestAnimationFrame = realFrame;
+      }
+      report(mode, tickDurations);
+      report(`${mode}-frames`, frameDurations);
+    };
+    (async () => {
+      await sleep(PERF_WARMUP_MS);
+      await timeFor('animated');
+      if (cancelled) {
+        return;
+      }
+      const offsets = [0, 300, 900, 1500, 600];
+      let step = 0;
+      scroller = setInterval(() => {
+        step += 1;
+        list.current?.scrollTo({ y: offsets[step % offsets.length], animated: false });
+      }, 400);
+      await timeFor('animated-scrolling');
+      clearInterval(scroller);
+    })().catch((error: unknown) => {
+      mark(`secure-perf threw ${String(error)} nonce=${nonce}`);
+    });
+    return () => {
+      cancelled = true;
+      clearInterval(scroller);
+    };
+  }, [mountedSecures, nonce]);
+
+  return (
+    <AnimatedScreen style={styles.stage}>
+      {mountedSecures && (
+        <AnimatedRows list={list} scrollY={scrollY} headerY={headerY} />
+      )}
+    </AnimatedScreen>
+  );
+}
+
+function AnimatedRows({
+  list,
+  scrollY,
+  headerY,
+}: {
+  list: { current: ScrollView | null };
+  scrollY: Animated.Value;
+  headerY: Animated.AnimatedInterpolation<number>;
+}) {
+  // After every child's layout effect: the loop's interval has started.
+  useLayoutEffect(() => {
+    endTimingWindow?.();
+    endTimingWindow = undefined;
+  }, []);
+  return (
+    <>
+      <Animated.ScrollView
+        ref={list as never}
+        style={styles.fill}
+        contentContainerStyle={styles.animatedContent}
+        scrollEventThrottle={16}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}>
+        {Array.from({ length: ANIMATED_ROWS }, (_, i) => (
+          <BugseeSecure key={i} style={styles.animatedRow} />
+        ))}
+      </Animated.ScrollView>
+      <Animated.View style={[styles.header, { transform: [{ translateY: headerY }] }]}>
+        {Array.from({ length: HEADER_SECURES }, (_, i) => (
+          <BugseeSecure key={i} style={styles.headerSecure} />
+        ))}
+      </Animated.View>
+    </>
+  );
+}
+
 export function SecureVisibleStage({ scenario, nonce }: { scenario: SecureVisibleScenario; nonce: string }) {
   if (scenario === 'secure-visible') {
     return <SecureVisibleProbe nonce={nonce} />;
+  }
+  if (scenario === SECURE_TRANSITIONS_SCENARIO) {
+    return <SecureTransitionsProbe nonce={nonce} />;
+  }
+  if (scenario === 'secure-perf-animated') {
+    return <SecurePerfAnimatedProbe nonce={nonce} />;
   }
   return scenario === 'secure-perf' ? <SecurePerfProbe nonce={nonce} /> : <SecurePerfManyProbe nonce={nonce} />;
 }
@@ -473,4 +626,8 @@ const styles = StyleSheet.create({
   manyScroll: { height: 100, flexGrow: 0, marginBottom: 20 },
   manyContent: { height: 2000 },
   manySecure: { height: 40, backgroundColor: '#EEEEEE' },
+  animatedContent: { paddingTop: HEADER_HEIGHT },
+  animatedRow: { height: 40, marginBottom: 8, backgroundColor: '#EEEEEE' },
+  header: { position: 'absolute', top: 0, left: 0, right: 0, height: HEADER_HEIGHT, flexDirection: 'row' },
+  headerSecure: { flex: 1, margin: 8, backgroundColor: '#DDDDDD' },
 });

@@ -38,7 +38,23 @@ export function fabricHost(
 export const view = (children: FiberSpec[], props: Record<string, unknown> = {}): FiberSpec =>
   fabricHost('RCTView', rect(0, 0, 400, 800), props, children);
 
+/**
+ * A vertical ScrollView as React Native renders it on Android: its content
+ * container through the `View` component (a component fiber, then the
+ * `RCTView` host), `VScrollContentViewNativeComponent` on 0.81-0.87.
+ */
 export const scrollView = (measured: WindowRect | null, children: FiberSpec[], type = 'RCTScrollView'): FiberSpec =>
+  fabricHost(type, measured, {}, [
+    {
+      tag: FiberTag.FunctionComponent,
+      type: () => null,
+      memoizedProps: {},
+      children: [fabricHost('RCTView', rect(0, -5000, 400, 9000), {}, children)],
+    },
+  ]);
+
+/** A ScrollView as React Native renders it on iOS (and horizontally on Android): its content container a host. */
+export const iosScrollView = (measured: WindowRect | null, children: FiberSpec[], type = 'RCTScrollView'): FiberSpec =>
   fabricHost(type, measured, {}, [fabricHost('RCTScrollContentView', rect(0, -5000, 400, 9000), {}, children)]);
 
 export const offscreen = (visibility: unknown, children: FiberSpec[]): FiberSpec => ({

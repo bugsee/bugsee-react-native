@@ -5,6 +5,9 @@ import { wrap } from './viewtree/anchor';
 import { collectWrapperFacts } from './wrapper/collect';
 import { wrapperIdentity } from './wrapper/identity';
 import { setOwnerRectangles } from './secure/registry';
+// For its effect, eagerly (Metro's inlineRequires defers only what is read): follows native Animated events
+// from here on, so those attached before the first <BugseeSecure> mounts are counted too.
+import './secure/followEvents';
 import type { SecureRectangle } from './secure/rectangles';
 import { Status } from './status';
 import { statusForEvent } from './wrapper/events';

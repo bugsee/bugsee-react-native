@@ -289,6 +289,103 @@ grep -qE "uiViewClassName: 'AndroidHorizontalScrollView'" \
   || { echo "FAIL: AndroidHorizontalScrollViewNativeComponent.js no longer names its host AndroidHorizontalScrollView"; exit 1; }
 echo "    the commit and pairing, hidden Offscreen hosts, RootNodeKind hosts, ScrollView clipping and host names are unchanged"
 
+# (6) <BugseeSecure>'s transitions and native-driven transforms
+# (src/secure/transition.ts, src/secure/nativeAnimation.ts) depend on:
+# - a deleted child being listed in its parent's `deletions` (deleteChild);
+# - Animated components being named `Animated(<name>)`;
+# - an Animated.Value keeping its running animation in `_animation`, a timing
+#   animation its `_fromValue`, `_toValue` and `_easing`, an interpolation its
+#   `_parent`, `_config` and `_getInterpolation()`, and a native node
+#   `__isNative`; a value its `_value`, `_offset` and `hasListeners()`; diffClamp,
+#   modulo and division their own fields; Modal its `animationType` prop;
+# - native Animated.events attached through AnimatedEvent.__attach/__detach,
+#   or attachNativeEvent, and values made native through __makeNative.
+for RENDERER_BUNDLE in \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-dev.js" \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-prod.js"
+do
+  grep -qE 'deletions = \[childToDelete\]' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $(basename "$RENDERER_BUNDLE") no longer lists a deleted child in its parent's deletions"; exit 1; }
+done
+ANIMATED="$RN_SRC/Libraries/Animated"
+grep -qE 'Animated\(\$\{' "$ANIMATED/createAnimatedComponent.js" \
+  || { echo "FAIL: createAnimatedComponent.js no longer names its components Animated(<name>)"; exit 1; }
+grep -qE 'this\._animation = animation' "$ANIMATED/nodes/AnimatedValue.js" \
+  || { echo "FAIL: AnimatedValue.js no longer keeps its running animation in _animation"; exit 1; }
+for FIELD in '_fromValue = fromValue' '_toValue = config\.toValue' '_easing = '; do
+  grep -qE "this\.$FIELD" "$ANIMATED/animations/TimingAnimation.js" \
+    || { echo "FAIL: TimingAnimation.js no longer sets this.$FIELD"; exit 1; }
+done
+for FIELD in 'this\._parent = parent' 'this\._config = config' '_getInterpolation\(\)'; do
+  grep -qE "$FIELD" "$ANIMATED/nodes/AnimatedInterpolation.js" \
+    || { echo "FAIL: AnimatedInterpolation.js no longer has $FIELD"; exit 1; }
+done
+grep -qE 'this\.__isNative = true' "$ANIMATED/nodes/AnimatedWithChildren.js" \
+  || { echo "FAIL: AnimatedWithChildren.js no longer marks a native node __isNative"; exit 1; }
+for FIELD in 'this\._value = ' 'this\._offset = ' 'this\._animation = null' 'hasListeners\(\)'; do
+  grep -qE "$FIELD" "$ANIMATED/nodes/AnimatedValue.js" "$ANIMATED/nodes/AnimatedNode.js" \
+    || { echo "FAIL: AnimatedValue.js/AnimatedNode.js no longer has $FIELD"; exit 1; }
+done
+grep -qE 'this\._min = min' "$ANIMATED/nodes/AnimatedDiffClamp.js" \
+  || { echo "FAIL: AnimatedDiffClamp.js no longer keeps its bounds in _min/_max"; exit 1; }
+grep -qE 'this\._modulus = modulus' "$ANIMATED/nodes/AnimatedModulo.js" \
+  || { echo "FAIL: AnimatedModulo.js no longer keeps its modulus in _modulus"; exit 1; }
+grep -qE '_warnedAboutDivideByZero' "$ANIMATED/nodes/AnimatedDivision.js" \
+  || { echo "FAIL: AnimatedDivision.js is no longer told apart by _warnedAboutDivideByZero"; exit 1; }
+# A native Animated.event is attached and detached through AnimatedEvent's
+# own __attach/__detach (an Animated component's props), its values in
+# _argMapping[0], and the module is reachable at its Libraries path.
+grep -qE 'export class AnimatedEvent' "$ANIMATED/AnimatedEvent.js" \
+  || { echo "FAIL: AnimatedEvent.js no longer exports the AnimatedEvent class"; exit 1; }
+for FIELD in '__attach\(viewRef' '__detach\(viewTag' 'this\._argMapping = argMapping' 'argMapping\[0\]\.nativeEvent'; do
+  grep -qE "$FIELD" "$ANIMATED/AnimatedEvent.js" \
+    || { echo "FAIL: AnimatedEvent.js no longer has $FIELD"; exit 1; }
+done
+# A call with the view and the prop name (nodes' own `super.__attach()` takes none).
+grep -rqE '\.__attach\([A-Za-z_]+, *[A-Za-z_]+\)' --exclude=AnimatedEvent.js "$RN_SRC/src/private/animated" "$ANIMATED" \
+  || { echo "FAIL: no Animated component attaches its native events with __attach any more"; exit 1; }
+# Events attached with attachNativeEvent directly (React Native's ScrollView for
+# its sticky headers, or an app through Animated) are followed by wrapping it on
+# AnimatedImplementation's default export, which ScrollView calls it on, and on
+# the public Animated object, which spreads that export; the handle's detach
+# ends the attachment. A value is made native through AnimatedValue's own
+# __makeNative (an animation's start, an event's attach), the module's default
+# export.
+# src/secure/followEvents.ts requires these four by path, each optional to Metro (in a try block): a file
+# moved builds and follows nothing (every still native value then masked as moving). Noticed here first.
+for MODULE in AnimatedEvent AnimatedImplementation Animated nodes/AnimatedValue; do
+  [ -f "$ANIMATED/$MODULE.js" ] \
+    || { echo "FAIL: Libraries/Animated/$MODULE.js is gone: src/secure/followEvents.ts requires it"; exit 1; }
+done
+# A vertical ScrollView's content container on Android is the View component's host, below the ScrollView's host
+# (nativeAnimation.ts and ancestry.ts look through at most CONTENT_DEPTH components for it).
+grep -qE "Platform\.OS === 'android' \? View : ScrollContentViewNativeComponent" \
+  "$RN_SRC/src/private/components/scrollview/VScrollViewNativeComponents.js" \
+  || { echo "FAIL: VScrollContentViewNativeComponent is no longer View on Android: recheck CONTENT_DEPTH"; exit 1; }
+grep -qE '^export default \{' "$ANIMATED/AnimatedImplementation.js" \
+  && grep -qE '^  attachNativeEvent: attachNativeEventImpl,' "$ANIMATED/AnimatedImplementation.js" \
+  || { echo "FAIL: AnimatedImplementation.js no longer exports attachNativeEvent on its default object"; exit 1; }
+grep -qE 'AnimatedImplementation\.attachNativeEvent\(' "$RN_SRC/Libraries/Components/ScrollView/ScrollView.js" \
+  || { echo "FAIL: ScrollView.js no longer calls AnimatedImplementation.attachNativeEvent"; exit 1; }
+grep -qE '^export function attachNativeEventImpl\(' "$ANIMATED/AnimatedEvent.js" \
+  && grep -qE '^    detach\(\) \{' "$ANIMATED/AnimatedEvent.js" \
+  || { echo "FAIL: AnimatedEvent.js attachNativeEventImpl no longer returns a handle that detaches"; exit 1; }
+grep -qE '^  \.\.\.Animated,' "$ANIMATED/AnimatedExports.js" \
+  && grep -qE "require\('\./AnimatedExports'\)" "$ANIMATED/Animated.js" \
+  || { echo "FAIL: the public Animated object is no longer AnimatedExports' spread of AnimatedImplementation"; exit 1; }
+grep -qE '^export default class AnimatedValue ' "$ANIMATED/nodes/AnimatedValue.js" \
+  && grep -qE '^  __makeNative\(' "$ANIMATED/nodes/AnimatedValue.js" \
+  || { echo "FAIL: AnimatedValue.js no longer default-exports a class with its own __makeNative"; exit 1; }
+grep -qE 'animatedValue\.__makeNative\(' "$ANIMATED/animations/Animation.js" \
+  && grep -qE 'value\.__makeNative\(' "$ANIMATED/AnimatedEvent.js" \
+  || { echo "FAIL: an animation or an event no longer makes its value native through __makeNative"; exit 1; }
+grep -qE 'animationType=\{animationType\}' "$RN_SRC/Libraries/Modal/Modal.js" \
+  || { echo "FAIL: Modal.js no longer passes animationType to its host"; exit 1; }
+# Tracked, not required: with C++ Animated on, the shadow tree holds a native animation's end value.
+grep -qE 'cxxNativeAnimatedEnabled' "$RN_SRC/src/private/featureflags/ReactNativeFeatureFlags.js" \
+  || echo "    note: no cxxNativeAnimatedEnabled flag in this React Native"
+echo "    deletions, Animated component names and the Animated node fields are unchanged"
+
 echo "--- exception-handler internals guard"
 # Task 7.2: global ErrorUtils / promise-rejection capture depends on these
 # React Native surfaces staying put. Fail with a named reason the day any of

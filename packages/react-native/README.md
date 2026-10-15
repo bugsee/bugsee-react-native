@@ -70,6 +70,79 @@ running, or a token the backend rejects — without that being an error worth
 throwing on. Capture comes up asynchronously, so poll `getStatus()` rather
 than assuming a resolved `launch` means recording has begun.
 
+### Hiding a view from recordings
+
+Wrap anything that must never be recorded in `<BugseeSecure>`:
+
+```tsx
+import { BugseeSecure } from '@bugsee/react-native';
+
+<BugseeSecure>
+  <Text>{accountNumber}</Text>
+</BugseeSecure>
+```
+
+The part of it that is on screen is masked, and taps on it are dropped, while
+it is mounted and `enabled` (default `true`). It follows scrolling, hidden
+screens, react-native-screens push and pop transitions, sliding `<Modal>`s and
+`Animated` transforms driven by the native driver, masking more rather than
+less where it cannot tell exactly. `enabled={false}` unmasks at once; an
+unmount keeps the mask for about half a second, as native may still draw the
+view.
+
+Known limits:
+
+- Content that mounts in a pushed screen or an opening `<Modal>` after it
+  came (behind a spinner), or that is first shown on the screen a pop
+  uncovers, is masked for the rest of the transition. When a screen came or
+  went is known only if a `<BugseeSecure>` saw it; otherwise the first one to
+  look masks as if it happened then (the whole screen, or the Modal's band,
+  for under a second).
+- A value a native event drives (an `Animated.event` in an `Animated`
+  component's `onScroll` or `onGestureEvent`, or `Animated.attachNativeEvent`,
+  which React Native's own ScrollView uses for `stickyHeaderIndices`) moves
+  with the scroll or the gesture. What it transforms is masked wherever it can
+  be drawn, for as long as the event is attached, idle or not:
+  - a clamped interpolation, one whose ends are flat (a swipeable row without
+    overshoot), or a `diffClamp`: over its output range;
+  - on Android, a ScrollView's `contentOffset`, vertical or horizontal (a
+    collapsing or parallax header, a sticky header): over the offsets the
+    ScrollView can reach, from its measured content and viewport, plus 64 dp
+    either way for a fling's overrun (AOSP flings 6 dp past an end; the
+    margin assumes no device flings more than ten times that). A view inside
+    the content of the ScrollView whose offset drives it (a sticky header,
+    from `stickyHeaderIndices` or a `SectionList`) moves with that content
+    too, natively ahead of what JS measures: it is masked over that
+    ScrollView's whole viewport;
+  - anything else (a gesture's translation through an interpolation that
+    extends, an iOS ScrollView, which bounces and can be scrolled anywhere by
+    `scrollTo`, a ScrollView in another React root, or under a scale other
+    than 1): the whole surface around it, cut by the clipping ancestors above
+    it (a list's viewport, say).
+- Native events are followed from when `@bugsee/react-native` is first
+  evaluated: with Metro's `inlineRequires`, its first use. Import it (or call
+  `Bugsee.launch`) at the top of `index.js` to follow them from the start.
+  A value made native before then is masked as if anything could drive it,
+  until JS next animates or sets it. A native event attached without
+  `Animated` (code that calls React Native's native Animated module itself)
+  is not seen at all, and the value it drives is taken to be where JS last
+  had it.
+- A transform animated from JS (`useNativeDriver: false`) is followed every
+  frame while its animation runs. Other styles a JS animation moves (`top`,
+  `left`, `margin`, a size) are followed by the 100 ms re-measure only.
+- Reanimated runs its animations on the UI thread, out of JS's sight. A
+  Reanimated component whose style sets a transform through an animated
+  style, sets a shared value inline, or uses a CSS animation or transition
+  masks the whole surface around it; other Reanimated motion (an animated
+  style that adds a transform only later, layout animations,
+  `entering`/`exiting`, shared element transitions) is not followed.
+- An interactive back gesture (iOS swipe-back, Android predictive back) moves
+  a mounted screen without anything JS can see.
+- The mask is published in the same JS task that starts a native animation
+  (or sets, resets or offsets an `Animated.Value`), but the two reach native
+  separately: under heavy load the animation's first frame could still be
+  drawn before the mask lands.
+
 ## Expo config plugin
 
 ```json

@@ -166,3 +166,56 @@ describeDevice(`<BugseeSecure> cost of 200 still, clipped views on ${TARGET_NAME
     expect(Number(results.get('many-frames')!.p95)).toBeLessThan(0.5);
   });
 });
+
+/**
+ * Scenario `secure-perf-animated`: 52 `<BugseeSecure>` under `Animated`
+ * components, as in a react-native-screens app (every screen is one): 50
+ * rows (18 in Debug) in an `Animated.ScrollView` driving a native `Animated.event`, and 2
+ * in a native-driven collapsing header. Ticks and frames are timed idle
+ * (`animated`) and while the list is scrolled every 400 ms
+ * (`animated-scrolling`).
+ */
+describeDevice(`<BugseeSecure> cost under Animated components on ${TARGET_NAME}`, () => {
+  // Release times 52 views; Debug (React's dev build, several times slower) 20, the count of the other modes, so
+  // every mode keeps the one 2 ms budget in both builds.
+  const MODES_ANIMATED = ['animated', 'animated-frames', 'animated-scrolling', 'animated-scrolling-frames'];
+  let log: DeviceLog;
+  const results = new Map<string, Record<string, string>>();
+
+  beforeAll(async () => {
+    log = await startDeviceLog('#88 perf animated', '#88 perf animated');
+    const run = await startRun('secure-perf-animated');
+    const nonce = run.scenario.nonce;
+    for (const mode of MODES_ANIMATED) {
+      const done = new RegExp(`BUGSEE_E2E secure-perf (result mode=${mode}|threw) .*nonce=${escape(nonce)}`);
+      const line = must(await log.waitFor(done, 120_000, run.start), `the secure-perf ${mode} result`, run.start);
+      const result = Object.fromEntries(
+        [...line.text.matchAll(/(\w+)=(\S+)/g)].map(([, key, value]) => [key!, value!]),
+      );
+      results.set(mode, result);
+      report('secure-perf', { label: process.env.E2E_PERF_LABEL ?? 'unlabelled', dev: run.dev, ...result });
+    }
+  });
+
+  afterAll(async () => {
+    try {
+      await stopApp();
+    } finally {
+      stopDeviceLog(log);
+      resetScenario();
+    }
+  });
+
+  describe.each(MODES_ANIMATED)('%s', (mode) => {
+    it('timed 52 views in Release, 20 in Debug', () => {
+      const result = results.get(mode)!;
+      expect(result.secures).toBe(result.dev === 'true' ? '20' : '52');
+      // The frames too: the header's watched value keeps the frame loop running (2300-2400 frames a run).
+      expect(Number(result.ticks)).toBeGreaterThanOrEqual(MIN_TICKS);
+    });
+
+    it(`keeps p95 under ${P95_BUDGET_MS} ms`, () => {
+      expect(Number(results.get(mode)!.p95)).toBeLessThan(P95_BUDGET_MS);
+    });
+  });
+});
