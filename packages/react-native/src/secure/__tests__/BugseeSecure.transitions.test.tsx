@@ -2078,12 +2078,18 @@ describe('R4-2: a view under a transform animated from JS (useNativeDriver: fals
     expect(jest.getTimerCount()).toBe(1);
 
     act(() => (value as unknown as FakeAnimatedValue).animate({ ...timing(0, 300), useNativeDriver: false }));
+    // At once: its whole path, ahead of where it is drawn at any step.
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 350)));
     for (let frame = 1; frame <= 12; frame += 1) {
-      // React Native's onUpdate: the value steps, and setNativeProps moves the view in the shadow tree.
+      // React Native's onUpdate: the value steps, and setNativeProps moves the view in the shadow tree; the
+      // step drawn next is one further on.
       value._value += 16;
       selfRect = rect(10, 100 + 16 * frame, 200, 50);
       wait(16);
-      expect(publishedRects()).toContainEqual(px(selfRect));
+      const next = px(rect(10, 100 + 16 * (frame + 1), 200, 50));
+      expect(
+        publishedRects().some(([l, t, r, b]) => l! <= next[0]! && t! <= next[1]! && r! >= next[2]! && b! >= next[3]!),
+      ).toBe(true);
     }
 
     // Ended: back to the tick, with no frame loop.
@@ -2092,14 +2098,25 @@ describe('R4-2: a view under a transform animated from JS (useNativeDriver: fals
     expect(jest.getTimerCount()).toBe(1);
   });
 
-  it('a value JS tracks (Animated.timing to another value) is followed every frame too', () => {
+  it('a value JS tracks (Animated.timing to another value) can be anywhere: the whole surface, while it tracks', () => {
     const value = animatedValue(0, false);
     (value as unknown as { _tracking: unknown })._tracking = {};
     render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
-    wait(16 * 20);
 
-    // The tick, and the frame loop.
-    expect(jest.getTimerCount()).toBe(2);
+    expect(firstPublished()).toEqual(px(WHOLE_SURFACE));
+  });
+
+  it('a JS spring (no path known) covers the whole surface while it runs, then only the view', () => {
+    const value = animatedValue(0, false);
+    render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
+    wait(212);
+
+    act(() => (value as unknown as FakeAnimatedValue).animate({ _toValue: 100, useNativeDriver: false } as never));
+    expect(firstPublished()).toEqual(px(WHOLE_SURFACE));
+
+    value._animation = null;
+    wait(SECURE_SHRINK_HOLD_MS + 16 * (STEADY_FRAMES + 4));
+    expect(lastPublished()).toEqual([0, px(selfRect)]);
   });
 });
 

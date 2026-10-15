@@ -61,11 +61,13 @@ import type { FiberLike, WindowRect } from '../viewtree/fiber';
  * its values on the UI thread).
  * Masking too much beats drawing the view where nothing masks it.
  *
- * A JS-driven animation needs none of this bounding: Fabric commits its
- * values to the shadow tree, and `measureInWindow` follows it. It moves the
- * view every frame, though, with no wrapped call: a view under one is
- * re-measured every frame while it runs (`_animation` or `_tracking` set on a
- * root), and back on the tick once it stops.
+ * A JS-driven transform at rest needs none of this: Fabric commits its
+ * values to the shadow tree, and `measureInWindow` follows it. While a JS
+ * animation runs on it (`_animation` or `_tracking` set on a root), though,
+ * it moves the view every frame with no wrapped call, and a step can be drawn
+ * before the frame that measures it: it is then bounded over the animation's
+ * path like a native one, and the view re-measured every frame; once it
+ * stops, back to the tick.
  */
 
 export interface Range {
@@ -675,10 +677,12 @@ function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number
   }
   if (!nodes.some(([, value]) => isNativeNode(value))) {
     const roots = nodes.flatMap(([, value]) => nodeBound(value).roots);
-    // Driven from JS, an animation moves the view every frame (Fabric commits each step) with no wrapped call:
-    // followed every frame while one runs on a root, and back to the tick once it stops.
-    const moving = roots.some((root) => root._animation != null || root._tracking != null);
-    return { running: roots.length === 0 || moving, roots, move: undefined };
+    // Driven from JS, an animation moves the view every frame (Fabric commits each step) with no wrapped call, and
+    // a step can be drawn before the frame that measures it: while one runs on a root it is bounded over its path,
+    // as a native one is, and followed every frame; once it stops, back to the tick.
+    if (!roots.some((root) => root._animation != null || root._tracking != null)) {
+      return { running: roots.length === 0, roots, move: undefined };
+    }
   }
   const host = hostBelow(ancestry, fibers, index);
   // By place: a function can come twice (`translateX` twice), each with its own value.
