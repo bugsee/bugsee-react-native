@@ -734,21 +734,39 @@ function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number
 }
 
 /**
- * Whether a value of a level is the offset of a ScrollView whose content
- * holds the view (a sticky header; or a transform around a ScrollView, driven
- * by its own offset): the view then moves with that content as well, by the
- * same offset, natively ahead of the shadow tree it is measured in, so
- * bounding the transform alone does not bound where it is drawn. Unbounded:
- * the whole surface, cut by the clipping ancestors above the level.
+ * Whether a value of a level is, or may be, the offset of a ScrollView whose
+ * content holds the view (a sticky header; or a transform around a
+ * ScrollView, driven by its own offset): the view then moves with that
+ * content as well, by the same offset, natively ahead of the shadow tree it is
+ * measured in, so bounding the transform alone does not bound where it is
+ * drawn. Unbounded: the whole surface, cut by the clipping ancestors above
+ * the level. Fails closed: a native value whose driver is not known (nothing
+ * followed, made native unfollowed, or a scroll whose ScrollView cannot be
+ * found) counts as such an offset whenever a ScrollView is above the view.
  */
 function scrolledBy(ancestry: Ancestry, roots: readonly AnimatedNodeLike[]): boolean {
-  const above = new Set(ancestry.path.map(keyOf));
-  return roots.some((root) =>
-    (eventsOn(root) ?? []).some((attachment) => {
+  let keys: Set<object> | undefined;
+  const holds = (scroller: FiberLike): boolean => (keys ??= new Set(ancestry.path.map(keyOf))).has(keyOf(scroller));
+  const underScroll = (): boolean =>
+    ancestry.path.some((fiber) => fiber.tag === FiberTag.HostComponent && SCROLL_HOST_TYPES.has(fiber.type));
+  return roots.some((root) => {
+    // Driven from JS: it moves no content natively.
+    if (root.__isNative === false) {
+      return false;
+    }
+    const events = eventsOn(root);
+    if (events === undefined || (events.length === 0 && !knownDriven(root))) {
+      return underScroll();
+    }
+    return events.some((attachment) => {
       const scroller = scrollHostOf(attachment);
-      return scroller !== undefined && above.has(keyOf(scroller));
-    }),
-  );
+      if (scroller !== undefined) {
+        return holds(scroller);
+      }
+      // A scroll whose ScrollView is not found may be one of those above; a gesture, say, is no scroll.
+      return attachment.event === 'onScroll' && underScroll();
+    });
+  });
 }
 
 interface Level {

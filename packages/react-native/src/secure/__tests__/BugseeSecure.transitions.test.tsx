@@ -2393,6 +2393,113 @@ describe('R3-1, R3-4: values driven by a ScrollView\'s offset', () => {
     expect(firstPublished()).toEqual(px(WHOLE_SURFACE));
   });
 
+  describe('P3-A: a sticky header with a next one (flat at both ends) when its scroll is not followed', () => {
+    /** RN's interpolation for a sticky header at 200 that the next one, at 700, pushes off: flat at both ends. */
+    function stickyNext(scrollY: object): FiberLike {
+      const translateY = interpolationOf(
+        scrollY,
+        { inputRange: [-1, 0, 200, 201, 700, 701], outputRange: [0, 0, 0, 1, 500, 500] },
+        (input) => Math.min(500, Math.max(0, input - 200)),
+      );
+      const header = {
+        tag: FiberTag.FunctionComponent,
+        type: AnimatedView,
+        memoizedProps: { style: { transform: [{ translateY }] } },
+        children: [fabricHost('RCTView', rect(0, 300, 400, 50), { style: { transform: [{ translateY: 0 }] } }, [
+          view([self()]),
+        ])],
+      };
+      return existing(selfIn(root([scroller(rect(0, 100, 400, 600), rect(0, 100, 400, 3000), [header])])));
+    }
+    const VIEWPORT = px(rect(0, 100, 400, 600));
+
+    it('PROBE-STICKY-NEXT: nothing followed (a React Native file moved): the whole viewport', () => {
+      const scrollY = animatedValue(0);
+      forgetDrivers();
+      try {
+        selfRect = rect(10, 300, 200, 50);
+        render(stickyNext(scrollY));
+
+        expect(firstPublished()).toEqual(VIEWPORT);
+      } finally {
+        followDrivers({
+          eventClass: FakeAnimatedEvent,
+          implementation,
+          exported: animated,
+          valueClass: FakeAnimatedValue,
+        });
+      }
+    });
+
+    it('PROBE-STICKY-NEXT: a scroll value made native before the package loaded: the whole viewport', () => {
+      selfRect = rect(10, 300, 200, 50);
+      render(stickyNext(animatedValue(0, true, false)));
+
+      expect(firstPublished()).toEqual(VIEWPORT);
+    });
+
+    it('a scroll attached to a ScrollView that cannot be found: the whole viewport', () => {
+      const scrollY = animatedValue(0);
+      const fiber = stickyNext(scrollY);
+      new FakeAnimatedEvent([{ nativeEvent: { contentOffset: { y: scrollY } } }]).__attach(-7, 'onScroll');
+      selfRect = rect(10, 300, 200, 50);
+
+      render(fiber);
+
+      expect(firstPublished()).toEqual(VIEWPORT);
+    });
+
+    it('followed and found: the whole viewport too (the control)', () => {
+      const scrollY = animatedValue(0);
+      const fiber = stickyNext(scrollY);
+      implementation.attachNativeEvent(
+        { __internalInstanceHandle: ancestorOfType(fiber, 'RCTScrollView') },
+        'onScroll',
+        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+      );
+      selfRect = rect(10, 300, 200, 50);
+
+      render(fiber);
+
+      expect(firstPublished()).toEqual(VIEWPORT);
+    });
+
+    it('a swipeable row in a list (a gesture, followed) stays bounded over its outputs', () => {
+      const dragX = animatedValue(0);
+      new FakeAnimatedEvent([{ nativeEvent: { translationX: dragX } }]).__attach(5, 'onGestureEvent');
+      const translateX = interpolationOf(
+        dragX,
+        { inputRange: [-101, -100, 80, 81], outputRange: [-100, -100, 80, 80] },
+        (input) => Math.min(80, Math.max(-100, input)),
+      );
+      const row = {
+        tag: FiberTag.FunctionComponent,
+        type: AnimatedView,
+        memoizedProps: { style: { transform: [{ translateX }] } },
+        children: [fabricHost('RCTView', rect(0, 300, 400, 50), {}, [view([self()])])],
+      };
+      selfRect = rect(110, 300, 200, 50);
+
+      render(existing(selfIn(root([scroller(rect(0, 100, 400, 600), rect(0, 100, 400, 3000), [row])]))));
+
+      expect(firstPublished()).toEqual(px(rect(10, 300, 380, 50)));
+    });
+
+    it('a still value of unknown driver with no ScrollView above: bounded by its flat ends', () => {
+      const scrollY = animatedValue(0, true, false);
+      const translateY = interpolationOf(
+        scrollY,
+        { inputRange: [0, 1, 2, 3], outputRange: [0, 0, 40, 40] },
+        (input) => Math.min(40, Math.max(0, (input - 1) * 40)),
+      );
+      selfRect = rect(10, 100, 200, 50);
+
+      render(underAnimated([{ translateY }], [{ translateY: 0 }]));
+
+      expect(firstPublished()).toEqual(px(rect(10, 100, 200, 90)));
+    });
+  });
+
   it('a sticky header with a still value beside its scroll is unbounded all the same', () => {
     const { fiber } = sticky();
     const wrapper = ancestorOfType(fiber, AnimatedView);
