@@ -3,6 +3,10 @@
  * is imported, not when the app first reads `BugseeSecure` (Metro's
  * `inlineRequires` evaluates a re-export only then).
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { parseSync, traverse } from '@babel/core';
+import type { NodePath } from '@babel/core';
 import type * as NativeAnimation from '../nativeAnimation';
 import { FakeAnimatedEvent, madeNative } from './fakeAnimated';
 
@@ -34,4 +38,46 @@ it('R3-2: an event attached before the first BugseeSecure is read is counted', (
   const { nodeBound } = require('../nativeAnimation') as typeof NativeAnimation;
 
   expect(nodeBound(scrollY).range).toBeUndefined();
+});
+
+/**
+ * Metro's rule for an optional dependency (`isOptionalDependency` in
+ * `metro/src/ModuleGraph/worker/collectDependencies.js`, 0.81-0.87): walking
+ * up from the `require` through at most three statements, the first block
+ * reached is a `try` statement's block.
+ */
+function optionalToMetro(path: NodePath): boolean {
+  let statements = 0;
+  let at: NodePath | null = path;
+  while (at !== null && statements < 3) {
+    if (at.isStatement()) {
+      if (at.node.type === 'BlockStatement') {
+        return at.parentPath?.node.type === 'TryStatement' && at.key === 'block';
+      }
+      statements += 1;
+    }
+    at = at.parentPath;
+  }
+  return false;
+}
+
+it('P3-4: every React Native internal is required where Metro takes it as optional (a moved file builds)', () => {
+  const source = readFileSync(join(__dirname, '..', 'followEvents.ts'), 'utf8');
+  const ast = parseSync(source, { filename: 'followEvents.ts', parserOpts: { plugins: ['typescript'] } });
+  const required: Array<[string, boolean]> = [];
+  traverse(ast as never, {
+    CallExpression(path) {
+      const [argument] = path.node.arguments;
+      if (path.get('callee').isIdentifier({ name: 'require' }) && argument?.type === 'StringLiteral') {
+        required.push([argument.value, optionalToMetro(path)]);
+      }
+    },
+  });
+
+  expect(required).toEqual([
+    ['react-native/Libraries/Animated/AnimatedEvent', true],
+    ['react-native/Libraries/Animated/AnimatedImplementation', true],
+    ['react-native/Libraries/Animated/Animated', true],
+    ['react-native/Libraries/Animated/nodes/AnimatedValue', true],
+  ]);
 });

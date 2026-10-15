@@ -99,16 +99,22 @@ function add(state: DriverState, attachments: readonly Attached[]): void {
     state.attached.set(attachment.value, [...(state.attached.get(attachment.value) ?? []), attachment]);
     state.known.delete(attachment.value);
   }
+  // Counted only now: a view woken as React Native made the value native (inside the attach) took it as still.
+  for (const attachment of attachments) {
+    moved(state, attachment.value);
+  }
 }
 
 function remove(state: DriverState, attachments: readonly Attached[]): void {
   for (const attachment of attachments) {
     // Each attachment is removed once, after it was added.
-    // Where the last event left it, JS may not know: it stays unknown until an animation moves it.
-    state.attached.set(
-      attachment.value,
-      (state.attached.get(attachment.value) as Attached[]).filter((each) => each !== attachment),
-    );
+    const left = (state.attached.get(attachment.value) as Attached[]).filter((each) => each !== attachment);
+    state.attached.set(attachment.value, left);
+    if (left.length === 0) {
+      // Where the last event left it, JS may not know (whatever JS set while it was attached): it stays unknown
+      // until JS next animates or sets it.
+      state.known.delete(attachment.value);
+    }
   }
 }
 

@@ -105,20 +105,29 @@ Known limits:
   be drawn, for as long as the event is attached, idle or not:
   - a clamped interpolation, one whose ends are flat (a swipeable row without
     overshoot), or a `diffClamp`: over its output range;
-  - on Android, a ScrollView's `contentOffset` (a collapsing or parallax
-    header, a sticky header): over the offsets the ScrollView can reach, from
-    its measured content and viewport, plus a fling's overrun (32 dp). A
-    sticky header is masked from where it rests down to the bottom of the
-    list's viewport;
+  - on Android, a ScrollView's `contentOffset`, vertical or horizontal (a
+    collapsing or parallax header, a sticky header): over the offsets the
+    ScrollView can reach, from its measured content and viewport, plus 64 dp
+    either way for a fling's overrun (AOSP flings 6 dp past an end; the
+    margin assumes no device flings more than ten times that). A sticky
+    header is masked from where it rests down to the bottom of the list's
+    viewport;
   - anything else (a gesture's translation through an interpolation that
     extends, an iOS ScrollView, which bounces and can be scrolled anywhere by
-    `scrollTo`, a ScrollView in another React root): the whole surface around
-    it, cut by the clipping ancestors above it (a list's viewport, say).
-- Events attached before `@bugsee/react-native` is first imported are not
-  seen: a value made native that early is masked as if anything could drive
-  it, until it next animates. A native event attached without `Animated`
-  (code that calls React Native's native Animated module itself) is not seen
-  at all, and the value it drives is taken to be where JS last had it.
+    `scrollTo`, a ScrollView in another React root, or under a scale other
+    than 1): the whole surface around it, cut by the clipping ancestors above
+    it (a list's viewport, say).
+- Native events are followed from when `@bugsee/react-native` is first
+  evaluated: with Metro's `inlineRequires`, its first use. Import it (or call
+  `Bugsee.launch`) at the top of `index.js` to follow them from the start.
+  A value made native before then is masked as if anything could drive it,
+  until JS next animates or sets it. A native event attached without
+  `Animated` (code that calls React Native's native Animated module itself)
+  is not seen at all, and the value it drives is taken to be where JS last
+  had it.
+- A transform animated from JS (`useNativeDriver: false`) is followed every
+  frame while its animation runs. Other styles a JS animation moves (`top`,
+  `left`, `margin`, a size) are followed by the 100 ms re-measure only.
 - Reanimated runs its animations on the UI thread, out of JS's sight. A
   Reanimated component whose style sets a transform through an animated
   style, sets a shared value inline, or uses a CSS animation or transition

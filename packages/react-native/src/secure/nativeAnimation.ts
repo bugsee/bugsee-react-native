@@ -1,6 +1,7 @@
 import {
   SCROLL_HOST_TYPES,
   clipToAncestors,
+  contentOf,
   isReanimatedComponent,
   measureFiber,
   passMemo,
@@ -60,8 +61,11 @@ import type { FiberLike, WindowRect } from '../viewtree/fiber';
  * its values on the UI thread).
  * Masking too much beats drawing the view where nothing masks it.
  *
- * A JS-driven animation needs none of this: Fabric commits its values to the
- * shadow tree, and `measureInWindow` follows it.
+ * A JS-driven animation needs none of this bounding: Fabric commits its
+ * values to the shadow tree, and `measureInWindow` follows it. It moves the
+ * view every frame, though, with no wrapped call: a view under one is
+ * re-measured every frame while it runs (`_animation` or `_tracking` set on a
+ * root), and back on the tick once it stops.
  */
 
 export interface Range {
@@ -212,11 +216,15 @@ function valueBound(node: AnimatedNodeLike): NodeBound {
 
 /**
  * How far past either end of its content an Android ScrollView can be
- * scrolled: a fling runs on past an end by the overfling distance (6 dp in
- * AOSP's `ViewConfiguration`) before it springs back; a drag, a fling's end,
- * `scrollTo` and `contentOffset` are held within the content.
+ * scrolled: a fling runs on past an end by the overfling distance before it
+ * springs back; a drag, a fling's end, `scrollTo` and `contentOffset` are
+ * held within the content. The overfling distance is AOSP's
+ * `ViewConfiguration` (6 dp), which JS cannot read: an assumption, taken
+ * about ten times over for a device whose framework changed it. Only a
+ * ScrollView whose hosts (itself and above) are scaled by 1 or -1 is
+ * bounded: under any other scale its offsets are not in window units.
  */
-export const SCROLL_OVERRUN = 32;
+export const SCROLL_OVERRUN = 64;
 
 /**
  * Where native scroll events can set a value they are attached to: within
@@ -247,8 +255,9 @@ function scrollReach(attachment: Attachment): Range | undefined {
     return undefined;
   }
   const scroller = scrollHostOf(attachment);
-  const content = scroller?.child;
-  if (along === undefined || content == null || content.tag !== FiberTag.HostComponent) {
+  // Android renders a vertical ScrollView's content through the `View` component: its host is further down.
+  const content = scroller === undefined ? undefined : contentOf(scroller);
+  if (along === undefined || content === undefined || scaledFrom(scroller as FiberLike)) {
     return undefined;
   }
   const viewport = measureFiber(scroller as FiberLike);
@@ -257,6 +266,25 @@ function scrollReach(attachment: Attachment): Range | undefined {
     return undefined;
   }
   return { lo: -SCROLL_OVERRUN, hi: Math.max(0, inner[along] - viewport[along]) + SCROLL_OVERRUN };
+}
+
+/** How far up from a ScrollView its hosts are read for a scale; a cycle in a malformed tree must end. */
+const MAX_ANCESTORS = 10_000;
+
+/**
+ * Whether `scroller`, or a host above it, has a committed transform that
+ * scales by anything but 1 or -1 (or by what cannot be read): its offsets,
+ * in its own units, are then not the window units it is measured in.
+ */
+function scaledFrom(scroller: FiberLike): boolean {
+  let fiber: FiberLike | null = scroller;
+  for (let depth = 0; fiber != null && depth < MAX_ANCESTORS; depth += 1) {
+    if (fiber.tag === FiberTag.HostComponent && scalesBy(fiber.memoizedProps, (by) => Math.abs(by as number) !== 1)) {
+      return true;
+    }
+    fiber = fiber.return;
+  }
+  return false;
 }
 
 /** The ScrollView host each attachment was made to (`null`: none found), looked for once. */
@@ -647,7 +675,10 @@ function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number
   }
   if (!nodes.some(([, value]) => isNativeNode(value))) {
     const roots = nodes.flatMap(([, value]) => nodeBound(value).roots);
-    return { running: roots.length === 0, roots, move: undefined };
+    // Driven from JS, an animation moves the view every frame (Fabric commits each step) with no wrapped call:
+    // followed every frame while one runs on a root, and back to the tick once it stops.
+    const moving = roots.some((root) => root._animation != null || root._tracking != null);
+    return { running: roots.length === 0 || moving, roots, move: undefined };
   }
   const host = hostBelow(ancestry, fibers, index);
   // By place: a function can come twice (`translateX` twice), each with its own value.
@@ -874,15 +905,16 @@ export function nativeMotion(ancestry: Ancestry): NativeMotion | null {
   };
 }
 
+/** Whether a host's committed transform has a scale (its value now) for which `scales` holds. */
+function scalesBy(props: unknown, scales: (by: unknown) => boolean): boolean {
+  return (transformOf(props) ?? []).some(
+    ([name, value]) => SCALE_AXES[name] !== undefined && scales(isNode(value) ? value.__getValue() : value),
+  );
+}
+
 /** Whether a host's committed transform scales by more than 1 (or less than -1), or by what cannot be read. */
 function hostScalesUp(props: unknown): boolean {
-  return (transformOf(props) ?? []).some(([name, value]) => {
-    if (SCALE_AXES[name] === undefined) {
-      return false;
-    }
-    const by = isNode(value) ? value.__getValue() : value;
-    return !(Math.abs(by as number) <= 1);
-  });
+  return scalesBy(props, (by) => !(Math.abs(by as number) <= 1));
 }
 
 /** The outermost host above `index` in the path whose committed transform scales up; -1 when none. */

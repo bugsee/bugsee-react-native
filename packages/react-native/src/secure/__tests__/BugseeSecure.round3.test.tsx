@@ -234,18 +234,20 @@ describe('P2: a static clipped or hidden view costs nothing per frame', () => {
     expect(measureInWindow.mock.calls.length - selfBefore).toBe(0);
     // The ScrollView's content and the ScrollView itself, watched once a frame.
     expect(renderer.measures.slice(ancestorsBefore).map((fiber) => fiber.type)).toEqual(
-      Array(5).fill(['RCTScrollContentView', 'RCTScrollView']).flat(),
+      // Android's vertical ScrollView: its content container is the `RCTView` host the `View` component renders.
+      Array(5).fill(['RCTView', 'RCTScrollView']).flat(),
     );
   });
 
-  it('a parked view is woken, and follows, the frame its ScrollView content moves (control)', () => {
+  it('R4-1: a parked view is woken, and follows, the frame its (Android, vertical) ScrollView content moves', () => {
     const fiber = selfIn(root([scrollView(rect(0, 0, 400, 120), [self()])]));
     render(fiber);
     // Parked, and just past the 200 ms tick: the frame below holds no tick.
     frames(12);
     wait(13);
 
-    moveTo(ancestorOfType(fiber, 'RCTScrollContentView'), rect(0, -5040, 400, 9000));
+    // The content container's host, below the `View` component.
+    moveTo(ancestorOfType(fiber, 'RCTView'), rect(0, -5040, 400, 9000));
     selfRect = rect(10, 60, 200, 50);
     const before = measureInWindow.mock.calls.length;
     frames();

@@ -87,10 +87,11 @@ export interface BugseeSecureProps extends ViewProps {
  * long as it is attached, idle or not, whatever animated it before. It is
  * bounded only where that is provable: through an interpolation that clamps,
  * or extends a flat last segment, at both ends (within its outputs, eased);
- * through `diffClamp`; and, on Android, as a ScrollView's `contentOffset`,
- * within the offsets the ScrollView can reach (from its measured content and
- * viewport, and a fling's overrun past either end). What cannot be bounded
- * (any other event's value, an iOS ScrollView's offset, a rotation, a
+ * through `diffClamp`; and, on Android, as a ScrollView's `contentOffset`
+ * (vertical or horizontal), within the offsets the ScrollView can reach
+ * (from its measured content and viewport, and a fling's overrun past either
+ * end, `SCROLL_OVERRUN`), unless it is under a scale other than 1. What cannot
+ * be bounded (any other event's value, an iOS ScrollView's offset, a rotation, a
  * spring, a node React Native renamed) covers the whole surface, cut by the
  * clipping ancestors above it, for as long as it cannot be. A view under a
  * running native animation is re-measured every frame. When JS moves a value
@@ -99,11 +100,17 @@ export interface BugseeSecureProps extends ViewProps {
  * offsets it), the view is measured and published in that same JS task,
  * before React Native hands the change to the UI thread; what native does to
  * a still native value on its own (an animation ending) is seen by the next
- * JS frame. A value driven from JS keeps no frame loop running.
+ * JS frame. A transform animated from JS (`useNativeDriver: false`) moves the
+ * view every frame through Fabric with no wrapped call: the view is
+ * re-measured every frame while the animation runs, and an idle value driven
+ * from JS keeps no frame loop running. Other styles a JS animation moves
+ * (`top`, `left`, a size) are followed by the 100 ms re-measure only.
  *
  * What drives a native value is followed from when the package is first
- * imported (its entry imports `secure/followEvents` for that, so Metro's
- * `inlineRequires` does not defer it to the first `<BugseeSecure>`): the
+ * evaluated (its entry imports `secure/followEvents` for that, so Metro's
+ * `inlineRequires` does not defer it to the first `<BugseeSecure>`; it does
+ * defer the entry to its first use: import the package, or call
+ * `Bugsee.launch`, at the top of `index.js`): the
  * events attached to it, and its being made native. A native value made
  * native before that, or left wherever its last event took it, is unbounded
  * until it next animates. Where React Native's internals cannot be followed

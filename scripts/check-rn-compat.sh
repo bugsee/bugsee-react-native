@@ -351,6 +351,17 @@ grep -rqE '\.__attach\([A-Za-z_]+, *[A-Za-z_]+\)' --exclude=AnimatedEvent.js "$R
 # ends the attachment. A value is made native through AnimatedValue's own
 # __makeNative (an animation's start, an event's attach), the module's default
 # export.
+# src/secure/followEvents.ts requires these four by path, each optional to Metro (in a try block): a file
+# moved builds and follows nothing (every still native value then masked as moving). Noticed here first.
+for MODULE in AnimatedEvent AnimatedImplementation Animated nodes/AnimatedValue; do
+  [ -f "$ANIMATED/$MODULE.js" ] \
+    || { echo "FAIL: Libraries/Animated/$MODULE.js is gone: src/secure/followEvents.ts requires it"; exit 1; }
+done
+# A vertical ScrollView's content container on Android is the View component's host, below the ScrollView's host
+# (nativeAnimation.ts and ancestry.ts look through at most CONTENT_DEPTH components for it).
+grep -qE "Platform\.OS === 'android' \? View : ScrollContentViewNativeComponent" \
+  "$RN_SRC/src/private/components/scrollview/VScrollViewNativeComponents.js" \
+  || { echo "FAIL: VScrollContentViewNativeComponent is no longer View on Android: recheck CONTENT_DEPTH"; exit 1; }
 grep -qE '^export default \{' "$ANIMATED/AnimatedImplementation.js" \
   && grep -qE '^  attachNativeEvent: attachNativeEventImpl,' "$ANIMATED/AnimatedImplementation.js" \
   || { echo "FAIL: AnimatedImplementation.js no longer exports attachNativeEvent on its default object"; exit 1; }

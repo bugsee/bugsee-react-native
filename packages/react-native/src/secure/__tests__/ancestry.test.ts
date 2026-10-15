@@ -8,6 +8,7 @@
 import { FiberTag } from '../../viewtree/fiber';
 import type { FiberLike } from '../../viewtree/fiber';
 import {
+  CONTENT_DEPTH,
   MODAL_SCREEN_HOST_TYPE,
   ROOT_KIND_HOST_TYPES,
   SCREEN_CONTAINER_HOST_TYPES,
@@ -17,6 +18,7 @@ import {
   ancestryOfInstance,
   clipToAncestors,
   clipWatchNodes,
+  contentOf,
   isHidden,
   measureFiber,
   measurePass,
@@ -25,6 +27,7 @@ import {
   styleValue,
 } from '../ancestry';
 import type { Ancestry } from '../ancestry';
+import type { FiberSpec } from '../../viewtree/__tests__/fakeFibers';
 import {
   ancestorOfType,
   commitProps,
@@ -36,6 +39,7 @@ import {
   pairWith,
   rect,
   root,
+  iosScrollView,
   scrollView,
   screenContainer,
   self,
@@ -85,7 +89,7 @@ const inactive = (children: Parameters<typeof fabricHost>[3]) =>
 
 describe('ancestryOfFiber', () => {
   it('keeps the whole path to the root, and the hosts on it nearest first', () => {
-    const fiber = selfIn(root([view([composite([scrollView(rect(0, 0, 1, 1), [self()])])])]));
+    const fiber = selfIn(root([view([composite([iosScrollView(rect(0, 0, 1, 1), [self()])])])]));
     const ancestry = ancestryOfFiber(fiber);
 
     expect(ancestry.path.map((entry) => entry.tag)).toEqual([
@@ -118,7 +122,7 @@ describe('ancestryOfFiber', () => {
     'leaves out %s and every host above it',
     (type) => {
       const boundary = fabricHost(type as string, rect(0, 0, 1, 1), {}, [view([self()])]);
-      const ancestry = ancestryIn(root([scrollView(null, [boundary])]));
+      const ancestry = ancestryIn(root([iosScrollView(null, [boundary])]));
 
       expect(types(ancestry)).toEqual(['RCTView']);
       // The view below it ends at the boundary, not at the next host above.
@@ -129,7 +133,7 @@ describe('ancestryOfFiber', () => {
 
   it('keeps a modal screen as its last host, a boundary screen, and none above it', () => {
     const modal = fabricHost(MODAL_SCREEN_HOST_TYPE, null, {}, [view([self()])]);
-    const ancestry = ancestryIn(root([scrollView(null, [composite([modal])])]));
+    const ancestry = ancestryIn(root([iosScrollView(null, [composite([modal])])]));
 
     expect(types(ancestry)).toEqual(['RCTView', MODAL_SCREEN_HOST_TYPE]);
     expect(ancestry.hosts[1]).toMatchObject({ index: 1, above: 3, screen: true, boundary: true, scrolls: false });
@@ -157,7 +161,7 @@ describe('ancestryOfFiber', () => {
     const ancestry = ancestryIn(
       root([
         fabricHost(SCREEN_HOST_TYPE, null, {}, [
-          scrollView(null, [scrollView(null, [self()], 'AndroidHorizontalScrollView')]),
+          iosScrollView(null, [iosScrollView(null, [self()], 'AndroidHorizontalScrollView')]),
         ]),
       ]),
     );
@@ -275,7 +279,7 @@ describe('isHidden', () => {
     function inModal(props: Record<string, unknown>, wrapperProps: Record<string, unknown> = {}): Ancestry {
       const modal = fabricHost(MODAL_SCREEN_HOST_TYPE, null, props, [view([self()])]);
       const stack = screenContainer([composite([modal], wrapperProps)], 'RNSScreenStack');
-      return ancestryIn(root([inactive([scrollView(null, [stack])])]));
+      return ancestryIn(root([inactive([iosScrollView(null, [stack])])]));
     }
 
     it.each([
@@ -491,7 +495,7 @@ describe('isHidden', () => {
     });
 
     it('with props that throw while read, even after a nearer host read as clipping', () => {
-      const fiber = selfIn(root([inactive([scrollView(null, [self()])])]));
+      const fiber = selfIn(root([inactive([iosScrollView(null, [self()])])]));
       commitProps(ancestorOfType(fiber, SCREEN_HOST_TYPE), {
         get style(): never {
           throw new Error('torn props');
@@ -550,7 +554,7 @@ describe('isHidden', () => {
   });
 
   it('records which hosts clip', () => {
-    const open = view([scrollView(null, [self()])], { style: { overflow: 'visible' } });
+    const open = view([iosScrollView(null, [self()])], { style: { overflow: 'visible' } });
     const ancestry = ancestryIn(root([view([open], { style: { overflow: 'hidden' } })]));
 
     isHidden(ancestry);
@@ -571,7 +575,7 @@ describe('isHidden', () => {
     [{}, true],
     [undefined, true],
   ])('a ScrollView styled %p clips: %p', (style, clips) => {
-    const fiber = selfIn(root([scrollView(null, [self()])]));
+    const fiber = selfIn(root([iosScrollView(null, [self()])]));
     commitProps(ancestorOfType(fiber, 'RCTScrollView'), { style });
     const ancestry = ancestryOfFiber(fiber);
 
@@ -612,7 +616,7 @@ describe('clipToAncestors', () => {
   });
 
   it('returns the rectangle itself, measuring nothing, when the last read was not complete', () => {
-    const ancestry = readAncestry(root([scrollView(rect(0, 0, 400, 110), [self()])]));
+    const ancestry = readAncestry(root([iosScrollView(rect(0, 0, 400, 110), [self()])]));
     ancestry.readable = false;
 
     expect(clipToAncestors(SELF_RECT, ancestry)).toBe(SELF_RECT);
@@ -620,10 +624,11 @@ describe('clipToAncestors', () => {
   });
 
   it('lets an ancestor answering 0/0/0/0 clip nothing, and the others still clip', () => {
-    const only = readAncestry(root([scrollView(rect(0, 0, 0, 0), [self()])]));
+    const only = readAncestry(root([iosScrollView(rect(0, 0, 0, 0), [self()])]));
     expect(clipToAncestors(SELF_RECT, only)).toBe(SELF_RECT);
 
-    const nested = readAncestry(root([scrollView(rect(0, 0, 400, 120), [scrollView(rect(0, 0, 0, 0), [self()])])]));
+    const inner = iosScrollView(rect(0, 0, 0, 0), [self()]);
+    const nested = readAncestry(root([iosScrollView(rect(0, 0, 400, 120), [inner])]));
     expect(clipToAncestors(SELF_RECT, nested)).toEqual(rect(10, 100, 200, 20));
   });
 
@@ -633,11 +638,11 @@ describe('clipToAncestors', () => {
     ['width', rect(0, 0, 5, 0)],
     ['height', rect(0, 0, 0, 5)],
   ])('lets an ancestor with a non-zero %s and nothing else clip', (_, measured) => {
-    expect(clipToAncestors(SELF_RECT, readAncestry(root([scrollView(measured, [self()])])))).toBeNull();
+    expect(clipToAncestors(SELF_RECT, readAncestry(root([iosScrollView(measured, [self()])])))).toBeNull();
   });
 
   it('keeps an ancestor answering 0/0/0/0 for the pass', () => {
-    const ancestry = readAncestry(root([scrollView(rect(0, 0, 0, 0), [self()])]));
+    const ancestry = readAncestry(root([iosScrollView(rect(0, 0, 0, 0), [self()])]));
 
     measurePass(() => {
       clipToAncestors(SELF_RECT, ancestry);
@@ -648,7 +653,7 @@ describe('clipToAncestors', () => {
   });
 
   it('is the whole rectangle inside the viewport', () => {
-    expect(clipToAncestors(SELF_RECT, readAncestry(root([scrollView(rect(0, 0, 400, 800), [self()])])))).toEqual(
+    expect(clipToAncestors(SELF_RECT, readAncestry(root([iosScrollView(rect(0, 0, 400, 800), [self()])])))).toEqual(
       SELF_RECT,
     );
   });
@@ -660,7 +665,7 @@ describe('clipToAncestors', () => {
     ['to the right', rect(0, 0, 110, 800), rect(10, 100, 100, 50)],
     ['on every side', rect(20, 110, 100, 20), rect(20, 110, 100, 20)],
   ])('cuts off what lies outside the viewport %s', (_, viewport, expected) => {
-    expect(clipToAncestors(SELF_RECT, readAncestry(root([scrollView(viewport, [self()])])))).toEqual(expected);
+    expect(clipToAncestors(SELF_RECT, readAncestry(root([iosScrollView(viewport, [self()])])))).toEqual(expected);
   });
 
   it.each([
@@ -670,12 +675,12 @@ describe('clipToAncestors', () => {
     ['to the right', rect(210, 0, 400, 800)],
     ['far away', rect(0, 1000, 400, 800)],
   ])('is nothing when the viewport lies wholly %s', (_, viewport) => {
-    expect(clipToAncestors(SELF_RECT, readAncestry(root([scrollView(viewport, [self()])])))).toBeNull();
+    expect(clipToAncestors(SELF_RECT, readAncestry(root([iosScrollView(viewport, [self()])])))).toBeNull();
   });
 
   it('is cut by every clipping ancestor: nested ScrollViews', () => {
-    const horizontal = scrollView(rect(50, 0, 400, 800), [self()], 'AndroidHorizontalScrollView');
-    const ancestry = readAncestry(root([scrollView(rect(0, 0, 400, 130), [horizontal])]));
+    const horizontal = iosScrollView(rect(50, 0, 400, 800), [self()], 'AndroidHorizontalScrollView');
+    const ancestry = readAncestry(root([iosScrollView(rect(0, 0, 400, 130), [horizontal])]));
 
     expect(clipToAncestors(SELF_RECT, ancestry)).toEqual(rect(50, 100, 160, 30));
     expect(renderer.measures.map((fiber) => fiber.type)).toEqual(['AndroidHorizontalScrollView', 'RCTScrollView']);
@@ -690,7 +695,7 @@ describe('clipToAncestors', () => {
   });
 
   it('follows the ancestors as they move', () => {
-    const fiber = selfIn(root([scrollView(rect(0, 0, 400, 800), [self()])]));
+    const fiber = selfIn(root([iosScrollView(rect(0, 0, 400, 800), [self()])]));
     const ancestry = ancestryOfFiber(fiber);
     isHidden(ancestry);
     expect(clipToAncestors(SELF_RECT, ancestry)).toEqual(SELF_RECT);
@@ -701,7 +706,7 @@ describe('clipToAncestors', () => {
   });
 
   it('looks each clipping host up once, however often it measures', () => {
-    const ancestry = readAncestry(root([scrollView(rect(0, 0, 400, 800), [self()])]));
+    const ancestry = readAncestry(root([iosScrollView(rect(0, 0, 400, 800), [self()])]));
 
     clipToAncestors(SELF_RECT, ancestry);
     clipToAncestors(SELF_RECT, ancestry);
@@ -724,8 +729,8 @@ describe('clipToAncestors', () => {
 
   describe('in a measure pass', () => {
     /** Two views under one ScrollView, each with its ancestry read. */
-    function twoUnder(viewport: Parameters<typeof scrollView>[0]): Ancestry[] {
-      return selvesIn(root([scrollView(viewport, [self(), self()])])).map((fiber) => {
+    function twoUnder(viewport: Parameters<typeof iosScrollView>[0]): Ancestry[] {
+      return selvesIn(root([iosScrollView(viewport, [self(), self()])])).map((fiber) => {
         const ancestry = ancestryOfFiber(fiber);
         isHidden(ancestry);
         return ancestry;
@@ -788,7 +793,7 @@ describe('clipToAncestors', () => {
 
   describe('fails closed: the whole rectangle, unclipped', () => {
     it('when a clipping ancestor never answers', () => {
-      const ancestry = readAncestry(root([scrollView(rect(0, 0, 400, 120), [scrollView(null, [self()])])]));
+      const ancestry = readAncestry(root([iosScrollView(rect(0, 0, 400, 120), [iosScrollView(null, [self()])])]));
 
       expect(clipToAncestors(SELF_RECT, ancestry)).toBe(SELF_RECT);
     });
@@ -799,19 +804,20 @@ describe('clipToAncestors', () => {
       ['width', rect(0, 0, Number.NaN, 120)],
       ['height', rect(0, 0, 400, Number.NEGATIVE_INFINITY)],
     ])('when a clipping ancestor answers a non-finite %s', (_, measured) => {
-      const ancestry = readAncestry(root([scrollView(rect(0, 0, 400, 110), [scrollView(measured, [self()])])]));
+      const ancestry = readAncestry(root([iosScrollView(rect(0, 0, 400, 110), [iosScrollView(measured, [self()])])]));
 
       expect(clipToAncestors(SELF_RECT, ancestry)).toBe(SELF_RECT);
     });
 
     it('when a clipping ancestor further out never answers, after a nearer one cut', () => {
-      const ancestry = readAncestry(root([scrollView(null, [scrollView(rect(0, 0, 400, 120), [self()])])]));
+      const ancestry = readAncestry(root([iosScrollView(null, [iosScrollView(rect(0, 0, 400, 120), [self()])])]));
 
       expect(clipToAncestors(SELF_RECT, ancestry)).toBe(SELF_RECT);
     });
 
     it('when a clipping ancestor further out throws, after a nearer one cut', () => {
-      const fiber = selfIn(root([scrollView(rect(0, 0, 400, 800), [scrollView(rect(0, 0, 400, 120), [self()])])]));
+      const inner = iosScrollView(rect(0, 0, 400, 120), [self()]);
+      const fiber = selfIn(root([iosScrollView(rect(0, 0, 400, 800), [inner])]));
       const ancestry = ancestryOfFiber(fiber);
       const outer = ancestry.path[ancestry.hosts[3]!.index]!;
       isHidden(ancestry);
@@ -827,7 +833,7 @@ describe('clipToAncestors', () => {
     });
 
     it('when measuring a clipping ancestor throws', () => {
-      const ancestry = readAncestry(root([scrollView(rect(0, 0, 400, 120), [self()])]));
+      const ancestry = readAncestry(root([iosScrollView(rect(0, 0, 400, 120), [self()])]));
       renderer.getPublicInstanceFromInternalInstanceHandle = () => ({
         measureInWindow: () => {
           throw new Error('detached');
@@ -838,7 +844,7 @@ describe('clipToAncestors', () => {
     });
 
     it('when the renderer cannot be loaded', () => {
-      const ancestry = readAncestry(root([scrollView(rect(0, 0, 400, 120), [self()])]));
+      const ancestry = readAncestry(root([iosScrollView(rect(0, 0, 400, 120), [self()])]));
       jest.doMock(RENDERER_PROXY, () => {
         throw new Error('no renderer');
       });
@@ -854,7 +860,7 @@ describe('clipToAncestors', () => {
       ['width', rect(10, 100, Number.POSITIVE_INFINITY, 50)],
       ['height', rect(10, 100, 200, Number.NaN)],
     ])("when the view's own %s is not finite", (_, measured) => {
-      const ancestry = readAncestry(root([scrollView(rect(0, 1000, 400, 120), [self()])]));
+      const ancestry = readAncestry(root([iosScrollView(rect(0, 1000, 400, 120), [self()])]));
 
       expect(clipToAncestors(measured, ancestry)).toBe(measured);
       expect(renderer.measures).toEqual([]);
@@ -866,7 +872,7 @@ describe('clipToAncestors', () => {
 describe('round 3', () => {
   it('a HostPortal ends the walk like a root-kind host', () => {
     const portal = { tag: FiberTag.HostPortal, type: null, children: [view([self()])] };
-    const ancestry = ancestryIn(root([inactive([scrollView(rect(0, 0, 1, 1), [portal])])]));
+    const ancestry = ancestryIn(root([inactive([iosScrollView(rect(0, 0, 1, 1), [portal])])]));
 
     expect(types(ancestry)).toEqual(['RCTView']);
     expect(isHidden(ancestry)).toBe(false);
@@ -989,7 +995,7 @@ describe('round 3', () => {
 
   describe('clipWatchNodes', () => {
     it("is a ScrollView's content container, or the clipping view itself", () => {
-      const clipping = fabricHost('RCTView', null, { style: { overflow: 'hidden' } }, [scrollView(null, [self()])]);
+      const clipping = fabricHost('RCTView', null, { style: { overflow: 'hidden' } }, [iosScrollView(null, [self()])]);
       const fiber = selfIn(root([clipping]));
       const ancestry = ancestryOfFiber(fiber);
       isHidden(ancestry);
@@ -1000,6 +1006,33 @@ describe('round 3', () => {
         'RCTView',
       ]);
       expect(clipWatchNodes(ancestry)[0]).toBe(ancestorOfType(fiber, 'RCTScrollContentView'));
+    });
+
+    it('R4-1: on Android, the content container\'s host under the View component a vertical ScrollView renders', () => {
+      const fiber = selfIn(root([scrollView(rect(0, 0, 400, 300), [view([self()])])]));
+      const ancestry = ancestryOfFiber(fiber);
+      isHidden(ancestry);
+      const scroller = ancestorOfType(fiber, 'RCTScrollView');
+
+      expect(clipWatchNodes(ancestry)).toEqual([(scroller.child as FiberLike).child, scroller]);
+      expect(contentOf(scroller)).toBe((scroller.child as FiberLike).child);
+    });
+
+    it(`looks for the content container through at most ${CONTENT_DEPTH} components`, () => {
+      const nested = (depth: number, inner: FiberSpec[]): FiberSpec[] =>
+        depth === 0 ? inner : [composite(nested(depth - 1, inner))];
+      for (const depth of [CONTENT_DEPTH - 1, CONTENT_DEPTH]) {
+        const content = fabricHost('RCTView', rect(0, 0, 400, 900), {}, [self()]);
+        const fiber = selfIn(root([fabricHost('RCTScrollView', rect(0, 0, 400, 300), {}, nested(depth, [content]))]));
+        const ancestry = ancestryOfFiber(fiber);
+        isHidden(ancestry);
+        const scroller = ancestorOfType(fiber, 'RCTScrollView');
+        const found = depth < CONTENT_DEPTH ? ancestorOfType(fiber, 'RCTView') : undefined;
+
+        expect(clipWatchNodes(ancestry)).toEqual(found === undefined ? [scroller] : [found, scroller]);
+        expect(contentOf(scroller)).toBe(found);
+      }
+      expect(contentOf(fabricHost('RCTScrollView', null, {}, []) as never)).toBeUndefined();
     });
 
     it('is the ScrollView itself when what is below it is not a host', () => {
@@ -1015,14 +1048,14 @@ describe('round 3', () => {
       isHidden(ancestry);
       expect(clipWatchNodes(ancestry)).toEqual([]);
 
-      const unread = ancestryIn(root([scrollView(null, [self()])]));
+      const unread = ancestryIn(root([iosScrollView(null, [self()])]));
       expect(clipWatchNodes(unread)).toEqual([]);
     });
   });
 
   describe('measureFiber', () => {
     it('looks a fiber’s instance up once, and measures once a pass', () => {
-      const fiber = ancestorOfType(selfIn(root([scrollView(rect(0, 0, 400, 120), [self()])])), 'RCTScrollView');
+      const fiber = ancestorOfType(selfIn(root([iosScrollView(rect(0, 0, 400, 120), [self()])])), 'RCTScrollView');
 
       expect(measureFiber(fiber)).toEqual(rect(0, 0, 400, 120));
       measurePass(() => {
@@ -1035,8 +1068,8 @@ describe('round 3', () => {
     });
 
     it('answers 0/0/0/0 as null and silence as undefined', () => {
-      const zero = ancestorOfType(selfIn(root([scrollView(rect(0, 0, 0, 0), [self()])])), 'RCTScrollView');
-      const silent = ancestorOfType(selfIn(root([scrollView(null, [self()])])), 'RCTScrollView');
+      const zero = ancestorOfType(selfIn(root([iosScrollView(rect(0, 0, 0, 0), [self()])])), 'RCTScrollView');
+      const silent = ancestorOfType(selfIn(root([iosScrollView(null, [self()])])), 'RCTScrollView');
 
       expect(measureFiber(zero)).toBeNull();
       expect(measureFiber(silent)).toBeUndefined();
@@ -1135,7 +1168,7 @@ describe('round 3: edges', () => {
   });
 
   it('watches nothing once a read fails, whatever clipped before', () => {
-    const ancestry = ancestryIn(root([scrollView(null, [self()])]));
+    const ancestry = ancestryIn(root([iosScrollView(null, [self()])]));
     isHidden(ancestry);
     expect(clipWatchNodes(ancestry)).toHaveLength(2);
 

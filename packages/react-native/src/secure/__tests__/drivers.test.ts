@@ -356,6 +356,44 @@ describe('what a value is driven by', () => {
     expect(() => new rn.valueClass().animate('timing')).not.toThrow();
   });
 
+  it('P3-1: woken as React Native makes a value native inside an attach, a view is woken again once counted', () => {
+    const rn = sources();
+    const original = rn.implementation.attachNativeEvent;
+    // React Native's attachNativeEventImpl makes the mapped values native before it returns.
+    type Mapping = Array<{ nativeEvent: { y: { __makeNative: () => void } } }>;
+    original.mockImplementation((_view: unknown, _event: unknown, mapping: Mapping) => {
+      mapping[0]?.nativeEvent.y.__makeNative();
+      return { detach: jest.fn() };
+    });
+    followDrivers(rn);
+    const node = new rn.valueClass();
+    const seen: unknown[] = [];
+    whenMoved(node, () => seen.push(eventsOn(node)?.length));
+
+    rn.implementation.attachNativeEvent('host', 'onScroll', [{ nativeEvent: { y: node } }]);
+
+    // Inside the attach, not counted yet; then counted, and woken again.
+    expect(seen).toEqual([0, 1]);
+  });
+
+  it('P3-2: a value JS set while an event was attached is not trusted once the last event detaches', () => {
+    const rn = sources();
+    followDrivers(rn);
+    const node = new rn.valueClass();
+    const first = new rn.eventClass([{ nativeEvent: { y: node } }]);
+    const second = new rn.eventClass([{ nativeEvent: { y: node } }]);
+    first.__attach();
+    second.__attach();
+    node.setValue(0);
+    first.__detach();
+    // Still driven by the second: trusted or not, the event wins; known until the last one goes.
+    expect(knownDriven(node)).toBe(true);
+
+    second.__detach();
+
+    expect(knownDriven(node)).toBe(false);
+  });
+
   it('a value set from JS after its event left it is known again', () => {
     const rn = sources();
     followDrivers(rn);

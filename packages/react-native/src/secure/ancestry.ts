@@ -426,11 +426,18 @@ export function screensHide(ancestry: Ancestry): boolean {
 let passScreens: Map<FiberLike | null | undefined, boolean> | undefined;
 
 /**
+ * How many component fibers can stand between a ScrollView's host and its
+ * content container's host: on Android a vertical ScrollView renders its
+ * content through the `View` component (`VScrollContentViewNativeComponent`).
+ */
+export const CONTENT_DEPTH = 4;
+
+/**
  * The nodes whose movement can change how `ancestry`'s clipping ancestors
  * (as the last {@link isHidden} read them) cut the view: every clipping
  * host itself, whose bounds are the clip (a viewport that grows uncovers
  * more of the view), and a ScrollView's content container, which moves as
- * it scrolls.
+ * it scrolls: the nearest host below it on the way to the view.
  */
 export function clipWatchNodes(ancestry: Ancestry): FiberLike[] {
   if (!ancestry.readable) {
@@ -440,9 +447,28 @@ export function clipWatchNodes(ancestry: Ancestry): FiberLike[] {
     .filter((host) => host.clips)
     .flatMap((host) => {
       const clipper = ancestry.path[host.index] as FiberLike;
-      const below = ancestry.path[host.index - 1];
-      return host.scrolls && below?.tag === FiberTag.HostComponent ? [below, clipper] : [clipper];
+      const below = ancestry.path
+        .slice(Math.max(0, host.index - CONTENT_DEPTH), host.index)
+        .reverse()
+        .find((fiber) => fiber.tag === FiberTag.HostComponent);
+      return host.scrolls && below !== undefined ? [below, clipper] : [clipper];
     });
+}
+
+/**
+ * A ScrollView host's content container: the first host down its first
+ * children, through at most {@link CONTENT_DEPTH} components; `undefined`
+ * when there is none.
+ */
+export function contentOf(scroller: FiberLike): FiberLike | undefined {
+  let fiber = scroller.child;
+  for (let depth = 0; fiber != null && depth < CONTENT_DEPTH; depth += 1) {
+    if (fiber.tag === FiberTag.HostComponent) {
+      return fiber;
+    }
+    fiber = fiber.child;
+  }
+  return undefined;
 }
 
 /** Public instances of watched nodes, looked up once each. */
