@@ -22,10 +22,10 @@
  *                   rows (every one partly clipped, so on the per-frame
  *                   re-measure) and nudged every 400 ms, each mode timing
  *                   both ticks and frame callbacks (`<mode>-frames`), then for
- *                   20 s the per-frame check a withdrawn
- *                   view runs (`isHidden`, props only) for all 20 every
- *                   frame, and each mode's percentiles logged as
- *                   `secure-perf result`.
+ *                   20 s the full hidden check (`isHidden`, props only)
+ *                   for all 20 every frame, an upper bound of what a
+ *                   withdrawn view checks each frame, and each mode's
+ *                   percentiles logged as `secure-perf result`.
  *
  * The perf hook is the app's own, not the package's: while the 20 views mount
  * (their layout effects start the loop's one interval), `setInterval` is
@@ -36,8 +36,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { PixelRatio, ScrollView, StyleSheet, View } from 'react-native';
 import { BugseeSecure } from '@bugsee/react-native';
-// Deep-imported for secure-perf's `watch` mode only: the per-frame check a
-// withdrawn view runs, timed on the same views (as scenarios/channel.ts does).
+// Deep-imported for secure-perf's `watch` mode only: the full hidden check,
+// timed on the same views (as scenarios/channel.ts does).
 import { ancestryOfInstance, isHidden } from '@bugsee/react-native/src/secure/ancestry';
 
 export const SECURE_VISIBLE_SCENARIOS = ['secure-visible', 'secure-perf', 'secure-perf-many'] as const;
@@ -313,9 +313,11 @@ function SecurePerfProbe({ nonce }: { nonce: string }) {
       if (cancelled) {
         return;
       }
-      // What 20 withdrawn views would cost every frame: one isHidden each,
-      // props reads only, outside any measure pass, as BugseeSecure's frame
-      // callback runs it.
+      // An upper bound of what 20 withdrawn views cost every frame: one full
+      // isHidden each (props reads only, no per-pass cache). A withdrawn
+      // view's frame callback runs only screensHide, the screens part of it,
+      // cached per screen in a measure pass; these views have no screen above
+      // them, so screensHide would return at once and time nothing.
       const ancestries = insides.map(inside => ancestryOfInstance(inside as object));
       const watched = ancestries.length;
       tickDurations.length = 0;

@@ -42,9 +42,10 @@ const MIN_TICKS = 300;
  * moving, so all 20 are on it: the worst case. A frame mode's "ticks" are
  * frames.
  *
- * `watch` times, every frame for 20 s, the check each withdrawn view runs per
- * frame (BugseeSecure's frame callback), for all 20 views: what it costs if
- * every one of them were withdrawn at once. Its "ticks" are frames.
+ * `watch` times, every frame for 20 s, the full hidden check (`isHidden`) for
+ * all 20 views: an upper bound of what they cost if every one were withdrawn
+ * at once, since a withdrawn view's frame callback runs only its screens part
+ * (`screensHide`, cached per screen in a pass). Its "ticks" are frames.
  */
 const MODES = [
   'static',
