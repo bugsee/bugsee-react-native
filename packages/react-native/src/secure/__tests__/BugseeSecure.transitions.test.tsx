@@ -2352,6 +2352,58 @@ describe('R3-1, R3-4: values driven by a ScrollView\'s offset', () => {
     ]);
   });
 
+  it('R3-4: on iOS, a header over a ScrollView is unbounded (it bounces, and scrollTo goes anywhere)', () => {
+    mockPlatform.OS = 'ios';
+    try {
+      selfRect = rect(10, 20, 200, 50);
+      render(collapsing(parallax));
+
+      expect(lastPublished()).toEqual([0, [0, 0, WHOLE_SURFACE.width, WHOLE_SURFACE.height]]);
+    } finally {
+      mockPlatform.OS = 'android';
+    }
+  });
+
+  it('a transform above the ScrollView whose offset drives it (the view inside its content) is bounded', () => {
+    const scrollY = animatedValue(0);
+    const at = nextTag;
+    nextTag += 1;
+    const fiber = existing(
+      selfIn(
+        root([
+          {
+            tag: FiberTag.FunctionComponent,
+            type: AnimatedView,
+            memoizedProps: { style: { transform: [{ translateY: parallax(scrollY) }] } },
+            children: [
+              fabricHost('RCTView', rect(0, 0, 400, 800), {}, [
+                scroller(rect(0, 0, 400, 800), rect(0, 0, 400, 1000), [view([self()])], at),
+              ]),
+            ],
+          },
+        ]),
+      ),
+    );
+    new FakeAnimatedEvent(offsetY(scrollY)).__attach(at, 'onScroll');
+    selfRect = rect(10, 20, 200, 50);
+
+    render(fiber);
+
+    expect(lastPublished()).toEqual([0, px(rect(10, 20 - 200 - SCROLL_OVERRUN, 200, 50 + 200 + 2 * SCROLL_OVERRUN))]);
+  });
+
+  it('a sticky header with a still value beside its scroll is unbounded all the same', () => {
+    const { fiber } = sticky();
+    const wrapper = ancestorOfType(fiber, AnimatedView);
+    const { style } = wrapper.memoizedProps as { style: { transform: Array<Record<string, unknown>> } };
+    wrapper.memoizedProps = { style: { transform: [...style.transform, { translateX: animatedValue(0) }] } };
+    selfRect = rect(10, 300, 200, 50);
+
+    render(fiber);
+
+    expect(lastPublished()).toEqual([0, px(rect(0, 100, 400, 600))]);
+  });
+
   it('R3-4: content shorter than its viewport scrolls only by the overrun', () => {
     selfRect = rect(10, 20, 200, 50);
     render(collapsing(parallax, rect(0, 0, 400, 300)));
