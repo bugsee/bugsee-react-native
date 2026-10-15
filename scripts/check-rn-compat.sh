@@ -244,6 +244,51 @@ do
 done
 echo "    Offscreen's hidden signal (memoizedState) and the SimpleMemo/Offscreen tag numbers are unchanged in both renderer bundles"
 
+# (5) <BugseeSecure>'s ancestry (src/secure/ancestry.ts, #86) depends on:
+# - the committed tree: `root.current = finishedWork` at commit, and the
+#   fiber/alternate pairing of createWorkInProgress, so that the root's
+#   current tree, walked down by `.child`/`.sibling`, names the committed
+#   fiber of every stored pair;
+# - a hidden Offscreen being hidden in the shadow tree (cloneHiddenInstance
+#   clones its hosts with `display: "none"`, which measures 0x0), so it needs
+#   no check of its own;
+# - the RootNodeKind hosts it stops at: exactly ModalHostView and
+#   InputAccessory among React Native's own components, whose JS host names
+#   are their paperComponentNames;
+# - an iOS ScrollView not clipping when styled overflow: visible
+#   (clipsToBounds follows getClipsContentToBounds), so such a ScrollView
+#   clips nothing;
+# - the ScrollView host type names.
+for RENDERER_BUNDLE in \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-dev.js" \
+  "$RN_SRC/Libraries/Renderer/implementations/ReactFabric-prod.js"
+do
+  BUNDLE_NAME="$(basename "$RENDERER_BUNDLE")"
+  grep -qE '\.current = finishedWork' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $BUNDLE_NAME no longer commits by assigning root.current = finishedWork"; exit 1; }
+  grep -qE 'current\.alternate = workInProgress' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $BUNDLE_NAME no longer pairs a fiber with its alternate in createWorkInProgress"; exit 1; }
+  grep -qE 'style: \{ display: "none" \}' "$RENDERER_BUNDLE" \
+    || { echo "FAIL: $BUNDLE_NAME no longer hides an Offscreen's hosts with display: none in the shadow tree"; exit 1; }
+done
+ROOT_KINDS="$(grep -rlE 'traits\.set\(ShadowNodeTraits::Trait::RootNodeKind\)' "$RN_SRC/ReactCommon/react/renderer/components" \
+  | grep -v '/components/root/' | sed -E 's#.*/([A-Za-z]+)ShadowNode\.h$#\1#' | sort | tr '\n' ' ')"
+[ "$ROOT_KINDS" = "InputAccessory ModalHostView " ] \
+  || { echo "FAIL: React Native's RootNodeKind components are now: $ROOT_KINDS (ancestry.ts ROOT_KIND_HOST_TYPES)"; exit 1; }
+for PAPER_NAME in RCTModalHostView RCTInputAccessoryView; do
+  grep -rqE "paperComponentName: '$PAPER_NAME'" "$RN_SRC/Libraries" "$RN_SRC/src" \
+    || { echo "FAIL: no component is registered as $PAPER_NAME any more"; exit 1; }
+done
+grep -qE 'clipsToBounds = _props->getClipsContentToBounds\(\)' \
+  "$RN_SRC/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm" \
+  || { echo "FAIL: the iOS ScrollView no longer sets clipsToBounds from getClipsContentToBounds"; exit 1; }
+grep -qE "uiViewClassName: 'RCTScrollView'" "$RN_SRC/Libraries/Components/ScrollView/ScrollViewNativeComponent.js" \
+  || { echo "FAIL: ScrollViewNativeComponent.js no longer names its host RCTScrollView"; exit 1; }
+grep -qE "uiViewClassName: 'AndroidHorizontalScrollView'" \
+  "$RN_SRC/Libraries/Components/ScrollView/AndroidHorizontalScrollViewNativeComponent.js" \
+  || { echo "FAIL: AndroidHorizontalScrollViewNativeComponent.js no longer names its host AndroidHorizontalScrollView"; exit 1; }
+echo "    the commit and pairing, hidden Offscreen hosts, RootNodeKind hosts, ScrollView clipping and host names are unchanged"
+
 echo "--- exception-handler internals guard"
 # Task 7.2: global ErrorUtils / promise-rejection capture depends on these
 # React Native surfaces staying put. Fail with a named reason the day any of

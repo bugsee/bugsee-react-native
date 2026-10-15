@@ -70,6 +70,12 @@ export interface FiberLike {
    */
   memoizedState: unknown;
   stateNode: unknown;
+  /**
+   * The other fiber of the pair React swaps between the committed tree and
+   * the one being rendered. Only `secure/ancestry.ts` reads it, to find which
+   * of the two is committed.
+   */
+  alternate?: FiberLike | null;
 }
 
 export interface WindowRect {

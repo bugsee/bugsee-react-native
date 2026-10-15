@@ -119,13 +119,16 @@ describe('<BugseeSecure>', () => {
     tick();
     expect(measureInWindow).toHaveBeenCalledTimes(before + 1);
 
-    // An ancestor scrolled: no layout event, but the region follows.
+    // An ancestor scrolled: no layout event, but the region follows at once,
+    // and the old one is held until SECURE_SHRINK_HOLD_MS has passed.
     measureInWindow.mockImplementation(measuresAt(10, 70, 30, 40));
     tick();
-    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220, ...MEASURED]);
 
     tick(3);
     expect(measureInWindow).toHaveBeenCalledTimes(before + 5);
+    tick(3);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220]);
   });
 
   it('removes its rectangle on unmount', () => {
@@ -202,7 +205,8 @@ describe('<BugseeSecure>', () => {
 
     measureInWindow.mockImplementation(measuresAt(10, 70, 30, 40));
     tick();
-    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220]);
+    // The last good rectangle is held for a while after the region moved.
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220, ...MEASURED]);
   });
 
   // A measurement the registry rejects (a detached view can report NaN) is
@@ -253,7 +257,7 @@ describe('<BugseeSecure>', () => {
 
     layout(renderer);
 
-    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [0, 0, 100, 100]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [0, 0, 100, 100, ...MEASURED]);
   });
 
   it("calls the caller's onLayout", () => {

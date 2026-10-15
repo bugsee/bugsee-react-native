@@ -345,3 +345,313 @@ describe('the secure-rectangle registry, per surface', () => {
     expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, MODAL, A_FLAT);
   });
 });
+
+// Every mounted <BugseeSecure> republishes what it holds on every re-measure
+// it has not moved. That must cost a comparison, not a re-flatten of the
+// whole union, yet never skip a publish native still needs.
+describe('the secure-rectangle registry, an owner that has not moved', () => {
+  let ratio: number;
+  let flatten: jest.SpyInstance;
+
+  beforeEach(() => {
+    ratio = 2;
+    jest.resetModules();
+    jest.doMock('react-native', () => ({ Platform: { OS: 'android' }, PixelRatio: { get: () => ratio } }));
+    native = require('../../__mocks__/native').native;
+    native.reset();
+    registry = require('../registry');
+    const rectangles = require('../rectangles') as { flattenSecureRectangles: () => number[] };
+    flatten = jest.spyOn(rectangles, 'flattenSecureRectangles');
+  });
+
+  // Back to the file's own mock, for whatever runs next.
+  afterEach(() => {
+    jest.doMock('react-native', () => ({ Platform: { OS: 'ios' } }));
+  });
+
+  it('costs no flattening and no publish', () => {
+    const component = {};
+    registry.setOwnerRectangles(component, 0, [A, B]);
+    flatten.mockClear();
+    native.setSecureRectangles.mockClear();
+
+    registry.setOwnerRectangles(component, 0, [{ ...A }, { ...B }]);
+
+    expect(flatten).not.toHaveBeenCalled();
+    expect(native.setSecureRectangles).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['x', { ...B, x: 101 }],
+    ['y', { ...B, y: 201 }],
+    ['width', { ...B, width: 11 }],
+    ['height', { ...B, height: 11 }],
+  ])('publishes a change of %s', (_, moved) => {
+    const component = {};
+    registry.setOwnerRectangles(component, 0, [A, B]);
+
+    registry.setOwnerRectangles(component, 0, [A, moved]);
+
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [
+      20, 40, 80, 120,
+      2 * moved.x, 2 * moved.y, 2 * (moved.x + moved.width), 2 * (moved.y + moved.height),
+    ]);
+  });
+
+  it('publishes one rectangle more or fewer', () => {
+    const component = {};
+    registry.setOwnerRectangles(component, 0, [A]);
+
+    registry.setOwnerRectangles(component, 0, [A, B]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 40, 80, 120, 200, 400, 220, 420]);
+
+    registry.setOwnerRectangles(component, 0, [A]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 40, 80, 120]);
+  });
+
+  // The lanes it moves to are settled already, by other owners.
+  it('moves with an unchanged rectangle to another display or surface', () => {
+    const component = {};
+    registry.setOwnerRectangles('manual:2', 2, []);
+    registry.setOwnerRectangles({}, 2, [], 42);
+    registry.setOwnerRectangles(component, 0, [A]);
+
+    registry.setOwnerRectangles(component, 2, [A]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, []);
+    expect(native.setSecureRectangles).toHaveBeenCalledWith(2, [20, 40, 80, 120]);
+
+    registry.setOwnerRectangles(component, 2, [A], 42);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(2, 42, [20, 40, 80, 120]);
+  });
+
+  it('republishes at a new pixel ratio', () => {
+    const component = {};
+    registry.setOwnerRectangles(component, 0, [A]);
+
+    ratio = 3;
+    registry.setOwnerRectangles(component, 0, [A]);
+
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [30, 60, 120, 180]);
+  });
+
+  it('skips again once the lane is flattened at the new ratio, even when nothing crossed', () => {
+    const component = {};
+    registry.setOwnerRectangles(component, 0, []);
+    ratio = 3;
+    registry.setOwnerRectangles(component, 0, []);
+    flatten.mockClear();
+
+    registry.setOwnerRectangles(component, 0, []);
+
+    expect(flatten).not.toHaveBeenCalled();
+  });
+
+  // Another owner's failed publish left native without its region. An
+  // owner that has not moved must not skip the retry, nor the other owner
+  // its own.
+  it('does not skip on a lane whose last publish failed', () => {
+    const first = {};
+    const second = {};
+    registry.setOwnerRectangles(first, 0, [A]);
+    native.setSecureRectangles.mockImplementationOnce(() => {
+      throw new Error('bridge down');
+    });
+    expect(() => registry.setOwnerRectangles(second, 0, [B])).toThrow('bridge down');
+
+    registry.setOwnerRectangles(second, 0, [B]);
+
+    // The failed call, then the retry: not skipped.
+    expect(native.setSecureRectangles).toHaveBeenCalledTimes(3);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 40, 80, 120, 200, 400, 220, 420]);
+  });
+
+  it('skips nothing on another lane because one lane is settled', () => {
+    const component = {};
+    registry.setOwnerRectangles(component, 0, [A], 42);
+    registry.setOwnerRectangles('manual:0', 0, [B]);
+    native.setSecureRectanglesOnSurface.mockImplementationOnce(() => {
+      throw new Error('bridge down');
+    });
+    expect(() => registry.setOwnerRectangles(component, 0, [B], 42)).toThrow('bridge down');
+
+    registry.setOwnerRectangles(component, 0, [B], 42);
+
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(3);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, 42, [200, 400, 220, 420]);
+  });
+});
+
+// Every instance re-measured in one tick or frame changes its lane: they are
+// published together at the end, once per lane, not once per change.
+describe('the secure-rectangle registry, publishing together', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.doMock('react-native', () => ({ Platform: { OS: 'ios' } }));
+    native = require('../../__mocks__/native').native;
+    native.reset();
+    registry = require('../registry');
+  });
+
+  it('publishes each changed lane once, at the end', () => {
+    const [first, second] = [{}, {}];
+    registry.publishTogether(() => {
+      registry.setOwnerRectangles(first, 0, [A]);
+      registry.setOwnerRectangles(second, 0, [B]);
+      registry.setOwnerRectangles('manual:2', 2, [A]);
+      registry.setOwnerRectangles({}, 0, [B], 42);
+      expect(native.setSecureRectangles).not.toHaveBeenCalled();
+    });
+
+    expect(native.setSecureRectangles.mock.calls).toEqual([
+      [0, [...A_FLAT, ...B_FLAT]],
+      [2, A_FLAT],
+    ]);
+    expect(native.setSecureRectanglesOnSurface.mock.calls).toEqual([[0, 42, B_FLAT]]);
+  });
+
+  it('publishes the lane an owner left as well as the one it moved to', () => {
+    const owner = {};
+    registry.setOwnerRectangles(owner, 0, [A]);
+
+    registry.publishTogether(() => registry.setOwnerRectangles(owner, 2, [A]));
+
+    expect(native.setSecureRectangles.mock.calls.slice(1)).toEqual([
+      [2, A_FLAT],
+      [0, []],
+    ]);
+  });
+
+  it('inside another, simply runs the changes', () => {
+    registry.publishTogether(() => {
+      registry.publishTogether(() => registry.setOwnerRectangles({}, 0, [A]));
+      expect(native.setSecureRectangles).not.toHaveBeenCalled();
+    });
+
+    expect(native.setSecureRectangles).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes even when the changes throw, and publishes at once after', () => {
+    expect(() =>
+      registry.publishTogether(() => {
+        registry.setOwnerRectangles({}, 0, [A]);
+        throw new Error('measurer broke');
+      }),
+    ).toThrow('measurer broke');
+    expect(native.setSecureRectangles).toHaveBeenCalledWith(0, A_FLAT);
+
+    registry.setOwnerRectangles({}, 0, [B]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [...A_FLAT, ...B_FLAT]);
+  });
+
+  it('logs a lane whose publish threw, publishes the rest, and retries it on its next change', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    native.setSecureRectangles.mockImplementationOnce(() => {
+      throw new Error('bridge down');
+    });
+    const owner = {};
+    registry.publishTogether(() => {
+      registry.setOwnerRectangles(owner, 0, [A]);
+      registry.setOwnerRectangles({}, 2, [B]);
+    });
+
+    expect(warn).toHaveBeenCalledWith('[Bugsee] could not publish secure rectangles', 'Error');
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(2, B_FLAT);
+
+    // Unchanged, but its lane never reached the bridge: not skipped.
+    registry.setOwnerRectangles(owner, 0, [A]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, A_FLAT);
+    warn.mockRestore();
+  });
+
+  it('publishes a lane that failed again on the next call that retries, though nothing on it changed', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    native.setSecureRectanglesOnSurface.mockImplementationOnce(() => {
+      throw new Error('bridge down');
+    });
+    registry.publishTogether(() => registry.setOwnerRectangles({}, 0, [A], 42));
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(1);
+
+    // A frame does not retry it; a tick does.
+    registry.publishTogether(() => undefined);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(1);
+    registry.publishTogether(() => undefined, true);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(2);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, 42, A_FLAT);
+
+    // Once it went through, it is not published again.
+    registry.publishTogether(() => undefined, true);
+    expect(native.setSecureRectanglesOnSurface).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('keeps a lane that keeps failing for each retry, and warns once until it publishes', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    native.setSecureRectangles.mockImplementation(() => {
+      throw new Error('bridge down');
+    });
+    registry.publishTogether(() => registry.setOwnerRectangles({}, 0, [A]));
+    registry.publishTogether(() => undefined, true);
+    registry.publishTogether(() => undefined, true);
+
+    expect(native.setSecureRectangles).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // It goes through, then fails again: a new outage, a new warning.
+    native.setSecureRectangles.mockImplementation(() => undefined);
+    registry.publishTogether(() => undefined, true);
+    native.setSecureRectangles.mockImplementation(() => {
+      throw new Error('bridge down');
+    });
+    registry.publishTogether(() => registry.setOwnerRectangles({}, 0, [B]));
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('warns about a lane newly failing even while another is still failing', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    native.setSecureRectangles.mockImplementation(() => {
+      throw new Error('bridge down');
+    });
+    registry.publishTogether(() => registry.setOwnerRectangles({}, 0, [A]));
+    registry.publishTogether(() => registry.setOwnerRectangles({}, 2, [A]));
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('warns about a surface newly failing on a display with one already failing', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    native.setSecureRectangles.mockImplementation(() => {
+      throw new Error('bridge down');
+    });
+    const owner = {};
+    registry.publishTogether(() => registry.setOwnerRectangles(owner, 0, [A]));
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // It moves to a Modal's surface: that lane fails too, with the main one.
+    native.setSecureRectanglesOnSurface.mockImplementation(() => {
+      throw new Error('bridge down');
+    });
+    registry.publishTogether(() => registry.setOwnerRectangles(owner, 0, [A], 42));
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('a lane that failed and was published by a later change is not published again by a retry', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    native.setSecureRectangles.mockImplementationOnce(() => {
+      throw new Error('bridge down');
+    });
+    const owner = {};
+    registry.publishTogether(() => registry.setOwnerRectangles(owner, 0, [A]));
+    registry.publishTogether(() => registry.setOwnerRectangles(owner, 0, [B]));
+    expect(native.setSecureRectangles).toHaveBeenCalledTimes(2);
+
+    registry.publishTogether(() => undefined, true);
+
+    expect(native.setSecureRectangles).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+});
