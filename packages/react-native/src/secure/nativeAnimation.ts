@@ -280,6 +280,8 @@ const MAX_ANCESTORS = 10_000;
  */
 function scaledFrom(scroller: FiberLike): boolean {
   let fiber: FiberLike | null = scroller;
+  // One fiber more or less before giving up on a malformed tree changes nothing.
+  // Stryker disable next-line EqualityOperator
   for (let depth = 0; fiber != null && depth < MAX_ANCESTORS; depth += 1) {
     if (fiber.tag === FiberTag.HostComponent && scalesBy(fiber.memoizedProps, (by) => Math.abs(by as number) !== 1)) {
       return true;

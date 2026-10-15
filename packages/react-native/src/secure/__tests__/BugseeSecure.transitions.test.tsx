@@ -2098,6 +2098,18 @@ describe('R4-2: a view under a transform animated from JS (useNativeDriver: fals
     expect(jest.getTimerCount()).toBe(1);
   });
 
+  it('two values driven from JS, one of them animating: bounded over the path, and followed every frame', () => {
+    const still = animatedValue(10, false);
+    const moving = animatedValue(0, false);
+    render(underAnimated([{ translateY: moving }, { translateX: still }], [{ translateY: 0 }, { translateX: 10 }]));
+    wait(212);
+
+    act(() => (moving as unknown as FakeAnimatedValue).animate({ ...timing(0, 300), useNativeDriver: false }));
+
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 350)));
+    expect(jest.getTimerCount()).toBe(2);
+  });
+
   it('a value JS tracks (Animated.timing to another value) can be anywhere: the whole surface, while it tracks', () => {
     const value = animatedValue(0, false);
     (value as unknown as { _tracking: unknown })._tracking = {};
@@ -2634,6 +2646,30 @@ describe('R3-4: a ScrollView\'s reach, value by value', () => {
     new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll');
 
     expect(boundIn(fiber, scrollY).range).toEqual(bounded ? REACH : undefined);
+  });
+
+  it('P3-5: a component above a ScrollView styled with a scale is not a host: what it commits is read off hosts', () => {
+    const scrollY = animatedValue(0);
+    tag += 1;
+    const scaler = { ...composite([port(fabric(tag))]), memoizedProps: { style: { transform: [{ scale: 0.5 }] } } };
+    const fiber = tree(scrollY, [scaler]);
+    new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll');
+
+    expect(boundIn(fiber, scrollY).range).toEqual(REACH);
+  });
+
+  it('P3-5: a ScrollView whose parents run in a circle is read up to a limit, and taken as unscaled', () => {
+    const scrollY = animatedValue(0);
+    tag += 1;
+    const fiber = tree(scrollY, [port(fabric(tag))]);
+    const scroller = ancestorOfType(fiber, AnimatedView).sibling as FiberLike;
+    const loop = { ...(scroller.return as FiberLike), tag: FiberTag.FunctionComponent } as FiberLike;
+    loop.return = loop;
+    new FakeAnimatedEvent(offsetY(scrollY)).__attach(tag, 'onScroll');
+    nativeMotion(ancestryOfFiber(fiber));
+    scroller.return = loop;
+
+    expect(nodeBound(scrollY).range).toEqual(REACH);
   });
 
   it('a ScrollView found once is remembered, by attachment and by tag; a tag that moved is looked for again', () => {
