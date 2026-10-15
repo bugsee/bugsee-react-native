@@ -727,21 +727,22 @@ function levelOf(ancestry: Ancestry, fibers: readonly FiberLike[], index: number
   const origin = originOf(host.memoizedProps);
   // Without the second test, reading a missing origin throws, which reads as unbounded too.
   // Stryker disable next-line ConditionalExpression -- so its mutant is equivalent
-  if (!bounded || origin === undefined || scrolledBy(ancestry, index, roots)) {
+  if (!bounded || origin === undefined || scrolledBy(ancestry, roots)) {
     return { running, roots, move: () => undefined, scaled };
   }
   return { running, roots, move: (rect) => moveThrough(rect, host, steps, origin), scaled };
 }
 
 /**
- * Whether a value of the level at `index` is the offset of a ScrollView
- * above it, whose content holds it (a sticky header): its content then moves
- * by that offset too, natively ahead of the shadow tree it is measured in, so
+ * Whether a value of a level is the offset of a ScrollView whose content
+ * holds the view (a sticky header; or a transform around a ScrollView, driven
+ * by its own offset): the view then moves with that content as well, by the
+ * same offset, natively ahead of the shadow tree it is measured in, so
  * bounding the transform alone does not bound where it is drawn. Unbounded:
- * the whole surface, cut to the ScrollView's viewport.
+ * the whole surface, cut by the clipping ancestors above the level.
  */
-function scrolledBy(ancestry: Ancestry, index: number, roots: readonly AnimatedNodeLike[]): boolean {
-  const above = new Set(ancestry.path.slice(index + 1).map(keyOf));
+function scrolledBy(ancestry: Ancestry, roots: readonly AnimatedNodeLike[]): boolean {
+  const above = new Set(ancestry.path.map(keyOf));
   return roots.some((root) =>
     (eventsOn(root) ?? []).some((attachment) => {
       const scroller = scrollHostOf(attachment);

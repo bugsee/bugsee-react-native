@@ -2364,7 +2364,7 @@ describe('R3-1, R3-4: values driven by a ScrollView\'s offset', () => {
     }
   });
 
-  it('a transform above the ScrollView whose offset drives it (the view inside its content) is bounded', () => {
+  it('a transform around the ScrollView whose offset drives it, the view inside its content, is unbounded', () => {
     const scrollY = animatedValue(0);
     const at = nextTag;
     nextTag += 1;
@@ -2389,7 +2389,8 @@ describe('R3-1, R3-4: values driven by a ScrollView\'s offset', () => {
 
     render(fiber);
 
-    expect(lastPublished()).toEqual([0, px(rect(10, 20 - 200 - SCROLL_OVERRUN, 200, 50 + 200 + 2 * SCROLL_OVERRUN))]);
+    // The content moves by the same offset, natively ahead of the shadow tree: nothing above to cut it.
+    expect(firstPublished()).toEqual(px(WHOLE_SURFACE));
   });
 
   it('a sticky header with a still value beside its scroll is unbounded all the same', () => {
