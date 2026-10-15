@@ -99,11 +99,6 @@ test.each([Status.Launched, Status.Launching])(
   },
 );
 
-test('shows the cocoa-196 known issue under Capture video (iOS)', async () => {
-  await render(withSession(session()));
-  expect(screen.getByText('⚠ Known issue: capture.video=false still records')).toBeTruthy();
-});
-
 test('pre-fills the endpoint from bugsee.config.json when none is saved', async () => {
   mockExtra = { bugseeEndpoint: 'https://bugsee.example.com' };
   await render(withSession(session()));

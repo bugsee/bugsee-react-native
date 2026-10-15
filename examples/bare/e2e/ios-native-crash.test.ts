@@ -130,16 +130,10 @@ describeIphone(`a native signal crash recovered on ${TARGET_NAME}`, () => {
     assertLabelled(await crashAndRecover('segv'));
   });
 
-  // Known SDK bug, pinned (bugsee-cocoa #220, 7.0.0-beta5 c015f6ba2): a
-  // recovered report is exported from a copy re-loaded off disk a few ms after
-  // the handlers are dispatched, and the late-completion re-persist misses
-  // it. A handler that waits 20 ms before `setLabels` loses the labels, 20 of
-  // 20 on the XS, with the completion far inside the deadline. The labels
-  // assertion is the correct behaviour; this passes (it.failing) while the
-  // bug stands and fails once the SDK keeps the edit, which is the cue to
-  // make it a plain `it`.
-  // Filed: https://github.com/bugsee/bugsee-cocoa/issues/220
-  it.failing("a recovery handler that waits 20 ms: its labels reach the segv crash report (bugsee-cocoa #220)", async () => {
+  // A handler that waits 20 ms before `setLabels` still keeps its labels: the
+  // recovered report is exported after the handlers finish (bugsee-cocoa #220,
+  // fixed in 7.0.0-beta6).
+  it("a recovery handler that waits 20 ms: its labels reach the segv crash report (bugsee-cocoa #220)", async () => {
     assertLabelled(await crashAndRecover('segv', 'native-crash-recover-late'));
   });
 

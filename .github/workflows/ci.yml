@@ -260,7 +260,7 @@ jobs:
         run: |
           sdk=$(jq -r '.android.sdk' native-versions.json)
           if [[ "$sdk" == *-SNAPSHOT ]]; then
-            echo "::error title=Local SNAPSHOT pin::native-versions.json pins Android ${sdk}, built from a private clone; CI cannot resolve it. Expected red until Task 3.P3 flips to 7.3.0."
+            echo "::error title=Local SNAPSHOT pin::native-versions.json pins Android ${sdk}, built from a private clone; CI cannot resolve it. Expected red until the pin flips to the released version."
             exit 1
           fi
       - uses: actions/setup-node@v4

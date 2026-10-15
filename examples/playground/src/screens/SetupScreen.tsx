@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput } from 'react-native';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
@@ -7,7 +7,6 @@ import { AdvancedEditor } from '../options/AdvancedEditor';
 import type { CommonOptions } from '../options/common';
 import { useSession } from '../session/SessionContext';
 import { isAppToken, tokenPrefix } from '../session/token';
-import { KnownIssue } from '../ui/KnownIssue';
 import { Screen } from '../ui/Screen';
 import { Section } from '../ui/Section';
 import { describeError } from '../ui/ActionButton';
@@ -163,10 +162,7 @@ export default function SetupScreen() {
       </Section>
       <Section title="Common options">
         {BOOLS.map(([k, label]) => (
-          <Fragment key={k}>
-            <Toggle label={label} value={common[k]} onChange={(v) => setC(k, v)} />
-            {k === 'video' ? <KnownIssue id="cocoa-196" /> : null}
-          </Fragment>
+          <Toggle key={k} label={label} value={common[k]} onChange={(v) => setC(k, v)} />
         ))}
         <Text style={styles.label}>Log level</Text>
         <Text style={styles.chips}>

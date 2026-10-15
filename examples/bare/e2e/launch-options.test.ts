@@ -144,10 +144,6 @@ const CASES: readonly Case[] = [
     effect: outcome => {
       expect(types(the(outcome))).not.toContain('video');
     },
-    // Filed: https://github.com/bugsee/bugsee-cocoa/issues/196
-    effectFails: {
-      ios: 'iOS 7.0.0-beta3 and beta4 record capture.video=false (and turns the screenshot off) but still writes a real video into the report',
-    },
   },
   {
     name: 'screenshot-off',
@@ -373,11 +369,6 @@ const CASES: readonly Case[] = [
       expect(covPostBodies(control)).toContain(POST_BODY);
       expect(covPostBodies(outcome).every(body => body.length <= 7)).toBe(true);
     },
-    // Filed: https://github.com/bugsee/bugsee-cocoa/issues/197
-    readbackFails: {
-      ios: 'iOS 7.0.0-beta3 and beta4 drop com.bugsee.option.capture.network.body-size-limit: getLaunchOptions() reports 20480 and the report environment does not list it',
-    },
-    effectFails: { ios: 'as the read-back: the SDK never applies the limit (the POST body is kept whole)' },
   },
 ];
 
@@ -493,11 +484,13 @@ describeDevice(`launch options and their effects on ${TARGET_NAME}`, () => {
    * Control's own POST fails to connect (the dead endpoint); its request body
    * is still in the capture. Android 7.3.0 recorded it. 7.3.1 reads the body
    * only while OkHttp writes it, which a refused connection never does, and
-   * records no_body_reason no_data instead. Android only: iOS was not
-   * measured here.
+   * records no_body_reason no_data instead. 7.4.0 records cant_read_data:
+   * React Native wraps request bodies in ProgressRequestBody, which the SDK
+   * cannot read (bugsee-android#249; capturing them needs the RN SDK).
+   * Android only: iOS was not measured here.
    */
   (ON_ANDROID ? it.failing : it.skip)(
-    'control: a POST that fails before any response keeps its request body [known: Android 7.3.1 records it without the body (no_data), https://github.com/bugsee/bugsee-android/issues/246]',
+    'control: a POST that fails before any response keeps its request body [known: Android records it without the body (no_body_reason cant_read_data), https://github.com/bugsee/bugsee-android/issues/246]',
     async () => {
       const control = await runCase(CASES[0]!);
       report('control cov-post bodies', covPostBodies(control));

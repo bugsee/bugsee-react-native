@@ -148,7 +148,6 @@ const handlerActions: Action[] = [
     label: 'Handler: add label',
     call: 'Bugsee.setReportHandler(REPORT_HANDLER_PRESETS.labels)',
     expect: 'The next report carries label from-handler, including a crash recovered at the next launch',
-    knownIssue: 'cocoa-220',
     run: () => chooseHandler('labels'),
   },
   {
@@ -156,7 +155,6 @@ const handlerActions: Action[] = [
     label: 'Handler: attach file',
     call: 'Bugsee.setReportHandler(REPORT_HANDLER_PRESETS.attachFile)',
     expect: 'handler.txt attached, including to a crash recovered at the next launch',
-    knownIssue: 'cocoa-220',
     run: () => chooseHandler('attachFile'),
   },
   {
@@ -229,7 +227,6 @@ const feedbackActions: Action[] = [
     label: 'Set greeting',
     call: "Feedback.setGreeting('Hi from the playground!')",
     expect: 'The chat opens with this greeting',
-    knownIssue: 'android-245',
     run: () => Feedback.setGreeting('Hi from the playground!'),
   },
   {

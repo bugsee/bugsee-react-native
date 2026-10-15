@@ -35,15 +35,6 @@ jest.setTimeout(6 * 60_000);
 /** The iOS simulator slice has no exception reporter: device-only there. */
 const itDevice = ON_IOS && iosTarget() === 'simulator' ? it.skip : it;
 /**
- * iOS 7.0.0-beta4 recovers the JS fatal at the next launch (beta3 lost it,
- * api-device-coverage.md R2) but files it at Blocker (5), not the
- * `reporting.defaults.crash-priority` of 2 it was launched with (XS, run
- * 2026-10-06). Android files it at 2.
- * Filed: https://github.com/bugsee/bugsee-cocoa/issues/198
- */
-const itSeverity = ON_IOS ? (iosTarget() === 'simulator' ? it.skip : it.failing) : it;
-
-/**
  * The Android half waits for the crash filed in-process, which only a Debug
  * build does: the red box keeps the process alive. A Release JS fatal kills
  * the process and is filed at the next launch, the path the exceptions suite's
@@ -102,7 +93,7 @@ describeJsCrash(`testJsCrash() on ${TARGET_NAME}`, () => {
     expect(crash.handled).toBe(false);
   });
 
-  itSeverity('is filed at the default crash priority it was launched with', () => {
+  itDevice('is filed at the default crash priority it was launched with', () => {
     expect(crashes).toHaveLength(1);
     expect(crashes[0]!.request.severity).toBe(2);
   });

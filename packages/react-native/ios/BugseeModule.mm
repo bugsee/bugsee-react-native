@@ -1180,10 +1180,8 @@ RCT_EXPORT_MODULE(Bugsee)
 
 #pragma mark - Blackout and view-hierarchy capture (design doc §4.1)
 
-// iOS honours startBlackout/endBlackout regardless of launch state, unlike
-// Android, which ignores them (a logged no-op) before launch() resolves.
-// Recorded in the plan as a candidate SDK issue, not patched here -- see the
-// Phase 6 preamble's "Planner decisions".
+// iOS honours startBlackout/endBlackout regardless of launch state; Android
+// does too since 7.4.0 (bugsee-android#248).
 
 - (void)startBlackout {
   BGSRNRunOnMain(^{

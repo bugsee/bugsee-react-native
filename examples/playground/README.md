@@ -199,16 +199,9 @@ The app shows a note next to each affected button.
 
 | Platform | Issue |
 |---|---|
-| iOS | [`capture.video=false` still records](https://github.com/bugsee/bugsee-cocoa/issues/196) |
-| iOS | [`deleteCollectedDataOnDevice` only empties the legacy folder; capture data stays](https://github.com/bugsee/bugsee-cocoa/issues/195) |
-| Android | [`deleteCollectedDataOnDevice(false)` also deletes the rolling capture](https://github.com/bugsee/bugsee-android/issues/250) |
-| iOS | [Report-handler edits on a recovered crash are lost](https://github.com/bugsee/bugsee-cocoa/issues/220) |
 | iOS | [A second `createReport` wipes the first](https://github.com/bugsee/bugsee-cocoa/issues/224) |
 | iOS | [`logException` `includeVideo` ignored](https://github.com/bugsee/bugsee-cocoa/issues/226) |
 | Android | [`logException` labels and `includeVideo` ignored](https://github.com/bugsee/bugsee-android/issues/247) |
-| Android | [Blackout before launch is a no-op](https://github.com/bugsee/bugsee-android/issues/248) |
 | iOS | [`upload()` source type shows as unknown](https://github.com/bugsee/bugsee-cocoa/issues/223) |
-| Android | [Feedback greeting not shown](https://github.com/bugsee/bugsee-android/issues/245) |
-| iOS | [`span.setName` renames the transaction instead of setting the operation (fixed after 7.0.0-beta5)](https://github.com/bugsee/bugsee-cocoa/issues/199) |
 
 For manual test sessions, see [VALIDATION.md](./VALIDATION.md).

@@ -60,10 +60,9 @@ export const homeActions: Action[] = [
     id: 'delete-true-ios',
     label: 'Delete collected data (incl. intermediate)',
     call: 'Bugsee.deleteCollectedDataOnDevice(true)',
-    expect: 'false while launched; true after Stop, and no old report is sent at the next launch',
+    expect: 'false while launched; true after Stop; the capture and intermediate data are deleted',
     run: () => Bugsee.deleteCollectedDataOnDevice(true),
     platforms: ['ios'],
-    knownIssue: 'cocoa-195',
   },
   {
     id: 'delete-true-android',
@@ -75,21 +74,19 @@ export const homeActions: Action[] = [
   },
   {
     id: 'delete-false-ios',
-    label: 'Delete processed data only',
+    label: 'Delete capture, keep finished bundles',
     call: 'Bugsee.deleteCollectedDataOnDevice(false)',
-    expect: 'false while launched; true after Stop; intermediate capture kept',
+    expect: 'false while launched; true after Stop; the rolling capture is deleted, finished bundles are kept',
     run: () => Bugsee.deleteCollectedDataOnDevice(false),
     platforms: ['ios'],
-    knownIssue: 'cocoa-195',
   },
   {
     id: 'delete-false-android',
-    label: 'Delete processed data only',
+    label: 'Delete capture, keep finished bundles',
     call: 'Bugsee.deleteCollectedDataOnDevice(false)',
-    expect: 'false while launched; true after Stop; intermediate capture kept',
+    expect: 'false while launched; true after Stop; the rolling capture is deleted, finished bundles are kept',
     run: () => Bugsee.deleteCollectedDataOnDevice(false),
     platforms: ['android'],
-    knownIssue: 'android-250',
   },
 ];
 export const AUTO_LAUNCH_HINT = 'Needed to send crash reports at the next start';

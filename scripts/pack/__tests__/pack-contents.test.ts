@@ -3,6 +3,9 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { readNativeVersions } from '../../native-versions';
+import { releaseBlockers } from '../../releasable-pins';
+
 /**
  * What the published tarballs hold, packed the two ways a release can be cut:
  * `npm pack` and `yarn pack` (Yarn 4, the repo's own). Both run the packages'
@@ -19,6 +22,19 @@ import { join } from 'node:path';
  */
 const repo = join(__dirname, '..', '..', '..');
 const rootVersions = JSON.parse(readFileSync(join(repo, 'native-versions.json'), 'utf8')) as unknown;
+
+// While native-versions.json pins something unreleasable (a local Android
+// -SNAPSHOT during beta validation), both packages' prepack refuses to pack at
+// all -- that refusal is the release guard, and it is what this file asserts
+// in that state. The tarball-content suites need a tarball, so they run only
+// once the pins are releasable again (and always under BUGSEE_RELEASE=1,
+// where an unreleasable pin must fail loudly rather than be skipped).
+const blockers = releaseBlockers(
+  readNativeVersions(),
+  readFileSync(join(repo, 'packages/react-native/ios/Support/Package.resolved'), 'utf8'),
+);
+const packable = blockers.length === 0 || process.env.BUGSEE_RELEASE === '1';
+const describeTarballs = packable ? describe : describe.skip;
 
 type Tool = 'npm' | 'yarn';
 type Pkg = 'react-native' | 'react-native-feedback';
@@ -52,6 +68,7 @@ const entry = (tgz: string, path: string): string =>
 
 const tarballs = new Map<string, string>();
 beforeAll(() => {
+  if (!packable) return;
   for (const tool of ['npm', 'yarn'] as const) {
     for (const pkg of ['react-native', 'react-native-feedback'] as const) {
       tarballs.set(`${tool} ${pkg}`, pack(tool, pkg));
@@ -66,7 +83,7 @@ const TEST_ONLY = [
   /^android\/src\/test\//,
 ];
 
-describe.each(['npm', 'yarn'] as const)('%s pack', (tool) => {
+describeTarballs.each(['npm', 'yarn'] as const)('%s pack', (tool) => {
   describe.each(['react-native', 'react-native-feedback'] as const)('@bugsee/%s', (pkg) => {
     const tgz = () => tarballs.get(`${tool} ${pkg}`)!;
 
@@ -142,8 +159,30 @@ describe.each(['npm', 'yarn'] as const)('%s pack', (tool) => {
   });
 });
 
-describe('npm and yarn pack the same files', () => {
+describeTarballs('npm and yarn pack the same files', () => {
   it.each(['react-native', 'react-native-feedback'] as const)('@bugsee/%s', (pkg) => {
     expect(listing(tarballs.get(`yarn ${pkg}`)!)).toEqual(listing(tarballs.get(`npm ${pkg}`)!));
+  });
+});
+
+(packable ? describe.skip : describe)('while the pins are not releasable', () => {
+  it.each([
+    ['npm', 'react-native'],
+    ['npm', 'react-native-feedback'],
+    ['yarn', 'react-native'],
+    ['yarn', 'react-native-feedback'],
+  ] as const)('%s pack refuses @bugsee/%s', (tool, pkg) => {
+    let output = '';
+    try {
+      pack(tool, pkg);
+    } catch (error) {
+      const failed = error as { stdout?: Buffer | string; stderr?: Buffer | string };
+      output = `${failed.stdout?.toString() ?? ''}${failed.stderr?.toString() ?? ''}`;
+      // Yarn 4 does not echo a failed lifecycle script; it names a log file.
+      const log = /logs can be found here: (\S+?\.log)/.exec(output)?.[1];
+      if (log !== undefined && existsSync(log)) output += readFileSync(log, 'utf8');
+    }
+    expect(output).toContain('native-versions.json is not releasable');
+    expect(existsSync(join(repo, 'packages', pkg, 'native-versions.json'))).toBe(false);
   });
 });

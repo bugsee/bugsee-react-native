@@ -29,7 +29,7 @@ test('set and clear secure rectangle draws and removes the overlay', async () =>
 test('blackout before launch stops, blacks out, then launches', async () => {
   const a = privacyActions.find((x) => x.id === 'blackout-before-launch')!;
   expect(a.call.startsWith('Bugsee.startBlackout()')).toBe(true);
-  expect(a.knownIssue).toBe('android-248');
+  expect(a.knownIssue).toBeUndefined();
   [Bugsee.stop, Bugsee.startBlackout, Bugsee.launch].forEach((f) => (f as jest.Mock).mockClear());
   await a.run();
   const o = (f: unknown) => (f as jest.Mock).mock.invocationCallOrder[0];

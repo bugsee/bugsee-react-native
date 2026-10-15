@@ -1,10 +1,10 @@
 {
   "android": {
-    "sdk": "7.3.1",
+    "sdk": "7.4.1",
     "gradlePlugin": "4.0.8"
   },
   "ios": {
-    "sdk": "7.0.0-beta5",
+    "sdk": "7.0.0-beta6",
     "spmUrl": "https://github.com/bugsee/spm"
   }
 }

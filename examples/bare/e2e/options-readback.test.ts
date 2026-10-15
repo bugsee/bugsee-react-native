@@ -47,13 +47,12 @@ const PLATFORM_NAME: 'android' | 'ios' = ON_IOS ? 'ios' : 'android';
 
 /**
  * Known product bugs a read-back or the environment record pins (it.failing).
- * iOS bug 5: beta3..beta5 drop `capture.network.body-size-limit` -- read back
- * as the default 20480, absent from `environment.sdk.options` (XS, beta5,
- * 2026-10-07). Filed: https://github.com/bugsee/bugsee-cocoa/issues/197
+ * None open: iOS 7.0.0-beta6 applies `capture.network.body-size-limit`
+ * (bugsee-cocoa #197).
  */
 const KNOWN_READBACK: Record<'android' | 'ios', Record<string, string>> = {
   android: {},
-  ios: { 'com.bugsee.option.capture.network.body-size-limit': 'bugsee-cocoa#197' },
+  ios: {},
 };
 const ACCESSORS: Record<string, string> = { ...ACCESSOR_KEYS.shared, ...(ON_IOS ? ACCESSOR_KEYS.ios : ACCESSOR_KEYS.android) };
 

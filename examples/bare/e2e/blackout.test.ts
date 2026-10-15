@@ -7,8 +7,8 @@
  * `startBlackout()`; 2 s in, `captureViewHierarchy()`; 500 ms later
  * `upload('blackout-during-<n>')`; 2 s later `endBlackout()`; 3 s later
  * `upload('blackout-after-<n>')`. Scenario `blackout-prelaunch` calls
- * `startBlackout()` before `launch()`, which Android's SDK drops (the Phase 6
- * planner decision), and reads the state back once Launched.
+ * `startBlackout()` before `launch()` and reads the state back once Launched
+ * (both SDKs honour it; Android 7.4.0 fixed bugsee-android#248).
  *
  * Retention is airplane mode (bundles.ts), on top of the placeholder token's
  * dead endpoint. Preconditions as for the other Android suites: the debug
@@ -291,27 +291,17 @@ describeDevice(`blackout on ${TARGET_NAME}`, () => {
       started: lifecycle('BlackoutStarted').map(line => line.text.trim()),
       ended: lifecycle('BlackoutEnded').map(line => line.text.trim()),
     });
-    if (ON_IOS) {
-      // iOS honours a startBlackout() made before launch: the SDK is blacked
-      // out once Launched, until endBlackout().
-      expect(state.text).toMatch(/ isBlackout=true /);
-      expect(cleared.text).toMatch(/ isBlackout=false /);
-      // The wrapper is registered at module init, so the listener subscribed
-      // before the call hears the same pair the post-launch case does.
-      const startedEvents = lifecycle('BlackoutStarted');
-      const ended = lifecycle('BlackoutEnded');
-      expect(startedEvents).toHaveLength(1);
-      expect(ended).toHaveLength(1);
-      expect(startedEvents[0]!.index).toBeLessThan(prelaunchRun.launched.index);
-      expect(ended[0]!.index).toBeGreaterThan(state.index);
-    } else {
-      // Android: the SDK drops a startBlackout() before launch (a logged no-op).
-      // Known SDK bug: https://github.com/bugsee/bugsee-android/issues/248
-      expect(state.text).toMatch(/ isBlackout=false /);
-      expect(cleared.text).toMatch(/ isBlackout=false /);
-      // ...and says nothing about it: the lifecycle listener, subscribed before
-      // the call, hears no BlackoutStarted for this run.
-      expect(lifecycle('BlackoutStarted')).toEqual([]);
-    }
+    // Both SDKs honour a startBlackout() made before launch: the SDK is
+    // blacked out once Launched, until endBlackout().
+    expect(state.text).toMatch(/ isBlackout=true /);
+    expect(cleared.text).toMatch(/ isBlackout=false /);
+    // The wrapper is registered at module init, so the listener subscribed
+    // before the call hears the same pair the post-launch case does.
+    const startedEvents = lifecycle('BlackoutStarted');
+    const ended = lifecycle('BlackoutEnded');
+    expect(startedEvents).toHaveLength(1);
+    expect(ended).toHaveLength(1);
+    expect(startedEvents[0]!.index).toBeLessThan(prelaunchRun.launched.index);
+    expect(ended[0]!.index).toBeGreaterThan(state.index);
   });
 });
