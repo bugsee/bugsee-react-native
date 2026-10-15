@@ -570,6 +570,7 @@ export class SecureTracker {
     const natives = nodes.map((node) => (node as { __isNative?: unknown }).__isNative !== false);
     // Watching the same values again takes their state now as the baseline, as the frame just did: only work. A
     // value made native since is polled from then on; JS moving it is followed, so that only adds a safety net.
+    // Stryker disable next-line ArrowFunction -- as above
     const same = (node: object, index: number): boolean =>
       // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator -- as above
       node === this.values[index] && natives[index] === this.natives[index];
