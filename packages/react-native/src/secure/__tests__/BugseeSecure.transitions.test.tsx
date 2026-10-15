@@ -2098,6 +2098,15 @@ describe('R4-2: a view under a transform animated from JS (useNativeDriver: fals
     expect(jest.getTimerCount()).toBe(1);
   });
 
+  it('a native value beside a value driven from JS, both at rest: the native one is still bounded', () => {
+    const native = animatedValue(40);
+    const js = animatedValue(10, false);
+    render(underAnimated([{ translateY: native }, { translateX: js }], [{ translateY: 0 }, { translateX: 10 }]));
+
+    // At 40, whichever value the shadow tree holds (0 as rendered, or 40).
+    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 90)));
+  });
+
   it('two values driven from JS, one of them animating: bounded over the path, and followed every frame', () => {
     const still = animatedValue(10, false);
     const moving = animatedValue(0, false);
