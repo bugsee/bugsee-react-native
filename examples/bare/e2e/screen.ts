@@ -101,6 +101,19 @@ export async function displaySize(): Promise<{ width: number; height: number }> 
 }
 
 /**
+ * The display size apps and `input touchscreen` use (`wm size`), in pixels:
+ * the override when one is set, else the physical size.
+ */
+export async function effectiveDisplaySize(): Promise<{ width: number; height: number }> {
+  const out = await adb('shell', 'wm', 'size');
+  const size = /Override size: (\d+)x(\d+)/.exec(out) ?? /Physical size: (\d+)x(\d+)/.exec(out);
+  if (size === null) {
+    throw new Error(`could not read the display size: ${out}`);
+  }
+  return { width: Number(size[1]), height: Number(size[2]) };
+}
+
+/**
  * `rect` (display pixels) on an image `imageWidth` wide, shrunk to its
  * centred `fraction` (1 = the whole rectangle), rounded inwards.
  */

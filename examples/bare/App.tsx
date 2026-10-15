@@ -22,7 +22,7 @@
  * `breadcrumb-filter` is scenarios/breadcrumb-filter.ts,
  * `network-filter` is scenarios/network-filter.ts,
  * `add-network-event` is scenarios/add-network-event.ts,
- * `feedback` is scenarios/feedback.ts, `apm` is scenarios/apm.ts, and
+ * `touch-capture` is scenarios/touches.ts, `feedback` is scenarios/feedback.ts, `apm` is scenarios/apm.ts, and
  * `cov-*` / `opt-<case>` are scenarios/coverage.ts. `early-report` is
  * scenarios/early-report.ts (it owns the launch).
  */
@@ -105,6 +105,7 @@ import {
   isLogFilterScenario,
   runLogFilterScenario,
 } from './scenarios/log-filter';
+import { isTouchesScenario, runTouchesScenario } from './scenarios/touches';
 import {
   isBreadcrumbFilterScenario,
   runBreadcrumbFilterScenario,
@@ -534,6 +535,11 @@ export default function App() {
 
         if (isNetworkScenario(choice.scenario)) {
           await runNetworkScenario(choice.nonce);
+          return;
+        }
+
+        if (isTouchesScenario(choice.scenario)) {
+          runTouchesScenario(choice.nonce);
           return;
         }
 
