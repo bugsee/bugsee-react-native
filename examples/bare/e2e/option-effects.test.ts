@@ -350,13 +350,10 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(control).not.toMatch(/api-secret-/);
   });
 
-  /**
-   * iOS 7.0.0-beta5 records the response twice under one URLSession event id
-   * ("complete", body null, then "complete" with the body), and the second
-   * carries the untyped body with body-without-type at its default (false)
-   * as well as with it on (XS, 2026-10-07): the option never withholds it.
-   * BGSNetworkHelperMethods.m gates only the first. Filed: bugsee-cocoa#204.
-   */
+  // iOS records the response twice under one URLSession event id ("complete"
+  // with the headers, then "complete" with the body), so every record is read.
+  // Before bugsee-cocoa#239 the second kept the untyped body with the option
+  // off (bugsee-cocoa#204).
   /** The response body fields (Android `body`, iOS `custom.body`) of `name`'s stub fetch, as JSON. */
   const untypedBodies = async (name: string): Promise<string> => {
     const outcome = await uploaded(name, 'bytes', true);
@@ -372,7 +369,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(await untypedBodies('body-no-type')).toContain('x'.repeat(32));
   });
 
-  (ON_IOS ? it.failing : on(['A']))(`[OPT-007] capture.network.body-without-type at its default (false) leaves a response body with no Content-Type out${ON_IOS ? ' [known: iOS keeps untyped bodies with the option off (bugsee-cocoa#204)]' : ''}`, async () => {
+  on(['A', 'S', 'X'])('[OPT-007] capture.network.body-without-type at its default (false) leaves a response body with no Content-Type out', async () => {
     expect(await untypedBodies('body-no-type-control')).not.toContain('x'.repeat(32));
   });
 
