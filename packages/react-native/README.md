@@ -109,9 +109,11 @@ Known limits:
     collapsing or parallax header, a sticky header): over the offsets the
     ScrollView can reach, from its measured content and viewport, plus 64 dp
     either way for a fling's overrun (AOSP flings 6 dp past an end; the
-    margin assumes no device flings more than ten times that). A sticky
-    header is masked from where it rests down to the bottom of the list's
-    viewport;
+    margin assumes no device flings more than ten times that). A view inside
+    the content of the ScrollView whose offset drives it (a sticky header,
+    from `stickyHeaderIndices` or a `SectionList`) moves with that content
+    too, natively ahead of what JS measures: it is masked over that
+    ScrollView's whole viewport;
   - anything else (a gesture's translation through an interpolation that
     extends, an iOS ScrollView, which bounces and can be scrolled anywhere by
     `scrollTo`, a ScrollView in another React root, or under a scale other

@@ -2107,6 +2107,24 @@ describe('R4-2: a view under a transform animated from JS (useNativeDriver: fals
     expect(firstPublished()).toEqual(px(rect(10, 100, 200, 90)));
   });
 
+  it('where nothing is followed, a JS animation is still bounded over its path', () => {
+    const value = animatedValue(0, false);
+    forgetDrivers();
+    try {
+      value._animation = timing(0, 300);
+      render(underAnimated([{ translateY: value }], [{ translateY: 0 }]));
+
+      expect(firstPublished()).toEqual(px(rect(10, 100, 200, 350)));
+    } finally {
+      followDrivers({
+        eventClass: FakeAnimatedEvent,
+        implementation,
+        exported: animated,
+        valueClass: FakeAnimatedValue,
+      });
+    }
+  });
+
   it('two values driven from JS, one of them animating: bounded over the path, and followed every frame', () => {
     const still = animatedValue(10, false);
     const moving = animatedValue(0, false);
@@ -2245,16 +2263,39 @@ describe('R3-1, R3-4: values driven by a ScrollView\'s offset', () => {
     const { fiber, content } = sticky();
     selfRect = rect(10, 300, 200, 50);
     render(fiber);
-    // At rest: wherever the header can be pinned as the list scrolls, below where it rests, in the viewport.
-    expect(lastPublished()).toEqual([0, px(rect(10, 300, 200, 400))]);
+    // Its content scrolls by the same offset, natively ahead of the shadow tree: the whole viewport.
+    expect(lastPublished()).toEqual([0, px(rect(0, 100, 400, 600))]);
 
     // Scrolled 500 past its place: the shadow tree's content moved up; native pins the header at the top.
     moveTo(content, rect(0, -400, 400, 3000));
     selfRect = rect(10, -100, 200, 50);
     wait(17);
 
-    // Drawn at the top of the viewport (100 to 150): covered (with where it rested, held).
-    expect(firstPublished()).toEqual(px(rect(10, 100, 200, 600)));
+    expect(firstPublished()).toEqual(px(rect(0, 100, 400, 600)));
+  });
+
+  it('a header inside another ScrollView\'s content than the one driving it is bounded by the driver\'s reach', () => {
+    const scrollY = animatedValue(0);
+    const outerTag = nextTag;
+    nextTag += 1;
+    const driver = scroller(rect(0, 0, 400, 800), rect(0, 0, 400, 1000), [], outerTag);
+    const header = {
+      tag: FiberTag.FunctionComponent,
+      type: AnimatedView,
+      memoizedProps: { style: { transform: [{ translateY: parallax(scrollY) }] } },
+      children: [fabricHost('RCTView', rect(0, 0, 400, 100), {}, [view([self()])])],
+    };
+    const fiber = existing(
+      selfIn(root([view([scroller(rect(0, 0, 400, 800), rect(0, 0, 400, 9000), [header], nextTag), driver])])),
+    );
+    nextTag += 1;
+    new FakeAnimatedEvent([{ nativeEvent: { contentOffset: { y: scrollY } } }]).__attach(outerTag, 'onScroll');
+    selfRect = rect(10, 20, 200, 50);
+
+    render(fiber);
+
+    // Its reach (up 200 + the overrun, down the overrun), cut to the viewport of the ScrollView it is in.
+    expect(lastPublished()).toEqual([0, px(rect(10, 0, 200, 20 + 50 + SCROLL_OVERRUN))]);
   });
 
   it('R3-1: on iOS, where a ScrollView bounces and scrollTo goes anywhere, the whole viewport', () => {

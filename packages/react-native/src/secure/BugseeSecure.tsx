@@ -90,7 +90,9 @@ export interface BugseeSecureProps extends ViewProps {
  * through `diffClamp`; and, on Android, as a ScrollView's `contentOffset`
  * (vertical or horizontal), within the offsets the ScrollView can reach
  * (from its measured content and viewport, and a fling's overrun past either
- * end, `SCROLL_OVERRUN`), unless it is under a scale other than 1. What cannot
+ * end, `SCROLL_OVERRUN`), unless it is under a scale other than 1, or inside
+ * that ScrollView's own content (a sticky header: its content moves by the
+ * same offset, natively ahead of the shadow tree). What cannot
  * be bounded (any other event's value, an iOS ScrollView's offset, a rotation, a
  * spring, a node React Native renamed) covers the whole surface, cut by the
  * clipping ancestors above it, for as long as it cannot be. A view under a
