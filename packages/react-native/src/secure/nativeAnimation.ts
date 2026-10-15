@@ -748,6 +748,8 @@ function scrolledBy(ancestry: Ancestry, roots: readonly AnimatedNodeLike[]): boo
   let keys: Set<object> | undefined;
   const holds = (scroller: FiberLike): boolean => (keys ??= new Set(ancestry.path.map(keyOf))).has(keyOf(scroller));
   const underScroll = (): boolean =>
+    // Only a host has a ScrollView's (string) type: the tag only spares a lookup.
+    // Stryker disable next-line ConditionalExpression
     ancestry.path.some((fiber) => fiber.tag === FiberTag.HostComponent && SCROLL_HOST_TYPES.has(fiber.type));
   return roots.some((root) => {
     // Driven from JS: it moves no content natively.

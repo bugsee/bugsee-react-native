@@ -2485,6 +2485,45 @@ describe('R3-1, R3-4: values driven by a ScrollView\'s offset', () => {
       expect(firstPublished()).toEqual(px(rect(10, 300, 380, 50)));
     });
 
+    it('nothing followed, with no ScrollView above: still bounded by its flat ends', () => {
+      const scrollY = animatedValue(0);
+      const translateY = interpolationOf(
+        scrollY,
+        { inputRange: [0, 1, 2, 3], outputRange: [0, 0, 40, 40] },
+        (input) => Math.min(40, Math.max(0, (input - 1) * 40)),
+      );
+      forgetDrivers();
+      try {
+        selfRect = rect(10, 100, 200, 50);
+        render(underAnimated([{ translateY }], [{ translateY: 0 }]));
+
+        expect(firstPublished()).toEqual(px(rect(10, 100, 200, 90)));
+      } finally {
+        followDrivers({
+          eventClass: FakeAnimatedEvent,
+          implementation,
+          exported: animated,
+          valueClass: FakeAnimatedValue,
+        });
+      }
+    });
+
+    it('a JS-driven animation on a header inside a ScrollView moves no content: bounded over its path', () => {
+      const value = animatedValue(0, false);
+      value._animation = timing(0, 100);
+      const header = {
+        tag: FiberTag.FunctionComponent,
+        type: AnimatedView,
+        memoizedProps: { style: { transform: [{ translateY: value }] } },
+        children: [fabricHost('RCTView', rect(0, 300, 400, 50), {}, [view([self()])])],
+      };
+      selfRect = rect(10, 300, 200, 50);
+
+      render(existing(selfIn(root([scroller(rect(0, 100, 400, 600), rect(0, 100, 400, 3000), [header])]))));
+
+      expect(firstPublished()).toEqual(px(rect(10, 300, 200, 150)));
+    });
+
     it('a still value of unknown driver with no ScrollView above: bounded by its flat ends', () => {
       const scrollY = animatedValue(0, true, false);
       const translateY = interpolationOf(
