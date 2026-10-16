@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - run: corepack enable
@@ -92,7 +92,7 @@ jobs:
           # A pull request checks out its merge commit; its first parent is
           # the base branch, so HEAD^1..HEAD is exactly what the PR changes.
           fetch-depth: 2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - id: scope
@@ -168,7 +168,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - run: corepack enable
@@ -187,7 +187,7 @@ jobs:
         react-native: ['0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87']
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       # Codegen and typecheck against each supported React Native, which is
@@ -218,7 +218,7 @@ jobs:
             android: true
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - uses: actions/setup-java@v4
@@ -239,7 +239,7 @@ jobs:
         react-native: ['0.81', '0.87']
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - run: ./scripts/check-pack-install.sh ${{ matrix.react-native }} --ios
@@ -263,7 +263,7 @@ jobs:
             echo "::error title=Local SNAPSHOT pin::native-versions.json pins Android ${sdk}, built from a private clone; CI cannot resolve it. Expected red until the pin flips to the released version."
             exit 1
           fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - uses: actions/setup-java@v4
@@ -319,7 +319,7 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - run: corepack enable
@@ -464,7 +464,7 @@ jobs:
         delivery: [cocoapods, spm]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - run: corepack enable

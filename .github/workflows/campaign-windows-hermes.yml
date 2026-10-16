@@ -48,7 +48,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - uses: actions/setup-java@v4
@@ -171,7 +171,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - uses: actions/setup-java@v4
@@ -285,7 +285,7 @@ jobs:
           mkdir -p "$APP_ROOT"
           cp -a . "$APP_ROOT/"
           ls "$APP_ROOT"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - uses: actions/setup-java@v4
