@@ -17,7 +17,7 @@ Pod::Spec.new do |s|
   s.version      = package['version']
   s.summary      = package['description']
   s.homepage     = package['homepage']
-  s.license      = { :type => 'Commercial', :text => 'See LICENSE at https://www.bugsee.com/terms' }
+  s.license      = { :type => 'MIT', :text => 'See LICENSE in the package root.' }
   s.author       = 'Bugsee'
   s.platforms    = {
     :ios => defined?(min_ios_version_supported) ? min_ios_version_supported : '15.1'

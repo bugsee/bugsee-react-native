@@ -2,7 +2,7 @@
   "name": "@bugsee/react-native-feedback",
   "version": "0.0.0",
   "description": "In-app feedback UI for the Bugsee React Native SDK",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "homepage": "https://www.bugsee.com",
   "main": "src/index.ts",
   "files": [
