@@ -129,7 +129,7 @@ jobs:
             console.log("stub received the map with debug_id " + want);
           ' "$RUNNER_TEMP/stub.log" "$RUNNER_TEMP/debug-id"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: campaign-windows-hermes
@@ -250,7 +250,7 @@ jobs:
             console.log("stub received the map with debug_id " + want);
           ' "$RUNNER_TEMP/stub.log" "$RUNNER_TEMP/debug-id"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: campaign-windows-hermes-expo
@@ -357,7 +357,7 @@ jobs:
             console.log("stub received the map with debug_id " + want);
           ' "$RUNNER_TEMP/stub.log" "$RUNNER_TEMP/debug-id"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: campaign-windows-hermes-spaced
@@ -365,7 +365,7 @@ jobs:
           if-no-files-found: warn
 
       # A second artifact: upload-artifact needs one root, and the logs are on D:.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: campaign-windows-hermes-spaced-logs
