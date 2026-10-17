@@ -890,6 +890,7 @@ export { IOSLaunchOptions } from './options/IOSLaunchOptions';
 export { createDefaultLaunchOptions } from './options/createDefaultLaunchOptions';
 export { endpointFor } from './options/endpoint';
 export {
+  CrashHandlerType,
   FrameRate,
   IssueSeverity,
   LogLevel,

@@ -63,6 +63,7 @@ writeFileSync(enumsOut, `${JSON.stringify(enums, null, 2)}\n`);
 const iosEnumHeaders = {
   IssueSeverity: ['BugseeConstants.h', 'BugseeSeverityLevel'],
   IssueType: ['BGSContracts.h', 'BGSIssueType'],
+  CrashHandlerType: ['BugseeConstants.h', 'BugseeCrashHandlerType'],
 } as const;
 const iosEnums = Object.fromEntries(
   Object.entries(iosEnumHeaders).map(([name, [header, objcName]]) => {

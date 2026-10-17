@@ -40,6 +40,22 @@ typedef NS_ENUM(NSInteger, E) {
 `).E).toEqual({ EA: 10, EB: 11, EC: 12, ED: 20, EE: 21 });
   });
 
+  it('reads members that carry NS_SWIFT_NAME', () => {
+    expect(parseObjcEnums(`
+typedef NS_ENUM(NSUInteger, BugseeCrashHandlerType) {
+    BugseeCrashHandlerTypeBSD NS_SWIFT_NAME(bsd) = 1,
+    BugseeCrashHandlerTypeMach NS_SWIFT_NAME(mach) = 2,
+    BugseeCrashHandlerTypeMachAndBSD NS_SWIFT_NAME(machAndBSD) = 3
+};
+`)).toEqual({
+      BugseeCrashHandlerType: {
+        BugseeCrashHandlerTypeBSD: 1,
+        BugseeCrashHandlerTypeMach: 2,
+        BugseeCrashHandlerTypeMachAndBSD: 3,
+      },
+    });
+  });
+
   it('ignores comments, including ones naming other enums', () => {
     expect(parseObjcEnums(`
 // typedef NS_ENUM(NSInteger, NotReal) { NotRealA = 99 };

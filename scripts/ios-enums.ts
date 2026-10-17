@@ -27,6 +27,15 @@ function withoutComments(source: string): string {
     .replace(/\/\/[^\n]*/g, '');
 }
 
+/**
+ * Drops `NS_SWIFT_NAME(...)` from a member. `BugseeCrashHandlerTypeBSD
+ * NS_SWIFT_NAME(bsd) = 1` would otherwise fail MEMBER and be skipped, and an
+ * enum whose every member carries one would parse as empty -- silently.
+ */
+function withoutSwiftNames(entry: string): string {
+  return entry.replace(/\bNS_SWIFT_NAME\s*\([^)]*\)/g, '');
+}
+
 function members(body: string): Record<string, number> {
   const out: Record<string, number> = {};
   // Implicit members take the previous value plus one, so the running value
@@ -34,7 +43,7 @@ function members(body: string): Record<string, number> {
   // entirely, which is how an enum looks like it agrees when it does not.
   let next = 0;
   for (const entry of body.split(',')) {
-    const matched = MEMBER.exec(entry);
+    const matched = MEMBER.exec(withoutSwiftNames(entry));
     if (!matched) continue;
     const name = matched[1] as string;
     const explicit = matched[2];

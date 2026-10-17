@@ -197,19 +197,19 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
    */
   it.skip('[OPT-026] detect.early-crash: not isolable from JS -- a JS-raised crash is after Launched, where detect.crash recovers it either way (staging S-5)', () => {});
 
-  on(['X'])('[OPT-055] capture.mach-exceptions=false: a SIGSEGV is still recovered, as a signal', async () => {
+  on(['X'])('[OPT-052] capture.crash-handler-type=BSD: a SIGSEGV is still recovered, as a signal', async () => {
     await clearBundles();
-    const crash = await launch('mach-off', 'segv');
-    await apiMarker(log!, 'eff crashing case=mach-off', crash.run.scenario.nonce, 10_000, crash.run.start);
+    const crash = await launch('handler-bsd', 'segv');
+    await apiMarker(log!, 'eff crashing case=handler-bsd', crash.run.scenario.nonce, 10_000, crash.run.start);
     expect(await waitForExit(20_000)).toBe(true);
     await stopApp();
-    await launch('mach-off', 'idle');
+    await launch('handler-bsd', 'idle');
     const bundles = await awaitBundles(1, 60_000);
     await stopApp();
     const crashes = bundles.filter(b => b.request.type === 'crash');
     expect(crashes).toHaveLength(1);
     const text = JSON.stringify(crashOf(crashes[0]!));
-    report('mach-off crash (head)', text.slice(0, 600));
+    report('handler-bsd crash (head)', text.slice(0, 600));
     expect(text).toMatch(/SIGSEGV/);
   });
 
@@ -488,7 +488,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   // -------------------------------------------------------------------------
   // iOS environment, os_log, frame-rate bounds
 
-  on(['S', 'X'])('[OPT-050][OPT-052][OPT-053][OPT-058][OPT-063][OPT-064][OPT-065] the iOS environment options change the report environment', async () => {
+  on(['S', 'X'])('[OPT-050][OPT-053][OPT-054][OPT-058][OPT-063][OPT-064][OPT-065] the iOS environment options change the report environment', async () => {
     const env = async (name: string) => {
       const outcome = await uploaded(name);
       return { outcome, environment: own(outcome, name).request.environment as Record<string, unknown> };
@@ -510,7 +510,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(added.length).toBeGreaterThan(0);
   });
 
-  on(['S', 'X'])('[OPT-054] capture.logs.oslog is accepted and ignored, as beta5 documents: no os_log line reaches the report either way', async () => {
+  on(['S', 'X'])('[OPT-055] capture.logs.oslog is accepted and ignored, as beta5 documents: no os_log line reaches the report either way', async () => {
     const lines = async (name: string): Promise<string[]> => {
       const outcome = await uploaded(name, 'oslog');
       return captureEvents(own(outcome, name), 'log')
