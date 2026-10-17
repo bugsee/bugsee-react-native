@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Text } from 'react-native';
 import type { Action } from './action';
 import { KnownIssue } from './KnownIssue';
@@ -28,23 +29,32 @@ export function describeError(e: unknown): string {
   return describe(e);
 }
 
-const describeResult = (v: unknown) => (v instanceof Error ? describeError(v) : describe(v));
+// Many SDK calls return nothing (upload, log, startBlackout...): say "done" rather than a bare "undefined".
+const describeResult = (v: unknown) =>
+  v === undefined ? 'done (returns nothing)' : v instanceof Error ? describeError(v) : describe(v);
 
 export function ActionButton({ action }: { action: Action }) {
   const log = useLog();
+  // The screen's result log sits below every action, often off screen: echo the latest outcome on the card itself.
+  const [last, setLast] = useState<string | undefined>(undefined);
   if (action.platforms && !action.platforms.includes(Platform.OS as 'ios' | 'android')) return null;
+  const report = (line: string) => {
+    log(line);
+    setLast(line);
+  };
   const go = () => {
     log(`▶ ${action.label}`);
+    setLast('▶ running…');
     try {
       const r = action.run();
       if (typeof (r as { then?: unknown } | null | undefined)?.then === 'function') {
         Promise.resolve(r).then(
-          (v) => log(`→ ${describeResult(v)}`),
-          (e) => log(`✗ ${describeError(e)}`),
+          (v) => report(`→ ${describeResult(v)}`),
+          (e) => report(`✗ ${describeError(e)}`),
         );
-      } else log(`→ ${describeResult(r)}`);
+      } else report(`→ ${describeResult(r)}`);
     } catch (e) {
-      log(`✗ ${describeError(e)}`);
+      report(`✗ ${describeError(e)}`);
     }
   };
   const press = () =>
@@ -55,17 +65,36 @@ export function ActionButton({ action }: { action: Action }) {
         ])
       : go();
   return (
-    <Pressable accessibilityRole="button" onPress={press} style={styles.box} testID={`action-${action.id}`}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={press}
+      android_ripple={{ color: '#d0d5dd' }}
+      style={({ pressed }) => [styles.box, pressed && styles.pressed]}
+      testID={`action-${action.id}`}
+    >
       <Text style={styles.label}>{action.label}</Text>
       <Text style={styles.call}>{action.call}</Text>
       <Text style={styles.expect}>{`Expect: ${action.expect}`}</Text>
       {action.knownIssue ? <KnownIssue id={action.knownIssue} /> : null}
+      {last !== undefined ? (
+        <Text style={[styles.result, last.startsWith('✗') && styles.failed]} testID={`action-result-${action.id}`}>
+          {last}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
 const styles = StyleSheet.create({
-  box: { padding: 12, marginVertical: 4, borderRadius: 8, backgroundColor: '#f2f4f7' },
+  box: { padding: 12, marginVertical: 4, borderRadius: 8, backgroundColor: '#f2f4f7', overflow: 'hidden' },
+  pressed: { backgroundColor: '#e4e7ec' },
   label: { fontSize: 16, fontWeight: '600' },
   call: { fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), fontSize: 12, marginTop: 4 },
   expect: { fontSize: 12, color: '#475467', marginTop: 4 },
+  result: {
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    fontSize: 12,
+    color: '#067647',
+    marginTop: 6,
+  },
+  failed: { color: '#b42318' },
 });

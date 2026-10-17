@@ -2729,6 +2729,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@expo/vector-icons@npm:^15.0.2":
+  version: 15.1.1
+  resolution: "@expo/vector-icons@npm:15.1.1"
+  peerDependencies:
+    expo-font: ">=14.0.4"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/fdd50c90484934204b90d345904fa69ca788a5de704d62b3cb580c52aa4cf4bffe1c05c509d043cf2b6842f1bdad6b78585524f3c6ae5f77e36385d83c0aa577
+  languageName: node
+  linkType: hard
+
 "@expo/ws-tunnel@npm:^2.0.0":
   version: 2.0.1
   resolution: "@expo/ws-tunnel@npm:2.0.1"
@@ -5999,6 +6010,7 @@ __metadata:
   dependencies:
     "@bugsee/react-native": "workspace:*"
     "@bugsee/react-native-feedback": "workspace:*"
+    "@expo/vector-icons": "npm:^15.0.2"
     "@react-native-async-storage/async-storage": "npm:2.2.0"
     "@react-native/jest-preset": "npm:0.86.3"
     "@testing-library/react-native": "npm:^14.1.0"

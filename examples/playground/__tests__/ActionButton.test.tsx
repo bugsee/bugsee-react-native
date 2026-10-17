@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { Alert, Platform } from 'react-native';
 import { ActionButton, describe, describeError } from '../src/ui/ActionButton';
 import { Screen } from '../src/ui/Screen';
+const inLog = () => within(screen.getByTestId('result-log'));
 const base = { id: 'a', label: 'Do it', call: 'Bugsee.log("x")', expect: 'A line in the log' };
 test('shows label, call and Expect', async () => {
   await render(<Screen title="T"><ActionButton action={{ ...base, run: () => 1 }} /></Screen>);
@@ -12,12 +13,14 @@ test('shows label, call and Expect', async () => {
 test.each([
   ['returned value', () => 42, '→ 42'],
   ['resolved value', () => Promise.resolve({ a: 1 }), '→ {"a":1}'],
+  ['void call', () => undefined, '→ done (returns nothing)'],
+  ['void promise', () => Promise.resolve(), '→ done (returns nothing)'],
   ['sync throw', () => { throw Object.assign(new TypeError('bad'), { code: 'E_X' }); }, '✗ TypeError [E_X]: bad'],
   ['rejection', () => Promise.reject(new Error('nope')), '✗ Error: nope'],
 ])('logs a %s', async (_n, run, line) => {
   await render(<Screen title="T"><ActionButton action={{ ...base, run }} /></Screen>);
   await fireEvent.press(screen.getByText('Do it'));
-  await waitFor(() => expect(screen.getByText(line, { exact: false })).toBeTruthy());
+  await waitFor(() => expect(inLog().getByText(line, { exact: false })).toBeTruthy());
 });
 test('confirm asks first and runs only on OK', async () => {
   const run = jest.fn();
@@ -38,12 +41,12 @@ test('logs a rejection from a non-Promise thenable', async () => {
   const run = () => ({ then: (_res: unknown, rej: (e: unknown) => void) => rej(new Error('x')) });
   await render(<Screen title="T"><ActionButton action={{ ...base, run }} /></Screen>);
   await fireEvent.press(screen.getByText('Do it'));
-  await waitFor(() => expect(screen.getByText('✗ Error: x', { exact: false })).toBeTruthy());
+  await waitFor(() => expect(inLog().getByText('✗ Error: x', { exact: false })).toBeTruthy());
 });
 test('a resolved Error is logged through describeError', async () => {
   await render(<Screen title="T"><ActionButton action={{ ...base, run: () => Promise.resolve(new RangeError('r')) }} /></Screen>);
   await fireEvent.press(screen.getByText('Do it'));
-  await waitFor(() => expect(screen.getByText('→ RangeError: r', { exact: false })).toBeTruthy());
+  await waitFor(() => expect(inLog().getByText('→ RangeError: r', { exact: false })).toBeTruthy());
 });
 test('describe and describeError never throw', () => {
   const circ: Record<string, unknown> = Object.create(null);
@@ -52,4 +55,15 @@ test('describe and describeError never throw', () => {
   expect(describe(circ)).toBe('[unprintable]');
   expect(describe(bad)).toBe('[unprintable]');
   expect(describeError(circ)).toBe('[unprintable]');
+});
+test('echoes the latest outcome on the card itself', async () => {
+  let fail = false;
+  const run = () => (fail ? Promise.reject(new Error('nope')) : Promise.resolve(true));
+  await render(<Screen title="T"><ActionButton action={{ ...base, run }} /></Screen>);
+  expect(screen.queryByTestId('action-result-a')).toBeNull();
+  await fireEvent.press(screen.getByText('Do it'));
+  await waitFor(() => expect(screen.getByTestId('action-result-a')).toHaveTextContent('→ true'));
+  fail = true;
+  await fireEvent.press(screen.getByText('Do it'));
+  await waitFor(() => expect(screen.getByTestId('action-result-a')).toHaveTextContent('✗ Error: nope'));
 });
