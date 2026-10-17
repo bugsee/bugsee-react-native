@@ -5,7 +5,7 @@
  * Defaults to the sibling Bugsee checkouts.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { parseObjcEnums } from './ios-enums.ts';
+import { readObjcEnum } from './ios-enums.ts';
 import { join } from 'node:path';
 import {
   parseAndroidDescriptors,
@@ -67,17 +67,17 @@ const iosEnumHeaders = {
 } as const;
 const iosEnums = Object.fromEntries(
   Object.entries(iosEnumHeaders).map(([name, [header, objcName]]) => {
-    const parsed = parseObjcEnums(
-      readFileSync(join(iosRoot, 'BugseeDev/BugseeLib/BugseeLib', header), 'utf8'),
-    )[objcName];
-    if (parsed === undefined) {
-      throw new Error(
-        `iOS enum ${objcName} not found in ${header}. It is the source for ` +
-          `${name}; a rename there must fail here rather than silently ` +
-          `producing an empty parity check.`,
-      );
+    // Throws on a missing, empty or partly unreadable enum: a rename or a new
+    // attribute in the header must fail here rather than silently producing a
+    // short parity check.
+    try {
+      return [name, readObjcEnum(
+        readFileSync(join(iosRoot, 'BugseeDev/BugseeLib/BugseeLib', header), 'utf8'),
+        objcName,
+      )];
+    } catch (error) {
+      throw new Error(`${(error as Error).message} (${header}, the source for ${name})`, { cause: error });
     }
-    return [name, parsed];
   }),
 );
 const iosEnumsOut = join(

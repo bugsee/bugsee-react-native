@@ -1,4 +1,4 @@
-import { parseObjcEnums } from '../ios-enums';
+import { parseObjcEnums, readObjcEnum } from '../ios-enums';
 
 describe('parseObjcEnums', () => {
   it('reads the trailing-typedef form the SDK uses', () => {
@@ -74,5 +74,44 @@ typedef enum : NSUInteger { BB = 2 } B;
 
   it('returns nothing for a header with no enums', () => {
     expect(parseObjcEnums('@interface Foo : NSObject\n@end')).toEqual({});
+  });
+
+  it('reads a Swift name that has its own parentheses', () => {
+    expect(parseObjcEnums(`
+typedef NS_ENUM(NSInteger, E) { EA NS_SWIFT_NAME(a(b:)) = 4 };
+`).E).toEqual({ EA: 4 });
+  });
+
+  it('reports the entries it could not read instead of dropping them silently', () => {
+    const skipped: Record<string, string[]> = {};
+    const parsed = parseObjcEnums(`
+typedef NS_ENUM(NSInteger, E) {
+    EA = 1,
+    EB API_AVAILABLE(ios(13.0)) = 2,
+    EAll = (EA | EB),
+};
+typedef NS_ENUM(NSInteger, F) { FA = 1 };
+`, skipped);
+    expect(parsed.E).toEqual({ EA: 1 });
+    expect(skipped).toEqual({ E: ['EB API_AVAILABLE(ios(13.0)) = 2', 'EAll = (EA | EB)'] });
+  });
+});
+
+describe('readObjcEnum', () => {
+  it('returns an enum read whole', () => {
+    expect(readObjcEnum('typedef NS_ENUM(NSInteger, E) { EA = 1, EB };', 'E')).toEqual({ EA: 1, EB: 2 });
+  });
+
+  it('throws when the enum is missing', () => {
+    expect(() => readObjcEnum('typedef NS_ENUM(NSInteger, E) { EA = 1 };', 'F')).toThrow('F not found');
+  });
+
+  it('throws when a member could not be read', () => {
+    expect(() => readObjcEnum('typedef NS_ENUM(NSInteger, E) { EA = 1, EAll = (EA | 2) };', 'E'))
+      .toThrow('could not read "EAll = (EA | 2)"');
+  });
+
+  it('throws when the enum has no members', () => {
+    expect(() => readObjcEnum('typedef NS_ENUM(NSInteger, E) { };', 'E')).toThrow('no members');
   });
 });
