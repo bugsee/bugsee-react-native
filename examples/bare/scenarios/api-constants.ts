@@ -80,7 +80,7 @@ export const READBACK_ANDROID: Readonly<Record<string, unknown>> = {
   [`${P}config.max-pending-reports`]: 9,
   [`${P}config.report-handler-callback-timeout`]: 12,
   // config.report-processing-in-process=false files no report on the
-  // WOD_LX1 (option-effects.test.ts OPT-081), which this run needs for the
+  // WOD_LX1 (option-effects.test.ts OPT-080), which this run needs for the
   // environment record: read back there instead.
   [`${P}detect.anr.sampling`]: false,
   [`${P}detect.exit.bg_low_memory_as_error`]: true,
@@ -123,7 +123,6 @@ export const READBACK_IOS: Readonly<Record<string, unknown>> = {
   [`${P}config.build-type`]: 'api-e2e-type',
   [`${P}detect.crash.fill_empty_exception_stacks`]: true,
   [`${P}detect.crash.swift_async_stacktraces`]: false,
-  [`${P}detect.kill`]: true,
   /** BugseeStyleDusk (1); the default is BugseeStyleSystem (3). */
   [`${P}reporting.ui.style`]: 1,
 };
@@ -161,7 +160,6 @@ export const ACCESSOR_KEYS = {
     captureAVPlayer: `${P}capture.avplayer`,
     captureMachExceptions: `${P}capture.mach-exceptions`,
     captureDiskSpace: `${P}capture.disk-space`,
-    detectAndReportKill: `${P}detect.kill`,
   },
 } as const;
 
@@ -192,7 +190,6 @@ export const EFFECT_OPTIONS: Readonly<Record<string, Readonly<Record<string, unk
   'crash-off': { [`${P}detect.crash`]: false },
   exit: { [`${P}detect.exit`]: true, [`${P}detect.exit.user_requested`]: true },
   'exit-control': { [`${P}detect.exit`]: true, [`${P}detect.exit.user_requested`]: false },
-  kill: { [`${P}detect.kill`]: true },
   hang: { [`${P}detect.hang`]: true, [`${P}detect.hang.level.fair`]: 2000 },
   'hang-control': { [`${P}detect.hang`]: false },
   'http-errors': { [`${P}detect.http-errors`]: true },

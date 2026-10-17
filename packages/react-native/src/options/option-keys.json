@@ -69,7 +69,6 @@
     "com.bugsee.option.config.data-encryption",
     "com.bugsee.option.detect.crash.fill_empty_exception_stacks",
     "com.bugsee.option.detect.crash.swift_async_stacktraces",
-    "com.bugsee.option.detect.kill",
     "com.bugsee.option.reporting.ui.style"
   ],
   "android": [

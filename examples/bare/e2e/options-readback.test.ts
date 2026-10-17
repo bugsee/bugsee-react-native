@@ -21,7 +21,7 @@
  *
  * `config.data-encryption` (iOS) is read back by option-effects.test.ts
  * (`env-diff`), not here: it would encrypt this run's bundle. Likewise
- * `config.report-processing-in-process` (Android, OPT-081): off, it files no
+ * `config.report-processing-in-process` (Android, OPT-080): off, it files no
  * report, and this run needs one.
  */
 import { type PulledBundle } from './bundles';

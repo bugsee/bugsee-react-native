@@ -36,7 +36,7 @@ import {
 } from './harness';
 import { LUMA_BRIGHT_MIN, LUMA_DARK_MAX, imageSize, regionLuma } from './media';
 import { beginRetainingSuite, endRetainingSuite, frameCount } from './observe';
-import { type DeviceLog, type LogLine, adbStatus, devicectl, devicePidsOfApp, pidOf } from './scenario';
+import { type DeviceLog, type LogLine, adbStatus, devicePidsOfApp, pidOf } from './scenario';
 import { centreRegion, uiDump } from './screen';
 import { type StubServer, deviceStubUrl, releaseDeviceStub, startStubServerFor } from './stub-server';
 
@@ -238,9 +238,9 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   });
 
   // -------------------------------------------------------------------------
-  // Exit and kill detection
+  // Exit detection
 
-  on(['A'])('[OPT-094][OPT-027][FLOW-46] detect.exit.user_requested: a force-stop is reported at the next launch, not without it', async () => {
+  on(['A'])('[OPT-093][OPT-027][FLOW-46] detect.exit.user_requested: a force-stop is reported at the next launch, not without it', async () => {
     const after = async (name: string): Promise<PulledBundle[]> => {
       await clearBundles();
       const first = await launch(name, 'idle');
@@ -260,29 +260,6 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     const control = await after('exit-control');
     expect(control).toEqual([]);
     expect(exit.length).toBeGreaterThan(0);
-  });
-
-  /**
-   * iOS 7.0.0-beta5: nothing in the library reads detect.kill -- it is only
-   * registered (BGSOptionsDescriptors.m) -- and a SIGKILL while running
-   * files nothing at the next launch (XS, 2026-10-07). Filed: bugsee-cocoa#203.
-   */
-  (HERE === 'X' ? it.failing : it.skip)('[OPT-068] detect.kill: a SIGKILL is reported at the next launch [known: iOS beta5 never reads detect.kill (bugsee-cocoa#203)]', async () => {
-    await clearBundles();
-    const first = await launch('kill', 'idle');
-    await apiMarker(log!, 'eff idle case=kill', first.run.scenario.nonce, 10_000, first.run.start);
-    await new Promise(resolve => setTimeout(resolve, 5_000));
-    for (const pid of await devicePidsOfApp()) {
-      await devicectl('process', 'signal', '--pid', String(pid), '--signal', 'SIGKILL');
-    }
-    expect(await waitForExit(15_000)).toBe(true);
-    await launch('kill', 'idle');
-    await new Promise(resolve => setTimeout(resolve, 20_000));
-    const names = await listBundles();
-    const bundles = names.length === 0 ? [] : await awaitBundles(names.length, 1_000);
-    await stopApp();
-    report('kill bundles', bundles.map(b => ({ type: b.request.type, summary: b.request.summary })));
-    expect(bundles.length).toBeGreaterThan(0);
   });
 
   // -------------------------------------------------------------------------
@@ -550,7 +527,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   // -------------------------------------------------------------------------
   // Android: all sources, FLAG_SECURE, handler timeout
 
-  on(['A'])('[OPT-070] capture.logs.allsources: another process\'s logcat line reaches the report only with the option', async () => {
+  on(['A'])('[OPT-069] capture.logs.allsources: another process\'s logcat line reaches the report only with the option', async () => {
     const has = async (name: string): Promise<{ other: boolean; tags: string[] }> => {
       const key = `${name}--ready`;
       if (!cache.has(key)) {
@@ -583,7 +560,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(extra.length).toBeGreaterThan(0);
   });
 
-  on(['A'])('[OPT-071] capture.respect-flag-secure: a FLAG_SECURE window is blacked out by default and recorded when off', async () => {
+  on(['A'])('[OPT-070] capture.respect-flag-secure: a FLAG_SECURE window is blacked out by default and recorded when off', async () => {
     const centre = async (name: string): Promise<number> => {
       const outcome = await uploaded(name, 'secure');
       const shot = (own(outcome, name).binaries.get('screenshot') ?? [])[0];
@@ -597,7 +574,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(ignored).toBeGreaterThanOrEqual(LUMA_BRIGHT_MIN);
   });
 
-  on(['A'])('[OPT-080] config.report-handler-callback-timeout lowers the live handler deadline', async () => {
+  on(['A'])('[OPT-079] config.report-handler-callback-timeout lowers the live handler deadline', async () => {
     const deadline = async (name: string): Promise<number> => {
       const outcome = await uploaded(name, 'handler');
       const lines = log!.all(/BugseeRN.*report handler rh-\d+ phase=\w+ deadline=(\d+)/, outcome.run.start);
@@ -643,15 +620,15 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     return cache.get(key)!;
   };
 
-  on(['A'])('[OPT-081] config.report-processing-in-process=false reads back as set', async () => {
+  on(['A'])('[OPT-080] config.report-processing-in-process=false reads back as set', async () => {
     const { options } = await outOfProcess();
     expect(jsonAfter(options.text, 'values')).toEqual({ 'com.bugsee.option.config.report-processing-in-process': false });
   });
 
-  on(['A'])('[OPT-081] config.report-processing-in-process=false still files the report (network on, dead endpoint)', async () => {
+  on(['A'])('[OPT-080] config.report-processing-in-process=false still files the report (network on, dead endpoint)', async () => {
     const { run, bundles } = await outOfProcess();
     expect(bundles.map(b => b.request.summary)).toContain(`api-eff-out-of-process-${run.scenario.nonce}`);
   });
 
-  it.skip('[OPT-098][FLOW-05b] reporting.triggers.broadcast: not covered -- the receiver is not exported and needs a signature permission; no in-app sender exists', () => {});
+  it.skip('[OPT-097][FLOW-05b] reporting.triggers.broadcast: not covered -- the receiver is not exported and needs a signature permission; no in-app sender exists', () => {});
 });
