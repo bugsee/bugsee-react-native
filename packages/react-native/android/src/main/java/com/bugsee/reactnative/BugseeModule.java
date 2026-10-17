@@ -590,16 +590,19 @@ public class BugseeModule extends NativeBugseeSpec
     /**
      * The app's own {@code Bugsee.log()} line, through the SDK's public
      * {@code Bugsee.log} -- not the wrapper channel, which records nothing
-     * with {@code capture.logs} off. {@code requiresFiltering} is the app's
-     * choice, passed through: the app's log filter runs on the line only when
-     * it is {@code true}. The level maps by the channel's table.
+     * with {@code capture.logs} off. {@code requiresFiltering} is passed
+     * through; JS sends {@code false}: {@code log()} in
+     * {@code src/logs/log.ts} runs the app's log filter itself and sends the
+     * result, so the filter is not asked again from here. The level maps by
+     * the channel's table.
      *
-     * <p>When it runs, the app's filter runs on this thread, and an exception
-     * it throws comes back here, as on the channel
-     * ({@link WrapperChannelHolder#log}).
-     * This thread is React Native's, so it stops here and is reported once
-     * per process: the report is itself a logcat line, which the SDK's
-     * logcat capture can feed back into the same filter.
+     * <p>The catch below is for a {@code true} that does not come from JS
+     * today: the app's filter would then run on this thread, and an
+     * exception it threw would come back here, as on the channel
+     * ({@link WrapperChannelHolder#log}). This thread is React Native's, so
+     * it stops here and is reported once per process: the report is itself a
+     * logcat line, which the SDK's logcat capture can feed back into the same
+     * filter.
      */
     @Override
     public void log(final String message, final double level, final boolean requiresFiltering) {

@@ -1541,8 +1541,9 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 
 /// The app's own `Bugsee.log()` line, through the SDK's public `+[Bugsee
 /// log:level:requiresFiltering:]` -- not the wrapper channel, which records
-/// nothing with `capture.logs` off. `requiresFiltering` is the app's choice,
-/// passed through: the app's log filter runs on the line only when it is YES.
+/// nothing with `capture.logs` off. `requiresFiltering` is passed through; JS
+/// sends NO: `log()` in `src/logs/log.ts` runs the app's log filter itself and
+/// sends the result, so the filter is not asked again from here.
 ///
 /// Not a channel line, so no `BGSRNBeginChannelLine`: the echo drop in the log
 /// filter never takes a line that is neither stdout/stderr nor a console stamp.
