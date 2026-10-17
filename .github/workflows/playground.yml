@@ -39,7 +39,7 @@ jobs:
     timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
@@ -55,7 +55,7 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Fails fast, before any setup or Gradle download: native-versions.json
       # can pin a SNAPSHOT built from a private clone, which CI cannot
       # resolve. Same guard as the android job in ci.yml.
@@ -101,7 +101,7 @@ jobs:
       # "Build ExpoModulesJSI xcframework" phase builds that package: Swift 6.2 ships with Xcode 26.0.
       MIN_XCODE: '26.0'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The runner's default Xcode can be older than Expo 57 needs; pick the newest one installed.
       - name: Select the newest installed Xcode
         run: |

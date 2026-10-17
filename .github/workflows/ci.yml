@@ -26,7 +26,7 @@ jobs:
     name: lint, typecheck, unit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
@@ -87,7 +87,7 @@ jobs:
     outputs:
       gates: ${{ steps.scope.outputs.gates }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # A pull request checks out its merge commit; its first parent is
           # the base branch, so HEAD^1..HEAD is exactly what the PR changes.
@@ -167,7 +167,7 @@ jobs:
     name: expo prebuild (config plugin)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
@@ -186,7 +186,7 @@ jobs:
       matrix:
         react-native: ['0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
@@ -217,7 +217,7 @@ jobs:
           - react-native: '0.87'
             android: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
@@ -238,7 +238,7 @@ jobs:
       matrix:
         react-native: ['0.81', '0.87']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
@@ -248,7 +248,7 @@ jobs:
     name: android
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Fails fast, before spending a single minute on setup or a Gradle
       # download: native-versions.json can pin a SNAPSHOT built from a
       # private clone (Task 3.P1), which only exists in one developer's
@@ -291,7 +291,7 @@ jobs:
     name: ios unit (BugseeRNSupport)
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The only ObjC tests in the repo, and they used to run nowhere. They
       # cover the marshalling helpers and the main-thread hop -- removing the
       # hop is otherwise undetectable, since the device e2e passes without it.
@@ -318,7 +318,7 @@ jobs:
     name: ios e2e (simulator)
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
@@ -463,7 +463,7 @@ jobs:
         # disproved — so there is no older SPM leg to run.
         delivery: [cocoapods, spm]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
