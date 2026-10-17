@@ -949,7 +949,7 @@ describe('buildViewTree', () => {
     expect(ids).toEqual(Array.from({ length: ids.length }, (_, i) => i));
   });
 
-  it('stops at depth 64 and marks that node — and the root — truncated', () => {
+  it('stops at VH_MAX_DEPTH (200) and marks that node — and the root — truncated', () => {
     let deepest = host('Bottom', RECT);
     for (let i = 0; i < VH_MAX_DEPTH + 10; i += 1) {
       deepest = host(`Level${i}`, RECT, [deepest]);
@@ -974,15 +974,30 @@ describe('buildViewTree', () => {
     expect(tree?.truncated).toBe(true);
   });
 
+  it('keeps an Expo Router-shaped tree whole: 150 levels of composites over hosts are not truncated', () => {
+    // RNAA-109 (staging): one Expo Router stack screen used 59 levels before
+    // any app view, and Tabs nests a second navigator stack under it.
+    let deepest = host('AppContent', RECT);
+    for (let i = 0; i < 75; i += 1) {
+      const provider = Object.assign((): null => null, { displayName: `Provider${i}` });
+      deepest = fn(provider, [host(`Wrapper${i}`, RECT, [deepest])]);
+    }
+    const tree = buildViewTree([fiberRoot(deepest)], makeEnv());
+    const names = flatten(tree as ManagedNode).map((n) => n.class_name);
+    expect(names).toContain('AppContent');
+    expect(tree?.truncated).toBeUndefined();
+    expect(VH_MAX_DEPTH).toBe(200);
+  });
+
   it('a depth cut landing on a composite still marks the nearest emitted (host) ancestor and the root', () => {
-    // 63 nested hosts wrapping a composite whose own child (a host) sits one
+    // VH_MAX_DEPTH - 1 nested hosts wrapping a composite whose own child (a host) sits one
     // level too deep. The composite is dropped (nothing measurable of its
     // own), but the innermost host — its nearest emitted ancestor — and the
     // root must both carry `truncated: true`.
     let deepest: FiberSpec = fn(function TooDeep() {
       return null;
     }, [host('NeverShown', RECT)]);
-    for (let i = 0; i < 63; i += 1) {
+    for (let i = 0; i < VH_MAX_DEPTH - 1; i += 1) {
       deepest = host(`Level${i}`, RECT, [deepest]);
     }
 
@@ -997,7 +1012,7 @@ describe('buildViewTree', () => {
       node = node.subitems?.[0];
     }
 
-    expect(count).toBe(63);
+    expect(count).toBe(VH_MAX_DEPTH - 1);
     expect(innermost?.class_name).not.toBe('TooDeep');
     expect(innermost?.truncated).toBe(true);
     expect(tree?.truncated).toBe(true);
