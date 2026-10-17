@@ -55,6 +55,26 @@ export const IssueSeverity = {
 export type IssueSeverity = (typeof IssueSeverity)[keyof typeof IssueSeverity];
 
 /**
+ * How the iOS crash reporter intercepts crashes. iOS only: Android has no Mach
+ * exceptions, and tvOS runs every value as BSD.
+ *
+ * - `BSD`: BSD signal handlers.
+ * - `Mach`: a Mach exception handler, plus a BSD signal handler for SIGABRT.
+ *   Other signals raised by software (`raise()`, `kill()`) are not reported.
+ * - `MachAndBSD`: both, so hardware faults and signals raised by software are
+ *   reported. The SDK default.
+ *
+ * Checked against the iOS header through `ios-enums.json`: the Android-sourced
+ * fixture has no such enum.
+ */
+export const CrashHandlerType = {
+  BSD: 1,
+  Mach: 2,
+  MachAndBSD: 3,
+} as const;
+export type CrashHandlerType = (typeof CrashHandlerType)[keyof typeof CrashHandlerType];
+
+/**
  * SDK enum members this package deliberately does not expose, with the value
  * they carry natively.
  *

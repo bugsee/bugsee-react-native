@@ -218,7 +218,7 @@ BugseeLaunchOptions (abstract)
 AndroidLaunchOptions extends …   videoMode, logsUseAllSources, the detect.exit*
                                  family, triggerByNotification/Broadcast, ndk,
                                  maxPendingReports/ReportAge, …
-IOSLaunchOptions     extends …   captureAVPlayer, machExceptions, bluetoothStatus,
+IOSLaunchOptions     extends …   captureAVPlayer, crashHandlerType, bluetoothStatus,
                                  diskSpace, killDetection, style, …
 ```
 
