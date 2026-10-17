@@ -4365,18 +4365,18 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@react-native/jest-preset@npm:0.86.3":
-  version: 0.86.3
-  resolution: "@react-native/jest-preset@npm:0.86.3"
+"@react-native/jest-preset@npm:0.87.1":
+  version: 0.87.1
+  resolution: "@react-native/jest-preset@npm:0.87.1"
   dependencies:
     "@jest/create-cache-key-function": "npm:^29.7.0"
-    "@react-native/js-polyfills": "npm:0.86.3"
+    "@react-native/js-polyfills": "npm:0.87.1"
     babel-jest: "npm:^29.7.0"
     jest-environment-node: "npm:^29.7.0"
     regenerator-runtime: "npm:^0.13.2"
   peerDependencies:
     react: ^19.2.3
-  checksum: 10c0/6eddbd33e3e057a04e0ddd44ad0a40f36f122095aa9709004d5e608da97314452ca023df63c69592fa0efe58a98de2eb166c015fd130d39140476ed5d3c321d6
+  checksum: 10c0/68d3e8a082b9e37457c58e5f761327fd52517068b217f609a23f001b38de83065dddf2c51d0ab8f55a16dbee0a6a3d2ce862f6ca56d96daeeafb8656179be380
   languageName: node
   linkType: hard
 
@@ -6000,7 +6000,7 @@ __metadata:
     "@bugsee/react-native": "workspace:*"
     "@bugsee/react-native-feedback": "workspace:*"
     "@react-native-async-storage/async-storage": "npm:2.2.0"
-    "@react-native/jest-preset": "npm:0.86.3"
+    "@react-native/jest-preset": "npm:0.87.1"
     "@testing-library/react-native": "npm:^14.1.0"
     "@types/react": "npm:~19.2.4"
     expo: "npm:~57.0.26"
