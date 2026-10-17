@@ -498,4 +498,4 @@ then run `pod install` again:
 
 ## Licence
 
-Commercial. See [LICENSE](./LICENSE) and https://www.bugsee.com/terms.
+MIT. See [LICENSE](./LICENSE).

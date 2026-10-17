@@ -2,7 +2,7 @@
   "name": "@bugsee/react-native",
   "version": "0.0.0",
   "description": "Bugsee SDK for React Native",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "homepage": "https://www.bugsee.com",
   "main": "src/index.ts",
   "files": [
