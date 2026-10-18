@@ -142,7 +142,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
     expect(jsonAfter<number[]>(line.text, 'keptStatus')).toEqual([3, 0]);
   });
 
-  describe('logException with values that are not Errors, and includeVideo', () => {
+  describe('logException with values that are not Errors', () => {
     let run: Run;
     let done: LogLine;
     let errors: PulledBundle[] = [];
@@ -151,7 +151,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       if (ON_SIMULATOR) {
         return;
       }
-      const result = await runFor(log!, 'api-exc-values', 'exc-values done', 5);
+      const result = await runFor(log!, 'api-exc-values', 'exc-values done', 3);
       run = result.run;
       done = result.line;
       errors = result.bundles.filter(b => b.request.type === 'error');
@@ -170,22 +170,9 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       report('payload reasons', reasons);
       expect(reasons.filter(r => r === `api-exc string ${nonce}`)).toHaveLength(1);
       expect(reasons.filter(r => r === 'Non-Error thrown: object')).toHaveLength(2);
-      // The three values plus the two includeVideo errors.
-      expect(errors).toHaveLength(5);
+      expect(errors).toHaveLength(3);
     });
 
-    // iOS ignores includeVideo too: https://github.com/bugsee/bugsee-cocoa/issues/226
-    itReports('[API-11d] includeVideo is accepted and changes nothing', () => {
-      const nonce = run.scenario.nonce;
-      const video = jsonAfter<Record<string, Settled>>(done.text, 'video');
-      expect(video.on!.ok && video.off!.ok).toBe(true);
-      const on = errors.find(b => payloadReason(b) === `api-exc video-on ${nonce}`);
-      const off = errors.find(b => payloadReason(b) === `api-exc video-off ${nonce}`);
-      expect(on).toBeDefined();
-      expect(off).toBeDefined();
-      report('includeVideo files', { on: types(on!), off: types(off!) });
-      expect(types(on!)).toEqual(types(off!));
-    });
   });
 
   describe('ErrorBoundary with a fallback function and options', () => {
@@ -227,12 +214,6 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       }
     });
 
-    /** Android 7.3.0 ignores logException labels (R10, exceptions.test.ts case 7): the same path.
-     * https://github.com/bugsee/bugsee-android/issues/247 */
-    (ON_ANDROID ? it.failing : itReports)('[API-13d] the options prop: labels reach the report', () => {
-      expect(bundles).toHaveLength(1);
-      expect(bundles[0]!.request.labels).toEqual(expect.arrayContaining([`api-label-${run.scenario.nonce}`]));
-    });
   });
 
   it('[API-15b-d] notify() carries severity, fields and urgent into the relay record; a sixth argument throws', async () => {

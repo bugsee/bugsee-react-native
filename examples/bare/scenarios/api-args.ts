@@ -137,11 +137,7 @@ async function exceptionValues(nonce: string): Promise<void> {
     null: await settled(() => Bugsee.logException(null)),
   };
   await delay(1_500);
-  const video = {
-    on: await settled(() => Bugsee.logException(new Error(`api-exc video-on ${nonce}`), { includeVideo: true })),
-    off: await settled(() => Bugsee.logException(new Error(`api-exc video-off ${nonce}`), { includeVideo: false })),
-  };
-  mark(`exc-values done nonce=${nonce} results=${JSON.stringify(results)} video=${JSON.stringify(video)}`);
+  mark(`exc-values done nonce=${nonce} results=${JSON.stringify(results)}`);
 }
 
 async function notifications(nonce: string): Promise<void> {

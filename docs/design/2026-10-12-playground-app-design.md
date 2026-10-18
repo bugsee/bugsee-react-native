@@ -192,7 +192,7 @@ config plugin. On `expo prebuild`:
 | Capture: Network | `fetch` and XHR GET and POST with JSON, form, binary, large and no-Content-Type bodies; a 4xx; a 5xx; a timeout; a failed DNS lookup; a WebSocket echo; native `URLSession` / `OkHttp` requests; `setNetworkFilter` to redact a header or drop a URL; `addNetworkEvent` |
 | Capture: WebView | A `react-native-webview` page that writes console output, makes a fetch and throws a JS error |
 | Privacy | `startBlackout` / `endBlackout` / `isBlackout`; `BugseeSecure` around a view; secure `TextInput` (password and card); `setSecureRectangles` with a visible overlay; the native secure field next to a plain one; "blackout before launch" |
-| Errors | `logException` with an Error, a string, labels, severity and `includeVideo`; an `ErrorBoundary` demo; an unhandled promise rejection; `testJsCrash`; `testNativeCrash`; native module crashes (segv, abort, exception, background thread); NDK crashes (Android only); a 6-second main-thread hang |
+| Errors | `logException` with an Error, a string and a domain; an `ErrorBoundary` demo; an unhandled promise rejection; `testJsCrash`; `testNativeCrash`; native module crashes (segv, abort, exception, background thread); NDK crashes (Android only); a 6-second main-thread hang |
 | Reports | `showReportDialog` with prefill; `upload` with summary, description, severity and labels; `createReport` with the report operations; `captureViewHierarchy`; `setReportHandler` presets (add labels, attach a file, drop the report) on and off; Feedback: `showFeedbackUI`, `setGreeting`, `appearance` presets, and listener events shown in the log |
 | Data | `setUserIdentifier` / `clearUserIdentifier` / `getUserIdentifier`; attributes set, get, get all, clear one and clear all, for every value type and for invalid values; `addBreadcrumb` and `setBreadcrumbFilter`; `event` with and without parameters; `trace`; `attach` with text, an image, and a too-large file |
 | Perf | `startTransaction` with child spans (a fake checkout of about 1.2 s); `startSpan`, `getActiveSpan`, `setName` and status; nested spans around real network calls; a "slow render" action |
@@ -209,8 +209,6 @@ Android 7.3.1:
 | bugsee-android#250 | `deleteCollectedDataOnDevice(false)` (Android) |
 | bugsee-cocoa#220 | report handler edits on a crash recovered at the next launch |
 | bugsee-cocoa#224 | a second `createReport` |
-| bugsee-cocoa#226 | `includeVideo` (iOS) |
-| bugsee-android#247 | `logException` labels and `includeVideo` (Android) |
 | bugsee-android#248 | blackout before launch (Android) |
 | bugsee-cocoa#223 | `upload` trigger shows as unknown (iOS) |
 

@@ -174,8 +174,6 @@ export function runExceptionScenario(
     } catch (e) {
       Bugsee.logException(e, {
         domain: `e2e-${nonce}`,
-        labels: ['e2e', `lbl-${nonce}`],
-        includeVideo: true,
       });
     }
     Bugsee.logException({ password: `pw-${nonce}`, message: `obj-${nonce}` });

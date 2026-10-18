@@ -1342,8 +1342,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 }
 
 /// A handled JS exception. `payloadJson` is the Task 7.1a payload, forwarded
-/// verbatim as the reason; `optionsJson` is `{domain?, labels?, includeVideo?}`
-/// or null. Only `domain` reaches iOS 7.0.0-beta7 or later. Unparseable options are logged and the exception is still sent
+/// verbatim as the reason; `optionsJson` is `{domain?}` or null. Unparseable options are logged and the exception is still sent
 /// with nil options — a void method has no promise to reject.
 - (void)logException:(NSString *)payloadJson
          optionsJson:(NSString * _Nullable)optionsJson {
@@ -1364,8 +1363,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
         return;
       }
       const BugseeStatus status = BGSRNCurrentStatus();
-      // 7.0.0-beta7 has no options object: the domain is an argument, labels
-      // and includeVideo have no per-call hook.
+      // 7.0.0-beta7 has no options object: the domain is an argument.
       [Bugsee logException:BGSRNReactNativeExceptionName
                     reason:payloadJson
                     domain:opts.domain

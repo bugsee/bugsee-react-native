@@ -5,7 +5,6 @@ import { NATIVE_UNAVAILABLE, PlaygroundNative } from '../../modules/playground-n
 import { ActionButton } from '../ui/ActionButton';
 import type { Action } from '../ui/action';
 import { afterTap } from '../ui/afterTap';
-import { KnownIssue } from '../ui/KnownIssue';
 import { Screen } from '../ui/Screen';
 import { Section } from '../ui/Section';
 
@@ -57,37 +56,11 @@ export const errorsActions: Action[] = [
     run: () => Bugsee.logException('a plain string'),
   },
   {
-    id: 'handled-labels',
-    label: 'Log handled error with labels',
-    call: "Bugsee.logException(new Error('labelled'), { labels: ['playground', 'handled'] })",
-    knownIssue: 'android-247',
-    expect: 'Labels playground, handled on the error',
-    run: () => Bugsee.logException(new Error('labelled'), { labels: ['playground', 'handled'] }),
-  },
-  {
     id: 'handled-domain',
     label: 'Log handled error with domain',
     call: "Bugsee.logException(new Error('domain'), { domain: 'com.bugsee.playground' })",
     expect: 'Domain com.bugsee.playground on the error',
     run: () => Bugsee.logException(new Error('domain'), { domain: 'com.bugsee.playground' }),
-  },
-  {
-    id: 'handled-video-ios',
-    label: 'Log handled error with video',
-    call: "Bugsee.logException(new Error('video'), { includeVideo: true })",
-    platforms: ['ios'],
-    knownIssue: 'cocoa-226',
-    expect: 'A handled error report that includes video',
-    run: () => Bugsee.logException(new Error('video'), { includeVideo: true }),
-  },
-  {
-    id: 'handled-video-android',
-    label: 'Log handled error with video',
-    call: "Bugsee.logException(new Error('video'), { includeVideo: true })",
-    platforms: ['android'],
-    knownIssue: 'android-247',
-    expect: 'A handled error report that includes video',
-    run: () => Bugsee.logException(new Error('video'), { includeVideo: true }),
   },
 
   {
@@ -154,7 +127,7 @@ function BoundaryDemo() {
     <>
       <Text>Expect: The fallback renders; a handled error with label boundary is reported</Text>
       <ErrorBoundary
-        options={{ labels: ['boundary'] }}
+        options={{ domain: 'boundary' }}
         fallback={({ error, resetError }) => (
           <>
             <Text>Fallback: {error instanceof Error ? error.message : String(error)}</Text>
@@ -171,7 +144,6 @@ function BoundaryDemo() {
         <Bomb armed={armed} />
       </ErrorBoundary>
       <Button title="Throw inside ErrorBoundary" onPress={() => setArmed(true)} />
-      <KnownIssue id="android-247" />
     </>
   );
 }

@@ -16,11 +16,6 @@ static id Fail(NSError **out, NSError *made) {
   return nil;
 }
 
-static BOOL IsCFBoolean(id value) {
-  return [value isKindOfClass:NSNumber.class] &&
-         CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID();
-}
-
 @implementation BGSRNExceptionOptions
 @end
 
@@ -46,8 +41,6 @@ static BOOL IsCFBoolean(id value) {
   }
 
   BGSRNExceptionOptions *opts = [BGSRNExceptionOptions new];
-  // JS's contract is YES unless the caller set false.
-  opts.includeVideo = YES;
 
   id domain = object[@"domain"];
   if (domain != nil) {
@@ -59,36 +52,7 @@ static BOOL IsCFBoolean(id value) {
     opts.domain = (NSString *)domain;
   }
 
-  id labels = object[@"labels"];
-  if (labels != nil) {
-    if (![labels isKindOfClass:NSArray.class]) {
-      return Fail(error, [NSError errorWithDomain:BGSRNExceptionsErrorDomain
-                                             code:1
-                                         userInfo:@{NSLocalizedDescriptionKey : @"labels must be an array of strings"}]);
-    }
-    NSMutableArray<NSString *> *kept = [NSMutableArray array];
-    for (id element in (NSArray *)labels) {
-      if (![element isKindOfClass:NSString.class]) {
-        return Fail(error, [NSError errorWithDomain:BGSRNExceptionsErrorDomain
-                                               code:1
-                                           userInfo:@{NSLocalizedDescriptionKey : @"labels must be an array of strings"}]);
-      }
-      [kept addObject:element];
-    }
-    opts.labels = kept;
-  }
-
-  id includeVideo = object[@"includeVideo"];
-  if (includeVideo != nil) {
-    if (!IsCFBoolean(includeVideo)) {
-      return Fail(error, [NSError errorWithDomain:BGSRNExceptionsErrorDomain
-                                             code:1
-                                         userInfo:@{NSLocalizedDescriptionKey : @"includeVideo must be a boolean"}]);
-    }
-    opts.includeVideo = [(NSNumber *)includeVideo boolValue];
-  }
-
-  // Unknown keys (skipFrames, mergingRules, …) are ignored: JS already
+  // Unknown keys (labels, includeVideo, skipFrames, …) are ignored: JS already
   // rejects them, and a future key must not refuse a report the facade sent.
   if (error != NULL) {
     *error = nil;

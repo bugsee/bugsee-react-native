@@ -311,7 +311,7 @@ The table's selectors are both the `NSString`-pair overload, which is the one th
 
 (An earlier draft of this document mis-stated the unhandled selector as `logUnhandledException:name:reason:completion:` — that selector does not exist, because `name:` is a Swift argument label, not an ObjC selector segment.)
 
-The `ExceptionOptions` contract interface declares only `Domain` and `SkipFrames`, but the `logException` javadoc documents `"domain"`, `"labels"` and `"includeVideo"`. The parameter is `Map<String, Object>`, so the extra keys are accepted; the wrapper passes all three.
+The `ExceptionOptions` contract interface declares only `Domain` and `SkipFrames`, but the `logException` javadoc documents `"domain"`, `"labels"` and `"includeVideo"`. The parameter is `Map<String, Object>`, so the extra keys are accepted. **Superseded:** the SDKs no longer take per-call labels or `includeVideo` (iOS 7.0.0-beta7 removed `BugseeExceptionLoggingOptions`; Android ignores them), so `ExceptionOptions` is `{ domain }` only and labels are set through `setReportHandler`. The wrapper passes the domain alone: `logException(t, domain, 0)` on Android, `logException:reason:domain:skipFrames:completion:` on iOS.
 
 ### 9.2 Source maps
 
