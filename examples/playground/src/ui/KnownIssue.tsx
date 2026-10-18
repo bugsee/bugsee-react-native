@@ -4,7 +4,7 @@ import type { KnownIssueId } from './knownIssues';
 
 export function KnownIssue({ id }: { id: KnownIssueId }) {
   const issue = KNOWN_ISSUES[id];
-  if (Platform.OS !== issue.platform) return null;
+  if (issue === undefined || Platform.OS !== issue.platform) return null;
   return (
     <Text accessibilityRole="link" style={styles.link} onPress={() => void Linking.openURL(issue.url)}>
       {`⚠ Known issue: ${issue.title}`}

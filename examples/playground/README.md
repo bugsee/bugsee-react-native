@@ -197,9 +197,6 @@ the build still succeeds. The app runs, but crashes show raw frames.
 These are problems in the underlying Bugsee SDKs that affect some actions here.
 The app shows a note next to each affected button.
 
-| Platform | Issue |
-|---|---|
-| iOS | [A second `createReport` wipes the first](https://github.com/bugsee/bugsee-cocoa/issues/224) |
-| iOS | [`upload()` source type shows as unknown](https://github.com/bugsee/bugsee-cocoa/issues/223) |
+None are open at the pinned versions (iOS 7.0.0-beta7 fixed bugsee-cocoa#223 and #224).
 
 For manual test sessions, see [VALIDATION.md](./VALIDATION.md).

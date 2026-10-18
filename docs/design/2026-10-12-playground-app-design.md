@@ -208,9 +208,7 @@ Android 7.3.1:
 | bugsee-cocoa#195 | `deleteCollectedDataOnDevice` (iOS) |
 | bugsee-android#250 | `deleteCollectedDataOnDevice(false)` (Android) |
 | bugsee-cocoa#220 | report handler edits on a crash recovered at the next launch |
-| bugsee-cocoa#224 | a second `createReport` |
 | bugsee-android#248 | blackout before launch (Android) |
-| bugsee-cocoa#223 | `upload` trigger shows as unknown (iOS) |
 
 The list is maintained in one file, `src/ui/knownIssues.ts`.
 

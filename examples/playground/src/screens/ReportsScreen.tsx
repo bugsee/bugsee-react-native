@@ -48,7 +48,6 @@ const reportActions: Action[] = [
     label: 'Upload report (no UI)',
     call: "Bugsee.upload('Playground upload', 'Sent with no UI', IssueSeverity.Medium, ['playground', 'upload'])",
     expect: 'A bug report appears on the dashboard with these fields',
-    knownIssue: 'cocoa-223',
     run: () => Bugsee.upload('Playground upload', 'Sent with no UI', IssueSeverity.Medium, ['playground', 'upload']),
   },
   {
@@ -66,7 +65,6 @@ const createdActions: Action[] = [
     label: 'Create report',
     call: 'Bugsee.createReport()',
     expect: 'Resolves an object; a second create before upload rejects with E_REPORT_CREATE_BUSY',
-    knownIssue: 'cocoa-224',
     run: async () => {
       created = (await Bugsee.createReport()) ?? null;
       return created ? 'created' : 'null';
