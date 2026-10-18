@@ -24,11 +24,27 @@ export class IOSLaunchOptions extends BugseeLaunchOptions {
     this.$set('com.bugsee.option.capture.avplayer', value);
   }
 
-  get captureMachExceptions(): boolean | undefined {
-    return this.$get('com.bugsee.option.capture.mach-exceptions');
+  /**
+   * The fatal signals the crash reporter intercepts, as the iOS SDK's
+   * `BugseeCrashSignals` bit set: ABRT 1, SEGV 2, BUS 4, ILL 8, FPE 16,
+   * TRAP 32. Replaces `captureMachExceptions`, removed in 7.0.0-beta7.
+   */
+  get captureCrashSignals(): number | undefined {
+    return this.$get('com.bugsee.option.capture.crash-signals');
   }
-  set captureMachExceptions(value: boolean | undefined) {
-    this.$set('com.bugsee.option.capture.mach-exceptions', value);
+  set captureCrashSignals(value: number | undefined) {
+    this.$set('com.bugsee.option.capture.crash-signals', value);
+  }
+
+  /**
+   * How the crash reporter intercepts crashes, as the iOS SDK's
+   * `BugseeCrashHandlerType`: BSD 1, Mach 2, Mach and BSD 3 (the default).
+   */
+  get captureCrashHandlerType(): number | undefined {
+    return this.$get('com.bugsee.option.capture.crash-handler-type');
+  }
+  set captureCrashHandlerType(value: number | undefined) {
+    this.$set('com.bugsee.option.capture.crash-handler-type', value);
   }
 
   get captureDiskSpace(): boolean | undefined {

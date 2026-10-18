@@ -197,7 +197,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
    */
   it.skip('[OPT-026] detect.early-crash: not isolable from JS -- a JS-raised crash is after Launched, where detect.crash recovers it either way (staging S-5)', () => {});
 
-  on(['X'])('[OPT-055] capture.mach-exceptions=false: a SIGSEGV is still recovered, as a signal', async () => {
+  on(['X'])('[OPT-052] capture.crash-handler-type=BSD: a SIGSEGV is still recovered, as a signal', async () => {
     await clearBundles();
     const crash = await launch('mach-off', 'segv');
     await apiMarker(log!, 'eff crashing case=mach-off', crash.run.scenario.nonce, 10_000, crash.run.start);
@@ -213,7 +213,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(text).toMatch(/SIGSEGV/);
   });
 
-  on(['X'])('[OPT-056] capture.on-device-symbolication names the frames the control leaves bare', async () => {
+  on(['X'])('[OPT-057] capture.on-device-symbolication names the frames the control leaves bare', async () => {
     const frames = async (name: string): Promise<string> => {
       await clearBundles();
       const crash = await launch(name, 'native');
@@ -240,7 +240,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   // -------------------------------------------------------------------------
   // Exit detection
 
-  on(['A'])('[OPT-093][OPT-027][FLOW-46] detect.exit.user_requested: a force-stop is reported at the next launch, not without it', async () => {
+  on(['A'])('[OPT-094][OPT-027][FLOW-46] detect.exit.user_requested: a force-stop is reported at the next launch, not without it', async () => {
     const after = async (name: string): Promise<PulledBundle[]> => {
       await clearBundles();
       const first = await launch(name, 'idle');
@@ -376,7 +376,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
    * on) records no websocket event for Metro's /hot socket on the XS, so
    * turning the option off has nothing to remove. Read back by N-06.
    */
-  it.skip('[OPT-062] capture.websocket=false: not observable -- the SDK records no React Native (SocketRocket) websocket even with the option on', () => {});
+  it.skip('[OPT-063] capture.websocket=false: not observable -- the SDK records no React Native (SocketRocket) websocket even with the option on', () => {});
 
   // -------------------------------------------------------------------------
   // Notify flush, breadcrumb extras, report UI fields
@@ -462,7 +462,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   // -------------------------------------------------------------------------
   // iOS environment, os_log, frame-rate bounds
 
-  on(['S', 'X'])('[OPT-050][OPT-052][OPT-053][OPT-058][OPT-063][OPT-064][OPT-065] the iOS environment options change the report environment', async () => {
+  on(['S', 'X'])('[OPT-050][OPT-054][OPT-055][OPT-059][OPT-064][OPT-065][OPT-066] the iOS environment options change the report environment', async () => {
     const env = async (name: string) => {
       const outcome = await uploaded(name);
       return { outcome, environment: own(outcome, name).request.environment as Record<string, unknown> };
@@ -484,7 +484,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(added.length).toBeGreaterThan(0);
   });
 
-  on(['S', 'X'])('[OPT-054] capture.logs.oslog is accepted and ignored, as beta5 documents: no os_log line reaches the report either way', async () => {
+  on(['S', 'X'])('[OPT-056] capture.logs.oslog is accepted and ignored, as beta5 documents: no os_log line reaches the report either way', async () => {
     const lines = async (name: string): Promise<string[]> => {
       const outcome = await uploaded(name, 'oslog');
       return captureEvents(own(outcome, name), 'log')
@@ -501,7 +501,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(control).toEqual([]);
   });
 
-  on(['S', 'X'])('[OPT-059][OPT-060] capture.video.max-frame-rate caps the frame count (min-frame-rate recorded)', async () => {
+  on(['S', 'X'])('[OPT-060][OPT-061] capture.video.max-frame-rate caps the frame count (min-frame-rate recorded)', async () => {
     const frames = async (name: string, step = 'run') => {
       const outcome = await uploaded(name, step);
       const video = (own(outcome, name).binaries.get('video') ?? [])[0];
@@ -524,7 +524,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   // -------------------------------------------------------------------------
   // Android: all sources, FLAG_SECURE, handler timeout
 
-  on(['A'])('[OPT-069] capture.logs.allsources: another process\'s logcat line reaches the report only with the option', async () => {
+  on(['A'])('[OPT-070] capture.logs.allsources: another process\'s logcat line reaches the report only with the option', async () => {
     const has = async (name: string): Promise<{ other: boolean; tags: string[] }> => {
       const key = `${name}--ready`;
       if (!cache.has(key)) {
@@ -557,7 +557,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(extra.length).toBeGreaterThan(0);
   });
 
-  on(['A'])('[OPT-070] capture.respect-flag-secure: a FLAG_SECURE window is blacked out by default and recorded when off', async () => {
+  on(['A'])('[OPT-071] capture.respect-flag-secure: a FLAG_SECURE window is blacked out by default and recorded when off', async () => {
     const centre = async (name: string): Promise<number> => {
       const outcome = await uploaded(name, 'secure');
       const shot = (own(outcome, name).binaries.get('screenshot') ?? [])[0];
@@ -571,7 +571,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(ignored).toBeGreaterThanOrEqual(LUMA_BRIGHT_MIN);
   });
 
-  on(['A'])('[OPT-079] config.report-handler-callback-timeout lowers the live handler deadline', async () => {
+  on(['A'])('[OPT-080] config.report-handler-callback-timeout lowers the live handler deadline', async () => {
     const deadline = async (name: string): Promise<number> => {
       const outcome = await uploaded(name, 'handler');
       const lines = log!.all(/BugseeRN.*report handler rh-\d+ phase=\w+ deadline=(\d+)/, outcome.run.start);
@@ -617,15 +617,15 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     return cache.get(key)!;
   };
 
-  on(['A'])('[OPT-080] config.report-processing-in-process=false reads back as set', async () => {
+  on(['A'])('[OPT-081] config.report-processing-in-process=false reads back as set', async () => {
     const { options } = await outOfProcess();
     expect(jsonAfter(options.text, 'values')).toEqual({ 'com.bugsee.option.config.report-processing-in-process': false });
   });
 
-  on(['A'])('[OPT-080] config.report-processing-in-process=false still files the report (network on, dead endpoint)', async () => {
+  on(['A'])('[OPT-081] config.report-processing-in-process=false still files the report (network on, dead endpoint)', async () => {
     const { run, bundles } = await outOfProcess();
     expect(bundles.map(b => b.request.summary)).toContain(`api-eff-out-of-process-${run.scenario.nonce}`);
   });
 
-  it.skip('[OPT-097][FLOW-05b] reporting.triggers.broadcast: not covered -- the receiver is not exported and needs a signature permission; no in-app sender exists', () => {});
+  it.skip('[OPT-098][FLOW-05b] reporting.triggers.broadcast: not covered -- the receiver is not exported and needs a signature permission; no in-app sender exists', () => {});
 });

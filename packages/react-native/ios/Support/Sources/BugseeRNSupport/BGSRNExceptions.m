@@ -21,9 +21,12 @@ static BOOL IsCFBoolean(id value) {
          CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID();
 }
 
+@implementation BGSRNExceptionOptions
+@end
+
 @implementation BGSRNExceptions
 
-+ (BugseeExceptionLoggingOptions *)loggingOptionsFromJSON:(NSString *)json error:(NSError **)error {
++ (BGSRNExceptionOptions *)loggingOptionsFromJSON:(NSString *)json error:(NSError **)error {
   if (json == nil) {
     if (error != NULL) {
       *error = nil;
@@ -42,9 +45,8 @@ static BOOL IsCFBoolean(id value) {
                                        }]);
   }
 
-  BugseeExceptionLoggingOptions *opts = [BugseeExceptionLoggingOptions new];
-  // The SDK's own object defaults includeVideo to NO; JS's contract is YES
-  // unless the caller set false. Force it before reading the wire.
+  BGSRNExceptionOptions *opts = [BGSRNExceptionOptions new];
+  // JS's contract is YES unless the caller set false.
   opts.includeVideo = YES;
 
   id domain = object[@"domain"];
@@ -54,7 +56,7 @@ static BOOL IsCFBoolean(id value) {
                                              code:1
                                          userInfo:@{NSLocalizedDescriptionKey : @"domain must be a string"}]);
     }
-    opts.exceptionDomain = (NSString *)domain;
+    opts.domain = (NSString *)domain;
   }
 
   id labels = object[@"labels"];

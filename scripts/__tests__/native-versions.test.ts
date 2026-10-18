@@ -15,7 +15,7 @@ describe('readNativeVersions', () => {
     expect(v.android.gradlePlugin).toBe('4.0.8');
     // A released pin carries no snapshot provenance.
     expect(v.android).not.toHaveProperty('snapshotCommit');
-    expect(v.ios.sdk).toBe('7.0.0-beta6');
+    expect(v.ios.sdk).toBe('7.0.0-beta7');
     expect(v.ios.spmUrl).toBe('https://github.com/bugsee/spm');
   });
 

@@ -80,7 +80,7 @@ export const READBACK_ANDROID: Readonly<Record<string, unknown>> = {
   [`${P}config.max-pending-reports`]: 9,
   [`${P}config.report-handler-callback-timeout`]: 12,
   // config.report-processing-in-process=false files no report on the
-  // WOD_LX1 (option-effects.test.ts OPT-080), which this run needs for the
+  // WOD_LX1 (option-effects.test.ts OPT-081), which this run needs for the
   // environment record: read back there instead.
   [`${P}detect.anr.sampling`]: false,
   [`${P}detect.exit.bg_low_memory_as_error`]: true,
@@ -111,7 +111,8 @@ export const READBACK_IOS: Readonly<Record<string, unknown>> = {
   [`${P}capture.device-network-names`]: true,
   [`${P}capture.disk-space`]: true,
   [`${P}capture.logs.oslog`]: true,
-  [`${P}capture.mach-exceptions`]: false,
+  [`${P}capture.crash-handler-type`]: 1,
+  [`${P}capture.crash-signals`]: 11,
   [`${P}capture.on-device-symbolication`]: true,
   [`${P}capture.sample-buffer-display-layer`]: true,
   [`${P}capture.status-bar-info`]: true,
@@ -158,7 +159,8 @@ export const ACCESSOR_KEYS = {
   },
   ios: {
     captureAVPlayer: `${P}capture.avplayer`,
-    captureMachExceptions: `${P}capture.mach-exceptions`,
+    captureCrashSignals: `${P}capture.crash-signals`,
+    captureCrashHandlerType: `${P}capture.crash-handler-type`,
     captureDiskSpace: `${P}capture.disk-space`,
   },
 } as const;
@@ -223,7 +225,7 @@ export const EFFECT_OPTIONS: Readonly<Record<string, Readonly<Record<string, unk
   'oslog-control': {},
   allsources: { [`${P}capture.logs.allsources`]: true },
   'allsources-control': {},
-  'mach-off': { [`${P}capture.mach-exceptions`]: false },
+  'mach-off': { [`${P}capture.crash-handler-type`]: 1 },
   'ondevice-sym': { [`${P}capture.on-device-symbolication`]: true },
   'ondevice-sym-control': { [`${P}capture.on-device-symbolication`]: false },
   'fps-max': { [`${P}capture.video.max-frame-rate`]: 2 },
