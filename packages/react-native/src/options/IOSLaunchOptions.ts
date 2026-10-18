@@ -37,11 +37,4 @@ export class IOSLaunchOptions extends BugseeLaunchOptions {
   set captureDiskSpace(value: boolean | undefined) {
     this.$set('com.bugsee.option.capture.disk-space', value);
   }
-
-  get detectAndReportKill(): boolean | undefined {
-    return this.$get('com.bugsee.option.detect.kill');
-  }
-  set detectAndReportKill(value: boolean | undefined) {
-    this.$set('com.bugsee.option.detect.kill', value);
-  }
 }
