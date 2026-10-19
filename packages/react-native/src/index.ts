@@ -419,7 +419,10 @@ class Bugsee {
    * returns is sent at once, a promise is waited on for at most 10 s and the
    * line is stamped when it settles, and a throw, a rejection, or anything
    * else drops the line. A filtered line logged while the filter runs,
-   * before it returns, is dropped. Dropped before launch(), after the filter
+   * before it returns, is dropped. A line still waiting on a promise filter
+   * is also dropped when `launch`, `relaunch`, `attach` or `stop` is called
+   * meanwhile, whether or not that call takes effect: it would otherwise be
+   * recorded in another session. Dropped before launch(), after the filter
    * has seen it.
    */
   log(message: string, level: LogLevel = LogLevel.Info, requiresFiltering: boolean = false): void {

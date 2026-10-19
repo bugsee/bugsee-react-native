@@ -23,6 +23,12 @@ let insideFilter = false;
  * later is sent only if no such call happened in between: native would record it
  * in whichever session is live then, which can be a later one (or none), not the
  * one the line was logged in.
+ *
+ * The bump is on the call, whether or not the call takes effect (a `launch` that
+ * resolves `false` because the SDK already runs, a `stop` on a stopped SDK). That
+ * can drop a line in a session that did not change; it never records one in the
+ * wrong session, and bumping only after the native call resolved would let a line
+ * logged during that window through.
  */
 let session = 0;
 
@@ -101,7 +107,8 @@ export function log(
     insideFilter = false;
   }
   if (typeof result === 'string') {
-    if (!dropsEmpty) NativeBugsee.log(result, level, false);
+    // The filter itself may have called launch/relaunch/attach/stop before returning.
+    if (!dropsEmpty && loggedIn === session) NativeBugsee.log(result, level, false);
   } else if (isThenable(result)) {
     sendWhenSettled(result, level, loggedIn, dropsEmpty);
   }

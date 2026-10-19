@@ -362,6 +362,27 @@ describe('log with an asynchronous filter across sessions', () => {
     expect(native.log.mock.calls).toEqual([['token=[redacted]', 3, false]]);
   });
 
+  it('drops a synchronous result when the filter itself called a session method before returning', async () => {
+    Bugsee.setLogFilter((line) => {
+      void Bugsee.stop();
+      return `[app] ${line}`;
+    });
+    Bugsee.log('a', LogLevel.Info, true);
+    await flush();
+    expect(native.log).not.toHaveBeenCalled();
+  });
+
+  it('drops a waiting line even when the session call changes nothing (launch resolving false)', async () => {
+    native.launch.mockResolvedValue(false);
+    let settle: (line: string) => void = () => {};
+    Bugsee.setLogFilter(() => new Promise<string>((resolve) => (settle = resolve)));
+    Bugsee.log('x', LogLevel.Info, true);
+    await Promise.allSettled([Bugsee.launch(TOKEN)]);
+    settle('x');
+    await flush();
+    expect(native.log).not.toHaveBeenCalled();
+  });
+
   it('sends a synchronous filter result even though a session call follows', async () => {
     Bugsee.setLogFilter((line) => `[app] ${line}`);
     Bugsee.log('a', LogLevel.Info, true);
