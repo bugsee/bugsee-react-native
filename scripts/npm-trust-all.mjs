@@ -10,7 +10,7 @@
 // auth session that skips it.
 import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
-import { loadPackages } from './check-publishable.mjs';
+import { loadPackages } from './load-packages.mjs';
 import { matchesTrust } from './npm-trust-match.ts';
 
 const REPO = 'bugsee/bugsee-react-native';

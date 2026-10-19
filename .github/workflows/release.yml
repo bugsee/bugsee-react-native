@@ -11,12 +11,16 @@ name: Release
 # The file NAME is part of the trust relationship. Renaming it silently breaks publishing until
 # every package is re-registered.
 #
-# Two jobs. `check` runs the gates, packs the tarballs and dry-runs the publish on any ref, and holds no
-# publish rights. `publish`
-# needs it, runs only for a real publish, and is the only job with the OIDC token and the `npm-publish`
-# environment. The gates are the same lint, typecheck and unit tests CI runs, the release metadata
-# gate, and `prepack`'s refusal to pack a SNAPSHOT pin. `latest` is never the default, and publish-all.mjs refuses `latest` for a prerelease
-# version, so neither a forgotten nor a mistyped tag can put a beta where nobody asked for one.
+# Two jobs. `check` runs the gates, packs the tarballs and dry-runs the publish on any ref, and holds
+# no publish rights. `publish` needs it, runs only for a real publish, and is the only job with the
+# OIDC token and the `npm-publish` environment. The gates are the same lint, typecheck and unit tests
+# CI runs, the release metadata gate, and `prepack`'s refusal to pack a SNAPSHOT pin.
+#
+# `latest` is never the default, and publish-all.mjs refuses `latest` for a prerelease version, so
+# neither a forgotten nor a mistyped tag can put a beta where nobody asked for one.
+#
+# A version already on npm is skipped, not re-tagged: a re-run with a different tag reports success
+# without moving the tag. Move a tag deliberately with `npm dist-tag add`.
 on:
   workflow_dispatch:
     inputs:
@@ -115,8 +119,6 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-
-      - run: corepack enable
 
       # Trusted publishing needs npm >= 11.5.1; fail loudly rather than fall back to a token prompt.
       - name: Check npm version
