@@ -10,13 +10,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import semver from 'semver';
-import { loadPackages } from './load-packages.mjs';
+import { isEntryPoint, loadPackages } from './load-packages.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MIN_README_CHARS = 400;
 const REPO_URL = 'git+https://github.com/bugsee/bugsee-react-native.git';
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   const packages = loadPackages();
   if (process.argv.includes('--list')) {
     for (const { json } of packages) console.log(json.name);

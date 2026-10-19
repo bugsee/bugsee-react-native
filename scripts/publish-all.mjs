@@ -26,8 +26,9 @@
 //
 // `npm publish` moves exactly one dist-tag. --also-tag adds the others with `npm dist-tag add`, once
 // EVERY package is published (also for a version already on npm, so a re-run repairs a tag left
-// behind). If a publish fails, no tag is moved, so the packages never sit at different versions under
-// `latest`. If a tag step fails the packages are still published; the failures are listed at the end
+// behind). If a publish fails, no extra tag is moved. (`--tag` itself is set by `npm publish`, package
+// by package: with `--tag latest` a failure part-way leaves `latest` split until a re-run, which is safe
+// because publishing is idempotent.) If a tag step fails the packages are still published; the failures are listed at the end
 // (exit 3) with the command to run by hand. Moving a tag needs the publisher's dist-tag right, which a
 // trusted-publisher token may not carry.
 //
@@ -43,7 +44,7 @@ import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPackages } from './load-packages.mjs';
+import { isEntryPoint, loadPackages } from './load-packages.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -140,7 +141,7 @@ function addTags(name, version, tags, dryRun) {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isEntryPoint(import.meta.url)) {
   const dryRun = flag('--dry-run');
   const tag = value('--tag');
   if (!tag) {
@@ -159,9 +160,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     (p) => !only || only.includes(p.json.name),
   );
 
-  // Before anything is published: `latest` may only take a prerelease when it does not now point at a
-  // stable release (see the header).
-  if (!dryRun && [tag, ...alsoTags].includes('latest')) {
+  // Before anything is published, and in a dry run too (it only reads): `latest` may only take a
+  // prerelease when it does not now point at a stable release (see the header), so a refusal shows in
+  // the unprivileged check job, before anyone approves the publish.
+  if ([tag, ...alsoTags].includes('latest')) {
     const refusals = packages
       .filter((p) => p.json.version.includes('-'))
       .map((p) => latestRefusal(p.json.name, p.json.version))
@@ -221,7 +223,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       }
     }
   } catch (error) {
-    if (alsoTags.length > 0) console.error('\nA publish failed: no --also-tag was moved.');
+    if (alsoTags.length > 0 || tag === 'latest') console.error(
+      `\nA publish failed: no --also-tag was moved${tag === 'latest' ? '; `latest` may already point at an earlier package of the set, so re-run to finish' : ''}.`,
+    );
     throw error;
   }
 

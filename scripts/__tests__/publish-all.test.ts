@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,17 +7,43 @@ import { join } from 'node:path';
  * publish-all.mjs run against a stub `npm` that answers from environment variables and logs every
  * call, so the dist-tag rules are exercised without a registry.
  */
-const root = join(__dirname, '..', '..');
-const script = join(root, 'scripts', 'publish-all.mjs');
+const repoScripts = join(__dirname, '..');
 const names = ['@bugsee/react-native', '@bugsee/react-native-feedback'];
+const dirs: Record<string, string> = {
+  '@bugsee/react-native': 'react-native',
+  '@bugsee/react-native-feedback': 'react-native-feedback',
+};
+const VERSION = '7.0.0-beta1';
 
-function run(args: string[], env: { latest?: string; viewFails?: string; tagFails?: boolean; publishFails?: boolean }) {
+interface Env {
+  latest?: string;
+  viewFails?: string;
+  tagFails?: boolean;
+  publishFails?: boolean;
+  version?: string;
+}
+
+function run(args: string[], env: Env) {
+  const version = env.version ?? VERSION;
   const dir = mkdtempSync(join(tmpdir(), 'publish-all-'));
+  // The script reads package versions from the tree it sits in, so it runs from a temp copy with a
+  // fixed version: the suite does not depend on what version the repo is at, and the copy has no
+  // node_modules, which the publish job does not have either.
+  const root = join(dir, 'repo');
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  for (const file of ['publish-all.mjs', 'load-packages.mjs']) {
+    copyFileSync(join(repoScripts, file), join(root, 'scripts', file));
+  }
+  for (const name of names) {
+    mkdirSync(join(root, 'packages', dirs[name] as string), { recursive: true });
+    writeFileSync(join(root, 'packages', dirs[name] as string, 'package.json'), JSON.stringify({ name, version }));
+  }
+  const script = join(root, 'scripts', 'publish-all.mjs');
   const log = join(dir, 'calls.log');
   const tarballs = join(dir, 'tarballs');
   mkdirSync(tarballs);
   for (const name of names) {
-    writeFileSync(join(tarballs, `${name.replace('@', '').replace('/', '-')}-7.0.0-beta1.tgz`), '');
+    writeFileSync(join(tarballs, `${name.replace('@', '').replace('/', '-')}-${version}.tgz`), '');
   }
   const stub = join(dir, 'npm');
   writeFileSync(
@@ -27,7 +53,7 @@ echo "$@" >> "${log}"
 case "$1" in
   view)
     case "$2" in
-      *@7.0.0-beta1) echo "npm error code E404" >&2; exit 1;;
+      *@${version}) echo "npm error code E404" >&2; exit 1;;
     esac
     if [ -n "$STUB_VIEW_FAILS" ]; then echo "npm error code $STUB_VIEW_FAILS" >&2; exit 1; fi
     echo "$STUB_LATEST"; exit 0;;
@@ -62,6 +88,18 @@ describe('publish-all.mjs dist-tag rules', () => {
     const r = run(['--tag', 'latest'], { latest: '7.0.0' });
     expect(r.status).toBe(2);
     expect(publishes(r.calls)).toEqual([]);
+  });
+
+  it('refuses in a dry run too, so the unprivileged check job shows it before approval', () => {
+    const r = run(['--tag', 'beta', '--also-tag', 'latest', '--dry-run'], { latest: '7.0.0' });
+    expect(r.status).toBe(2);
+    expect(publishes(r.calls)).toEqual([]);
+  });
+
+  it('does not apply the prerelease rule to a stable version', () => {
+    const r = run(['--tag', 'latest'], { latest: '7.0.0', version: '7.0.1' });
+    expect(r.status).toBe(0);
+    expect(publishes(r.calls)).toHaveLength(2);
   });
 
   it('refuses --also-tag latest the same way', () => {
@@ -99,8 +137,8 @@ describe('publish-all.mjs dist-tag rules', () => {
     const r = run(['--tag', 'beta', '--also-tag', 'latest'], { latest: '', tagFails: true });
     expect(publishes(r.calls)).toHaveLength(2);
     expect(r.status).toBe(3);
-    expect(r.stderr).toContain('npm dist-tag add @bugsee/react-native@7.0.0-beta1 latest');
-    expect(r.stderr).toContain('npm dist-tag add @bugsee/react-native-feedback@7.0.0-beta1 latest');
+    expect(r.stderr).toContain(`npm dist-tag add @bugsee/react-native@${VERSION} latest`);
+    expect(r.stderr).toContain(`npm dist-tag add @bugsee/react-native-feedback@${VERSION} latest`);
   });
 
   it('moves no tag when a publish fails', () => {
