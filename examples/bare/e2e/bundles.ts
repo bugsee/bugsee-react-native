@@ -215,42 +215,62 @@ async function catAndroidBundle(file: string): Promise<Buffer> {
   return stdout;
 }
 
+/** The `ls -l` line of `file` in a bundles-dir listing, or 'absent'. */
+function listedLine(listing: string, file: string): string {
+  const line = listing.split('\n').find(l => l.trim().split(/\s+/).pop() === file);
+  return line === undefined ? 'absent' : line.trim();
+}
+
+/**
+ * Pulls one retained bundle and says exactly what came back. A listing of the
+ * bundles dir is taken just before and just after each pull; one `[pull-diag]`
+ * line is always logged. A pull that is not a complete zip is retried once.
+ * If it is still bad: a file that is gone from the listing was evicted between
+ * the ls and the cat (skipped, `undefined`); a file that is still listed throws
+ * with the evidence, and `TRUNCATED ZIP (non-empty)` is the one case that
+ * points at a short write by the SDK. Never returns a bad buffer.
+ */
+async function pullOneAndroidBundle(file: string): Promise<Buffer | undefined> {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const before = await listAndroidBundlesLong();
+    const startedAt = Date.now();
+    const buf = await catAndroidBundle(file);
+    const after = await listAndroidBundlesLong();
+    const kind = classifyPulledZip(buf);
+    const peek = peekBytes(buf);
+    const beforeLine = listedLine(before, file);
+    const afterLine = listedLine(after, file);
+    console.log(
+      `[pull-diag] ${file} attempt=${attempt} startedAtEpochMs=${startedAt} endedAtEpochMs=${Date.now()} ` +
+        `length=${buf.length} looksLikeZip=${buf.subarray(0, 4).equals(ZIP_LOCAL_HEADER)} kind=${kind} ` +
+        `hex=${peek.hex} text=${JSON.stringify(peek.text)} before=[${beforeLine}] after=[${afterLine}]`,
+    );
+    if (kind === 'ok') return buf;
+    console.log(`[pull-diag] ${file} not a complete zip (${kind}); bundles dir before:\n${before}\nafter:\n${after}`);
+    if (attempt === 1) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      continue;
+    }
+    if (afterLine === 'absent') {
+      console.log(`[pull-diag] ${file} evicted before pull, skipping`);
+      return undefined;
+    }
+    const headline =
+      kind === 'truncated-zip'
+        ? `TRUNCATED ZIP (non-empty): ${file} is ${buf.length} bytes, starts like a zip and has no end-of-central-directory record; the listing says [${afterLine}]`
+        : `pulled ${file} is ${kind} (${buf.length} bytes, first bytes ${JSON.stringify(peek.text)}) although it is still listed [${afterLine}]`;
+    throw new Error(`${headline}\nbundles dir before the pull:\n${before}\nafter the pull:\n${after}`);
+  }
+  return undefined;
+}
+
 export async function pullAndroidBundles(): Promise<PulledBundle[]> {
   const root = newPulledRoot();
   const bundles: PulledBundle[] = [];
-  const listedAt = Date.now();
-  const listing = await listAndroidBundlesLong();
   for (const file of await listAndroidBundles()) {
+    const stdout = await pullOneAndroidBundle(file);
+    if (stdout === undefined) continue;
     const zip = join(root, file);
-    let stdout = await catAndroidBundle(file);
-    let kind = classifyPulledZip(stdout);
-    const pulls = [{ at: Date.now(), length: stdout.length, kind }];
-    if (kind !== 'ok') {
-      // One retry: an eviction between the ls and the cat is the likely cause,
-      // and a second listing tells whether the file is still there.
-      await new Promise(resolve => setTimeout(resolve, 500));
-      stdout = await catAndroidBundle(file);
-      kind = classifyPulledZip(stdout);
-      pulls.push({ at: Date.now(), length: stdout.length, kind });
-    }
-    if (process.env.E2E_BUNDLE_DIAG === '1' || kind !== 'ok') {
-      const peek = peekBytes(stdout);
-      console.log(
-        `[bundle-pull] ${file} listedAtEpochMs=${listedAt} pulls=${JSON.stringify(pulls)} ` +
-          `length=${stdout.length} kind=${kind} startsWithPK=${stdout.subarray(0, 4).equals(ZIP_LOCAL_HEADER)} ` +
-          `hex=${peek.hex} text=${JSON.stringify(peek.text)}\nbundles dir (ls -l) before the pull:\n${listing}`,
-      );
-    }
-    if (kind !== 'ok') {
-      const after = await listAndroidBundlesLong().catch((error: unknown) => `ls failed: ${String(error)}`);
-      throw new Error(
-        `pulled ${file} is ${kind} (${stdout.length} bytes, retried once), not a complete zip` +
-          (kind === 'empty' || kind === 'error-text'
-            ? ': the cat failed (the bundle was probably evicted or removed between the ls and the pull), not a short write'
-            : '') +
-          `\nbundles dir before the pull:\n${listing}\nbundles dir after the retry:\n${after}`,
-      );
-    }
     writeFileSync(zip, stdout);
     const dir = join(root, file.replace(/\.bundle\.zip$/, ''));
     mkdirSync(dir);
