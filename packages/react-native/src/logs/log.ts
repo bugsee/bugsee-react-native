@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 import NativeBugsee from '../NativeBugsee';
 import { LogLevel } from '../options/enums';
 import { currentLogFilter, type LogFilter } from './filter';
@@ -16,6 +18,29 @@ const FILTER_TIMEOUT_MS = 10_000;
 let insideFilter = false;
 
 /**
+ * Counts the sessions the wrapper has been told about: bumped when `launch`,
+ * `relaunch`, `attach` or `stop` is called. A filtered line whose filter settles
+ * later is sent only if no such call happened in between: native would record it
+ * in whichever session is live then, which can be a later one (or none), not the
+ * one the line was logged in.
+ */
+let session = 0;
+
+/** A session starts or ends: lines still waiting on a filter are not sent. */
+export function endLogSession(): void {
+  session += 1;
+}
+
+/** `result.then` is app code's object: reading it can throw. */
+function isThenable(result: unknown): result is PromiseLike<unknown> {
+  try {
+    return typeof (result as { then?: unknown } | null | undefined)?.then === 'function';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The app's own line, through the SDK's public `Bugsee.log` -- not the
  * wrapper channel, which carries only what this wrapper captured on its own
  * (`console.*`, RCTLog) and records nothing with `capture.logs` off
@@ -29,8 +54,11 @@ let insideFilter = false;
  *
  * A string the filter returns is sent at once. A promise is waited on for at
  * most `FILTER_TIMEOUT_MS`; the line is then stamped when it settles, not when
- * it was logged. A throw, a rejection, a timeout, or anything that is not a
- * string drops the line. A filtered line logged while the filter runs, before
+ * it was logged, and only if no `launch`, `relaunch`, `attach` or `stop` was
+ * called meanwhile (it would land in another session). A throw, a rejection, a
+ * timeout, or anything that is not a string drops the line. On iOS an empty
+ * `message` is never sent, whatever the filter returns: the SDK drops an empty
+ * line before it filters, so a replacement would record a line it never records. A filtered line logged while the filter runs, before
  * it returns, is dropped too: filtering it would recurse. One logged later,
  * after an `await` or in a callback, is filtered again.
  *
@@ -61,6 +89,8 @@ export function log(
   if (insideFilter) {
     return;
   }
+  const loggedIn = session;
+  const dropsEmpty = Platform.OS === 'ios' && message === '';
   let result: ReturnType<LogFilter>;
   insideFilter = true;
   try {
@@ -71,9 +101,9 @@ export function log(
     insideFilter = false;
   }
   if (typeof result === 'string') {
-    NativeBugsee.log(result, level, false);
-  } else if (typeof result?.then === 'function') {
-    sendWhenSettled(result, level);
+    if (!dropsEmpty) NativeBugsee.log(result, level, false);
+  } else if (isThenable(result)) {
+    sendWhenSettled(result, level, loggedIn, dropsEmpty);
   }
 }
 
@@ -89,14 +119,19 @@ export function log(
  * and Android does not order timers due in the same millisecond. Either way
  * the original line is never sent.
  */
-function sendWhenSettled(result: PromiseLike<unknown>, level: LogLevel): void {
+function sendWhenSettled(
+  result: PromiseLike<unknown>,
+  level: LogLevel,
+  loggedIn: number,
+  dropsEmpty: boolean,
+): void {
   let expired = false;
   const timer = setTimeout(() => {
     expired = true;
   }, FILTER_TIMEOUT_MS);
   Promise.resolve(result)
     .then((line) => {
-      if (!expired && typeof line === 'string') {
+      if (!expired && typeof line === 'string' && loggedIn === session && !dropsEmpty) {
         NativeBugsee.log(line, level, false);
       }
     })

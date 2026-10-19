@@ -15,7 +15,7 @@ import type { LifecycleEvent } from './wrapper/events';
 import { setReportHandler as installReportHandler } from './report/dispatcher';
 import { createReport as openCreatedReport } from './report/CreatedReport';
 import type { BugseeCreatedReport, BugseeReportHandler } from './report/types';
-import { log as sendLog } from './logs/log';
+import { endLogSession, log as sendLog } from './logs/log';
 import { installConsoleCapture } from './console/capture';
 import { setLogFilter as installLogFilter } from './logs/filter';
 import type { LogFilter } from './logs/filter';
@@ -122,6 +122,8 @@ class Bugsee {
    */
   async launch(token: string, options: LaunchOptions = {}): Promise<boolean> {
     assertUsableToken(token);
+    // A filtered `log` line still waiting on its filter belongs to the session before this call.
+    endLogSession();
     // Registered before launching, not after: the SDK reads the wrapper while
     // composing a report's environment, and a crash during start-up would
     // otherwise produce a report that does not say what wrapper it came from.
@@ -152,6 +154,7 @@ class Bugsee {
    * {@link launch}. A second install does not wrap again.
    */
   async relaunch(options: LaunchOptions = {}): Promise<boolean> {
+    endLogSession();
     this.registerWrapper();
     installExceptionHandlers();
     applyExceptionCaptureFromOptions(options);
@@ -277,6 +280,7 @@ class Bugsee {
 
   /** Stops the current session. */
   async stop(): Promise<boolean> {
+    endLogSession();
     return NativeBugsee.stop();
   }
 
@@ -471,8 +475,9 @@ class Bugsee {
    * replacement string. `null` or `undefined` drops the line. For a line the
    * SDK captured, the native SDK invokes the filter; the callback runs on a
    * later turn, and this method does not wait for it. A callback that
-   * throws, rejects, or does not settle before the SDK's own timeout drops
-   * the line. It is not passed through. A {@link log} line with
+   * throws, rejects, or does not settle drops the line; it is not passed
+   * through. Android's SDK drops it once its own timeout passes. iOS has no
+   * timeout of its own: a line whose callback never settles stays unrecorded. A {@link log} line with
    * `requiresFiltering` is filtered in JS, inside that call.
    *
    * The callback must not call {@link log} with `requiresFiltering`. Such a
@@ -683,6 +688,7 @@ class Bugsee {
    * handlers; a rejected read does not install it either.
    */
   async attach(): Promise<void> {
+    endLogSession();
     setExceptionCaptureEnabled(false);
     const options = await this.getLaunchOptions();
     applyExceptionCaptureFromOptions(options);

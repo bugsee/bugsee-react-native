@@ -3,6 +3,8 @@
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 jest.mock('../NativeBugsee', () => require('../__mocks__/native').nativeMock);
 
+import { Platform } from 'react-native';
+
 import { LogLevel } from '../options/enums';
 import { native } from '../__mocks__/native';
 import Bugsee from '../index';
@@ -316,5 +318,105 @@ describe('log with requiresFiltering', () => {
     await flush();
     await new Promise((resolve) => setImmediate(resolve));
     expect(native.log).toHaveBeenCalledTimes(1);
+  });
+});
+
+// A filter that settles later must not record its line in another session.
+describe('log with an asynchronous filter across sessions', () => {
+  const TOKEN = '3f2a9c1e-0000-4abc-8def-5ca1ab1e0002';
+
+  afterEach(() => {
+    Bugsee.setLogFilter(null);
+    (Platform as { OS: string }).OS = 'android';
+  });
+
+  async function flush(times = 10): Promise<void> {
+    for (let i = 0; i < times; i++) {
+      await Promise.resolve();
+    }
+  }
+
+  it.each([
+    ['stop', () => Bugsee.stop()],
+    ['launch', () => Bugsee.launch(TOKEN)],
+    ['relaunch', () => Bugsee.relaunch()],
+    ['attach', () => Bugsee.attach()],
+  ])('drops a line whose filter settles after %s was called', async (_name, lifecycle) => {
+    let settle: (line: string) => void = () => {};
+    Bugsee.setLogFilter(() => new Promise<string>((resolve) => (settle = resolve)));
+    Bugsee.log('token=abc', LogLevel.Info, true);
+    await Promise.allSettled([lifecycle()]);
+    native.log.mockClear();
+    settle('token=[redacted]');
+    await flush();
+    expect(native.log).not.toHaveBeenCalled();
+  });
+
+  it('sends a line logged after the session started, when its filter settles', async () => {
+    await Promise.allSettled([Bugsee.launch(TOKEN)]);
+    let settle: (line: string) => void = () => {};
+    Bugsee.setLogFilter(() => new Promise<string>((resolve) => (settle = resolve)));
+    Bugsee.log('token=abc', LogLevel.Info, true);
+    settle('token=[redacted]');
+    await flush();
+    expect(native.log.mock.calls).toEqual([['token=[redacted]', 3, false]]);
+  });
+
+  it('sends a synchronous filter result even though a session call follows', async () => {
+    Bugsee.setLogFilter((line) => `[app] ${line}`);
+    Bugsee.log('a', LogLevel.Info, true);
+    await Promise.allSettled([Bugsee.stop()]);
+    expect(native.log.mock.calls).toEqual([['[app] a', 3, false]]);
+  });
+});
+
+// iOS drops an empty line before it filters; a filter must not bring one back.
+describe('log of an empty message with a filter', () => {
+  afterEach(() => {
+    Bugsee.setLogFilter(null);
+    (Platform as { OS: string }).OS = 'android';
+  });
+
+  async function flush(times = 10): Promise<void> {
+    for (let i = 0; i < times; i++) {
+      await Promise.resolve();
+    }
+  }
+
+  it.each([
+    ['synchronous', (line: string) => `[app] ${line}`],
+    ['asynchronous', (line: string) => Promise.resolve(`[app] ${line}`)],
+  ])('does not send a %s replacement for an empty line on iOS, but the filter still sees it', async (_kind, filter) => {
+    (Platform as { OS: string }).OS = 'ios';
+    const seen = jest.fn(filter as (line: string) => string);
+    Bugsee.setLogFilter(seen);
+    Bugsee.log('', LogLevel.Info, true);
+    await flush();
+    expect(seen).toHaveBeenCalledWith('');
+    expect(native.log).not.toHaveBeenCalled();
+  });
+
+  it('sends it on Android, and sends a non-empty line on iOS', async () => {
+    Bugsee.setLogFilter((line) => `[app] ${line}`);
+    Bugsee.log('', LogLevel.Info, true);
+    (Platform as { OS: string }).OS = 'ios';
+    Bugsee.log('x', LogLevel.Info, true);
+    await flush();
+    expect(native.log.mock.calls).toEqual([
+      ['[app] ', 3, false],
+      ['[app] x', 3, false],
+    ]);
+  });
+
+  it('drops the line, without throwing, when reading the result\'s then throws', async () => {
+    const hostile = {
+      get then(): never {
+        throw new Error('no');
+      },
+    };
+    Bugsee.setLogFilter(() => hostile as unknown as string);
+    expect(() => Bugsee.log('secret', LogLevel.Info, true)).not.toThrow();
+    await flush();
+    expect(native.log).not.toHaveBeenCalled();
   });
 });
