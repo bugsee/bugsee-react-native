@@ -20,7 +20,7 @@ Pod::Spec.new do |s|
   # No :file — the path would be resolved against this package's directory as
   # the autolinker symlinks it into an app's node_modules, so `../../LICENSE`
   # lands in <app>/node_modules/LICENSE and CocoaPods warns it cannot be read.
-  s.license      = { :type => 'MIT', :text => 'See LICENSE in the package root.' }
+  s.license      = { :type => 'MIT', :text => 'The wrapper is MIT, see LICENSE in the package root. The native Bugsee SDK it bundles is a separate package with its own terms.' }
   s.author       = 'Bugsee'
   # React Native's floor, read from React Native, so it tracks whichever
   # version the app is on rather than drifting. RN defines this top-level

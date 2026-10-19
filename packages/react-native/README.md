@@ -498,4 +498,4 @@ then run `pod install` again:
 
 ## Licence
 
-MIT. See [LICENSE](./LICENSE).
+The React Native wrapper is MIT. See [LICENSE](./LICENSE). The native Bugsee SDKs it bundles (iOS and Android) are separate packages with their own terms.
