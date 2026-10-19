@@ -240,7 +240,9 @@ if (isEntryPoint(import.meta.url)) {
         if (/cannot publish over the previously published versions?/i.test(text)) {
           console.log(`skip     ${name}@${version} (accepted earlier; not readable yet)`);
           skipped++;
-          settled.push({ name, version, alreadyThere: true });
+          // The earlier publish already set the primary tag, and the registry cannot show the version yet, so
+          // only the extra tags are applied (no alreadyThere).
+          settled.push({ name, version });
           continue;
         }
         process.stderr.write(text);

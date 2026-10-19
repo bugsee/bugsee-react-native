@@ -23,6 +23,7 @@ interface Env {
   version?: string;
   published?: boolean;
   tagAt?: string;
+  publishExists?: boolean;
 }
 
 function run(args: string[], env: Env) {
@@ -64,7 +65,7 @@ case "$1" in
     esac
     echo "$STUB_LATEST"; exit 0;;
   dist-tag) [ -n "$STUB_TAG_FAILS" ] && { echo "npm error code E403" >&2; exit 1; }; exit 0;;
-  publish) [ -n "$STUB_PUBLISH_FAILS" ] && { echo "npm error code E500" >&2; exit 1; }; exit 0;;
+  publish) [ -n "$STUB_PUBLISH_EXISTS" ] && { echo "npm error cannot publish over the previously published versions" >&2; exit 1; }; [ -n "$STUB_PUBLISH_FAILS" ] && { echo "npm error code E500" >&2; exit 1; }; exit 0;;
 esac
 exit 0
 `,
@@ -82,6 +83,7 @@ exit 0
       STUB_PUBLISH_FAILS: env.publishFails ? '1' : '',
       STUB_PUBLISHED: env.published ? '1' : '',
       STUB_TAG_AT: env.tagAt ?? '',
+      STUB_PUBLISH_EXISTS: env.publishExists ? '1' : '',
     },
   });
   const calls = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
@@ -173,6 +175,13 @@ describe('publish-all.mjs dist-tag rules', () => {
 
   it('moves a tag that points at another version', () => {
     const r = run(['--tag', 'beta'], { published: true, tagAt: '9.9.9' });
+    expect(tags(r.calls)).toHaveLength(2);
+  });
+
+  it('applies only the extra tags to a publish accepted earlier but not readable yet', () => {
+    const r = run(['--tag', 'beta', '--also-tag', 'latest'], { latest: '', publishExists: true });
+    expect(r.status).toBe(0);
+    expect(tags(r.calls).every((c) => c.endsWith(' latest'))).toBe(true);
     expect(tags(r.calls)).toHaveLength(2);
   });
 
