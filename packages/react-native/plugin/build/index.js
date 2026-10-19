@@ -213,5 +213,5 @@ function listSchemes(iosRoot) {
     }
     return schemes;
 }
-exports.default = (0, config_plugins_1.createRunOncePlugin)(withBugsee, '@bugsee/react-native', '7.0.0-beta1');
+exports.default = (0, config_plugins_1.createRunOncePlugin)(withBugsee, '@bugsee/react-native', '7.0.0-beta2');
 //# sourceMappingURL=index.js.map
