@@ -200,8 +200,9 @@ describeIosDevice(`reports right after launch() on ${TARGET_NAME}`, () => {
       report('hold mechanics not reached: Launched came first in every attempt', { attempts });
       expect(held).toHaveLength(0);
       expect(sent).toHaveLength(1);
+      // `upload sent` is logged only on a replay; that the upload went through
+      // is the 'files the upload' case.
       expect(log.all(bridgeLine('upload held until launched'), start)).toHaveLength(0);
-      expect(log.all(bridgeLine('upload sent'), start)).toHaveLength(1);
       return;
     }
     expect(held).toHaveLength(1);
