@@ -9,6 +9,7 @@ it("the plugin's run-once version is the package version", () => {
   // so the build is checked as well as the source.
   for (const file of [join('..', 'index.ts'), join('..', '..', 'build', 'index.js')]) {
     const text = readFileSync(join(__dirname, file), 'utf8');
-    expect(text).toMatch(new RegExp(`createRunOncePlugin\\)?\\(withBugsee, '@bugsee/react-native', '${pkg.version}'\\)`));
+    expect(text).toMatch(/createRunOncePlugin\)?\(withBugsee, /);
+    expect(text).toContain(`withBugsee, '@bugsee/react-native', '${pkg.version}')`);
   }
 });

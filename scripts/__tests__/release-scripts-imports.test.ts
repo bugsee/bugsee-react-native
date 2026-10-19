@@ -22,7 +22,16 @@ const OPAQUE = /\bcreateRequire\b|\bimport\(\s*[^'"\x60\s]|\brequire\(\s*[^'"\x6
 const importsOf = (file: string): string[] => {
   const text = readFileSync(file, 'utf8');
   if (OPAQUE.test(text)) throw new Error(`${file}: loads a module by a name this test cannot read`);
-  return PATTERNS.flatMap((re) => [...text.matchAll(re)].map((m) => m[2] as string));
+  const found = PATTERNS.flatMap((re) => [...text.matchAll(re)].map((m) => m[2] as string));
+  // Every call the patterns did not capture whole (`import('sem' + 'ver')`, a spread argument) is a
+  // load whose name this test cannot read, so count the calls and refuse on any gap.
+  const calls = (text.match(/\bimport\(/g) ?? []).length + (text.match(/\brequire\(/g) ?? []).length;
+  const captured = [PATTERNS[1], PATTERNS[2]].reduce(
+    (n, re) => n + [...text.matchAll(re as RegExp)].length,
+    0,
+  );
+  if (calls !== captured) throw new Error(`${file}: a dynamic load this test cannot read in full`);
+  return found;
 };
 
 function closure(entry: string, seen = new Set<string>()): Set<string> {
@@ -65,5 +74,7 @@ describe('the import scan itself', () => {
   it('refuses a load it cannot read', () => {
     expect(() => scan("createRequire(import.meta.url)('x');")).toThrow();
     expect(() => scan('await import(name);')).toThrow();
+    expect(() => scan("await import('sem' + 'ver');")).toThrow();
+    expect(() => scan("const r = require('a' + b);")).toThrow();
   });
 });
