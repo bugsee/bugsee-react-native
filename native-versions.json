@@ -4,7 +4,7 @@
     "gradlePlugin": "4.0.8"
   },
   "ios": {
-    "sdk": "7.0.0-beta6",
+    "sdk": "7.0.0-beta7",
     "spmUrl": "https://github.com/bugsee/spm"
   }
 }
