@@ -71,13 +71,17 @@ React Native itself also needs `nodeLinker: hoisted` under pnpm.
 ## Use
 
 ```ts
-import Bugsee, { BugseeLaunchOptions, createDefaultLaunchOptions } from '@bugsee/react-native';
+import Bugsee, { createDefaultLaunchOptions } from '@bugsee/react-native';
 
 const options = createDefaultLaunchOptions();
 options.captureLogs = true;
 
-await Bugsee.launch('<your app token>', BugseeLaunchOptions.serialize(options));
+await Bugsee.launch('<your app token>', options);
 ```
+
+`launch` and `relaunch` take the options object as is. They also accept the plain
+`com.bugsee.option.*` map, for options you build or merge yourself; the object's
+`BugseeLaunchOptions.serialize(options)` returns exactly that map.
 
 `launch` resolves to whether the SDK started. It can decline — already
 running, or a token the backend rejects — without that being an error worth

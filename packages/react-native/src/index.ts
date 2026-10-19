@@ -27,6 +27,7 @@ import type { NetworkFilter } from './network/filter';
 import { addNetworkEvent as recordNetworkEvent } from './network/add';
 import type { AddedNetworkEvent } from './network/add';
 import { type IssueSeverity, LogLevel } from './options/enums';
+import { BugseeLaunchOptions } from './options/BugseeLaunchOptions';
 import { labelsArgument, severityArgument } from './report/fields';
 import {
   assertEventOrTraceName,
@@ -104,9 +105,24 @@ function toAttributeError(error: unknown): unknown {
 
 export type LaunchOptions = Record<string, unknown>;
 
+/**
+ * What `launch` and `relaunch` take: the options object (`createDefaultLaunchOptions()` and its
+ * accessors), or the plain `com.bugsee.option.*` map it serialises to. Both are the same payload.
+ */
+export type LaunchOptionsInput = BugseeLaunchOptions | LaunchOptions;
+
+/** The native payload for either form. An options object is serialised here, once, so callers never have to. */
+function nativeOptionsOf(options: LaunchOptionsInput): LaunchOptions {
+  return options instanceof BugseeLaunchOptions
+    ? BugseeLaunchOptions.serialize(options)
+    : options;
+}
+
 class Bugsee {
   /**
-   * Starts the SDK. Resolves to whether the native side actually launched —
+   * Starts the SDK. `options` is the options object from `createDefaultLaunchOptions()` as is, or
+   * the plain option map; there is no serialise step to call. Resolves to whether the native side
+   * actually launched —
    * it can decline (already running, token rejected) without that being an
    * error the caller should throw on.
    *
@@ -120,16 +136,17 @@ class Bugsee {
    * does not install the patch. A later call does not wrap the functions
    * again; it does re-read `com.bugsee.option.capture.logs`.
    */
-  async launch(token: string, options: LaunchOptions = {}): Promise<boolean> {
+  async launch(token: string, options: LaunchOptionsInput = {}): Promise<boolean> {
     assertUsableToken(token);
+    const nativeOptions = nativeOptionsOf(options);
     // Registered before launching, not after: the SDK reads the wrapper while
     // composing a report's environment, and a crash during start-up would
     // otherwise produce a report that does not say what wrapper it came from.
     this.registerWrapper();
     installExceptionHandlers();
-    applyExceptionCaptureFromOptions(options);
-    const launched = await NativeBugsee.launch(token, options);
-    installConsoleCapture(options);
+    applyExceptionCaptureFromOptions(nativeOptions);
+    const launched = await NativeBugsee.launch(token, nativeOptions);
+    installConsoleCapture(nativeOptions);
     return launched;
   }
 
@@ -151,12 +168,13 @@ class Bugsee {
    * Installs the console patch after the native call resolves, same as
    * {@link launch}. A second install does not wrap again.
    */
-  async relaunch(options: LaunchOptions = {}): Promise<boolean> {
+  async relaunch(options: LaunchOptionsInput = {}): Promise<boolean> {
+    const nativeOptions = nativeOptionsOf(options);
     this.registerWrapper();
     installExceptionHandlers();
-    applyExceptionCaptureFromOptions(options);
-    const relaunched = await NativeBugsee.relaunch(options);
-    installConsoleCapture(options);
+    applyExceptionCaptureFromOptions(nativeOptions);
+    const relaunched = await NativeBugsee.relaunch(nativeOptions);
+    installConsoleCapture(nativeOptions);
     return relaunched;
   }
 
