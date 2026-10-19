@@ -498,4 +498,4 @@ then run `pod install` again:
 
 ## Licence
 
-Commercial. See [LICENSE](./LICENSE) and https://www.bugsee.com/terms.
+The React Native wrapper is MIT. See [LICENSE](./LICENSE). The native Bugsee SDKs it bundles (iOS and Android) are separate packages with their own terms.
