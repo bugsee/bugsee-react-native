@@ -19,8 +19,10 @@ name: Release
 # The tag is a deliberate choice: it defaults to `beta`, and a prerelease may also go to `latest`
 # while the SDK itself is a beta.
 #
-# A version already on npm is skipped, not re-tagged: a re-run with a different tag reports success
-# without moving the tag. Move a tag deliberately with `npm dist-tag add`.
+# `npm publish` moves one dist-tag. `also_tag` (default `latest`) points a second tag at the same
+# version afterwards, so `latest` and `beta` stay together while the SDK is a beta. Moving a tag needs the
+# publisher's dist-tag right, which a trusted-publisher token may not carry; if that step fails the
+# publish has still happened and the error names the command to run by hand.
 on:
   workflow_dispatch:
     inputs:
@@ -30,6 +32,10 @@ on:
         options: [beta, next, latest]
         default: beta
         required: true
+      also_tag:
+        description: Second dist-tag to point at the same version (npm publish moves only one). Blank for none.
+        default: latest
+        required: false
       dry_run:
         description: Pack and `npm publish --dry-run` only; publishes nothing
         type: boolean
@@ -79,7 +85,8 @@ jobs:
       - name: Dry-run publish
         env:
           NPM_TAG: ${{ inputs.tag }}
-        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --dry-run --pack-to "$RUNNER_TEMP/tarballs"
+          ALSO_TAG: ${{ inputs.also_tag }}
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --also-tag "$ALSO_TAG" --dry-run --pack-to "$RUNNER_TEMP/tarballs"
 
       # The bytes that passed the gates are the bytes `publish` uploads to npm.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -136,4 +143,5 @@ jobs:
       - name: Publish
         env:
           NPM_TAG: ${{ inputs.tag }}
-        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --tarballs "$RUNNER_TEMP/tarballs"
+          ALSO_TAG: ${{ inputs.also_tag }}
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --also-tag "$ALSO_TAG" --tarballs "$RUNNER_TEMP/tarballs"

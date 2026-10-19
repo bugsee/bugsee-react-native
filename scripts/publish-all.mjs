@@ -22,6 +22,13 @@
 // too but which a plain `npm publish` of a directory would not stage the same way. Publishing the
 // tarball with npm keeps the OIDC path on npm itself (>= 11.5.1), which yarn does not speak.
 //
+//   node scripts/publish-all.mjs --tag beta --also-tag latest        # then point `latest` at the same version
+//
+// `npm publish` moves exactly one dist-tag. --also-tag adds the others with `npm dist-tag add`, after the
+// publish and also for a version that is already on npm, so a re-run repairs a tag left behind. It needs
+// the publisher's right to move dist-tags, which a trusted-publisher token may not carry; if the step
+// fails the publish itself has still happened, and the error says which tag to move by hand.
+//
 // Needs Node 22.18+ (npm-trust-all.mjs loads a .ts module through type stripping).
 // Idempotent: a re-run after a partial failure skips what is already published. It stops at the
 // first failure so a broken package never lets its dependents publish against it.
@@ -81,6 +88,22 @@ const published = (name, version) => {
   }
 };
 
+/** Points each extra dist-tag at this version. Idempotent; a failure names the tag to move by hand. */
+function addTags(name, version, tags, dryRun) {
+  for (const extra of tags) {
+    console.log(`${dryRun ? 'dry-run ' : 'tag     '} ${name}@${version} -> ${extra}`);
+    if (dryRun) continue;
+    try {
+      run('npm', ['dist-tag', 'add', `${name}@${version}`, extra], { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      process.stderr.write(`${error.stdout ?? ''}${error.stderr ?? ''}`);
+      throw new Error(
+        `${name}@${version} is published, but the ${extra} tag was not moved: run \`npm dist-tag add ${name}@${version} ${extra}\``,
+      );
+    }
+  }
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const dryRun = flag('--dry-run');
   const tag = value('--tag');
@@ -89,6 +112,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(2);
   }
   const only = value('--only')?.split(',');
+  const alsoTags = (value('--also-tag')?.split(',') ?? []).filter((t) => t && t !== tag);
   const packages = topologicalOrder(loadPackages()).filter(
     (p) => !only || only.includes(p.json.name),
   );
@@ -103,6 +127,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (!dryRun && published(name, version)) {
       console.log(`skip     ${name}@${version} (already on npm)`);
       skipped++;
+      addTags(name, version, alsoTags, dryRun);
       continue;
     }
     const cwd = join(root, 'packages', dir);
@@ -118,6 +143,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     try {
       process.stdout.write(run('npm', args, { stdio: ['ignore', 'pipe', 'pipe'] }));
       done++;
+      addTags(name, version, alsoTags, dryRun);
     } catch (error) {
       const text = `${error.stdout ?? ''}${error.stderr ?? ''}`;
       // The registry accepts a publish (202) and makes it readable a few minutes later, so a re-run can
@@ -125,6 +151,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       if (/cannot publish over the previously published versions?/i.test(text)) {
         console.log(`skip     ${name}@${version} (accepted earlier; not readable yet)`);
         skipped++;
+        addTags(name, version, alsoTags, dryRun);
         continue;
       }
       process.stderr.write(text);
