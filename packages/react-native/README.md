@@ -10,9 +10,10 @@ added.
 ## Status: beta
 
 This is a beta (`7.0.0-beta1`), built on the 7.x native SDKs, and the iOS SDK it
-bundles is itself a beta. It is published under the `beta` npm dist-tag only, so
-a plain `yarn add @bugsee/react-native` finds nothing: ask for the tag, as in
-[Install](#install). The API can still change between betas.
+bundles is itself a beta. `latest` and `beta` both point at it for now, so a plain
+`yarn add @bugsee/react-native` installs it; the `@beta` form in [Install](#install)
+keeps following betas once a stable release exists. The API can still change
+between betas.
 
 It replaces `react-native-bugsee` (6.x), which stays on its own line. The two
 are different packages with different APIs, not an upgrade in place: remove the

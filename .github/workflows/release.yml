@@ -16,20 +16,30 @@ name: Release
 # OIDC token and the `npm-publish` environment. The gates are the same lint, typecheck and unit tests
 # CI runs, the release metadata gate, and `prepack`'s refusal to pack a SNAPSHOT pin.
 #
-# `latest` is never the default, and publish-all.mjs refuses `latest` for a prerelease version, so
-# neither a forgotten nor a mistyped tag can put a beta where nobody asked for one.
+# The tag is a deliberate choice: it defaults to `beta`, and a prerelease may also go to `latest`
+# while the SDK itself is a beta.
 #
-# A version already on npm is skipped, not re-tagged: a re-run with a different tag reports success
-# without moving the tag. Move a tag deliberately with `npm dist-tag add`.
+# `npm publish` moves one dist-tag. `also_tag` (blank by default, so moving `latest` is always typed)
+# points a second tag at the same version afterwards, e.g. `latest` while the SDK is a beta. publish-all
+# never moves `latest` from a stable release to a prerelease. Moving a tag needs the
+# publisher's dist-tag right, which a trusted-publisher token may not carry; if that fails every package
+# is still published and the step exits non-zero listing the commands to run by hand.
+#
+# A version already on npm is not published again, but the tags are still applied to it: a re-run with
+# another `tag` or an `also_tag` moves the tag instead of reporting success and doing nothing.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: npm dist-tag to publish under (a prerelease can never go to latest)
+        description: npm dist-tag to publish under
         type: choice
         options: [beta, next, latest]
         default: beta
         required: true
+      also_tag:
+        description: Second dist-tag to point at the same version (npm publish moves only one). Blank for none. Moving latest is a deliberate choice.
+        default: ''
+        required: false
       dry_run:
         description: Pack and `npm publish --dry-run` only; publishes nothing
         type: boolean
@@ -79,7 +89,8 @@ jobs:
       - name: Dry-run publish
         env:
           NPM_TAG: ${{ inputs.tag }}
-        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --dry-run --pack-to "$RUNNER_TEMP/tarballs"
+          ALSO_TAG: ${{ inputs.also_tag }}
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --also-tag "$ALSO_TAG" --dry-run --pack-to "$RUNNER_TEMP/tarballs"
 
       # The bytes that passed the gates are the bytes `publish` uploads to npm.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -136,4 +147,5 @@ jobs:
       - name: Publish
         env:
           NPM_TAG: ${{ inputs.tag }}
-        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --tarballs "$RUNNER_TEMP/tarballs"
+          ALSO_TAG: ${{ inputs.also_tag }}
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --also-tag "$ALSO_TAG" --tarballs "$RUNNER_TEMP/tarballs"

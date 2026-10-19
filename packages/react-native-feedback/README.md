@@ -5,8 +5,9 @@ do not have to depend on this package.
 
 ## Status: beta
 
-Published under the `beta` npm dist-tag only, at the same version as `@bugsee/react-native`
-(`7.0.0-beta1`); install both with `@beta`. The two must be the same release.
+At the same version as `@bugsee/react-native` (`7.0.0-beta1`); the npm `latest` and `beta` tags
+both point at it for now. Install both with `@beta` to keep following betas. The two must be the
+same release.
 
 ## Requirements
 

@@ -4,7 +4,7 @@ The Bugsee SDK for React Native: crash, error and bug reports that carry the vid
 network traffic, console logs and traces that led up to them. It wraps the native
 Bugsee SDKs for iOS and Android rather than reimplementing them.
 
-**Status: beta.** Published to npm under the `beta` dist-tag.
+**Status: beta.** The npm `latest` and `beta` tags both point at the current beta.
 
 | Package | What it is |
 |---|---|
