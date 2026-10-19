@@ -496,14 +496,20 @@ then run `pod install` again:
 `"includeVideo"`).** `Bugsee.logException` takes `{ domain }` only, as the
 7.x native SDKs do, and throws on any other key before anything is sent.
 Earlier betas accepted `labels` and `includeVideo`. Set labels from the
-report handler instead. `onAfterReportCreated` sees every report and may run
-more than once, so set the labels rather than append to them:
+report handler instead. It has no per-call context: the labels it sets land
+on every report it handles, not only on one `logException` call's.
+`onAfterReportCreated` may run more than once, so set the labels rather than
+append to them:
 
 ```ts
 Bugsee.setReportHandler({
   onAfterReportCreated: report => report.setLabels(['checkout']),
 });
 ```
+
+The handler sees only the reports that reach JavaScript. An Android NDK
+relaunch never does, and an iOS report recovered at launch is best-effort;
+`BugseeReportHandler` has the details.
 
 `includeVideo` has no replacement: neither SDK can leave the video out of a
 single report.
