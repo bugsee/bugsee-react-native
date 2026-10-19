@@ -17,6 +17,7 @@ import {
   setExceptionCaptureEnabled,
 } from '../exceptions/handlers';
 import { installConsoleCapture } from '../console/capture';
+import { createDefaultLaunchOptions } from '../options/createDefaultLaunchOptions';
 
 jest.mock('../NativeBugsee', () => require('../__mocks__/native').nativeMock);
 
@@ -25,6 +26,45 @@ beforeEach(() => {
   jest.mocked(installExceptionHandlers).mockClear();
   jest.mocked(setExceptionCaptureEnabled).mockClear();
   jest.mocked(installConsoleCapture).mockClear();
+});
+
+describe('launch and relaunch take the options object as is', () => {
+  const configured = () => {
+    const options = createDefaultLaunchOptions('ios');
+    options.setCustomOption('com.bugsee.option.capture.logs', false);
+    options.setCustomOption('com.bugsee.option.detect.crash', false);
+    return options;
+  };
+  const payload = { 'com.bugsee.option.capture.logs': false, 'com.bugsee.option.detect.crash': false };
+
+  it('serialises an options object for the native launch', async () => {
+    await Bugsee.launch('tok', configured());
+    expect(native.launch).toHaveBeenCalledWith('tok', payload);
+  });
+
+  it('sends the same payload for the plain map', async () => {
+    await Bugsee.launch('tok', payload);
+    expect(native.launch).toHaveBeenCalledWith('tok', payload);
+  });
+
+  it('reads the exception and console options from the serialised payload', async () => {
+    await Bugsee.launch('tok', configured());
+    expect(setExceptionCaptureEnabled).toHaveBeenLastCalledWith(false);
+    expect(installConsoleCapture).toHaveBeenCalledWith(payload);
+  });
+
+  it('never hands the native side the object itself', async () => {
+    await Bugsee.launch('tok', configured());
+    const sent = native.launch.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(Object.getPrototypeOf(sent)).toBe(Object.prototype);
+  });
+
+  it('does the same for relaunch', async () => {
+    await Bugsee.relaunch(configured());
+    expect(native.relaunch).toHaveBeenCalledWith(payload);
+    await Bugsee.relaunch(payload);
+    expect(native.relaunch).toHaveBeenLastCalledWith(payload);
+  });
 });
 
 describe('launch', () => {
