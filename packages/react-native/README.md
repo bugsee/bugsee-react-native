@@ -89,6 +89,43 @@ running, or a token the backend rejects — without that being an error worth
 throwing on. Capture comes up asynchronously, so poll `getStatus()` rather
 than assuming a resolved `launch` means recording has begun.
 
+### Reporting render errors
+
+Wrap part of the tree (or the whole app) in `<ErrorBoundary>` to report an error thrown while rendering
+and show a fallback instead of an empty screen:
+
+```tsx
+import { ErrorBoundary } from '@bugsee/react-native';
+
+<ErrorBoundary
+  fallback={({ error, componentStack, resetError }) => (
+    <ErrorScreen onRetry={resetError} />
+  )}
+  onError={(error, componentStack) => console.warn('render failed', error)}
+  options={{ domain: 'checkout' }}
+>
+  <App />
+</ErrorBoundary>
+```
+
+| Prop | |
+|---|---|
+| `fallback` | What to render after an error: an element, or a function that receives `error`, `componentStack` and `resetError()`. Without it the boundary renders nothing, so give it one. |
+| `onError(error, componentStack)` | Called after the error has been reported. |
+| `onReset(error, componentStack)` | Called when `resetError()` is called, just before the children render again. |
+| `options` | Handled-exception options for the report. `{ domain }` only, as for `Bugsee.logException`. An invalid value logs a warning and the error is reported without options. |
+
+What it does and does not do:
+
+- The error is reported as a **handled** exception, with the React component stack attached as an extra
+  (not as the error's `cause`).
+- An error object the SDK has already reported is not reported again, so a boundary and
+  `Bugsee.logException` (or the global handler) do not file the same error twice.
+- `children` is a plain React node. The function-as-children form from 6.x is not supported.
+- Like any React error boundary it only catches errors thrown while **rendering**. Errors in event
+  handlers, timers and promises are not caught by it; the global handlers `launch` installs report the
+  uncaught ones.
+
 ### Hiding a view from recordings
 
 Wrap anything that must never be recorded in `<BugseeSecure>`:
