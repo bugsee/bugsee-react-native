@@ -1,16 +1,20 @@
 import { ActivityIndicator, Pressable, Text } from 'react-native';
 import { Redirect, Tabs, useRouter } from 'expo-router';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useSession } from '../../src/session/SessionContext';
 
-const TABS = [
-  ['index', 'Home'],
-  ['capture', 'Capture'],
-  ['privacy', 'Privacy'],
-  ['errors', 'Errors'],
-  ['reports', 'Reports'],
-  ['data', 'Data'],
-  ['perf', 'Perf'],
-] as const;
+type IconName = keyof typeof Ionicons.glyphMap;
+
+// Without a tabBarIcon, React Navigation draws a fallback glyph that renders as an empty box on Android.
+export const TABS: readonly (readonly [name: string, title: string, icon: IconName])[] = [
+  ['index', 'Home', 'home-outline'],
+  ['capture', 'Capture', 'videocam-outline'],
+  ['privacy', 'Privacy', 'eye-off-outline'],
+  ['errors', 'Errors', 'bug-outline'],
+  ['reports', 'Reports', 'document-text-outline'],
+  ['data', 'Data', 'server-outline'],
+  ['perf', 'Perf', 'speedometer-outline'],
+];
 
 export default function TabsLayout() {
   const { ready, config } = useSession();
@@ -27,8 +31,12 @@ export default function TabsLayout() {
         ),
       }}
     >
-      {TABS.map(([name, title]) => (
-        <Tabs.Screen key={name} name={name} options={{ title }} />
+      {TABS.map(([name, title, icon]) => (
+        <Tabs.Screen
+          key={name}
+          name={name}
+          options={{ title, tabBarIcon: ({ color, size }) => <Ionicons name={icon} color={color} size={size} /> }}
+        />
       ))}
     </Tabs>
   );

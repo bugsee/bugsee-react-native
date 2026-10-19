@@ -1,8 +1,10 @@
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import Bugsee from '@bugsee/react-native';
 import * as Feedback from '@bugsee/react-native-feedback';
 import ReportsScreen, { reportsActions, resetReportsState } from '../src/screens/ReportsScreen';
 import { callTarget } from '../src/ui/action';
+
+const inLog = () => within(screen.getByTestId('result-log'));
 
 type Created = Record<'read' | 'update' | 'addDataAttachment' | 'upload', jest.Mock>;
 
@@ -28,7 +30,7 @@ test('renders labels', async () => {
 test('created-report steps before createReport log the error', async () => {
   await render(<ReportsScreen />);
   await press('Report: read');
-  expect(await screen.findByText(/Call Bugsee.createReport\(\) first/)).toBeTruthy();
+  expect(await inLog().findByText(/Call Bugsee.createReport\(\) first/)).toBeTruthy();
 });
 test('createReport then report.update calls the created object', async () => {
   await render(<ReportsScreen />);
@@ -74,7 +76,7 @@ test('a successful upload clears the handle', async () => {
   await press('Report: upload');
   expect(created.upload).toHaveBeenCalledTimes(1);
   await press('Report: read');
-  expect(await screen.findByText(/Call Bugsee.createReport\(\) first/)).toBeTruthy();
+  expect(await inLog().findByText(/Call Bugsee.createReport\(\) first/)).toBeTruthy();
   expect(created.read).not.toHaveBeenCalled();
 });
 test('a failed upload still clears the handle', async () => {
@@ -83,7 +85,7 @@ test('a failed upload still clears the handle', async () => {
   created.upload.mockResolvedValueOnce(false);
   await press('Report: upload');
   await press('Report: read');
-  expect(await screen.findByText(/Call Bugsee.createReport\(\) first/)).toBeTruthy();
+  expect(await inLog().findByText(/Call Bugsee.createReport\(\) first/)).toBeTruthy();
   expect(created.read).not.toHaveBeenCalled();
 });
 test('appearance assignments reach the Bugsee appearance object', async () => {
