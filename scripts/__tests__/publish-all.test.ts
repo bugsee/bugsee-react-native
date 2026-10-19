@@ -22,6 +22,7 @@ interface Env {
   publishFails?: boolean;
   version?: string;
   published?: boolean;
+  tagAt?: string;
 }
 
 function run(args: string[], env: Env) {
@@ -57,6 +58,10 @@ case "$1" in
       *@${version}) if [ -n "$STUB_PUBLISHED" ]; then echo "${version}"; exit 0; fi; echo "npm error code E404" >&2; exit 1;;
     esac
     if [ -n "$STUB_VIEW_FAILS" ]; then echo "npm error code $STUB_VIEW_FAILS" >&2; exit 1; fi
+    case "$3" in
+      dist-tags.latest) echo "$STUB_LATEST"; exit 0;;
+      dist-tags.*) echo "$STUB_TAG_AT"; exit 0;;
+    esac
     echo "$STUB_LATEST"; exit 0;;
   dist-tag) [ -n "$STUB_TAG_FAILS" ] && { echo "npm error code E403" >&2; exit 1; }; exit 0;;
   publish) [ -n "$STUB_PUBLISH_FAILS" ] && { echo "npm error code E500" >&2; exit 1; }; exit 0;;
@@ -76,6 +81,7 @@ exit 0
       STUB_TAG_FAILS: env.tagFails ? '1' : '',
       STUB_PUBLISH_FAILS: env.publishFails ? '1' : '',
       STUB_PUBLISHED: env.published ? '1' : '',
+      STUB_TAG_AT: env.tagAt ?? '',
     },
   });
   const calls = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
@@ -151,6 +157,17 @@ describe('publish-all.mjs dist-tag rules', () => {
       `dist-tag add @bugsee/react-native@${VERSION} latest`,
       `dist-tag add @bugsee/react-native-feedback@${VERSION} latest`,
     ]);
+  });
+
+  it('does not move a tag the registry already has on the version, so a re-run stays green', () => {
+    const r = run(['--tag', 'beta'], { published: true, tagAt: VERSION });
+    expect(r.status).toBe(0);
+    expect(tags(r.calls)).toEqual([]);
+  });
+
+  it('moves a tag that points at another version', () => {
+    const r = run(['--tag', 'beta'], { published: true, tagAt: '9.9.9' });
+    expect(tags(r.calls)).toHaveLength(2);
   });
 
   it('moves no tag when a publish fails', () => {

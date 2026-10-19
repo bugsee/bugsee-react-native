@@ -126,6 +126,23 @@ function latestRefusal(name, version) {
 }
 
 /**
+ * True when the registry already has `tag` on `version`. Skipping then keeps a re-run from failing on
+ * a redundant move (`npm dist-tag add` needs the dist-tag right even when nothing changes, which a
+ * trusted-publisher token may not carry). A read error is "unknown": the move is attempted.
+ */
+function tagAlreadyAt(name, tag, version) {
+  try {
+    return (
+      run('npm', ['view', name, `dist-tags.${tag}`, '--prefer-online'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim() === version
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Points each extra dist-tag at this version. Idempotent. Failures are collected, never thrown, so a
  * tag problem cannot stop a package from publishing; run only after the whole set is published.
  */
@@ -133,6 +150,10 @@ function addTags(name, version, tags, dryRun) {
   for (const extra of tags) {
     console.log(`${dryRun ? 'dry-run ' : 'tag     '} ${name}@${version} -> ${extra}`);
     if (dryRun) continue;
+    if (tagAlreadyAt(name, extra, version)) {
+      console.log(`         ${name}: ${extra} already points at ${version}`);
+      continue;
+    }
     try {
       run('npm', ['dist-tag', 'add', `${name}@${version}`, extra], { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
