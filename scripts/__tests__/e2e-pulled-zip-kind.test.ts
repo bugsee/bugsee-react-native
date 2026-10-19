@@ -23,6 +23,11 @@ describe('classifyPulledZip', () => {
     expect(classifyPulledZip(Buffer.from('run-as: package not debuggable: com.bareexample\n'))).toBe('error-text');
   });
 
+  it('malformed bytes that merely contain the word error are not-a-zip, not a failed cat', () => {
+    expect(classifyPulledZip(Buffer.from('this bundle had an error in it, and was not found complete'))).toBe('not-a-zip');
+    expect(classifyPulledZip(Buffer.from('cat: files/x.bundle.zip: Permission denied\n'))).toBe('error-text');
+  });
+
   it('other bytes that do not start like a zip are not-a-zip', () => {
     expect(classifyPulledZip(Buffer.from([0xde, 0xad, 0xbe, 0xef, 1, 2, 3]))).toBe('not-a-zip');
   });

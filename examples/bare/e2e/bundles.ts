@@ -183,7 +183,8 @@ export function classifyPulledZip(bytes: Buffer): PulledZipKind {
   if (bytes.length === 0) return 'empty';
   if (!bytes.subarray(0, 4).equals(ZIP_LOCAL_HEADER)) {
     const text = bytes.subarray(0, 256).toString('utf8');
-    return /cat:|No such file|Permission denied|run-as:|error|not found/i.test(text) ? 'error-text' : 'not-a-zip';
+    // Only what `cat` or `run-as` itself prints; arbitrary bytes that happen to contain "error" are a bad zip, not a failed cat.
+    return /^(cat|run-as): |No such file or directory|Permission denied/.test(text) ? 'error-text' : 'not-a-zip';
   }
   const tail = bytes.subarray(Math.max(0, bytes.length - (65_535 + 22)));
   const record = tail.lastIndexOf(ZIP_END_OF_CENTRAL_DIRECTORY);
