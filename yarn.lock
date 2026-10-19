@@ -2037,7 +2037,7 @@ __metadata:
   dependencies:
     react-native: "npm:0.87.1"
   peerDependencies:
-    "@bugsee/react-native": ^7.0.0-beta1
+    "@bugsee/react-native": ^7.0.0-beta2
     react: "*"
     react-native: ">=0.81.0"
   languageName: unknown
