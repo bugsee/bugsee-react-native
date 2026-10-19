@@ -1342,8 +1342,9 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 }
 
 /// A handled JS exception. `payloadJson` is the Task 7.1a payload, forwarded
-/// verbatim as the reason; `optionsJson` is `{domain?}` or null. Unparseable options are logged and the exception is still sent
-/// with nil options — a void method has no promise to reject.
+/// verbatim as the reason; `optionsJson` is `{domain?}` or null. Unparseable
+/// options are logged and the exception is still sent, without a domain — a
+/// void method has no promise to reject.
 - (void)logException:(NSString *)payloadJson
          optionsJson:(NSString * _Nullable)optionsJson {
   BGSRNRunOnMain(^{

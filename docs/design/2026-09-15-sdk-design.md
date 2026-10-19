@@ -285,18 +285,22 @@ What changes is the payload gaining a `debug_ids` member alongside name, message
 
 | | Android 7.x | iOS 7.x |
 |---|---|---|
-| handled | `logException(Throwable, Map)` | `logException:reason:options:completion:` |
+| handled | `logException(Throwable, String domain, int skipFrames)` (the `Map` overload is deprecated) | `logException:reason:domain:skipFrames:completion:` (7.0.0-beta7; beta6 and earlier: `logException:reason:options:completion:`) |
 | unhandled | `logUnhandledException(Throwable, Map)` | `logUnhandledException:reason:completion:` |
 
 `logUnhandledException` is new on Android and is a better fit than `onUncaughtException(Thread, Throwable)`, which exists to be called from a real `UncaughtExceptionHandler`.
 
-**Both exception-logging methods are two ObjC overloads each on iOS, and the RN bridge calls the `NSString`-pair one.** Verified against `Bugsee.h:367,374,380-381` (`packages/react-native/Bugsee.xcframework/ios-arm64/Bugsee.framework/Headers/`):
+**Both exception-logging methods are ObjC overloads on iOS, and the RN bridge calls the `NSString`-pair one.** As of 7.0.0-beta7 the handled ones are (`Bugsee.h` in the SDK's `Bugsee.xcframework/ios-arm64/Bugsee.framework/Headers/`; beta7 removed `BugseeExceptionLoggingOptions` and the `options:` overloads, so a beta6-or-earlier document of `logException:reason:options:completion:` is historical):
 
 ```objc
-+ (void)logException:(nonnull NSString *)name reason:(nonnull NSString *)reason options:(BugseeExceptionLoggingOptions *_Nullable)loggingOptions completion:(nullable BugseeEmptyBlock)completionBlock
-    NS_SWIFT_NAME(logException(name:reason:options:completion:));
-+ (void)logException:(nonnull NSException *)exception options:(BugseeExceptionLoggingOptions *_Nullable)loggingOptions completion:(nullable BugseeEmptyBlock)completionBlock
-    NS_SWIFT_NAME(logException(exception:options:completion:));
++ (void)logException:(nonnull NSString *)name reason:(nonnull NSString *)reason completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(name:reason:completion:));
++ (void)logException:(nonnull NSString *)name reason:(nonnull NSString *)reason domain:(nullable NSString *)domain skipFrames:(NSInteger)skipFrames completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(name:reason:domain:skipFrames:completion:));
++ (void)logException:(nonnull NSException *)exception completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(exception:completion:));
++ (void)logException:(nonnull NSException *)exception domain:(nullable NSString *)domain skipFrames:(NSInteger)skipFrames completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(exception:domain:skipFrames:completion:));
 
 + (void)logUnhandledException:(nonnull NSException *)exception completion:(nullable BugseeEmptyBlock)completionBlock
     NS_SWIFT_NAME(logUnhandledException(exception:completion:));
@@ -306,7 +310,7 @@ What changes is the payload gaining a `debug_ids` member alongside name, message
 
 The table's selectors are both the `NSString`-pair overload, which is the one the RN bridge has a name and a reason to hand it (a JS `Error`'s `name` and `message`), not a real `NSException`:
 
-- **handled** — `logException:reason:options:completion:`. Its **first** argument *is* the exception name (Swift label `name:`), the second is the reason; there is no `name:` selector segment because the first argument belongs to `logException:` itself. The `NSException`-overload's selector, `logException:options:completion:`, is the one this wrapper does not call.
+- **handled** — `logException:reason:domain:skipFrames:completion:`. Its **first** argument *is* the exception name (Swift label `name:`), the second is the reason; there is no `name:` selector segment because the first argument belongs to `logException:` itself. The `NSException` overloads (`logException:completion:`, `logException:domain:skipFrames:completion:`) are the ones this wrapper does not call.
 - **unhandled** — `logUnhandledException:reason:completion:`. Same shape: the first argument *is* the exception name (Swift label `name:` again), with no `name:` selector segment for the same reason. An `NSException`-taking overload also exists (`logUnhandledException:completion:`, Swift `logUnhandledException(exception:completion:)`), which this wrapper does not call either, since it never has a real `NSException` to hand it — only a JS error's name and message strings.
 
 (An earlier draft of this document mis-stated the unhandled selector as `logUnhandledException:name:reason:completion:` — that selector does not exist, because `name:` is a Swift argument label, not an ObjC selector segment.)

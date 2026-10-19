@@ -125,7 +125,7 @@ function BoundaryDemo() {
   const [armed, setArmed] = useState(false);
   return (
     <>
-      <Text>Expect: The fallback renders; a handled error with label boundary is reported</Text>
+      <Text>Expect: The fallback renders; a handled error with domain boundary is reported</Text>
       <ErrorBoundary
         options={{ domain: 'boundary' }}
         fallback={({ error, resetError }) => (

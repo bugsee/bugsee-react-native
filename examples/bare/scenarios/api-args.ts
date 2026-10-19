@@ -6,8 +6,7 @@
  *   api-token        before launch(): launch('') / '   ' / 42 must reject
  *                    without starting anything; then the app launches.
  *   api-subs         remove() on onLifecycleEvent and onStatusChange.
- *   api-exc-values   logException(string | plain object | null) and
- *                    {includeVideo: true | false}.
+ *   api-exc-values   logException(string | plain object | null).
  *   api-notify       notify() with severity, fields and urgent, and bare.
  *   api-spans        every SpanStatus through finish(status), startChildSpan,
  *                    setStatus then finish(), a dead handle, startSpan with no
