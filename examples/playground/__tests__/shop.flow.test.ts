@@ -48,11 +48,10 @@ test('filter returns events without a body unchanged', () => {
   expect(SHOP_NETWORK_FILTER(n)).toBe(n);
 });
 
-test('pay(declined) logs a handled exception with labels and domain', async () => {
+test('pay(declined) logs a handled exception with its domain', async () => {
   startCheckoutFlow();
   expect(await pay('declined', { total: 5 })).toBe('declined');
   expect(bugsee.logException).toHaveBeenCalledWith(expect.any(Error), {
-    labels: ['checkout', 'payment'],
     domain: 'payment',
   });
   expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/status/402'));

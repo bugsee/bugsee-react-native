@@ -77,8 +77,8 @@ public class BugseeModule extends NativeBugseeSpec
     /** Production adapter: the SDK's handled / unhandled entry points. */
     private static final ExceptionBridge.Sdk PROD_EXCEPTION_SDK = new ExceptionBridge.Sdk() {
         @Override
-        public void logException(final Throwable t, @Nullable final Map<String, Object> options) {
-            Bugsee.logException(t, options);
+        public void logException(final Throwable t, @Nullable final String domain) {
+            Bugsee.logException(t, domain, 0);
         }
 
         @Override

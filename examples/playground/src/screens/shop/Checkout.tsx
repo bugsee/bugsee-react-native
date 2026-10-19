@@ -82,7 +82,7 @@ export default function Checkout() {
       <CapturedNote
         lines={[
           'Card fields black in video, address visible',
-          'Declined: handled error with labels checkout, payment',
+          'Declined: handled error with domain payment',
           'Bug: crash at next launch with the whole flow',
         ]}
       />

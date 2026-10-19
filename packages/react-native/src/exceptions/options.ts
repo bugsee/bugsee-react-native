@@ -3,23 +3,20 @@ import { errorName } from '../errorName';
 /**
  * Options for a handled JS exception (`Bugsee.logException`).
  *
- * Encoded as JSON text for the TurboModule: `{domain?, labels?, includeVideo?}`
- * or `null` when nothing was set. Unknown keys are rejected; messages name the
+ * Encoded as JSON text for the TurboModule: `{domain?}` or `null` when nothing
+ * was set. Labels are set on the report through `setReportHandler`; the native
+ * SDKs take no per-call labels or `includeVideo`. Unknown keys are rejected; messages name the
  * field and never the rejected value.
  */
 
 export interface ExceptionOptions {
-  /** Groups the issue on the dashboard. Non-empty, at most 256 characters. */
+  /** The exception domain. Android groups issues by it; iOS records it with the report. Non-empty, at most 256 characters. */
   domain?: string;
-  /** Issue labels. Android 7.3.0 ignores them (to raise); iOS applies them. */
-  labels?: readonly string[];
-  /** Recorded in the report's exception options on iOS; neither 7.x SDK acts on it yet. */
-  includeVideo?: boolean;
 }
 
 export const EXCEPTION_DOMAIN_MAX_LENGTH = 256;
 
-const ALLOWED_KEYS = new Set(['domain', 'labels', 'includeVideo']);
+const ALLOWED_KEYS = new Set(['domain']);
 
 /** Every error `encodeExceptionOptions` threw: by identity, not by text. */
 const thrownHere = new WeakSet<Error>();
@@ -64,7 +61,6 @@ export function encodeExceptionOptions(
     }
   }
 
-  // Built in domain → labels → includeVideo order so the wire text is stable.
   const out: Record<string, unknown> = {};
 
   if (record.domain !== undefined) {
@@ -80,25 +76,6 @@ export function encodeExceptionOptions(
       ));
     }
     out.domain = record.domain;
-  }
-
-  if (record.labels !== undefined) {
-    if (!Array.isArray(record.labels)) {
-      refuse(new TypeError('ExceptionOptions.labels must be an array of strings'));
-    }
-    for (const label of record.labels) {
-      if (typeof label !== 'string') {
-        refuse(new TypeError('ExceptionOptions.labels must be an array of strings'));
-      }
-    }
-    out.labels = [...record.labels];
-  }
-
-  if (record.includeVideo !== undefined) {
-    if (typeof record.includeVideo !== 'boolean') {
-      refuse(new TypeError('ExceptionOptions.includeVideo must be a boolean'));
-    }
-    out.includeVideo = record.includeVideo;
   }
 
   if (Object.keys(out).length === 0) {

@@ -71,7 +71,7 @@ describe('report', () => {
   it('a handled error crosses as its payload and options', () => {
     const { reportHandled: report, native } = load();
     const error = new Error('boom');
-    report(error, { domain: 'auth', labels: ['a'], includeVideo: false });
+    report(error, { domain: 'auth' });
     const payload = buildExceptionPayload({
       error,
       platformOS: 'android',
@@ -79,7 +79,7 @@ describe('report', () => {
     expect(native.logException).toHaveBeenCalledTimes(1);
     expect(native.logException).toHaveBeenCalledWith(
       encodeBridgeObject(payload as unknown as Record<string, unknown>),
-      encodeExceptionOptions({ domain: 'auth', labels: ['a'], includeVideo: false }),
+      encodeExceptionOptions({ domain: 'auth' }),
     );
   });
 

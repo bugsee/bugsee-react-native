@@ -1,5 +1,7 @@
 import fixture from '../option-enums.json';
+import iosFixture from '../ios-enums.json';
 import {
+  CrashHandlerType,
   FrameRate,
   IssueSeverity,
   LogLevel,
@@ -100,5 +102,17 @@ describe('the values that diverge from ordinals', () => {
     Object.values(VideoQuality).forEach((value, ordinal) => {
       expect(value).toBe(ordinal);
     });
+  });
+});
+
+describe('CrashHandlerType matches the iOS SDK', () => {
+  // iOS only, so it is checked against BugseeCrashHandlerType from the iOS
+  // header (ios-enums.json) rather than the Android-sourced fixture above.
+  it('has the members and values of BugseeCrashHandlerType', () => {
+    const ios = (iosFixture as Record<string, Members>).CrashHandlerType ?? {};
+    const bare = Object.fromEntries(
+      Object.entries(ios).map(([member, value]) => [member.replace(/^BugseeCrashHandlerType/, ''), value])
+    );
+    expect(CrashHandlerType).toEqual(bare);
   });
 });

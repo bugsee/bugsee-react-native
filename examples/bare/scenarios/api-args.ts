@@ -6,8 +6,7 @@
  *   api-token        before launch(): launch('') / '   ' / 42 must reject
  *                    without starting anything; then the app launches.
  *   api-subs         remove() on onLifecycleEvent and onStatusChange.
- *   api-exc-values   logException(string | plain object | null) and
- *                    {includeVideo: true | false}.
+ *   api-exc-values   logException(string | plain object | null).
  *   api-notify       notify() with severity, fields and urgent, and bare.
  *   api-spans        every SpanStatus through finish(status), startChildSpan,
  *                    setStatus then finish(), a dead handle, startSpan with no
@@ -137,11 +136,7 @@ async function exceptionValues(nonce: string): Promise<void> {
     null: await settled(() => Bugsee.logException(null)),
   };
   await delay(1_500);
-  const video = {
-    on: await settled(() => Bugsee.logException(new Error(`api-exc video-on ${nonce}`), { includeVideo: true })),
-    off: await settled(() => Bugsee.logException(new Error(`api-exc video-off ${nonce}`), { includeVideo: false })),
-  };
-  mark(`exc-values done nonce=${nonce} results=${JSON.stringify(results)} video=${JSON.stringify(video)}`);
+  mark(`exc-values done nonce=${nonce} results=${JSON.stringify(results)}`);
 }
 
 async function notifications(nonce: string): Promise<void> {
