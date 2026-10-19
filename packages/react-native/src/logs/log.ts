@@ -61,7 +61,8 @@ function isThenable(result: unknown): result is PromiseLike<unknown> {
  * A string the filter returns is sent at once. A promise is waited on for at
  * most `FILTER_TIMEOUT_MS`; the line is then stamped when it settles, not when
  * it was logged, and only if no `launch`, `relaunch`, `attach` or `stop` was
- * called meanwhile (it would land in another session). A throw, a rejection, a
+ * called meanwhile and the SDK announced no `Launching` or `Stopping` (it would
+ * land in another session). A throw, a rejection, a
  * timeout, or anything that is not a string drops the line. On iOS an empty
  * `message` is never sent, whatever the filter returns: the SDK drops an empty
  * line before it filters, so a replacement would record a line it never records. A filtered line logged while the filter runs, before
@@ -133,15 +134,39 @@ function sendWhenSettled(
   dropsEmpty: boolean,
 ): void {
   let expired = false;
+  // The facade's calls bump `session`, but the SDK can also be stopped, launched or relaunched
+  // without them (native code in a mixed app, the SDK itself). Its own `Launching` and
+  // `Stopping` events say so on both platforms; native drops a late filter answer from an ended
+  // session the same way. The listener lives as long as the line waits.
+  let ended = false;
+  let watch: { remove: () => void } | undefined;
+  try {
+    watch = NativeBugsee.onLifecycleEvent((event) => {
+      if (event.name === 'Launching' || event.name === 'Stopping') ended = true;
+    });
+  } catch {
+    // The bridge is gone: only the facade's own calls can end the session then.
+  }
+  const release = () => {
+    try {
+      watch?.remove();
+    } catch {
+      // Nothing left to remove.
+    }
+  };
   const timer = setTimeout(() => {
     expired = true;
+    release();
   }, FILTER_TIMEOUT_MS);
   Promise.resolve(result)
     .then((line) => {
-      if (!expired && typeof line === 'string' && loggedIn === session && !dropsEmpty) {
+      if (!expired && !ended && typeof line === 'string' && loggedIn === session && !dropsEmpty) {
         NativeBugsee.log(line, level, false);
       }
     })
     .catch(() => {})
-    .finally(() => clearTimeout(timer));
+    .finally(() => {
+      clearTimeout(timer);
+      release();
+    });
 }

@@ -362,6 +362,78 @@ describe('log with an asynchronous filter across sessions', () => {
     expect(native.log.mock.calls).toEqual([['token=[redacted]', 3, false]]);
   });
 
+  // The SDK stopped, launched or relaunched without the facade being called (native code, the SDK itself).
+  it.each(['Stopping', 'Launching'])('drops a waiting line when the SDK announces %s', async (name) => {
+    let settle: (line: string) => void = () => {};
+    Bugsee.setLogFilter(() => new Promise<string>((resolve) => (settle = resolve)));
+    Bugsee.log('token=abc', LogLevel.Info, true);
+    native.emitLifecycle({ name });
+    settle('token=[redacted]');
+    await flush();
+    expect(native.log).not.toHaveBeenCalled();
+  });
+
+  it.each(['Launched', 'Stopped', 'BeforeReportShown'])('keeps a waiting line when the SDK announces %s', async (name) => {
+    let settle: (line: string) => void = () => {};
+    Bugsee.setLogFilter(() => new Promise<string>((resolve) => (settle = resolve)));
+    Bugsee.log('token=abc', LogLevel.Info, true);
+    native.emitLifecycle({ name });
+    settle('token=[redacted]');
+    await flush();
+    expect(native.log.mock.calls).toEqual([['token=[redacted]', 3, false]]);
+  });
+
+  it('does not let an event from before the line was logged drop it', async () => {
+    native.emitLifecycle({ name: 'Stopping' });
+    let settle: (line: string) => void = () => {};
+    Bugsee.setLogFilter(() => new Promise<string>((resolve) => (settle = resolve)));
+    Bugsee.log('x', LogLevel.Info, true);
+    settle('x');
+    await flush();
+    expect(native.log.mock.calls).toEqual([['x', 3, false]]);
+  });
+
+  it('removes its lifecycle listener when the line settles, is dropped, or times out', async () => {
+    jest.useFakeTimers();
+    try {
+      let settle: (line: string) => void = () => {};
+      Bugsee.setLogFilter(() => new Promise<string>((resolve) => (settle = resolve)));
+      const before = native.lifecycleListenerCount();
+      Bugsee.log('a', LogLevel.Info, true);
+      expect(native.lifecycleListenerCount()).toBe(before + 1);
+      settle('a');
+      await flush();
+      expect(native.lifecycleListenerCount()).toBe(before);
+
+      Bugsee.setLogFilter(() => new Promise<string>(() => {}));
+      Bugsee.log('hang', LogLevel.Info, true);
+      expect(native.lifecycleListenerCount()).toBe(before + 1);
+      jest.advanceTimersByTime(10_000);
+      expect(native.lifecycleListenerCount()).toBe(before);
+
+      Bugsee.setLogFilter(() => Promise.reject(new Error('no')));
+      Bugsee.log('rejects', LogLevel.Info, true);
+      await flush();
+      expect(native.lifecycleListenerCount()).toBe(before);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('still works when subscribing to the lifecycle channel throws', async () => {
+    const spy = jest.spyOn(native, 'onLifecycleEvent').mockImplementation(() => {
+      throw new Error('bridge gone');
+    });
+    try {
+      Bugsee.setLogFilter((line) => Promise.resolve(`[app] ${line}`));
+      Bugsee.log('a', LogLevel.Info, true);
+      await flush();
+      expect(native.log.mock.calls).toEqual([['[app] a', 3, false]]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('drops a synchronous result when the filter itself called a session method before returning', async () => {
     Bugsee.setLogFilter((line) => {
       void Bugsee.stop();
