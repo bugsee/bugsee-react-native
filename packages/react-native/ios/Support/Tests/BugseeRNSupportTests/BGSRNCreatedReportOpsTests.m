@@ -256,20 +256,21 @@
                  @"BGSRNCreatedReportAttachmentMaxBytes mirrors the SDK's MAX_SIZE_ATTACHMENT");
 }
 
-/// beta3 stores `internalAttributes` in a file-scope global and `-init`
-/// replaces it. When this fails, that bug is gone and P5 (one created report
-/// at a time) can be lifted. Filed: https://github.com/bugsee/bugsee-cocoa/issues/224
-- (void)testTheSdkSharesAttributesAcrossExtendedReports {
+/// Through beta6 `internalAttributes` lived in a file-scope global that
+/// `-init` replaced, so a second report wiped the first's
+/// (https://github.com/bugsee/bugsee-cocoa/issues/224). 7.0.0-beta7 keeps
+/// them per instance. This is what lifting P5 (one created report at a time)
+/// would rely on; P5 itself stays until it is lifted on both platforms.
+- (void)testTheSdkKeepsAttributesPerExtendedReport {
   BugseeExtendedReport *first = [BugseeExtendedReport new];
   [first setAttribute:@"only-a" withValue:@"1"];
   XCTAssertEqualObjects(first.attributes[@"only-a"], @"1");
 
   BugseeExtendedReport *second = [BugseeExtendedReport new];
-  XCTAssertNil(first.attributes[@"only-a"],
-               @"When this fails, BugseeExtendedReport no longer keeps attributes in a file-scope "
-               @"global that -init resets, and P5 (one created report at a time) can be lifted. "
-               @"The second report is %@",
-               second);
+  XCTAssertEqualObjects(first.attributes[@"only-a"], @"1",
+                        @"A second BugseeExtendedReport wiped the first one's attributes "
+                        @"(bugsee-cocoa#224 is back)");
+  XCTAssertNil(second.attributes[@"only-a"]);
 }
 
 @end

@@ -7,8 +7,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// One outstanding created report per process.
 ///
-/// iOS beta3 keeps `BugseeExtendedReport` attributes in a file-scope global,
-/// so a second created report wipes the first's (P5, https://github.com/bugsee/bugsee-cocoa/issues/224). The slot covers both
+/// iOS beta3 to beta6 kept `BugseeExtendedReport` attributes in a file-scope
+/// global, so a second created report wiped the first's (P5, https://github.com/bugsee/bugsee-cocoa/issues/224).
+/// 7.0.0-beta7 keeps them per instance; the slot stays until P5 is lifted on
+/// both platforms (Android answers `E_REPORT_CREATE_BUSY` too). The slot covers both
 /// "the SDK is still making one" and "JS holds one", and `invalidate` clears
 /// it because a reload's JS cannot know the handle.
 ///
