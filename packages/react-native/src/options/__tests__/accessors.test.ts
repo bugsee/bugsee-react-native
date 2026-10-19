@@ -28,8 +28,8 @@ const SHARED: [string, string, unknown][] = [
 
 const IOS: [string, string, unknown][] = [
   ['captureAVPlayer', 'com.bugsee.option.capture.avplayer', true],
-  ['captureCrashSignals', 'com.bugsee.option.capture.crash-signals', 11],
-  ['captureCrashHandlerType', 'com.bugsee.option.capture.crash-handler-type', 1],
+  ['crashSignals', 'com.bugsee.option.capture.crash-signals', 11],
+  ['crashHandlerType', 'com.bugsee.option.capture.crash-handler-type', 1],
   ['captureDiskSpace', 'com.bugsee.option.capture.disk-space', true],
 ];
 

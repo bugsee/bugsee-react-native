@@ -108,11 +108,13 @@ export const READBACK_IOS: Readonly<Record<string, unknown>> = {
   [`${P}capture.avplayer`]: true,
   [`${P}capture.bluetooth-status`]: true,
   [`${P}capture.camera-preview`]: true,
+  /** BSD: the SDK default is MachAndBSD (3). */
+  [`${P}capture.crash-handler-type`]: 1,
+  /** ABRT | SEGV | ILL; the SDK default is every signal. */
+  [`${P}capture.crash-signals`]: 11,
   [`${P}capture.device-network-names`]: true,
   [`${P}capture.disk-space`]: true,
   [`${P}capture.logs.oslog`]: true,
-  [`${P}capture.crash-handler-type`]: 1,
-  [`${P}capture.crash-signals`]: 11,
   [`${P}capture.on-device-symbolication`]: true,
   [`${P}capture.sample-buffer-display-layer`]: true,
   [`${P}capture.status-bar-info`]: true,
@@ -159,8 +161,8 @@ export const ACCESSOR_KEYS = {
   },
   ios: {
     captureAVPlayer: `${P}capture.avplayer`,
-    captureCrashSignals: `${P}capture.crash-signals`,
-    captureCrashHandlerType: `${P}capture.crash-handler-type`,
+    crashSignals: `${P}capture.crash-signals`,
+    crashHandlerType: `${P}capture.crash-handler-type`,
     captureDiskSpace: `${P}capture.disk-space`,
   },
 } as const;
@@ -225,7 +227,7 @@ export const EFFECT_OPTIONS: Readonly<Record<string, Readonly<Record<string, unk
   'oslog-control': {},
   allsources: { [`${P}capture.logs.allsources`]: true },
   'allsources-control': {},
-  'mach-off': { [`${P}capture.crash-handler-type`]: 1 },
+  'handler-bsd': { [`${P}capture.crash-handler-type`]: 1 },
   'ondevice-sym': { [`${P}capture.on-device-symbolication`]: true },
   'ondevice-sym-control': { [`${P}capture.on-device-symbolication`]: false },
   'fps-max': { [`${P}capture.video.max-frame-rate`]: 2 },

@@ -199,17 +199,17 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
 
   on(['X'])('[OPT-052] capture.crash-handler-type=BSD: a SIGSEGV is still recovered, as a signal', async () => {
     await clearBundles();
-    const crash = await launch('mach-off', 'segv');
-    await apiMarker(log!, 'eff crashing case=mach-off', crash.run.scenario.nonce, 10_000, crash.run.start);
+    const crash = await launch('handler-bsd', 'segv');
+    await apiMarker(log!, 'eff crashing case=handler-bsd', crash.run.scenario.nonce, 10_000, crash.run.start);
     expect(await waitForExit(20_000)).toBe(true);
     await stopApp();
-    await launch('mach-off', 'idle');
+    await launch('handler-bsd', 'idle');
     const bundles = await awaitBundles(1, 60_000);
     await stopApp();
     const crashes = bundles.filter(b => b.request.type === 'crash');
     expect(crashes).toHaveLength(1);
     const text = JSON.stringify(crashOf(crashes[0]!));
-    report('mach-off crash (head)', text.slice(0, 600));
+    report('handler-bsd crash (head)', text.slice(0, 600));
     expect(text).toMatch(/SIGSEGV/);
   });
 
