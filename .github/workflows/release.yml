@@ -19,10 +19,11 @@ name: Release
 # The tag is a deliberate choice: it defaults to `beta`, and a prerelease may also go to `latest`
 # while the SDK itself is a beta.
 #
-# `npm publish` moves one dist-tag. `also_tag` (default `latest`) points a second tag at the same
-# version afterwards, so `latest` and `beta` stay together while the SDK is a beta. Moving a tag needs the
-# publisher's dist-tag right, which a trusted-publisher token may not carry; if that step fails the
-# publish has still happened and the error names the command to run by hand.
+# `npm publish` moves one dist-tag. `also_tag` (blank by default, so moving `latest` is always typed)
+# points a second tag at the same version afterwards, e.g. `latest` while the SDK is a beta. publish-all
+# never moves `latest` from a stable release to a prerelease. Moving a tag needs the
+# publisher's dist-tag right, which a trusted-publisher token may not carry; if that fails every package
+# is still published and the step exits non-zero listing the commands to run by hand.
 on:
   workflow_dispatch:
     inputs:
@@ -33,8 +34,8 @@ on:
         default: beta
         required: true
       also_tag:
-        description: Second dist-tag to point at the same version (npm publish moves only one). Blank for none.
-        default: latest
+        description: Second dist-tag to point at the same version (npm publish moves only one). Blank for none. Moving latest is a deliberate choice.
+        default: ''
         required: false
       dry_run:
         description: Pack and `npm publish --dry-run` only; publishes nothing

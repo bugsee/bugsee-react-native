@@ -27,7 +27,9 @@
 // `npm publish` moves exactly one dist-tag. --also-tag adds the others with `npm dist-tag add`, after the
 // publish and also for a version that is already on npm, so a re-run repairs a tag left behind. It needs
 // the publisher's right to move dist-tags, which a trusted-publisher token may not carry; if the step
-// fails the publish itself has still happened, and the error says which tag to move by hand.
+// fails the publish itself has still happened, the remaining packages are still published, and the failures
+// are listed at the end (exit 3) with the command to run by hand. `latest` is never moved from a stable
+// release to a prerelease.
 //
 // Needs Node 22.18+ (npm-trust-all.mjs loads a .ts module through type stripping).
 // Idempotent: a re-run after a partial failure skips what is already published. It stops at the
@@ -88,18 +90,42 @@ const published = (name, version) => {
   }
 };
 
-/** Points each extra dist-tag at this version. Idempotent; a failure names the tag to move by hand. */
+const tagFailures = [];
+
+/** The stable version `latest` points at now, or undefined when it is a prerelease, a placeholder or unset. */
+function stableLatest(name) {
+  try {
+    const current = run('npm', ['view', name, 'dist-tags.latest', '--prefer-online'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    return current && !current.includes('-') ? current : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Points each extra dist-tag at this version. Idempotent. A failure never stops publishing: tagging
+ * runs after the package set is published and failures are listed, with the command to run by hand,
+ * so a tag problem cannot leave a pair of packages at different versions.
+ * `latest` is never moved from a stable release to a prerelease.
+ */
 function addTags(name, version, tags, dryRun) {
   for (const extra of tags) {
     console.log(`${dryRun ? 'dry-run ' : 'tag     '} ${name}@${version} -> ${extra}`);
     if (dryRun) continue;
+    if (extra === 'latest' && version.includes('-')) {
+      const stable = stableLatest(name);
+      if (stable) {
+        tagFailures.push(`${name}: refusing to move latest from stable ${stable} to prerelease ${version}`);
+        continue;
+      }
+    }
     try {
       run('npm', ['dist-tag', 'add', `${name}@${version}`, extra], { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
       process.stderr.write(`${error.stdout ?? ''}${error.stderr ?? ''}`);
-      throw new Error(
-        `${name}@${version} is published, but the ${extra} tag was not moved: run \`npm dist-tag add ${name}@${version} ${extra}\``,
-      );
+      tagFailures.push(`${name}@${version}: run \`npm dist-tag add ${name}@${version} ${extra}\``);
     }
   }
 }
@@ -161,4 +187,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(
     `\n${done} ${dryRun ? 'checked' : 'published'}, ${skipped} skipped, of ${packages.length}.`,
   );
+  if (tagFailures.length > 0) {
+    console.error('\nEvery package is published, but a tag was not moved:');
+    for (const failure of tagFailures) console.error(`  ${failure}`);
+    process.exit(3);
+  }
 }
