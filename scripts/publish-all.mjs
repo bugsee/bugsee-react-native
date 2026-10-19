@@ -30,8 +30,9 @@
 // moves it instead of succeeding and doing nothing). If a publish fails, no extra tag is moved. (`--tag` itself is set by `npm publish`, package
 // by package: with `--tag latest` a failure part-way leaves `latest` split until a re-run, which is safe
 // because publishing is idempotent.) If a tag step fails the packages are still published; the failures are listed at the end
-// (exit 3) with the command to run by hand. Moving a tag needs the publisher's dist-tag right, which a
-// trusted-publisher token may not carry.
+// (exit 3) with the command to run by hand. Moving a tag needs the trusted publisher's dist-tag permission and an
+// npm that runs the OIDC exchange for `dist-tag` (12.2.0; the npm 11 that ships with Node 24 does it only for
+// `publish` and fails with E401).
 //
 // Whenever `latest` would be set (as --tag or --also-tag) to a prerelease, the script checks first that
 // `latest` does not currently point at a stable release, and refuses before anything is published if it
