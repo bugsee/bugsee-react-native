@@ -9,6 +9,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import semver from 'semver';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MIN_README_CHARS = 400;
@@ -68,16 +69,18 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       if (/^(github:|git\+|git:|file:|link:|https?:|workspace:)/.test(range))
         errors.push(`${where}: ${dep} is a non-registry dependency (${range})`);
     }
-    // A peer range that cannot match this very release makes the pair uninstallable without
-    // --force: semver ranges such as "*" or ">=7" exclude a prerelease like 7.0.0-beta1.
+    // A peer range that does not match this very release makes the pair uninstallable without
+    // --force. Semver ranges such as "*" or ">=7" exclude a prerelease like 7.0.0-beta1, so test the
+    // range against the sibling's actual version with prereleases included, and reject "*" outright.
     for (const { json: other } of packages) {
       const range = json.peerDependencies?.[other.name];
-      if (range && range !== '*' && !range.includes(version?.split('.')[0] ?? ''))
-        errors.push(`${where}: peer ${other.name}@${range} does not look like ${version}`);
-      if (range === '*' && /-/.test(version ?? ''))
+      if (!range) continue;
+      if (range === '*' && other.version.includes('-'))
         errors.push(
-          `${where}: peer ${other.name}@"*" never matches the prerelease ${version}; use ^${version}`,
+          `${where}: peer ${other.name}@"*" never matches the prerelease ${other.version}; use ^${other.version}`,
         );
+      else if (!semver.satisfies(other.version, range, { includePrerelease: true }))
+        errors.push(`${where}: peer ${other.name}@${range} does not match ${other.version}`);
     }
   }
 

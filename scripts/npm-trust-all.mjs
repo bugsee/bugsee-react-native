@@ -14,6 +14,9 @@ import { loadPackages } from './check-publishable.mjs';
 
 const REPO = 'bugsee/bugsee-react-native';
 const WORKFLOW = 'release.yml';
+// The GitHub environment the publish job runs in. Its deployment-branch rule (main only) is what
+// limits who can mint a publish token, so the trust is registered for it and for no other ref.
+const ENVIRONMENT = 'npm-publish';
 const argv = process.argv.slice(2);
 const dryRun = argv.includes('--dry-run');
 const otpIndex = argv.indexOf('--otp');
@@ -73,6 +76,8 @@ packages: for (const { json } of loadPackages()) {
     WORKFLOW,
     '--repo',
     REPO,
+    '--env',
+    ENVIRONMENT,
     '--allow-publish',
     '--yes',
   ];
@@ -92,8 +97,24 @@ packages: for (const { json } of loadPackages()) {
         continue;
       }
       if (/already|exists|conflict|409/i.test(String(error.stderr ?? ''))) {
-        console.log(`skip     ${name} (a trusted publisher is already configured)`);
-        skipped++;
+        // An existing trust is only a success if it is THIS one. A package already trusting another
+        // repository, workflow or environment would still reject our publish, so a blind skip would
+        // exit 0 with release.yml unable to publish.
+        let listed = '';
+        try {
+          listed = npm(['trust', 'list', name, '--json']);
+        } catch (listError) {
+          listed = String(listError.stdout ?? '');
+        }
+        if ([REPO, WORKFLOW, ENVIRONMENT].every((part) => listed.includes(part))) {
+          console.log(`skip     ${name} (this trusted publisher is already configured)`);
+          skipped++;
+        } else {
+          console.error(
+            `FAILED   ${name}: a different trusted publisher is configured. Revoke it ('npm trust list ${name}', then 'npm trust revoke') and re-run.`,
+          );
+          failures.push(name);
+        }
         break;
       }
       failures.push(name);

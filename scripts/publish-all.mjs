@@ -84,6 +84,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const packages = topologicalOrder(loadPackages()).filter(
     (p) => !only || only.includes(p.json.name),
   );
+  // `latest` is what `yarn add <pkg>` installs. A prerelease there makes the beta the default install,
+  // and npm will not unpublish it after 72 hours.
+  const prereleases = packages.filter((p) => p.json.version.includes('-'));
+  if (tag === 'latest' && prereleases.length > 0) {
+    console.error(
+      `refusing --tag latest for prerelease ${prereleases.map((p) => `${p.json.name}@${p.json.version}`).join(', ')}`,
+    );
+    process.exit(2);
+  }
   const out = mkdtempSync(join(tmpdir(), 'bugsee-publish-'));
   let done = 0;
   let skipped = 0;
