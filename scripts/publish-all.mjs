@@ -11,7 +11,8 @@
 // and the job that holds the OIDC token publishes exactly those bytes, with no install step of its
 // own (a dependency's install script could otherwise ask for the token).
 //
-// --tag is required: a default of `latest` would let a forgotten flag put a beta where nobody asked.
+// --tag is required, with no default: which tag a release moves is always a deliberate choice. A
+// prerelease may be `latest` (the SDK is itself a beta, so the first beta is the default install).
 //
 // Auth is whatever `npm publish` finds: in CI that is the OIDC trusted-publisher exchange (no token);
 // for the one-time bootstrap it is NODE_AUTH_TOKEN / ~/.npmrc.
@@ -91,15 +92,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const packages = topologicalOrder(loadPackages()).filter(
     (p) => !only || only.includes(p.json.name),
   );
-  // `latest` is what `yarn add <pkg>` installs. A prerelease there makes the beta the default install,
-  // and npm will not unpublish it after 72 hours.
-  const prereleases = packages.filter((p) => p.json.version.includes('-'));
-  if (tag === 'latest' && prereleases.length > 0) {
-    console.error(
-      `refusing --tag latest for prerelease ${prereleases.map((p) => `${p.json.name}@${p.json.version}`).join(', ')}`,
-    );
-    process.exit(2);
-  }
   const tarballDir = value('--tarballs');
   const out = tarballDir ? resolve(tarballDir) : resolve(value('--pack-to') ?? mkdtempSync(join(tmpdir(), 'bugsee-publish-')));
   mkdirSync(out, { recursive: true });

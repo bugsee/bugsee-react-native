@@ -16,8 +16,8 @@ name: Release
 # OIDC token and the `npm-publish` environment. The gates are the same lint, typecheck and unit tests
 # CI runs, the release metadata gate, and `prepack`'s refusal to pack a SNAPSHOT pin.
 #
-# `latest` is never the default, and publish-all.mjs refuses `latest` for a prerelease version, so
-# neither a forgotten nor a mistyped tag can put a beta where nobody asked for one.
+# The tag is a deliberate choice: it defaults to `beta`, and a prerelease may also go to `latest`
+# while the SDK itself is a beta.
 #
 # A version already on npm is skipped, not re-tagged: a re-run with a different tag reports success
 # without moving the tag. Move a tag deliberately with `npm dist-tag add`.
@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: npm dist-tag to publish under (a prerelease can never go to latest)
+        description: npm dist-tag to publish under
         type: choice
         options: [beta, next, latest]
         default: beta
