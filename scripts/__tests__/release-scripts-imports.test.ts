@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
  */
 const scripts = join(__dirname, '..');
 const importsOf = (file: string): string[] =>
-  [...readFileSync(file, 'utf8').matchAll(/^import\s[^;]*?from\s+'([^']+)'/gms)].map((m) => m[1] as string);
+  [...readFileSync(file, 'utf8').matchAll(/^import\s+(?:[^;]*?from\s+)?'([^']+)'|\bimport\(\s*'([^']+)'\s*\)|\brequire\(\s*'([^']+)'\s*\)/gms)].map((m) => (m[1] ?? m[2] ?? m[3]) as string);
 
 function closure(entry: string, seen = new Set<string>()): Set<string> {
   if (seen.has(entry)) return seen;
