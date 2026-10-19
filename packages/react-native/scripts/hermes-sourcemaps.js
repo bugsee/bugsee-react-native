@@ -375,9 +375,9 @@ function relativeParts(flavor, from, to) {
  * Root-relative form of one `sources` entry, or the entry itself when it is
  * not an absolute path (or has no relative form).
  *
- * `memo` ({ root, dirs }) is shared across one map's entries.
+ * `memo` ({ dirs }) is shared across one map's entries.
  */
-function relativizeSource(source, projectRoot, memo = { root: undefined, dirs: new Map() }) {
+function relativizeSource(source, projectRoot, memo = { dirs: new Map() }) {
   if (typeof source !== 'string' || !isAbsoluteSource(source)) return source;
   const flavor = /^(?:[A-Za-z]:|\\\\)/.test(source) ? path.win32 : path.posix;
   const direct = relativeParts(flavor, flavor.resolve(projectRoot), flavor.resolve(source));
@@ -392,12 +392,20 @@ function relativizeSource(source, projectRoot, memo = { root: undefined, dirs: n
   // /tmp/... while Metro writes /private/tmp/...), so compare real paths,
   // which gives `/scenarios/a.ts` for that case and `../packages/x/a.js` for a
   // genuinely outside source (a linked workspace package), still free of the
-  // machine's absolute layout. Only this machine's own paths can be resolved.
-  if (flavor === path.posix && process.platform !== 'win32') {
-    if (memo.root === undefined) memo.root = realDirectory(flavor.resolve(projectRoot), flavor, memo.dirs);
+  // machine's absolute layout. Only this machine's own paths can be resolved:
+  // `path` is the host's flavor (posix or win32).
+  if (flavor === path) {
+    const root = realDirectory(flavor.resolve(projectRoot), flavor, memo.dirs);
     const resolved = flavor.resolve(source);
-    const real = flavor.join(realDirectory(flavor.dirname(resolved), flavor, memo.dirs), flavor.basename(resolved));
-    const viaReal = relativeParts(flavor, memo.root, real);
+    let real;
+    try {
+      // The file itself first: it may be a symlink to a file inside the root.
+      real = fs.realpathSync(resolved);
+    } catch {
+      real = flavor.join(realDirectory(flavor.dirname(resolved), flavor, memo.dirs), flavor.basename(resolved));
+    }
+    const viaReal = relativeParts(flavor, root, real);
+    // No relative form: the source is the root itself (through a link).
     if (viaReal !== undefined) return viaReal[0] === '..' ? viaReal.join('/') : `/${viaReal.join('/')}`;
   }
   return direct.join('/');
@@ -408,7 +416,7 @@ function relativizeSourceMap(mapText, projectRoot) {
   const map = JSON.parse(mapText);
   if (!Array.isArray(map.sources) || !projectRoot) return mapText;
   let changed = false;
-  const memo = { root: undefined, dirs: new Map() };
+  const memo = { dirs: new Map() };
   map.sources = map.sources.map((source) => {
     const next = relativizeSource(source, projectRoot, memo);
     if (next !== source) changed = true;

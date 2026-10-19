@@ -53,18 +53,51 @@ const ROOT = '/build/machine/app';
     expect(relativizeSource(`${realRoot}/linked-pkg/a.js`, linkRoot)).toBe('../packages/x/a.js');
   });
 
-  it('one map resolves the root and each directory once, however many sources it has', () => {
+  it('one map resolves the root once, however many sources it has', () => {
     const spy = jest.spyOn(fs, 'realpathSync');
     try {
       const sources = Array.from({ length: 50 }, (_, i) => `${realRoot}/scenarios/file${i}.ts`);
       const text = JSON.stringify({ version: 3, sources, mappings: '' });
       const out = JSON.parse(relativizeSourceMap(text, linkRoot));
       expect(out.sources.every((source, i) => source === `/scenarios/file${i}.ts`)).toBe(true);
-      // The root and the one `scenarios` directory, not 2 x 50.
-      expect(spy.mock.calls.length).toBeLessThanOrEqual(3);
+      // One lookup per file (it may itself be a symlink) plus the root and its
+      // directories once each, not the root again for every entry (2 x 50 or more).
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(50 + 3);
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('an outside-root file that is itself a symlink to a file inside the root maps to the in-root path', () => {
+    fs.mkdirSync(nodePath.join(base, 'real', 'elsewhere'), { recursive: true });
+    fs.symlinkSync(nodePath.join(realRoot, 'scenarios', 'a.ts'), nodePath.join(base, 'real', 'elsewhere', 'alias.ts'));
+    expect(relativizeSource(`${base}/real/elsewhere/alias.ts`, linkRoot)).toBe('/scenarios/a.ts');
+  });
+
+  it('a missing file under several missing directories is resolved through its nearest existing parent', () => {
+    expect(relativizeSource(`${realRoot}/newdir/sub/x.ts`, linkRoot)).toBe('/newdir/sub/x.ts');
+  });
+
+  it('missing directories below a symlink in the source are resolved through the existing parent of that link', () => {
+    // The source goes through the link and the root is the real path: only walking up to
+    // `link/app` (which exists) and resolving it gives the in-root form.
+    expect(relativizeSource(`${linkRoot}/newdir/sub/x.ts`, realRoot)).toBe('/newdir/sub/x.ts');
+  });
+
+  it('terminates at the filesystem root when nothing can be resolved at all', () => {
+    const spy = jest.spyOn(fs, 'realpathSync').mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+    try {
+      expect(relativizeSource(`${realRoot}/newdir/sub/x.ts`, linkRoot)).toBe('../../real/app/newdir/sub/x.ts');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('a source that is a link to the project root itself keeps its plain relative form', () => {
+    fs.symlinkSync(realRoot, nodePath.join(base, 'real', 'rootlink'));
+    expect(relativizeSource(`${base}/real/rootlink`, linkRoot)).toBe('../../real/rootlink');
   });
 
   it('a sibling package outside the root keeps its ../ form', () => {
@@ -100,9 +133,18 @@ describe('relativizeSource', () => {
     expect(relativizeSource('\\\\host\\share\\app\\a.ts', '\\\\host\\share\\app')).toBe('/a.ts');
   });
 
+  it('a Windows source outside the root stays ../-relative without touching this machine\'s filesystem', () => {
+    expect(relativizeSource('C:\\build\\packages\\x\\a.js', 'C:\\build\\app')).toBe('../packages/x/a.js');
+  });
+
   it('handles Windows paths', () => {
     expect(relativizeSource('C:\\proj\\app\\src\\a.ts', 'C:\\proj\\app')).toBe('/src/a.ts');
     expect(relativizeSource('D:\\other\\a.ts', 'C:\\proj\\app')).toBe('D:\\other\\a.ts');
+  });
+
+  it('returns a map whose sources need no change byte for byte, not re-serialized', () => {
+    const pretty = '{\n  "version": 3,\n  "sources": ["src/app.js", "./b.js"],\n  "mappings": ""\n}\n';
+    expect(relativizeSourceMap(pretty, ROOT)).toBe(pretty);
   });
 
   it('passes non-strings through', () => {

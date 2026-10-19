@@ -215,12 +215,20 @@ async function listAndroidBundlesLong(): Promise<string> {
 }
 
 async function catAndroidBundle(file: string): Promise<Buffer> {
-  const { stdout } = await execFileAsync(
-    ADB,
-    ['-s', ANDROID_SERIAL, 'exec-out', 'run-as', ANDROID_PACKAGE, 'cat', `${BUNDLES}/${file}`],
-    { encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 },
-  );
-  return stdout;
+  try {
+    const { stdout } = await execFileAsync(
+      ADB,
+      ['-s', ANDROID_SERIAL, 'exec-out', 'run-as', ANDROID_PACKAGE, 'cat', `${BUNDLES}/${file}`],
+      { encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 },
+    );
+    return stdout;
+  } catch (error) {
+    // An adb that does carry cat's exit code rejects here with the bytes it got
+    // (cat's error text, for an evicted bundle): classify those, don't lose them.
+    const stdout = (error as { stdout?: unknown }).stdout;
+    if (Buffer.isBuffer(stdout)) return stdout;
+    throw error;
+  }
 }
 
 /**
@@ -279,7 +287,9 @@ async function pullOneAndroidBundle(file: string): Promise<Buffer | undefined> {
     const headline =
       kind === 'truncated-zip'
         ? `TRUNCATED ZIP (non-empty): ${file} is ${buf.length} bytes, starts like a zip and has no end-of-central-directory record; the listing says [${afterLine}]`
-        : `pulled ${file} is ${kind} (${buf.length} bytes, first bytes ${JSON.stringify(peek.text)}) although it is still listed [${afterLine}]`;
+        : afterLine === 'absent'
+          ? `pulled ${file} is ${kind} (${buf.length} bytes, first bytes ${JSON.stringify(peek.text)}) and is no longer listed`
+          : `pulled ${file} is ${kind} (${buf.length} bytes, first bytes ${JSON.stringify(peek.text)}) although it is still listed [${afterLine}]`;
     throw new Error(`${headline}\nbundles dir before the pull:\n${before}\nafter the pull:\n${after}`);
   }
   return undefined;
