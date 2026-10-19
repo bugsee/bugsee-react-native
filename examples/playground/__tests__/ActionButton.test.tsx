@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
-import { Alert, Platform } from 'react-native';
+import { AccessibilityInfo, Alert, Platform } from 'react-native';
 import { ActionButton, describe, describeError } from '../src/ui/ActionButton';
 import { Screen } from '../src/ui/Screen';
 const inLog = () => within(screen.getByTestId('result-log'));
@@ -82,4 +82,12 @@ test('a slow earlier run does not overwrite the card after a later tap', async (
   expect(screen.getByTestId('action-result-a').props.children).toBe('→ "second"');
   await waitFor(() => expect(inLog().getByText('→ "first"', { exact: false })).toBeTruthy());
   expect(inLog().getByText('→ "second"', { exact: false })).toBeTruthy();
+});
+test('announces the running and final status to screen readers', async () => {
+  const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
+  await render(<Screen title="T"><ActionButton action={{ ...base, run: () => Promise.resolve(7) }} /></Screen>);
+  await fireEvent.press(screen.getByText('Do it'));
+  await waitFor(() => expect(announce).toHaveBeenCalledWith('→ 7'));
+  expect(announce).toHaveBeenCalledWith('▶ running…');
+  announce.mockRestore();
 });
