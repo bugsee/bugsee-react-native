@@ -346,13 +346,36 @@ function isAbsoluteSource(source) {
 }
 
 /**
+ * `p` with symlinks resolved, so a root and a source that name the same place
+ * through different paths compare equal (macOS: Xcode reports /tmp/... while
+ * Metro writes /private/tmp/...). A path that does not exist is resolved
+ * through its nearest existing parent. Only for this machine's own paths:
+ * a Windows-style entry in a map built elsewhere is returned as it is.
+ */
+function canonicalPath(p, flavor) {
+  const resolved = flavor.resolve(p);
+  if (flavor !== path.posix || process.platform === 'win32') return resolved;
+  let existing = resolved;
+  const missing = [];
+  while (existing !== flavor.dirname(existing)) {
+    try {
+      return flavor.join(fs.realpathSync(existing), ...missing.reverse());
+    } catch {
+      missing.push(flavor.basename(existing));
+      existing = flavor.dirname(existing);
+    }
+  }
+  return resolved;
+}
+
+/**
  * Root-relative form of one `sources` entry, or the entry itself when it is
  * not an absolute path (or has no relative form).
  */
 function relativizeSource(source, projectRoot) {
   if (typeof source !== 'string' || !isAbsoluteSource(source)) return source;
   const flavor = /^(?:[A-Za-z]:|\\\\)/.test(source) ? path.win32 : path.posix;
-  const relative = flavor.relative(flavor.resolve(projectRoot), flavor.resolve(source));
+  const relative = flavor.relative(canonicalPath(projectRoot, flavor), canonicalPath(source, flavor));
   // Another drive on Windows: there is no relative form.
   if (!relative || flavor.isAbsolute(relative)) return source;
   const parts = relative.split(/[\\/]/);

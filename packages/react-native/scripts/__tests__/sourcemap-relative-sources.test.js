@@ -10,6 +10,44 @@ const { relativizeSource, relativizeSourceMap, uploadComposedSourceMap } = requi
 const TOKEN = '3f2a9c1e-0000-4abc-8def-5ca1ab1e0002';
 const ROOT = '/build/machine/app';
 
+describe('relativizeSource through a symlinked project root', () => {
+  // macOS: Xcode reports the project under /tmp while Metro writes the real
+  // /private/tmp path into the map, so a plain relative() gave
+  // `../../../private/tmp/<build dir>/scenarios/a.ts`, the build machine's layout.
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const nodePath = require('node:path');
+  let base;
+  let realRoot;
+  let linkRoot;
+  beforeAll(() => {
+    base = fs.realpathSync(fs.mkdtempSync(nodePath.join(os.tmpdir(), 'bugsee-symroot-')));
+    realRoot = nodePath.join(base, 'real', 'app');
+    fs.mkdirSync(nodePath.join(realRoot, 'scenarios'), { recursive: true });
+    fs.mkdirSync(nodePath.join(base, 'real', 'packages', 'x'), { recursive: true });
+    fs.writeFileSync(nodePath.join(realRoot, 'scenarios', 'a.ts'), '');
+    fs.symlinkSync(nodePath.join(base, 'real'), nodePath.join(base, 'link'));
+    linkRoot = nodePath.join(base, 'link', 'app');
+  });
+  afterAll(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  it('a source under the real path is in the root when the root is given through the link', () => {
+    expect(relativizeSource(`${realRoot}/scenarios/a.ts`, linkRoot)).toBe('/scenarios/a.ts');
+  });
+
+  it('a source given through the link is in the root when the root is the real path', () => {
+    expect(relativizeSource(`${linkRoot}/scenarios/a.ts`, realRoot)).toBe('/scenarios/a.ts');
+  });
+
+  it('a file that does not exist is still resolved through its existing parent', () => {
+    expect(relativizeSource(`${realRoot}/scenarios/missing.ts`, linkRoot)).toBe('/scenarios/missing.ts');
+  });
+
+  it('a sibling package outside the root keeps its ../ form', () => {
+    expect(relativizeSource(`${realRoot}/../packages/x/a.js`, linkRoot)).toBe('../packages/x/a.js');
+  });
+});
+
 describe('relativizeSource', () => {
   it('makes an absolute path under the root project-relative with a leading slash', () => {
     expect(relativizeSource(`${ROOT}/scenarios/staging.ts`, ROOT)).toBe('/scenarios/staging.ts');
