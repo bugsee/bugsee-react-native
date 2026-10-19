@@ -447,7 +447,23 @@ cd ios && RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1 pod install
 
 With it set, the Archive's `dSYMs/` folder includes React's dSYMs and the
 post-action uploads them with the rest. A bare app has to export it wherever
-it runs `pod install`, including CI. With the Expo config plugin it is opt-in:
+it runs `pod install`, including CI.
+
+The dSYMs are fetched together with the prebuilt `React-Core-prebuilt` pod, so
+the variable does nothing for a pod that is already in `ios/Pods` (or in
+CocoaPods' cache) from an earlier `pod install` without it: the log shows no
+`Resolved stable dSYMs`, and the Archive has no `React.framework.dSYM`. On such
+a machine remove the pod first and install again, from the app's root
+directory:
+
+```sh
+rm -rf ios/Pods/React-Core-prebuilt
+pod cache clean React-Core-prebuilt --all
+(cd ios && RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1 pod install)
+```
+
+A fresh CI checkout is not affected. The check that it worked is the Archive's
+`dSYMs/React.framework.dSYM`. With the Expo config plugin it is opt-in:
 
 ```json
 ["@bugsee/react-native", { "appToken": "…", "symbolicateReactNativeFrameworks": true }]

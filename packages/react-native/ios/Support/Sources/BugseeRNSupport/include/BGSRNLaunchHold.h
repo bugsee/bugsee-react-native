@@ -6,7 +6,11 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /// WORKAROUND for https://github.com/bugsee/bugsee-cocoa/issues/227 -- remove
-/// this class, and its call sites in BugseeModule.mm, once that is fixed.
+/// this class, and its call sites in BugseeModule.mm, once every call it holds
+/// is accepted while the SDK is `Launching`. 7.0.0-beta7 accepts logException,
+/// logError and uploadWithSummary then (bugsee-cocoa#234);
+/// `+createReportWithCompletion:` and `+showReportDialog...` still return
+/// silently, so the hold stays for them and keeps all the calls in order.
 ///
 /// iOS 7.0.0-beta5 drops a report-creating call made while the SDK is
 /// `Launching`: `+logException:asHandled:withOptions:andCompletion:`
