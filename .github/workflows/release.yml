@@ -11,7 +11,8 @@ name: Release
 # The file NAME is part of the trust relationship. Renaming it silently breaks publishing until
 # every package is re-registered.
 #
-# Two jobs. `check` runs the gates and a dry-run publish on any ref and holds no publish rights. `publish`
+# Two jobs. `check` runs the gates, packs the tarballs and dry-runs the publish on any ref, and holds no
+# publish rights. `publish`
 # needs it, runs only for a real publish, and is the only job with the OIDC token and the `npm-publish`
 # environment. The gates are the same lint, typecheck and unit tests CI runs, the release metadata
 # gate, and `prepack`'s refusal to pack a SNAPSHOT pin. `latest` is never the default, and publish-all.mjs refuses `latest` for a prerelease
@@ -74,7 +75,15 @@ jobs:
       - name: Dry-run publish
         env:
           NPM_TAG: ${{ inputs.tag }}
-        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --dry-run
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --dry-run --pack-to "$RUNNER_TEMP/tarballs"
+
+      # The bytes that passed the gates are the bytes `publish` uploads to npm.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/tarballs
+          if-no-files-found: error
+          retention-days: 7
 
   publish:
     name: publish
@@ -115,9 +124,14 @@ jobs:
           npm --version
           node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm >= 11.5.1 required"); process.exit(1) }' "$(npm --version)"
 
-      - run: yarn install --immutable
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/tarballs
 
+      # No `yarn install` and no lifecycle script runs here: this job holds the OIDC token, so it
+      # only publishes the tarballs `check` packed and validated.
       - name: Publish
         env:
           NPM_TAG: ${{ inputs.tag }}
-        run: node scripts/publish-all.mjs --tag "$NPM_TAG"
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --tarballs "$RUNNER_TEMP/tarballs"

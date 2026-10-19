@@ -4,6 +4,12 @@
 //   node scripts/publish-all.mjs --dry-run --tag beta   # pack + `npm publish --dry-run`, publishes nothing
 //   node scripts/publish-all.mjs --tag beta             # publish under a dist-tag
 //   node scripts/publish-all.mjs --only @bugsee/react-native
+//   node scripts/publish-all.mjs --tag beta --dry-run --pack-to DIR   # also keep the tarballs in DIR
+//   node scripts/publish-all.mjs --tag beta --tarballs DIR            # publish the tarballs in DIR, pack nothing
+//
+// --pack-to / --tarballs split the release in two: a job without publish rights packs and validates,
+// and the job that holds the OIDC token publishes exactly those bytes, with no install step of its
+// own (a dependency's install script could otherwise ask for the token).
 //
 // --tag is required: a default of `latest` would let a forgotten flag put a beta where nobody asked.
 //
@@ -18,7 +24,7 @@
 // Idempotent: a re-run after a partial failure skips what is already published. It stops at the
 // first failure so a broken package never lets its dependents publish against it.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,7 +99,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     );
     process.exit(2);
   }
-  const out = mkdtempSync(join(tmpdir(), 'bugsee-publish-'));
+  const tarballDir = value('--tarballs');
+  const out = tarballDir ? resolve(tarballDir) : resolve(value('--pack-to') ?? mkdtempSync(join(tmpdir(), 'bugsee-publish-')));
+  mkdirSync(out, { recursive: true });
   let done = 0;
   let skipped = 0;
 
@@ -106,7 +114,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     }
     const cwd = join(root, 'packages', dir);
     const tarball = join(out, `${name.replace('@', '').replace('/', '-')}-${version}.tgz`);
-    run('yarn', ['pack', '--out', tarball], { cwd });
+    if (tarballDir) {
+      if (!existsSync(tarball)) throw new Error(`${name}: ${tarball} is missing; pack it in the check job first`);
+    } else {
+      run('yarn', ['pack', '--out', tarball], { cwd });
+    }
     const args = ['publish', tarball, '--tag', tag, '--access', 'public'];
     if (dryRun) args.push('--dry-run');
     console.log(`${dryRun ? 'dry-run ' : 'publish '} ${name}@${version} (tag ${tag})`);

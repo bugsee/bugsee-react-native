@@ -11,45 +11,13 @@
 import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { loadPackages } from './check-publishable.mjs';
+import { matchesTrust } from './npm-trust-match.ts';
 
 const REPO = 'bugsee/bugsee-react-native';
 const WORKFLOW = 'release.yml';
 // The GitHub environment the publish job runs in. Its deployment-branch rule (main only) is what
 // limits who can mint a publish token, so the trust is registered for it and for no other ref.
 const ENVIRONMENT = 'npm-publish';
-/**
- * True only when ONE trust entry names this repository, workflow and environment (exact values, not
- * substrings of the whole output) and grants plain publish rather than only staged publish. Anything
- * unparseable counts as "not ours": failing here costs a manual look, passing wrongly leaves a
- * release that npm rejects. The field names of `npm trust list --json` are not documented, so this
- * matches on values and on any key naming a publish permission, and has not been run against a
- * real listing.
- */
-export function matchesOurTrust(listed) {
-  let data;
-  try {
-    data = JSON.parse(listed);
-  } catch {
-    return false;
-  }
-  const entries = [];
-  const walk = (node) => {
-    if (Array.isArray(node)) node.forEach(walk);
-    else if (node && typeof node === 'object') {
-      entries.push(node);
-      Object.values(node).forEach(walk);
-    }
-  };
-  walk(data);
-  return entries.some((entry) => {
-    const values = Object.values(entry);
-    if (![REPO, WORKFLOW, ENVIRONMENT].every((part) => values.includes(part))) return false;
-    return Object.entries(entry).some(
-      ([key, value]) => /publish/i.test(key) && !/stage/i.test(key) && value === true,
-    ) || values.some((value) => Array.isArray(value) ? value.includes('publish') : false);
-  });
-}
-
 const argv = process.argv.slice(2);
 const dryRun = argv.includes('--dry-run');
 const otpIndex = argv.indexOf('--otp');
@@ -139,7 +107,7 @@ packages: for (const { json } of loadPackages()) {
         } catch (listError) {
           listed = String(listError.stdout ?? '');
         }
-        if (matchesOurTrust(listed)) {
+        if (matchesTrust(listed, { repo: REPO, file: WORKFLOW, environment: ENVIRONMENT })) {
           console.log(`skip     ${name} (this trusted publisher is already configured)`);
           skipped++;
         } else {
