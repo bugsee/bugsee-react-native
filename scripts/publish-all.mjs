@@ -26,7 +26,8 @@
 //
 // `npm publish` moves exactly one dist-tag. --also-tag adds the others with `npm dist-tag add`, once
 // EVERY package is published (also for a version already on npm, so a re-run repairs a tag left
-// behind). If a publish fails, no extra tag is moved. (`--tag` itself is set by `npm publish`, package
+// behind; for such a package the primary --tag is applied the same way, so re-running with another --tag
+// moves it instead of succeeding and doing nothing). If a publish fails, no extra tag is moved. (`--tag` itself is set by `npm publish`, package
 // by package: with `--tag latest` a failure part-way leaves `latest` split until a re-run, which is safe
 // because publishing is idempotent.) If a tag step fails the packages are still published; the failures are listed at the end
 // (exit 3) with the command to run by hand. Moving a tag needs the publisher's dist-tag right, which a
@@ -189,7 +190,7 @@ if (isEntryPoint(import.meta.url)) {
       if (!dryRun && published(name, version)) {
         console.log(`skip     ${name}@${version} (already on npm)`);
         skipped++;
-        settled.push({ name, version });
+        settled.push({ name, version, alreadyThere: true });
         continue;
       }
       const cwd = join(root, 'packages', dir);
@@ -215,7 +216,7 @@ if (isEntryPoint(import.meta.url)) {
         if (/cannot publish over the previously published versions?/i.test(text)) {
           console.log(`skip     ${name}@${version} (accepted earlier; not readable yet)`);
           skipped++;
-          settled.push({ name, version });
+          settled.push({ name, version, alreadyThere: true });
           continue;
         }
         process.stderr.write(text);
@@ -229,7 +230,11 @@ if (isEntryPoint(import.meta.url)) {
     throw error;
   }
 
-  for (const { name, version } of settled) addTags(name, version, alsoTags, dryRun);
+  // A package that was already on npm was not touched by `npm publish`, so its primary tag is applied
+  // here too: a re-run with a different --tag moves it instead of reporting success and doing nothing.
+  for (const { name, version, alreadyThere } of settled) {
+    addTags(name, version, alreadyThere ? [tag, ...alsoTags] : alsoTags, dryRun);
+  }
   console.log(
     `\n${done} ${dryRun ? 'checked' : 'published'}, ${skipped} skipped, of ${packages.length}.`,
   );

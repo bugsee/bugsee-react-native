@@ -24,6 +24,9 @@ name: Release
 # never moves `latest` from a stable release to a prerelease. Moving a tag needs the
 # publisher's dist-tag right, which a trusted-publisher token may not carry; if that fails every package
 # is still published and the step exits non-zero listing the commands to run by hand.
+#
+# A version already on npm is not published again, but the tags are still applied to it: a re-run with
+# another `tag` or an `also_tag` moves the tag instead of reporting success and doing nothing.
 on:
   workflow_dispatch:
     inputs:

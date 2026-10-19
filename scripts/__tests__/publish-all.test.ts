@@ -21,6 +21,7 @@ interface Env {
   tagFails?: boolean;
   publishFails?: boolean;
   version?: string;
+  published?: boolean;
 }
 
 function run(args: string[], env: Env) {
@@ -53,7 +54,7 @@ echo "$@" >> "${log}"
 case "$1" in
   view)
     case "$2" in
-      *@${version}) echo "npm error code E404" >&2; exit 1;;
+      *@${version}) if [ -n "$STUB_PUBLISHED" ]; then echo "${version}"; exit 0; fi; echo "npm error code E404" >&2; exit 1;;
     esac
     if [ -n "$STUB_VIEW_FAILS" ]; then echo "npm error code $STUB_VIEW_FAILS" >&2; exit 1; fi
     echo "$STUB_LATEST"; exit 0;;
@@ -74,6 +75,7 @@ exit 0
       STUB_VIEW_FAILS: env.viewFails ?? '',
       STUB_TAG_FAILS: env.tagFails ? '1' : '',
       STUB_PUBLISH_FAILS: env.publishFails ? '1' : '',
+      STUB_PUBLISHED: env.published ? '1' : '',
     },
   });
   const calls = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
@@ -139,6 +141,16 @@ describe('publish-all.mjs dist-tag rules', () => {
     expect(r.status).toBe(3);
     expect(r.stderr).toContain(`npm dist-tag add @bugsee/react-native@${VERSION} latest`);
     expect(r.stderr).toContain(`npm dist-tag add @bugsee/react-native-feedback@${VERSION} latest`);
+  });
+
+  it('applies the primary tag to a package that is already on npm, so a re-run with another tag moves it', () => {
+    const r = run(['--tag', 'latest'], { latest: '0.0.0-stage', published: true });
+    expect(r.status).toBe(0);
+    expect(publishes(r.calls)).toEqual([]);
+    expect(tags(r.calls)).toEqual([
+      `dist-tag add @bugsee/react-native@${VERSION} latest`,
+      `dist-tag add @bugsee/react-native-feedback@${VERSION} latest`,
+    ]);
   });
 
   it('moves no tag when a publish fails', () => {
