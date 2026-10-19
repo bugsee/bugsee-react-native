@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "sdk": "android",
-  "sdkVersion": "7.4.1",
+  "sdkVersion": "7.4.2",
   "buildConfiguration": "release",
   "generatedAt": "2026-10-13T15:48:14Z",
   "options": [

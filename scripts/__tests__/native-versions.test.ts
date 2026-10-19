@@ -11,7 +11,7 @@ const valid: NativeVersions = {
 describe('readNativeVersions', () => {
   it('exposes the pinned native versions', () => {
     const v = readNativeVersions();
-    expect(v.android.sdk).toBe('7.4.1');
+    expect(v.android.sdk).toBe('7.4.2');
     expect(v.android.gradlePlugin).toBe('4.0.8');
     // A released pin carries no snapshot provenance.
     expect(v.android).not.toHaveProperty('snapshotCommit');

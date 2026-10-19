@@ -3,6 +3,11 @@
 The in-app feedback chat for `@bugsee/react-native`. Apps that never show it
 do not have to depend on this package.
 
+## Status: beta
+
+Published under the `beta` npm dist-tag only, at the same version as `@bugsee/react-native`
+(`7.0.0-beta1`); install both with `@beta`. The two must be the same release.
+
 ## Requirements
 
 The same as `@bugsee/react-native`: React Native 0.81 or later with the New
@@ -14,7 +19,7 @@ React Native.
 ## Install
 
 ```sh
-yarn add @bugsee/react-native @bugsee/react-native-feedback
+yarn add @bugsee/react-native@beta @bugsee/react-native-feedback@beta
 ```
 
 No Expo config plugin. Autolinking adds `bugsee-android-feedback` on Android.
@@ -61,3 +66,7 @@ before the chat, as on Android) reads `feedbackEmailBackgroundColor`,
 `feedbackEmailContinueNotActiveColor`. The message bubbles still hard-code
 `Color.accentColor` and `Color.gray`, so the other colors are stored on
 `BugseeTheme` but do not change the chat in this beta.
+
+## Licence
+
+The React Native feedback package is MIT. See [LICENSE](./LICENSE). The native Bugsee feedback SDKs it bundles (iOS and Android) are separate packages with their own terms.

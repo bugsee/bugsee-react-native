@@ -2037,7 +2037,7 @@ __metadata:
   dependencies:
     react-native: "npm:0.87.1"
   peerDependencies:
-    "@bugsee/react-native": "*"
+    "@bugsee/react-native": ^7.0.0-beta1
     react: "*"
     react-native: ">=0.81.0"
   languageName: unknown
@@ -6049,6 +6049,7 @@ __metadata:
     jest: "npm:^29.7.0"
     react: "npm:19.2.3"
     react-test-renderer: "npm:19.2.3"
+    semver: "npm:^7.7.0"
     ts-jest: "npm:^29.4.14"
     ts-node: "npm:^10.9.2"
     typescript: "npm:~5.6.3"
@@ -12825,7 +12826,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"semver@npm:^7.1.3, semver@npm:^7.3.5, semver@npm:^7.5.2, semver@npm:^7.5.3, semver@npm:^7.5.4, semver@npm:^7.6.0, semver@npm:^7.6.3, semver@npm:^7.7.3, semver@npm:^7.8.5, semver@npm:~7.8.0":
+"semver@npm:^7.1.3, semver@npm:^7.3.5, semver@npm:^7.5.2, semver@npm:^7.5.3, semver@npm:^7.5.4, semver@npm:^7.6.0, semver@npm:^7.6.3, semver@npm:^7.7.0, semver@npm:^7.7.3, semver@npm:^7.8.5, semver@npm:~7.8.0":
   version: 7.8.5
   resolution: "semver@npm:7.8.5"
   bin:
