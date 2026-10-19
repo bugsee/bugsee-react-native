@@ -98,6 +98,9 @@ const published = (name, version) => {
 
 const tagFailures = [];
 
+/** A prerelease has a hyphen before any `+build` metadata: `1.0.0+build-1` is stable, `1.0.0-beta.1+x` is not. */
+export const isPrerelease = (version) => (version.split('+', 1)[0] ?? '').includes('-');
+
 /** A dist-tag name npm will take as a tag: not an option (leading dash), not a version. */
 export const isTagName = (t) => /^[a-z][a-z0-9._-]*$/i.test(t) && !/^v?\d/.test(t);
 
@@ -111,7 +114,7 @@ function latestState(name) {
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     if (!current) return 'none';
-    return current.includes('-') ? 'prerelease' : `stable ${current}`;
+    return isPrerelease(current) ? 'prerelease' : `stable ${current}`;
   } catch (error) {
     return /E404/.test(`${error.stdout ?? ''}${error.stderr ?? ''}`) ? 'none' : 'unknown';
   }
@@ -187,7 +190,7 @@ if (isEntryPoint(import.meta.url)) {
   // the unprivileged check job, before anyone approves the publish.
   if ([tag, ...alsoTags].includes('latest')) {
     const refusals = packages
-      .filter((p) => p.json.version.includes('-'))
+      .filter((p) => isPrerelease(p.json.version))
       .map((p) => latestRefusal(p.json.name, p.json.version))
       .filter(Boolean);
     if (refusals.length > 0) {

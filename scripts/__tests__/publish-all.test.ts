@@ -110,6 +110,12 @@ describe('publish-all.mjs dist-tag rules', () => {
     expect(publishes(r.calls)).toHaveLength(2);
   });
 
+  it('reads build metadata correctly: a stable version with a hyphen in its metadata is stable', () => {
+    const r = run(['--tag', 'beta', '--also-tag', 'latest'], { latest: '7.0.0+build-1' });
+    expect(r.status).toBe(2);
+    expect(publishes(r.calls)).toEqual([]);
+  });
+
   it('refuses --also-tag latest the same way', () => {
     const r = run(['--tag', 'beta', '--also-tag', 'latest'], { latest: '7.0.0' });
     expect(r.status).toBe(2);
