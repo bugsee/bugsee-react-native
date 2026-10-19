@@ -17,6 +17,39 @@ const WORKFLOW = 'release.yml';
 // The GitHub environment the publish job runs in. Its deployment-branch rule (main only) is what
 // limits who can mint a publish token, so the trust is registered for it and for no other ref.
 const ENVIRONMENT = 'npm-publish';
+/**
+ * True only when ONE trust entry names this repository, workflow and environment (exact values, not
+ * substrings of the whole output) and grants plain publish rather than only staged publish. Anything
+ * unparseable counts as "not ours": failing here costs a manual look, passing wrongly leaves a
+ * release that npm rejects. The field names of `npm trust list --json` are not documented, so this
+ * matches on values and on any key naming a publish permission, and has not been run against a
+ * real listing.
+ */
+export function matchesOurTrust(listed) {
+  let data;
+  try {
+    data = JSON.parse(listed);
+  } catch {
+    return false;
+  }
+  const entries = [];
+  const walk = (node) => {
+    if (Array.isArray(node)) node.forEach(walk);
+    else if (node && typeof node === 'object') {
+      entries.push(node);
+      Object.values(node).forEach(walk);
+    }
+  };
+  walk(data);
+  return entries.some((entry) => {
+    const values = Object.values(entry);
+    if (![REPO, WORKFLOW, ENVIRONMENT].every((part) => values.includes(part))) return false;
+    return Object.entries(entry).some(
+      ([key, value]) => /publish/i.test(key) && !/stage/i.test(key) && value === true,
+    ) || values.some((value) => Array.isArray(value) ? value.includes('publish') : false);
+  });
+}
+
 const argv = process.argv.slice(2);
 const dryRun = argv.includes('--dry-run');
 const otpIndex = argv.indexOf('--otp');
@@ -100,18 +133,18 @@ packages: for (const { json } of loadPackages()) {
         // An existing trust is only a success if it is THIS one. A package already trusting another
         // repository, workflow or environment would still reject our publish, so a blind skip would
         // exit 0 with release.yml unable to publish.
-        let listed = '';
+        let listed;
         try {
           listed = npm(['trust', 'list', name, '--json']);
         } catch (listError) {
           listed = String(listError.stdout ?? '');
         }
-        if ([REPO, WORKFLOW, ENVIRONMENT].every((part) => listed.includes(part))) {
+        if (matchesOurTrust(listed)) {
           console.log(`skip     ${name} (this trusted publisher is already configured)`);
           skipped++;
         } else {
           console.error(
-            `FAILED   ${name}: a different trusted publisher is configured. Revoke it ('npm trust list ${name}', then 'npm trust revoke') and re-run.`,
+            `FAILED   ${name}: a trusted publisher exists but is not ${REPO} / ${WORKFLOW} / ${ENVIRONMENT} with publish permission, or 'npm trust list' could not be read. Check 'npm trust list ${name}', revoke the conflicting entry ('npm trust revoke') and re-run.`,
           );
           failures.push(name);
         }

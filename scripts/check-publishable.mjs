@@ -71,7 +71,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     }
     // A peer range that does not match this very release makes the pair uninstallable without
     // --force. Semver ranges such as "*" or ">=7" exclude a prerelease like 7.0.0-beta1, so test the
-    // range against the sibling's actual version with prereleases included, and reject "*" outright.
+    // range against the sibling's actual version with npm's own rules (no includePrerelease: npm does not
+    // use it, so a range it would reject must not pass here), and reject "*" outright.
     for (const { json: other } of packages) {
       const range = json.peerDependencies?.[other.name];
       if (!range) continue;
@@ -79,7 +80,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         errors.push(
           `${where}: peer ${other.name}@"*" never matches the prerelease ${other.version}; use ^${other.version}`,
         );
-      else if (!semver.satisfies(other.version, range, { includePrerelease: true }))
+      else if (!semver.satisfies(other.version, range))
         errors.push(`${where}: peer ${other.name}@${range} does not match ${other.version}`);
     }
   }

@@ -11,9 +11,10 @@ name: Release
 # The file NAME is part of the trust relationship. Renaming it silently breaks publishing until
 # every package is re-registered.
 #
-# A real publish runs only from `main`, and only after the gates below pass: the same lint,
-# typecheck and unit tests CI runs, the release metadata gate, and `prepack`'s refusal to pack a
-# SNAPSHOT pin. `latest` is never the default, and publish-all.mjs refuses `latest` for a prerelease
+# Two jobs. `check` runs the gates and a dry-run publish on any ref and holds no publish rights. `publish`
+# needs it, runs only for a real publish, and is the only job with the OIDC token and the `npm-publish`
+# environment. The gates are the same lint, typecheck and unit tests CI runs, the release metadata
+# gate, and `prepack`'s refusal to pack a SNAPSHOT pin. `latest` is never the default, and publish-all.mjs refuses `latest` for a prerelease
 # version, so neither a forgotten nor a mistyped tag can put a beta where nobody asked for one.
 on:
   workflow_dispatch:
@@ -31,7 +32,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write # the OIDC token npm exchanges for publish rights
 
 concurrency:
   group: release
@@ -44,7 +44,42 @@ env:
   BUGSEE_ENDPOINT: http://127.0.0.1:9
 
 jobs:
+  check:
+    name: gates and dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - run: corepack enable
+
+      - run: yarn install --immutable
+
+      - name: Gates (the same as CI's js job)
+        run: |
+          yarn lint
+          yarn typecheck
+          yarn test
+
+      - name: Release gate (metadata, one version, peer ranges)
+        run: node scripts/check-publishable.mjs
+
+      # Inputs go in through the environment, never interpolated into the script text: a `${{ }}`
+      # inside `run:` is textually pasted into the shell.
+      - name: Dry-run publish
+        env:
+          NPM_TAG: ${{ inputs.tag }}
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --dry-run
+
   publish:
+    name: publish
+    needs: check
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # The control that actually limits who can publish. npm's trusted publisher is registered by
@@ -52,14 +87,16 @@ jobs:
     # restricts it to main, so a branch that edits this file cannot mint a publish token. The guard
     # step below is a convenience, not the control.
     environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # the OIDC token npm exchanges for publish rights
     steps:
       - name: A real publish runs from main only
         env:
-          DRY_RUN: ${{ inputs.dry_run }}
           REF: ${{ github.ref }}
         run: |
-          if [ "$DRY_RUN" != "true" ] && [ "$REF" != "refs/heads/main" ]; then
-            echo "::error::a real publish runs only from main (this run is on $REF); use dry_run or dispatch on main"
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::a real publish runs only from main (this run is on $REF)"
             exit 1
           fi
 
@@ -80,25 +117,7 @@ jobs:
 
       - run: yarn install --immutable
 
-      - name: Gates (the same as CI's js job)
-        run: |
-          yarn lint
-          yarn typecheck
-          yarn test
-
-      - name: Release gate (metadata, one version, peer ranges)
-        run: node scripts/check-publishable.mjs
-
-      # Inputs go in through the environment, never interpolated into the script text: a `${{ }}`
-      # inside `run:` is textually pasted into the shell, so a crafted tag could execute commands
-      # with the job's id-token.
       - name: Publish
         env:
           NPM_TAG: ${{ inputs.tag }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          if [ "$DRY_RUN" = "true" ]; then
-            node scripts/publish-all.mjs --tag "$NPM_TAG" --dry-run
-          else
-            node scripts/publish-all.mjs --tag "$NPM_TAG"
-          fi
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG"
