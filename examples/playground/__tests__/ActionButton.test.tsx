@@ -91,3 +91,12 @@ test('announces the running and final status to screen readers', async () => {
   expect(announce).toHaveBeenCalledWith('▶ running…');
   announce.mockRestore();
 });
+test('a repeated tap on a synchronous action is announced each time', async () => {
+  const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => undefined);
+  await render(<Screen title="T"><ActionButton action={{ ...base, run: () => true }} /></Screen>);
+  await fireEvent.press(screen.getByText('Do it'));
+  await fireEvent.press(screen.getByText('Do it'));
+  expect(announce.mock.calls.filter(([line]) => line === '→ true')).toHaveLength(2);
+  expect(announce.mock.calls.filter(([line]) => line === '▶ running…')).toHaveLength(2);
+  announce.mockRestore();
+});

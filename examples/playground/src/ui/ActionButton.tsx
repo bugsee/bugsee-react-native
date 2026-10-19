@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { AccessibilityInfo, Alert, Platform, Pressable, StyleSheet, Text } from 'react-native';
 import type { Action } from './action';
 import { KnownIssue } from './KnownIssue';
@@ -39,20 +39,23 @@ export function ActionButton({ action }: { action: Action }) {
   const [last, setLast] = useState<string | undefined>(undefined);
   // The run that owns the card: a slow earlier run must not overwrite a later tap's outcome there.
   const latestRun = useRef(0);
-  // A screen reader does not notice a text that changes inside a pressable: say the status out loud.
-  useEffect(() => {
-    if (last !== undefined) AccessibilityInfo.announceForAccessibility(last);
-  }, [last]);
   if (action.platforms && !action.platforms.includes(Platform.OS as 'ios' | 'android')) return null;
+  // A screen reader does not notice a text that changes inside a pressable: say the status out loud. Called
+  // directly, not from an effect on `last`, so a repeated tap that ends on the same text is still announced.
+  const announce = (line: string) => AccessibilityInfo.announceForAccessibility(line);
   // Every completion is logged; only the latest tap's outcome goes on the card.
   const report = (line: string, run: number) => {
     log(line);
-    if (run === latestRun.current) setLast(line);
+    if (run === latestRun.current) {
+      setLast(line);
+      announce(line);
+    }
   };
   const go = () => {
     const run = ++latestRun.current;
     log(`▶ ${action.label}`);
     setLast('▶ running…');
+    announce('▶ running…');
     try {
       const r = action.run();
       if (typeof (r as { then?: unknown } | null | undefined)?.then === 'function') {
