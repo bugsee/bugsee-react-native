@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Text } from 'react-native';
 import type { Action } from './action';
 import { KnownIssue } from './KnownIssue';
@@ -37,24 +37,28 @@ export function ActionButton({ action }: { action: Action }) {
   const log = useLog();
   // The screen's result log sits below every action, often off screen: echo the latest outcome on the card itself.
   const [last, setLast] = useState<string | undefined>(undefined);
+  // The run that owns the card: a slow earlier run must not overwrite a later tap's outcome there.
+  const latestRun = useRef(0);
   if (action.platforms && !action.platforms.includes(Platform.OS as 'ios' | 'android')) return null;
-  const report = (line: string) => {
+  // Every completion is logged; only the latest tap's outcome goes on the card.
+  const report = (line: string, run: number) => {
     log(line);
-    setLast(line);
+    if (run === latestRun.current) setLast(line);
   };
   const go = () => {
+    const run = ++latestRun.current;
     log(`▶ ${action.label}`);
     setLast('▶ running…');
     try {
       const r = action.run();
       if (typeof (r as { then?: unknown } | null | undefined)?.then === 'function') {
         Promise.resolve(r).then(
-          (v) => report(`→ ${describeResult(v)}`),
-          (e) => report(`✗ ${describeError(e)}`),
+          (v) => report(`→ ${describeResult(v)}`, run),
+          (e) => report(`✗ ${describeError(e)}`, run),
         );
-      } else report(`→ ${describeResult(r)}`);
+      } else report(`→ ${describeResult(r)}`, run);
     } catch (e) {
-      report(`✗ ${describeError(e)}`);
+      report(`✗ ${describeError(e)}`, run);
     }
   };
   const press = () =>

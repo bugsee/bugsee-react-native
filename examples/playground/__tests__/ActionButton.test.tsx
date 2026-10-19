@@ -67,3 +67,19 @@ test('echoes the latest outcome on the card itself', async () => {
   await fireEvent.press(screen.getByText('Do it'));
   await waitFor(() => expect(screen.getByTestId('action-result-a')).toHaveTextContent('✗ Error: nope'));
 });
+test('a slow earlier run does not overwrite the card after a later tap', async () => {
+  const settle: Array<(v: unknown) => void> = [];
+  const run = jest.fn((): Promise<unknown> | string => {
+    if (run.mock.calls.length === 1) return new Promise((res) => { settle.push(res); });
+    return 'second';
+  });
+  await render(<Screen title="T"><ActionButton action={{ ...base, run }} /></Screen>);
+  await fireEvent.press(screen.getByText('Do it'));
+  await fireEvent.press(screen.getByText('Do it'));
+  await waitFor(() => expect(screen.getByTestId('action-result-a').props.children).toBe('→ "second"'));
+  await act(async () => { settle[0]!('first'); });
+  // The card still shows the later tap's outcome; the log has both completions.
+  expect(screen.getByTestId('action-result-a').props.children).toBe('→ "second"');
+  await waitFor(() => expect(inLog().getByText('→ "first"', { exact: false })).toBeTruthy());
+  expect(inLog().getByText('→ "second"', { exact: false })).toBeTruthy();
+});
