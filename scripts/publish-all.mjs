@@ -24,12 +24,16 @@
 //
 //   node scripts/publish-all.mjs --tag beta --also-tag latest        # then point `latest` at the same version
 //
-// `npm publish` moves exactly one dist-tag. --also-tag adds the others with `npm dist-tag add`, after the
-// publish and also for a version that is already on npm, so a re-run repairs a tag left behind. It needs
-// the publisher's right to move dist-tags, which a trusted-publisher token may not carry; if the step
-// fails the publish itself has still happened, the remaining packages are still published, and the failures
-// are listed at the end (exit 3) with the command to run by hand. `latest` is never moved from a stable
-// release to a prerelease.
+// `npm publish` moves exactly one dist-tag. --also-tag adds the others with `npm dist-tag add`, once
+// EVERY package is published (also for a version already on npm, so a re-run repairs a tag left
+// behind). If a publish fails, no tag is moved, so the packages never sit at different versions under
+// `latest`. If a tag step fails the packages are still published; the failures are listed at the end
+// (exit 3) with the command to run by hand. Moving a tag needs the publisher's dist-tag right, which a
+// trusted-publisher token may not carry.
+//
+// Whenever `latest` would be set (as --tag or --also-tag) to a prerelease, the script checks first that
+// `latest` does not currently point at a stable release, and refuses before anything is published if it
+// does or if it cannot tell (a registry error other than "never published").
 //
 // Needs Node 22.18+ (npm-trust-all.mjs loads a .ts module through type stripping).
 // Idempotent: a re-run after a partial failure skips what is already published. It stops at the
@@ -92,35 +96,41 @@ const published = (name, version) => {
 
 const tagFailures = [];
 
-/** The stable version `latest` points at now, or undefined when it is a prerelease, a placeholder or unset. */
-function stableLatest(name) {
+/** A dist-tag name npm will take as a tag: not an option (leading dash), not a version. */
+export const isTagName = (t) => /^[a-z][a-z0-9._-]*$/i.test(t) && !/^v?\d/.test(t);
+
+/**
+ * What `latest` points at: 'none' (never published), 'prerelease' (a prerelease or the 0.0.0-stage
+ * placeholder), 'stable', or 'unknown' when the registry could not be read. 'unknown' counts as a refusal.
+ */
+function latestState(name) {
   try {
     const current = run('npm', ['view', name, 'dist-tags.latest', '--prefer-online'], {
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
-    return current && !current.includes('-') ? current : undefined;
-  } catch {
-    return undefined;
+    if (!current) return 'none';
+    return current.includes('-') ? 'prerelease' : `stable ${current}`;
+  } catch (error) {
+    return /E404/.test(`${error.stdout ?? ''}${error.stderr ?? ''}`) ? 'none' : 'unknown';
   }
 }
 
+/** Why `latest` may not be set to this prerelease, or undefined when it may. */
+function latestRefusal(name, version) {
+  const state = latestState(name);
+  if (state === 'unknown') return `${name}: cannot read what latest points at, so not moving it to ${version}`;
+  if (state.startsWith('stable')) return `${name}: latest is ${state}; refusing to move it to prerelease ${version}`;
+  return undefined;
+}
+
 /**
- * Points each extra dist-tag at this version. Idempotent. A failure never stops publishing: tagging
- * runs after the package set is published and failures are listed, with the command to run by hand,
- * so a tag problem cannot leave a pair of packages at different versions.
- * `latest` is never moved from a stable release to a prerelease.
+ * Points each extra dist-tag at this version. Idempotent. Failures are collected, never thrown, so a
+ * tag problem cannot stop a package from publishing; run only after the whole set is published.
  */
 function addTags(name, version, tags, dryRun) {
   for (const extra of tags) {
     console.log(`${dryRun ? 'dry-run ' : 'tag     '} ${name}@${version} -> ${extra}`);
     if (dryRun) continue;
-    if (extra === 'latest' && version.includes('-')) {
-      const stable = stableLatest(name);
-      if (stable) {
-        tagFailures.push(`${name}: refusing to move latest from stable ${stable} to prerelease ${version}`);
-        continue;
-      }
-    }
     try {
       run('npm', ['dist-tag', 'add', `${name}@${version}`, extra], { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (error) {
@@ -138,52 +148,84 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(2);
   }
   const only = value('--only')?.split(',');
-  const alsoTags = (value('--also-tag')?.split(',') ?? []).filter((t) => t && t !== tag);
+  const alsoTags = (value('--also-tag')?.split(',') ?? []).map((t) => t.trim()).filter((t) => t && t !== tag);
+  for (const name of [tag, ...alsoTags]) {
+    if (!isTagName(name)) {
+      console.error(`not a usable dist-tag: ${JSON.stringify(name)}`);
+      process.exit(2);
+    }
+  }
   const packages = topologicalOrder(loadPackages()).filter(
     (p) => !only || only.includes(p.json.name),
   );
+
+  // Before anything is published: `latest` may only take a prerelease when it does not now point at a
+  // stable release (see the header).
+  if (!dryRun && [tag, ...alsoTags].includes('latest')) {
+    const refusals = packages
+      .filter((p) => p.json.version.includes('-'))
+      .map((p) => latestRefusal(p.json.name, p.json.version))
+      .filter(Boolean);
+    if (refusals.length > 0) {
+      for (const refusal of refusals) console.error(refusal);
+      process.exit(2);
+    }
+  }
+
   const tarballDir = value('--tarballs');
-  const out = tarballDir ? resolve(tarballDir) : resolve(value('--pack-to') ?? mkdtempSync(join(tmpdir(), 'bugsee-publish-')));
+  const out = tarballDir
+    ? resolve(tarballDir)
+    : resolve(value('--pack-to') ?? mkdtempSync(join(tmpdir(), 'bugsee-publish-')));
   mkdirSync(out, { recursive: true });
   let done = 0;
   let skipped = 0;
+  const settled = []; // every package that is now on npm at its version, to tag once all are
 
-  for (const { dir, json } of packages) {
-    const { name, version } = json;
-    if (!dryRun && published(name, version)) {
-      console.log(`skip     ${name}@${version} (already on npm)`);
-      skipped++;
-      addTags(name, version, alsoTags, dryRun);
-      continue;
-    }
-    const cwd = join(root, 'packages', dir);
-    const tarball = join(out, `${name.replace('@', '').replace('/', '-')}-${version}.tgz`);
-    if (tarballDir) {
-      if (!existsSync(tarball)) throw new Error(`${name}: ${tarball} is missing; pack it in the check job first`);
-    } else {
-      run('yarn', ['pack', '--out', tarball], { cwd });
-    }
-    const args = ['publish', tarball, '--tag', tag, '--access', 'public'];
-    if (dryRun) args.push('--dry-run');
-    console.log(`${dryRun ? 'dry-run ' : 'publish '} ${name}@${version} (tag ${tag})`);
-    try {
-      process.stdout.write(run('npm', args, { stdio: ['ignore', 'pipe', 'pipe'] }));
-      done++;
-      addTags(name, version, alsoTags, dryRun);
-    } catch (error) {
-      const text = `${error.stdout ?? ''}${error.stderr ?? ''}`;
-      // The registry accepts a publish (202) and makes it readable a few minutes later, so a re-run can
-      // find a package that is "not there" to `npm view` yet but is already published.
-      if (/cannot publish over the previously published versions?/i.test(text)) {
-        console.log(`skip     ${name}@${version} (accepted earlier; not readable yet)`);
+  try {
+    for (const { dir, json } of packages) {
+      const { name, version } = json;
+      if (!dryRun && published(name, version)) {
+        console.log(`skip     ${name}@${version} (already on npm)`);
         skipped++;
-        addTags(name, version, alsoTags, dryRun);
+        settled.push({ name, version });
         continue;
       }
-      process.stderr.write(text);
-      throw error;
+      const cwd = join(root, 'packages', dir);
+      const tarball = join(out, `${name.replace('@', '').replace('/', '-')}-${version}.tgz`);
+      if (tarballDir) {
+        if (!existsSync(tarball)) {
+          throw new Error(`${name}: ${tarball} is missing; pack it in the check job first`);
+        }
+      } else {
+        run('yarn', ['pack', '--out', tarball], { cwd });
+      }
+      const args = ['publish', tarball, '--tag', tag, '--access', 'public'];
+      if (dryRun) args.push('--dry-run');
+      console.log(`${dryRun ? 'dry-run ' : 'publish '} ${name}@${version} (tag ${tag})`);
+      try {
+        process.stdout.write(run('npm', args, { stdio: ['ignore', 'pipe', 'pipe'] }));
+        done++;
+        settled.push({ name, version });
+      } catch (error) {
+        const text = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+        // The registry accepts a publish (202) and makes it readable a few minutes later, so a re-run can
+        // find a package that is "not there" to `npm view` yet but is already published.
+        if (/cannot publish over the previously published versions?/i.test(text)) {
+          console.log(`skip     ${name}@${version} (accepted earlier; not readable yet)`);
+          skipped++;
+          settled.push({ name, version });
+          continue;
+        }
+        process.stderr.write(text);
+        throw error;
+      }
     }
+  } catch (error) {
+    if (alsoTags.length > 0) console.error('\nA publish failed: no --also-tag was moved.');
+    throw error;
   }
+
+  for (const { name, version } of settled) addTags(name, version, alsoTags, dryRun);
   console.log(
     `\n${done} ${dryRun ? 'checked' : 'published'}, ${skipped} skipped, of ${packages.length}.`,
   );
