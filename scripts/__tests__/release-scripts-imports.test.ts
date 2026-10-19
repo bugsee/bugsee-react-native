@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 /**
@@ -8,8 +9,21 @@ import { dirname, join } from 'node:path';
  * ERR_MODULE_NOT_FOUND while the dry run, which installs, stayed green.
  */
 const scripts = join(__dirname, '..');
-const importsOf = (file: string): string[] =>
-  [...readFileSync(file, 'utf8').matchAll(/^import\s+(?:[^;]*?from\s+)?'([^']+)'|\bimport\(\s*'([^']+)'\s*\)|\brequire\(\s*'([^']+)'\s*\)/gms)].map((m) => (m[1] ?? m[2] ?? m[3]) as string);
+const SPEC = String.raw`(['"\x60])([^'"\x60]+)\1`;
+const PATTERNS = [
+  new RegExp(String.raw`^import\s+(?:[^;]*?from\s+)?${SPEC}`, 'gms'),
+  new RegExp(String.raw`\bimport\(\s*${SPEC}\s*\)`, 'g'),
+  new RegExp(String.raw`\brequire\(\s*${SPEC}\s*\)`, 'g'),
+];
+// Anything that loads a module by a name the patterns cannot read (a variable, createRequire(...)(x))
+// fails the test rather than slipping through it.
+const OPAQUE = /\bcreateRequire\b|\bimport\(\s*[^'"\x60\s]|\brequire\(\s*[^'"\x60\s]/;
+
+const importsOf = (file: string): string[] => {
+  const text = readFileSync(file, 'utf8');
+  if (OPAQUE.test(text)) throw new Error(`${file}: loads a module by a name this test cannot read`);
+  return PATTERNS.flatMap((re) => [...text.matchAll(re)].map((m) => m[2] as string));
+};
 
 function closure(entry: string, seen = new Set<string>()): Set<string> {
   if (seen.has(entry)) return seen;
@@ -29,5 +43,27 @@ describe('the publish entry point loads without installed dependencies', () => {
         expect(spec.startsWith('node:') || spec.startsWith('.')).toBe(true);
       }
     }
+  });
+});
+
+describe('the import scan itself', () => {
+  const scan = (text: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'imports-'));
+    const file = join(dir, 'x.mjs');
+    writeFileSync(file, text);
+    return importsOf(file);
+  };
+
+  it('reads single-quoted, double-quoted and template specifiers', () => {
+    expect(scan("import a from 'one';")).toEqual(['one']);
+    expect(scan('import b from "two";')).toEqual(['two']);
+    expect(scan('const m = await import(`three`);')).toEqual(['three']);
+    expect(scan('import "four";')).toEqual(['four']);
+    expect(scan("const r = require('five');")).toEqual(['five']);
+  });
+
+  it('refuses a load it cannot read', () => {
+    expect(() => scan("createRequire(import.meta.url)('x');")).toThrow();
+    expect(() => scan('await import(name);')).toThrow();
   });
 });

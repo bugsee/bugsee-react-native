@@ -21,6 +21,7 @@
 // too but which a plain `npm publish` of a directory would not stage the same way. Publishing the
 // tarball with npm keeps the OIDC path on npm itself (>= 11.5.1), which yarn does not speak.
 //
+// Needs Node 22.18+ (npm-trust-all.mjs loads a .ts module through type stripping).
 // Idempotent: a re-run after a partial failure skips what is already published. It stops at the
 // first failure so a broken package never lets its dependents publish against it.
 import { execFileSync } from 'node:child_process';

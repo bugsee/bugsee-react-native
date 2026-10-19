@@ -4,7 +4,7 @@
 //   node scripts/npm-trust-all.mjs --dry-run     # show what would be configured
 //   node scripts/npm-trust-all.mjs               # configure all (skips packages already trusted)
 //
-// Needs `npm login` as an owner of the @bugsee scope (npm >= 11.10 for `npm trust`) and every package
+// Needs Node 22.18+ (it loads a .ts module through type stripping) and `npm login` as an owner of the @bugsee scope (npm >= 11.10 for `npm trust`) and every package
 // to exist on the registry already — a trusted publisher can only be attached to a published package.
 // npm may ask for a 2FA code per call; pass `--otp <code>` to reuse a fresh one, or run it with an
 // auth session that skips it.
