@@ -26,8 +26,9 @@
  *     when an attempt landed in the window. When none did, they are reported
  *     as not reached rather than failed, and the hold's replay logic is proven
  *     by BGSRNLaunchHoldTests (ios/Support), which does not depend on timing.
- *     Without a window, the calls must instead go straight to the SDK: no
- *     `held` line at all.
+ *     Without a window, at most one call was held (Launched can arrive between
+ *     the two), and the exception must still have been sent, after its hold if
+ *     it had one.
  *
  * iPhone only (`E2E_IOS_TARGET=device`, Debug, `DEAD_ENDPOINT` retention): the
  * simulator SDK compiles `logException` out. Without the hold both bundles are
@@ -197,12 +198,22 @@ describeIosDevice(`reports right after launch() on ${TARGET_NAME}`, () => {
     const held = log.all(bridgeLine('exception handled bytes=\\d+ held until launched'), start);
     const sent = log.all(bridgeLine('exception handled sent bytes='), start);
     if (!windowReached) {
-      report('hold mechanics not reached: Launched came first in every attempt', { attempts });
-      expect(held).toHaveLength(0);
+      // Not both calls were held. One of them can still have been (Launched
+      // arrived between the two calls), so a partial hold is fine; what must
+      // hold is that the exception went through, after its hold when it had one.
+      report('hold mechanics not fully reached: no attempt had both calls in the Launching window', {
+        attempts,
+        heldExceptions: held.length,
+        heldUploads: log.all(bridgeLine('upload held until launched'), start).length,
+      });
       expect(sent).toHaveLength(1);
+      expect(held.length).toBeLessThanOrEqual(1);
+      if (held.length === 1) {
+        expect(held[0]!.index).toBeLessThan(sent[0]!.index);
+      }
       // `upload sent` is logged only on a replay; that the upload went through
       // is the 'files the upload' case.
-      expect(log.all(bridgeLine('upload held until launched'), start)).toHaveLength(0);
+      expect(log.all(bridgeLine('upload held until launched'), start).length).toBeLessThanOrEqual(1);
       return;
     }
     expect(held).toHaveLength(1);

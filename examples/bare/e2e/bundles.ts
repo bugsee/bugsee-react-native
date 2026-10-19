@@ -201,8 +201,16 @@ export function peekBytes(bytes: Buffer, n = 64): { hex: string; text: string } 
   };
 }
 
+/**
+ * `ls -l` of the bundles dir. Throws when the listing itself failed (adb or
+ * run-as error): its error text must never be read as "the file is absent",
+ * which would turn a real failure into a skipped bundle.
+ */
 async function listAndroidBundlesLong(): Promise<string> {
-  const { output } = await adbStatus('shell', 'run-as', ANDROID_PACKAGE, 'ls', '-l', BUNDLES);
+  const { code, output } = await adbStatus('shell', 'run-as', ANDROID_PACKAGE, 'ls', '-l', BUNDLES);
+  if (code !== 0) {
+    throw new Error(`cannot list the Android bundles dir (exit ${code}): ${output.trim()}`);
+  }
   return output.trim();
 }
 
@@ -213,6 +221,17 @@ async function catAndroidBundle(file: string): Promise<Buffer> {
     { encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 },
   );
   return stdout;
+}
+
+/**
+ * Whether a bad pull is the harness's eviction race (skip the bundle) and not a
+ * failure: the bundle is positively absent from a valid listing AND what came
+ * back is what a failed `cat` returns. A non-empty bad zip is never skipped,
+ * even when the file is gone: `truncated-zip` is the one case that would point
+ * at the SDK.
+ */
+export function evictedBeforePull(kind: PulledZipKind, listedAfter: string): boolean {
+  return listedAfter === 'absent' && (kind === 'empty' || kind === 'error-text');
 }
 
 /** The `ls -l` line of `file` in a bundles-dir listing, or 'absent'. */
@@ -226,9 +245,11 @@ function listedLine(listing: string, file: string): string {
  * bundles dir is taken just before and just after each pull; one `[pull-diag]`
  * line is always logged. A pull that is not a complete zip is retried once.
  * If it is still bad: a file that is gone from the listing was evicted between
- * the ls and the cat (skipped, `undefined`); a file that is still listed throws
- * with the evidence, and `TRUNCATED ZIP (non-empty)` is the one case that
- * points at a short write by the SDK. Never returns a bad buffer.
+ * the ls and the cat (skipped, `undefined`) when what came back is what a
+ * failed cat returns (empty or its error text); a file that is still listed
+ * throws with the evidence, and so does any non-empty bad zip even if the file
+ * is gone: `TRUNCATED ZIP (non-empty)` is the one case that points at a short
+ * write by the SDK. Never returns a bad buffer.
  */
 async function pullOneAndroidBundle(file: string): Promise<Buffer | undefined> {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -251,7 +272,7 @@ async function pullOneAndroidBundle(file: string): Promise<Buffer | undefined> {
       await new Promise(resolve => setTimeout(resolve, 500));
       continue;
     }
-    if (afterLine === 'absent') {
+    if (evictedBeforePull(kind, afterLine)) {
       console.log(`[pull-diag] ${file} evicted before pull, skipping`);
       return undefined;
     }

@@ -1,4 +1,4 @@
-import { classifyPulledZip, peekBytes } from '../../examples/bare/e2e/bundles';
+import { classifyPulledZip, evictedBeforePull, peekBytes } from '../../examples/bare/e2e/bundles';
 
 // A minimal complete zip: local header, then an end-of-central-directory record.
 const LOCAL = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
@@ -37,5 +37,25 @@ describe('peekBytes', () => {
   it('returns hex and text with dots for non-printables, at most n bytes', () => {
     const peek = peekBytes(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x41]), 4);
     expect(peek).toEqual({ hex: '504b0304', text: 'PK..' });
+  });
+});
+
+describe('evictedBeforePull', () => {
+  const listed = '-rw------- 1 u0_a1 u0_a1 55140 2026-10-19 07:28 abc.bundle.zip';
+
+  it('skips a bundle that is gone from a valid listing when the cat failed', () => {
+    expect(evictedBeforePull('empty', 'absent')).toBe(true);
+    expect(evictedBeforePull('error-text', 'absent')).toBe(true);
+  });
+
+  it('never skips a bundle that is still listed', () => {
+    for (const kind of ['empty', 'error-text', 'not-a-zip', 'truncated-zip'] as const) {
+      expect(evictedBeforePull(kind, listed)).toBe(false);
+    }
+  });
+
+  it('never skips a non-empty bad zip, even when the file is gone: a truncated zip is the one case that points at the SDK', () => {
+    expect(evictedBeforePull('truncated-zip', 'absent')).toBe(false);
+    expect(evictedBeforePull('not-a-zip', 'absent')).toBe(false);
   });
 });

@@ -24,6 +24,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 : "${BUGSEE_TOKEN_IOS:?set BUGSEE_TOKEN_IOS to a real app token}"
+# The post-action stops, exit 0, for the placeholder token and nothing would upload:
+# fail here instead. Same rule as isPlaceholderToken (endpoint.ts): dashes and
+# whitespace go first, the character lists are spelled out.
+case "$(printf '%s' "$BUGSEE_TOKEN_IOS" | tr -d ' \t\r\n-')" in
+  000000000000[0123456789abcdefABCDEF]000[0123456789abcdefABCDEF]000000000000000)
+    echo "set BUGSEE_TOKEN_IOS to a real app token, not the placeholder" >&2
+    exit 1
+    ;;
+esac
 : "${IOS_DEVELOPMENT_TEAM:?set IOS_DEVELOPMENT_TEAM to your Apple Developer team id}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-$PWD/ios/build/archive}"
 
@@ -33,11 +42,16 @@ rm -rf ios/Pods/React-Core-prebuilt
 pod cache clean React-Core-prebuilt --all >/dev/null 2>&1 || true
 (cd ios && RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1 pod install)
 
+# The scheme's post-action reads BUGSEE_APP_TOKEN before BUGSEE_TOKEN_IOS and
+# credentials.json, so a BUGSEE_APP_TOKEN left in the environment would send the
+# dSYMs to another app: pin it to the token this script was given.
+export BUGSEE_APP_TOKEN="$BUGSEE_TOKEN_IOS"
+
 rm -rf "$ARCHIVE_DIR" && mkdir -p "$ARCHIVE_DIR"
 xcodebuild archive -workspace ios/BareExample.xcworkspace -scheme BareExample \
   -configuration Release -destination generic/platform=iOS \
-  -archivePath "$ARCHIVE_DIR/BareExample.xcarchive" \
-  DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" CODE_SIGN_STYLE=Automatic -allowProvisioningUpdates
+  -archivePath "$ARCHIVE_DIR/BareExample.xcarchive" -allowProvisioningUpdates \
+  DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" CODE_SIGN_STYLE=Automatic BUGSEE_APP_TOKEN="$BUGSEE_TOKEN_IOS"
 
 for dsym in BareExample.app Bugsee.framework React.framework; do
   [[ -d "$ARCHIVE_DIR/BareExample.xcarchive/dSYMs/$dsym.dSYM" ]] ||

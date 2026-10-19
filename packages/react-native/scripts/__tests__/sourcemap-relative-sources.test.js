@@ -10,7 +10,8 @@ const { relativizeSource, relativizeSourceMap, uploadComposedSourceMap } = requi
 const TOKEN = '3f2a9c1e-0000-4abc-8def-5ca1ab1e0002';
 const ROOT = '/build/machine/app';
 
-describe('relativizeSource through a symlinked project root', () => {
+// Symlinks need a POSIX filesystem; Windows resolves paths lexically here and a runner may refuse to create one.
+(process.platform === 'win32' ? describe.skip : describe)('relativizeSource through a symlinked project root', () => {
   // macOS: Xcode reports the project under /tmp while Metro writes the real
   // /private/tmp path into the map, so a plain relative() gave
   // `../../../private/tmp/<build dir>/scenarios/a.ts`, the build machine's layout.
@@ -41,6 +42,29 @@ describe('relativizeSource through a symlinked project root', () => {
 
   it('a file that does not exist is still resolved through its existing parent', () => {
     expect(relativizeSource(`${realRoot}/scenarios/missing.ts`, linkRoot)).toBe('/scenarios/missing.ts');
+  });
+
+  it('a source that reaches the root through an in-tree symlink keeps its in-tree form', () => {
+    // A linked workspace package under node_modules: Metro may write either spelling.
+    fs.symlinkSync(nodePath.join(base, 'real', 'packages', 'x'), nodePath.join(realRoot, 'linked-pkg'));
+    expect(relativizeSource(`${realRoot}/linked-pkg/a.js`, realRoot)).toBe('/linked-pkg/a.js');
+    // Root given through a symlink as well: the plain paths escape the root, so real paths
+    // are compared and the package's real location comes out, still without the build layout.
+    expect(relativizeSource(`${realRoot}/linked-pkg/a.js`, linkRoot)).toBe('../packages/x/a.js');
+  });
+
+  it('one map resolves the root and each directory once, however many sources it has', () => {
+    const spy = jest.spyOn(fs, 'realpathSync');
+    try {
+      const sources = Array.from({ length: 50 }, (_, i) => `${realRoot}/scenarios/file${i}.ts`);
+      const text = JSON.stringify({ version: 3, sources, mappings: '' });
+      const out = JSON.parse(relativizeSourceMap(text, linkRoot));
+      expect(out.sources.every((source, i) => source === `/scenarios/file${i}.ts`)).toBe(true);
+      // The root and the one `scenarios` directory, not 2 x 50.
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(3);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('a sibling package outside the root keeps its ../ form', () => {

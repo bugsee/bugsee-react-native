@@ -346,43 +346,61 @@ function isAbsoluteSource(source) {
 }
 
 /**
- * `p` with symlinks resolved, so a root and a source that name the same place
- * through different paths compare equal (macOS: Xcode reports /tmp/... while
- * Metro writes /private/tmp/...). A path that does not exist is resolved
- * through its nearest existing parent. Only for this machine's own paths:
- * a Windows-style entry in a map built elsewhere is returned as it is.
+ * `dir` with symlinks resolved, through its nearest existing parent when it
+ * does not exist. `cache` (a Map) keeps one answer per directory, so a map with
+ * thousands of sources pays one filesystem lookup per directory, not per source.
  */
-function canonicalPath(p, flavor) {
-  const resolved = flavor.resolve(p);
-  if (flavor !== path.posix || process.platform === 'win32') return resolved;
-  let existing = resolved;
-  const missing = [];
-  while (existing !== flavor.dirname(existing)) {
-    try {
-      return flavor.join(fs.realpathSync(existing), ...missing.reverse());
-    } catch {
-      missing.push(flavor.basename(existing));
-      existing = flavor.dirname(existing);
-    }
+function realDirectory(dir, flavor, cache) {
+  const known = cache.get(dir);
+  if (known !== undefined) return known;
+  const parent = flavor.dirname(dir);
+  let real;
+  try {
+    real = fs.realpathSync(dir);
+  } catch {
+    real = parent === dir ? dir : flavor.join(realDirectory(parent, flavor, cache), flavor.basename(dir));
   }
-  return resolved;
+  cache.set(dir, real);
+  return real;
+}
+
+/** The parts of `to` relative to `from`, or undefined when there is no relative form (another drive). */
+function relativeParts(flavor, from, to) {
+  const relative = flavor.relative(from, to);
+  if (!relative || flavor.isAbsolute(relative)) return undefined;
+  return relative.split(/[\\/]/);
 }
 
 /**
  * Root-relative form of one `sources` entry, or the entry itself when it is
  * not an absolute path (or has no relative form).
+ *
+ * `memo` ({ root, dirs }) is shared across one map's entries.
  */
-function relativizeSource(source, projectRoot) {
+function relativizeSource(source, projectRoot, memo = { root: undefined, dirs: new Map() }) {
   if (typeof source !== 'string' || !isAbsoluteSource(source)) return source;
   const flavor = /^(?:[A-Za-z]:|\\\\)/.test(source) ? path.win32 : path.posix;
-  const relative = flavor.relative(canonicalPath(projectRoot, flavor), canonicalPath(source, flavor));
+  const direct = relativeParts(flavor, flavor.resolve(projectRoot), flavor.resolve(source));
   // Another drive on Windows: there is no relative form.
-  if (!relative || flavor.isAbsolute(relative)) return source;
-  const parts = relative.split(/[\\/]/);
-  // Inside the root: `/scenarios/a.ts`, as Expo writes it. Outside (a linked
-  // workspace package): `../packages/x/src/a.ts`, still free of the machine's
-  // absolute layout.
-  return parts[0] === '..' ? parts.join('/') : `/${parts.join('/')}`;
+  if (direct === undefined) return source;
+  // Inside the root: `/scenarios/a.ts`, as Expo writes it. A source that reaches
+  // the root through an in-tree symlink (a linked workspace package under
+  // node_modules) stays under the root too, so it is not resolved here.
+  if (direct[0] !== '..') return `/${direct.join('/')}`;
+  // Outside the root by plain paths. That is also what a root and a source that
+  // name the same place through a symlink look like (macOS: Xcode reports
+  // /tmp/... while Metro writes /private/tmp/...), so compare real paths,
+  // which gives `/scenarios/a.ts` for that case and `../packages/x/a.js` for a
+  // genuinely outside source (a linked workspace package), still free of the
+  // machine's absolute layout. Only this machine's own paths can be resolved.
+  if (flavor === path.posix && process.platform !== 'win32') {
+    if (memo.root === undefined) memo.root = realDirectory(flavor.resolve(projectRoot), flavor, memo.dirs);
+    const resolved = flavor.resolve(source);
+    const real = flavor.join(realDirectory(flavor.dirname(resolved), flavor, memo.dirs), flavor.basename(resolved));
+    const viaReal = relativeParts(flavor, memo.root, real);
+    if (viaReal !== undefined) return viaReal[0] === '..' ? viaReal.join('/') : `/${viaReal.join('/')}`;
+  }
+  return direct.join('/');
 }
 
 /** Returns the map text with `sources` made project-relative, or the text itself if nothing changed. */
@@ -390,8 +408,9 @@ function relativizeSourceMap(mapText, projectRoot) {
   const map = JSON.parse(mapText);
   if (!Array.isArray(map.sources) || !projectRoot) return mapText;
   let changed = false;
+  const memo = { root: undefined, dirs: new Map() };
   map.sources = map.sources.map((source) => {
-    const next = relativizeSource(source, projectRoot);
+    const next = relativizeSource(source, projectRoot, memo);
     if (next !== source) changed = true;
     return next;
   });
