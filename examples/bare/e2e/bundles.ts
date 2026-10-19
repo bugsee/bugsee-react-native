@@ -225,21 +225,30 @@ async function catAndroidBundle(file: string): Promise<Buffer> {
   } catch (error) {
     // An adb that does carry cat's exit code rejects here with the bytes it got
     // (cat's error text, for an evicted bundle): classify those, don't lose them.
-    const stdout = (error as { stdout?: unknown }).stdout;
-    if (Buffer.isBuffer(stdout)) return stdout;
+    // Only for a plain non-zero exit. A signal, a killed adb server, a lost device
+    // or an exceeded maxBuffer also reject with a partial Buffer, and that must
+    // surface as the adb failure it is, not as a truncated zip.
+    const failure = error as { code?: unknown; signal?: unknown; stdout?: unknown; stderr?: unknown };
+    if (typeof failure.code === 'number' && !failure.signal && Buffer.isBuffer(failure.stdout)) {
+      console.log(
+        `[pull-diag] ${file} adb exited with code ${failure.code}: ${String(failure.stderr ?? '').trim()}`,
+      );
+      return failure.stdout;
+    }
     throw error;
   }
 }
 
 /**
  * Whether a bad pull is the harness's eviction race (skip the bundle) and not a
- * failure: the bundle is positively absent from a valid listing AND what came
- * back is what a failed `cat` returns. A non-empty bad zip is never skipped,
- * even when the file is gone: `truncated-zip` is the one case that would point
- * at the SDK.
+ * failure: the bundle is positively absent from a valid listing AND every pull
+ * of it (the first and the retry) returned what a failed `cat` returns. A
+ * non-empty bad zip is never skipped, even when the file is gone by the retry:
+ * `truncated-zip` is the one case that would point at the SDK, and a later
+ * eviction must not hide it.
  */
-export function evictedBeforePull(kind: PulledZipKind, listedAfter: string): boolean {
-  return listedAfter === 'absent' && (kind === 'empty' || kind === 'error-text');
+export function evictedBeforePull(kinds: readonly PulledZipKind[], listedAfter: string): boolean {
+  return listedAfter === 'absent' && kinds.every(kind => kind === 'empty' || kind === 'error-text');
 }
 
 /** The `ls -l` line of `file` in a bundles-dir listing, or 'absent'. */
@@ -260,6 +269,8 @@ function listedLine(listing: string, file: string): string {
  * write by the SDK. Never returns a bad buffer.
  */
 async function pullOneAndroidBundle(file: string): Promise<Buffer | undefined> {
+  // What each pull returned, so that a retry coming back empty cannot hide an earlier short zip.
+  const seen: Array<{ kind: PulledZipKind; length: number; text: string }> = [];
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const before = await listAndroidBundlesLong();
     const startedAt = Date.now();
@@ -267,6 +278,7 @@ async function pullOneAndroidBundle(file: string): Promise<Buffer | undefined> {
     const after = await listAndroidBundlesLong();
     const kind = classifyPulledZip(buf);
     const peek = peekBytes(buf);
+    seen.push({ kind, length: buf.length, text: peek.text });
     const beforeLine = listedLine(before, file);
     const afterLine = listedLine(after, file);
     console.log(
@@ -280,16 +292,18 @@ async function pullOneAndroidBundle(file: string): Promise<Buffer | undefined> {
       await new Promise(resolve => setTimeout(resolve, 500));
       continue;
     }
-    if (evictedBeforePull(kind, afterLine)) {
+    if (evictedBeforePull(seen.map(pull => pull.kind), afterLine)) {
       console.log(`[pull-diag] ${file} evicted before pull, skipping`);
       return undefined;
     }
+    // Report the pull that is the real evidence: a short zip from the first attempt, if there was one.
+    const worst = seen.find(pull => pull.kind === 'truncated-zip' || pull.kind === 'not-a-zip') ?? seen[seen.length - 1]!;
     const headline =
-      kind === 'truncated-zip'
-        ? `TRUNCATED ZIP (non-empty): ${file} is ${buf.length} bytes, starts like a zip and has no end-of-central-directory record; the listing says [${afterLine}]`
+      worst.kind === 'truncated-zip'
+        ? `TRUNCATED ZIP (non-empty): ${file} is ${worst.length} bytes, starts like a zip and has no end-of-central-directory record; the listing says [${afterLine}]`
         : afterLine === 'absent'
-          ? `pulled ${file} is ${kind} (${buf.length} bytes, first bytes ${JSON.stringify(peek.text)}) and is no longer listed`
-          : `pulled ${file} is ${kind} (${buf.length} bytes, first bytes ${JSON.stringify(peek.text)}) although it is still listed [${afterLine}]`;
+          ? `pulled ${file} is ${worst.kind} (${worst.length} bytes, first bytes ${JSON.stringify(worst.text)}) and is no longer listed`
+          : `pulled ${file} is ${worst.kind} (${worst.length} bytes, first bytes ${JSON.stringify(worst.text)}) although it is still listed [${afterLine}]`;
     throw new Error(`${headline}\nbundles dir before the pull:\n${before}\nafter the pull:\n${after}`);
   }
   return undefined;

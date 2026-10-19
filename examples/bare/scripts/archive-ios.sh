@@ -36,7 +36,9 @@ esac
 : "${IOS_DEVELOPMENT_TEAM:?set IOS_DEVELOPMENT_TEAM to your Apple Developer team id}"
 ARCHIVE_DIR="${ARCHIVE_DIR:-$PWD/ios/build/archive}"
 
-BUGSEE_TOKEN_ANDROID="${BUGSEE_TOKEN_ANDROID:-$BUGSEE_TOKEN_IOS}" node scripts/write-credentials.mjs
+# The iOS token only: an exported BUGSEE_TOKEN_ANDROID passes through, and an unset one leaves the
+# Android Gradle plugin's uploads off instead of pointing them at the iOS app.
+node scripts/write-credentials.mjs
 
 rm -rf ios/Pods/React-Core-prebuilt
 pod cache clean React-Core-prebuilt --all >/dev/null 2>&1 || true

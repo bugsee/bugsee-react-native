@@ -43,19 +43,27 @@ describe('peekBytes', () => {
 describe('evictedBeforePull', () => {
   const listed = '-rw------- 1 u0_a1 u0_a1 55140 2026-10-19 07:28 abc.bundle.zip';
 
-  it('skips a bundle that is gone from a valid listing when the cat failed', () => {
-    expect(evictedBeforePull('empty', 'absent')).toBe(true);
-    expect(evictedBeforePull('error-text', 'absent')).toBe(true);
+  it('skips a bundle that is gone from a valid listing when every pull was a failed cat', () => {
+    expect(evictedBeforePull(['empty'], 'absent')).toBe(true);
+    expect(evictedBeforePull(['error-text'], 'absent')).toBe(true);
+    expect(evictedBeforePull(['error-text', 'error-text'], 'absent')).toBe(true);
+    expect(evictedBeforePull(['empty', 'error-text'], 'absent')).toBe(true);
   });
 
   it('never skips a bundle that is still listed', () => {
     for (const kind of ['empty', 'error-text', 'not-a-zip', 'truncated-zip'] as const) {
-      expect(evictedBeforePull(kind, listed)).toBe(false);
+      expect(evictedBeforePull([kind, kind], listed)).toBe(false);
     }
   });
 
   it('never skips a non-empty bad zip, even when the file is gone: a truncated zip is the one case that points at the SDK', () => {
-    expect(evictedBeforePull('truncated-zip', 'absent')).toBe(false);
-    expect(evictedBeforePull('not-a-zip', 'absent')).toBe(false);
+    expect(evictedBeforePull(['truncated-zip'], 'absent')).toBe(false);
+    expect(evictedBeforePull(['not-a-zip'], 'absent')).toBe(false);
+  });
+
+  it('a later eviction cannot hide an earlier truncated zip: the retry coming back empty is not enough to skip', () => {
+    expect(evictedBeforePull(['truncated-zip', 'empty'], 'absent')).toBe(false);
+    expect(evictedBeforePull(['truncated-zip', 'error-text'], 'absent')).toBe(false);
+    expect(evictedBeforePull(['not-a-zip', 'empty'], 'absent')).toBe(false);
   });
 });
