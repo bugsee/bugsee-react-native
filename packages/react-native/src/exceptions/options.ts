@@ -8,6 +8,10 @@ import { errorName } from '../errorName';
  * field and never the rejected value.
  */
 
+/**
+ * `labels` and `includeVideo` were removed and now throw `TypeError`: set
+ * labels from `setReportHandler`; neither SDK can leave the video out of a report.
+ */
 export interface ExceptionOptions {
   /** The exception domain. Android groups issues by it; iOS records it with the report. Non-empty, at most 256 characters. */
   domain?: string;

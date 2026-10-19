@@ -492,6 +492,22 @@ then run `pod install` again:
     end
 ```
 
+**`TypeError: ExceptionOptions has unknown key "labels"` (or
+`"includeVideo"`).** `Bugsee.logException` takes `{ domain }` only, as the
+7.x native SDKs do, and throws on any other key before anything is sent.
+Earlier betas accepted `labels` and `includeVideo`. Set labels from the
+report handler instead. `onAfterReportCreated` sees every report and may run
+more than once, so set the labels rather than append to them:
+
+```ts
+Bugsee.setReportHandler({
+  onAfterReportCreated: report => report.setLabels(['checkout']),
+});
+```
+
+`includeVideo` has no replacement: neither SDK can leave the video out of a
+single report.
+
 ## Examples
 
 [`examples/playground`](https://github.com/bugsee/bugsee-react-native/tree/main/examples/playground) is a sample app with a button for every SDK API, a demo shop and a manual validation map.
