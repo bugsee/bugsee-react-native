@@ -15,7 +15,7 @@ import type { LifecycleEvent } from './wrapper/events';
 import { setReportHandler as installReportHandler } from './report/dispatcher';
 import { createReport as openCreatedReport } from './report/CreatedReport';
 import type { BugseeCreatedReport, BugseeReportHandler } from './report/types';
-import { log as sendLog } from './logs/log';
+import { endLogSession, log as sendLog } from './logs/log';
 import { installConsoleCapture } from './console/capture';
 import { setLogFilter as installLogFilter } from './logs/filter';
 import type { LogFilter } from './logs/filter';
@@ -122,6 +122,8 @@ class Bugsee {
    */
   async launch(token: string, options: LaunchOptions = {}): Promise<boolean> {
     assertUsableToken(token);
+    // A filtered `log` line still waiting on its filter belongs to the session before this call.
+    endLogSession();
     // Registered before launching, not after: the SDK reads the wrapper while
     // composing a report's environment, and a crash during start-up would
     // otherwise produce a report that does not say what wrapper it came from.
@@ -152,6 +154,7 @@ class Bugsee {
    * {@link launch}. A second install does not wrap again.
    */
   async relaunch(options: LaunchOptions = {}): Promise<boolean> {
+    endLogSession();
     this.registerWrapper();
     installExceptionHandlers();
     applyExceptionCaptureFromOptions(options);
@@ -277,6 +280,7 @@ class Bugsee {
 
   /** Stops the current session. */
   async stop(): Promise<boolean> {
+    endLogSession();
     return NativeBugsee.stop();
   }
 
@@ -409,9 +413,17 @@ class Bugsee {
    * One line into the Bugsee log: the app's own, through the native
    * `Bugsee.log` (source Bugsee, no tag). Recorded with
    * `com.bugsee.option.capture.logs` false, which turns off only what is
-   * captured automatically. The app's log filter ({@link setLogFilter}) runs
-   * on it natively, once, only when `requiresFiltering` is `true`; by
-   * default it does not, as in the native SDKs. Dropped before launch().
+   * captured automatically. As in the native SDKs, the app's log filter
+   * ({@link setLogFilter}) skips the line unless `requiresFiltering` is
+   * `true`. Then the filter runs in JS, inside this call: a string it
+   * returns is sent at once, a promise is waited on for at most 10 s and the
+   * line is stamped when it settles, and a throw, a rejection, or anything
+   * else drops the line. A filtered line logged while the filter runs,
+   * before it returns, is dropped. A line still waiting on a promise filter
+   * is also dropped when `launch`, `relaunch`, `attach` or `stop` is called
+   * meanwhile, whether or not that call takes effect: it would otherwise be
+   * recorded in another session. Dropped before launch(), after the filter
+   * has seen it.
    */
   log(message: string, level: LogLevel = LogLevel.Info, requiresFiltering: boolean = false): void {
     sendLog(message, level, requiresFiltering);
@@ -463,11 +475,18 @@ class Bugsee {
    * callback, or with `null`, clears it.
    *
    * The callback receives the line and returns the line to keep, or a
-   * replacement string. `null` or `undefined` drops the line. The native SDK
-   * is what invokes the filter; the callback runs on a later turn, and this
-   * method does not wait for it. A callback that throws, rejects, or does
-   * not settle before the SDK's own timeout drops the line. It is not passed
-   * through.
+   * replacement string. `null` or `undefined` drops the line. For a line the
+   * SDK captured, the native SDK invokes the filter; the callback runs on a
+   * later turn, and this method does not wait for it. A callback that
+   * throws, rejects, or does not settle drops the line; it is not passed
+   * through. Android's SDK drops it once its own timeout passes. iOS has no
+   * timeout of its own: a line whose callback never settles stays unrecorded. A {@link log} line with
+   * `requiresFiltering` is filtered in JS, inside that call.
+   *
+   * The callback must not call {@link log} with `requiresFiltering`. Such a
+   * line is dropped only while the callback runs, before it returns. Logged
+   * later -- after an `await`, in a `then`, or from a microtask -- it is
+   * filtered again, and each pass records a line, without end.
    */
   setLogFilter(callback?: LogFilter | null): void {
     installLogFilter(callback);
@@ -672,6 +691,7 @@ class Bugsee {
    * handlers; a rejected read does not install it either.
    */
   async attach(): Promise<void> {
+    endLogSession();
     setExceptionCaptureEnabled(false);
     const options = await this.getLaunchOptions();
     applyExceptionCaptureFromOptions(options);

@@ -1,5 +1,8 @@
 /**
- * Task 9.2: the log filter's native→JS round trip, on a device.
+ * Task 9.2: the log filter on `Bugsee.log` lines, on a device.
+ *
+ * `log()` runs the filter in JS, so these lines do not take the native→JS
+ * round trip; console-dedup.test.ts still does, on console lines.
  *
  * Same retention as wrapper-channel.test.ts. A `Bugsee.log` line the filter
  * rewrites is the line in the retained bundle. A filter that never settles

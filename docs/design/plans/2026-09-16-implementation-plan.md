@@ -1067,7 +1067,7 @@ These three phases run **in order: 4, then 5, then 6**. Each ends with its own r
 ### Rulings (controller, 2026-09-29)
 
 - **Ruling:** Phase 4 runs first. Phase 5 does not start until Phase 4's review gate is satisfied.
-- ~~**Ruling:** `log()` goes through the existing `forwardLog` → `wrapperLog` → wrapper-channel route **only**. Its source stays `Custom` (98) and its level maps by value. No second native route.~~ Superseded 2026-10-12 (`bugsee/specs#49`, spec text in #52): with `capture.logs` off the SDKs drop the channel's `log`, so `log()` calls the native `Bugsee.log` (source `Bugsee`, level by value). Since 2026-10-13 (review of #80) it takes an optional `requiresFiltering`, default `false`, passed through as in the native SDKs. See design §10.3.
+- ~~**Ruling:** `log()` goes through the existing `forwardLog` → `wrapperLog` → wrapper-channel route **only**. Its source stays `Custom` (98) and its level maps by value. No second native route.~~ Superseded 2026-10-12 (`bugsee/specs#49`, spec text in #52): with `capture.logs` off the SDKs drop the channel's `log`, so `log()` calls the native `Bugsee.log` (source `Bugsee`, level by value). Since 2026-10-13 (review of #80) it takes an optional `requiresFiltering`, default `false`, as in the native SDKs; when it is `true`, `log()` runs the JS filter itself and sends `false` to native. See design §10.3.
 - **Ruling:** `event` and `trace` call the SDKs' public APIs.
 - **Ruling:** params must survive the bridge with their types and nesting intact. JS rejects any value outside the accepted domain before it crosses.
 - **Ruling:** device tests assert the lines, events and traces in retained bundles on both platforms.

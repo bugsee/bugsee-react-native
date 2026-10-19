@@ -5,10 +5,11 @@ import NativeBugsee from '../NativeBugsee';
  * One log line in, the line to keep out.
  *
  * A string replaces the line. `null` and `undefined` drop it. A promise is
- * waited on; the native SDK is what bounds that wait. This function does not
- * add a timeout of its own: both SDKs already drop a line whose filter does
- * not answer, and a timeout here that then passed the original line would
- * leak exactly what the filter exists to remove.
+ * waited on: for a line the SDK captured (`console.*`, RCTLog), by native,
+ * which asks JS; for a `Bugsee.log` line with `requiresFiltering`, by `log()`,
+ * which runs the filter itself and waits 10 s, as Android's SDK does. A
+ * filter that does not answer drops the line on either path. Passing the
+ * original line instead would leak exactly what the filter exists to remove.
  */
 export type LogFilter = (
   line: string,
@@ -40,6 +41,11 @@ export function setLogFilter(callback?: LogFilter | null): void {
   }
   current = callback ?? undefined;
   NativeBugsee.setLogFilterEnabled(current !== undefined);
+}
+
+/** The app's filter, for `log()` to run itself. */
+export function currentLogFilter(): LogFilter | undefined {
+  return current;
 }
 
 /**
