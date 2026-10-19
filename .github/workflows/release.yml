@@ -22,8 +22,9 @@ name: Release
 # `npm publish` moves one dist-tag. `also_tag` (blank by default, so moving `latest` is always typed)
 # points a second tag at the same version afterwards, e.g. `latest` while the SDK is a beta. publish-all
 # never moves `latest` from a stable release to a prerelease. Moving a tag needs the
-# publisher's dist-tag right, which a trusted-publisher token may not carry; if that fails every package
-# is still published and the step exits non-zero listing the commands to run by hand.
+# `dist-tag` permission ticked on the trusted publisher (npm 12.2.0, installed in the publish job, runs the
+# OIDC exchange for it); if a tag still cannot be moved every package is already published and the step
+# exits non-zero listing the commands to run by hand.
 #
 # A version already on npm is not published again, but the tags are still applied to it: a re-run with
 # another `tag` or an `also_tag` moves the tag instead of reporting success and doing nothing.
@@ -131,11 +132,16 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      # Trusted publishing needs npm >= 11.5.1; fail loudly rather than fall back to a token prompt.
-      - name: Check npm version
+      # Trusted publishing needs npm >= 11.5.1 for `npm publish`, and a newer npm for `npm dist-tag`: the
+      # runner's npm 11.19 does the OIDC exchange only for publish, so moving `latest` failed with E401
+      # in the first release (7.0.0-beta2). npm 12.2.0 runs the exchange for `dist-tag` too. Pinned
+      # exactly, installed before any package is published, and verified, so the run fails here and not
+      # half-way through a release if the right npm cannot be had.
+      - name: Install the npm that can move dist-tags
         run: |
+          npm install -g npm@12.2.0
+          test "$(npm --version)" = "12.2.0"
           npm --version
-          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm >= 11.5.1 required"); process.exit(1) }' "$(npm --version)"
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
