@@ -1,0 +1,97 @@
+name: Release
+
+# Publishes @bugsee/react-native and @bugsee/react-native-feedback to npm through TRUSTED PUBLISHING
+# (OIDC): there is no npm token in this repository. Each package on npm has THIS workflow file
+# registered as its trusted publisher (`node scripts/npm-trust-all.mjs`), so npm accepts the
+# short-lived identity token GitHub mints for the run and nothing long-lived exists to leak.
+#
+# GitHub-hosted runner: npm trusted publishing does not support self-hosted runners
+# (docs.npmjs.com/trusted-publishers).
+#
+# The file NAME is part of the trust relationship. Renaming it silently breaks publishing until
+# every package is re-registered.
+#
+# A real publish runs only from `main`, and only after the gates below pass: the same lint,
+# typecheck and unit tests CI runs, the release metadata gate, and `prepack`'s refusal to pack a
+# SNAPSHOT pin. Every package ships under the dist-tag you give; `latest` is never the default, so a
+# forgotten input cannot put a beta where nobody asked for one.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: npm dist-tag to publish under (beta until the iOS SDK reaches GA)
+        default: beta
+        required: true
+      dry_run:
+        description: Pack and `npm publish --dry-run` only; publishes nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token npm exchanges for publish rights
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # Never a real token; the gates only read these, and nothing here reaches the Bugsee API.
+  BUGSEE_TOKEN_IOS: 00000000-0000-4000-8000-000000000000
+  BUGSEE_TOKEN_ANDROID: 00000000-0000-4000-8000-000000000000
+  BUGSEE_ENDPOINT: http://127.0.0.1:9
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: A real publish runs from main only
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$DRY_RUN" != "true" ] && [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::a real publish runs only from main (this run is on $REF); use dry_run or dispatch on main"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - run: corepack enable
+
+      # Trusted publishing needs npm >= 11.5.1; fail loudly rather than fall back to a token prompt.
+      - name: Check npm version
+        run: |
+          npm --version
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm >= 11.5.1 required"); process.exit(1) }' "$(npm --version)"
+
+      - run: yarn install --immutable
+
+      - name: Gates (the same as CI's js job)
+        run: |
+          yarn lint
+          yarn typecheck
+          yarn test
+
+      - name: Release gate (metadata, one version, peer ranges)
+        run: node scripts/check-publishable.mjs
+
+      # Inputs go in through the environment, never interpolated into the script text: a `${{ }}`
+      # inside `run:` is textually pasted into the shell, so a crafted tag could execute commands
+      # with the job's id-token.
+      - name: Publish
+        env:
+          NPM_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            node scripts/publish-all.mjs --tag "$NPM_TAG" --dry-run
+          else
+            node scripts/publish-all.mjs --tag "$NPM_TAG"
+          fi

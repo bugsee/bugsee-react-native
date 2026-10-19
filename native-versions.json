@@ -1,6 +1,6 @@
 {
   "android": {
-    "sdk": "7.4.1",
+    "sdk": "7.4.2",
     "gradlePlugin": "4.0.8"
   },
   "ios": {

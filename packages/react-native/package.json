@@ -1,6 +1,6 @@
 {
   "name": "@bugsee/react-native",
-  "version": "0.0.0",
+  "version": "7.0.0-beta1",
   "description": "Bugsee SDK for React Native",
   "license": "MIT",
   "homepage": "https://www.bugsee.com",
@@ -53,5 +53,13 @@
         "Bugsee": "BugseeModule"
       }
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bugsee/bugsee-react-native.git",
+    "directory": "packages/react-native"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

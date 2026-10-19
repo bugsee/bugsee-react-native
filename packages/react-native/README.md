@@ -7,6 +7,17 @@ Wraps the native Bugsee SDKs — it is not a reimplementation — so a report fr
 a React Native app is the same report a native app produces, with the JS layer
 added.
 
+## Status: beta
+
+This is a beta (`7.0.0-beta1`), built on the 7.x native SDKs, and the iOS SDK it
+bundles is itself a beta. It is published under the `beta` npm dist-tag only, so
+a plain `yarn add @bugsee/react-native` finds nothing: ask for the tag, as in
+[Install](#install). The API can still change between betas.
+
+It replaces `react-native-bugsee` (6.x), which stays on its own line. The two
+are different packages with different APIs, not an upgrade in place: remove the
+old one and follow this README.
+
 ## Requirements
 
 | | |
@@ -28,8 +39,11 @@ build fails on 0.86 and 0.87.
 ## Install
 
 ```sh
-yarn add @bugsee/react-native
+yarn add @bugsee/react-native@beta
 ```
+
+`npm install @bugsee/react-native@beta` and `pnpm add @bugsee/react-native@beta` work the
+same way.
 
 **iOS.** React Native 0.87 and later resolve the SDK through Swift Package
 Manager. Earlier versions use CocoaPods, where the podspec vendors the same
