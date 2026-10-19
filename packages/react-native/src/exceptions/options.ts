@@ -10,7 +10,7 @@ import { errorName } from '../errorName';
  */
 
 export interface ExceptionOptions {
-  /** Groups the issue on the dashboard. Non-empty, at most 256 characters. */
+  /** The exception domain. Android groups issues by it; iOS records it with the report. Non-empty, at most 256 characters. */
   domain?: string;
 }
 
