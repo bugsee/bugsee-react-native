@@ -90,12 +90,13 @@ function remoteTagCommit(tag) {
   return refs.get(`refs/tags/${tag}^{}`) ?? refs.get(`refs/tags/${tag}`) ?? '';
 }
 
-function releaseExists(tag) {
+/** 'published', 'draft' or 'none'. `gh release view` may or may not find a draft, so isDraft is read from what it finds. */
+function releaseState(tag) {
   try {
-    run('gh', ['release', 'view', tag, '--json', 'tagName']);
-    return true;
+    const found = JSON.parse(run('gh', ['release', 'view', tag, '--json', 'tagName,isDraft']) || '{}');
+    return found.isDraft ? 'draft' : 'published';
   } catch (error) {
-    if (/release not found|not found|HTTP 404/i.test(`${error.stdout ?? ''}${error.stderr ?? ''}`)) return false;
+    if (/release not found|not found|HTTP 404/i.test(`${error.stdout ?? ''}${error.stderr ?? ''}`)) return 'none';
     throw error; // anything else (auth, network) is not "no release": do not go on to create one blindly
   }
 }
@@ -166,13 +167,15 @@ if (isEntryPoint(import.meta.url)) {
     process.exit(0);
   }
 
-  if (releaseExists(tag)) {
+  const state = releaseState(tag);
+  if (state === 'published') {
     console.log(`skip     release ${tag} already exists`);
     process.exit(0);
   }
-  // A published release is found above; a DRAFT is not (a failed asset upload leaves one). Creating a second
-  // release for the tag would be wrong and deleting someone's draft is not this script's call: stop and say so.
-  if (draftExists(tag)) {
+  // A DRAFT (a failed asset upload leaves one) is not complete: skipping it would report success with the release
+  // unpublished, creating a second release for the tag would be wrong, and deleting someone's draft is not this
+  // script's call. `gh release view` may not see a draft at all, so the draft list is checked as well.
+  if (state === 'draft' || draftExists(tag)) {
     console.error(`a draft release for ${tag} exists (an earlier run did not finish): publish or delete it, then re-run.`);
     process.exit(1);
   }

@@ -20,6 +20,7 @@ interface Setup {
   releaseExists?: boolean;
   releaseLookupFails?: boolean;
   draftExists?: boolean;
+  viewShowsDraft?: boolean; // `gh release view` itself returns the draft (isDraft: true)
   remoteTag?: string; // the sha `git ls-remote` prints on refs/tags/<tag>; '' = no tag
   remoteTagDeref?: string; // the sha it prints on refs/tags/<tag>^{} (an annotated tag's commit)
   npm?: 'match' | 'mismatch' | 'notfound' | 'late' | 'error'; // what `npm view ... dist.integrity` answers (default match)
@@ -63,7 +64,8 @@ function run(setup: Setup = {}) {
 { printf 'gh'; for a in "$@"; do printf ' %s' "$(printf '%s' "$a" | tr '\n' ' ')"; done; echo; } >> "${log}"
 if [ "$1 $2" = "release view" ]; then
   [ -n "$STUB_LOOKUP_FAILS" ] && { echo "HTTP 401: Bad credentials" >&2; exit 1; }
-  [ -n "$STUB_RELEASE_EXISTS" ] && { echo '{"tagName":"x"}'; exit 0; }
+  [ -n "$STUB_VIEW_DRAFT" ] && { echo '{"tagName":"x","isDraft":true}'; exit 0; }
+  [ -n "$STUB_RELEASE_EXISTS" ] && { echo '{"tagName":"x","isDraft":false}'; exit 0; }
   echo "release not found" >&2; exit 1
 fi
 if [ "$1 $2" = "release list" ]; then
@@ -118,6 +120,7 @@ esac
       VERIFY_ATTEMPTS: '4',
       VERIFY_RETRY_DELAY_MS: '10',
       STUB_DRAFT_EXISTS: setup.draftExists ? '1' : '',
+      STUB_VIEW_DRAFT: setup.viewShowsDraft ? '1' : '',
     },
   });
   const calls = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
@@ -169,6 +172,13 @@ describe('github-release.mjs', () => {
 
   it('stops, creating nothing, when an unfinished draft release exists for the tag', () => {
     const r = run({ draftExists: true });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('draft release');
+    expect(creates(r.calls)).toEqual([]);
+  });
+
+  it('stops on a draft that `gh release view` itself returns, instead of skipping it as done', () => {
+    const r = run({ viewShowsDraft: true });
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('draft release');
     expect(creates(r.calls)).toEqual([]);
