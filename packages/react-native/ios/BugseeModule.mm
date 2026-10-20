@@ -857,6 +857,10 @@ static BOOL BGSRNApplyBreadcrumbKeep(id<BGSBreadcrumb> breadcrumb, NSDictionary 
   return _span.isFinished;
 }
 
+- (NSInteger)bgsrnStatus {
+  return (NSInteger)_span.status;
+}
+
 @end
 
 /// One JSON value, or nil when it is missing, null, an object or an array.
@@ -2417,11 +2421,16 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 }
 
 - (NSDictionary *)adoptSpan:(id<BGSSpan>)span {
+  return [self adoptSpan:span owned:YES];
+}
+
+/// `owned` NO is a span JS only found (the active span), not one it started.
+- (NSDictionary *)adoptSpan:(id<BGSSpan>)span owned:(BOOL)owned {
   if (span == nil) {
     return BGSRNNoSpan();
   }
   BGSRNLiveSpan *adapter = [[BGSRNLiveSpan alloc] initWithSpan:span];
-  NSString *handle = [self.spanHandles retainSpan:span adapter:adapter];
+  NSString *handle = [self.spanHandles retainSpan:span adapter:adapter owned:owned];
   return BGSRNSpanSnapshot(handle, span);
 }
 
@@ -2493,7 +2502,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (NSDictionary *)getActiveSpan {
   __block NSDictionary *snapshot = nil;
   BGSRNRunOnMainSync(^{
-    snapshot = [self adoptSpan:[Bugsee getActiveSpan]];
+    snapshot = [self adoptSpan:[Bugsee getActiveSpan] owned:NO];
   });
   return snapshot;
 }
@@ -2582,10 +2591,10 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   return snapshot;
 }
 
-- (NSArray<NSString *> *)spanFinish:(NSString *)handle
+- (NSDictionary *)spanFinish:(NSString *)handle
                              status:(double)status
                         statusSet:(BOOL)statusSet {
-  __block NSArray<NSString *> *released = @[];
+  __block NSArray<NSDictionary *> *released = @[];
   BGSRNRunOnMainSync(^{
     NSNumber *wire = nil;
     if (statusSet) {
@@ -2598,7 +2607,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     }
     released = [self.spanHandles finishHandle:handle status:wire];
   });
-  return released;
+  return @{@"released": released};
 }
 
 /// Writable report colors on BugseeTheme (7.0.0-beta4; unchanged from beta3). Feedback properties

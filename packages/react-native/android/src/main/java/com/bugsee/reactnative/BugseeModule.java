@@ -1621,7 +1621,7 @@ public class BugseeModule extends NativeBugseeSpec
         if (span == null) {
             return noSpan();
         }
-        return snapshot(spanHandles.retain(span, new LiveSpan(span)), span);
+        return snapshot(spanHandles.retain(span, new LiveSpan(span), false), span);
     }
 
     @Override
@@ -1693,17 +1693,22 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     @Override
-    public WritableArray spanFinish(final String handle, final double status, final boolean statusSet) {
+    public WritableMap spanFinish(final String handle, final double status, final boolean statusSet) {
+        final WritableMap result = Arguments.createMap();
         final WritableArray released = Arguments.createArray();
+        result.putArray("released", released);
         final SpanStatus parsed = statusSet ? SpanHandles.status((int) status) : null;
         if (statusSet && parsed == null) {
             Log.w(TAG, "span finish status is outside 0..5");
-            return released;
+            return result;
         }
-        for (final String id : spanHandles.finish(handle, parsed)) {
-            released.pushString(id);
+        for (final SpanHandles.Released item : spanHandles.finish(handle, parsed)) {
+            final WritableMap entry = Arguments.createMap();
+            entry.putString("handle", item.handle);
+            entry.putInt("status", item.status);
+            released.pushMap(entry);
         }
-        return released;
+        return result;
     }
 
     @Nullable
@@ -1866,6 +1871,12 @@ public class BugseeModule extends NativeBugseeSpec
         @Override
         public boolean isFinished() {
             return span.isFinished();
+        }
+
+        @Override
+        public int statusOrdinal() {
+            final SpanStatus status = span.getStatus();
+            return status == null ? 0 : status.ordinal();
         }
     }
 }

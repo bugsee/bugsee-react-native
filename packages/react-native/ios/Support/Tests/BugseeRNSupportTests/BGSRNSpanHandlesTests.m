@@ -4,7 +4,9 @@
 
 @interface BGSRNFakeSpan : NSObject <BGSRNRetainedSpan>
 @property (nonatomic) BOOL finished;
+@property (nonatomic) NSInteger finishCalls;
 @property (nonatomic, strong) NSNumber *finishedWith;
+@property (nonatomic, strong) NSMutableArray<BGSRNFakeSpan *> *order;
 @property (nonatomic, strong) NSMutableArray<BGSRNFakeSpan *> *children;
 @end
 
@@ -18,14 +20,16 @@
   return self;
 }
 
+/// No self-guard against a second finish: a registry that finishes a span
+/// twice shows in `finishCalls`.
 - (void)bgsrnFinishWithStatus:(NSNumber *)status {
-  if (_finished) {
-    return;
-  }
+  _finishCalls += 1;
+  [_order addObject:self];
   _finished = YES;
   _finishedWith = status;
   for (BGSRNFakeSpan *child in _children) {
     if (!child.finished) {
+      child.order = _order;
       [child bgsrnFinishWithStatus:@(BGSSpanStatusCancelled)];
     }
   }
@@ -33,6 +37,10 @@
 
 - (BOOL)bgsrnIsFinished {
   return _finished;
+}
+
+- (NSInteger)bgsrnStatus {
+  return _finishedWith != nil ? _finishedWith.integerValue : BGSSpanStatusOK;
 }
 
 @end
@@ -48,7 +56,27 @@
 - (BOOL)bgsrnIsFinished {
   return NO;
 }
+- (NSInteger)bgsrnStatus {
+  return BGSSpanStatusUnknown;
+}
 @end
+
+@interface BGSRNThrowingSpan : BGSRNStickySpan
+@end
+
+@implementation BGSRNThrowingSpan
+- (void)bgsrnFinishWithStatus:(NSNumber *)status {
+  @throw [NSException exceptionWithName:@"boom" reason:@"boom" userInfo:nil];
+}
+@end
+
+static NSArray<NSString *> *BGSRNHandlesOf(NSArray<NSDictionary *> *released) {
+  NSMutableArray<NSString *> *out = [NSMutableArray array];
+  for (NSDictionary *item in released) {
+    [out addObject:item[@"handle"]];
+  }
+  return out;
+}
 
 @interface BGSRNSpanHandlesTests : XCTestCase
 @end
@@ -56,17 +84,52 @@
 @implementation BGSRNSpanHandlesTests
 
 /// A reload must not leave transactions open in the SDK.
-- (void)testCancelOpenAndReleaseAllCancelsOpenSpansAndClears {
+- (void)testCancelOpenAndReleaseAllCancelsOwnedOpenSpansParentFirstAndOnce {
   BGSRNSpanHandles *handles = [BGSRNSpanHandles new];
+  NSMutableArray<BGSRNFakeSpan *> *order = [NSMutableArray array];
   BGSRNFakeSpan *parent = [BGSRNFakeSpan new];
   BGSRNFakeSpan *child = [BGSRNFakeSpan new];
+  BGSRNFakeSpan *done = [BGSRNFakeSpan new];
+  parent.order = order;
+  child.order = order;
+  done.order = order;
+  done.finished = YES;
   [parent.children addObject:child];
   [handles retainSpan:parent adapter:parent];
   [handles retainSpan:child adapter:child];
+  [handles retainSpan:done adapter:done];
   [handles cancelOpenAndReleaseAll];
-  XCTAssertTrue(parent.finished);
+  XCTAssertEqual(parent.finishCalls, 1);
   XCTAssertEqualObjects(parent.finishedWith, @(BGSSpanStatusCancelled));
+  XCTAssertEqual(child.finishCalls, 1);
   XCTAssertEqualObjects(child.finishedWith, @(BGSSpanStatusCancelled));
+  XCTAssertEqual(done.finishCalls, 0, @"an already-finished span is skipped");
+  XCTAssertEqualObjects(order, (@[parent, child]));
+  XCTAssertEqual(handles.liveCount, 0u);
+}
+
+/// The active span belongs to the SDK or the app, not to this runtime.
+- (void)testCancelOpenAndReleaseAllDropsAdoptedSpansWithoutCancellingThem {
+  BGSRNSpanHandles *handles = [BGSRNSpanHandles new];
+  BGSRNFakeSpan *adopted = [BGSRNFakeSpan new];
+  BGSRNFakeSpan *owned = [BGSRNFakeSpan new];
+  [handles retainSpan:adopted adapter:adopted owned:NO];
+  [handles retainSpan:owned adapter:owned owned:YES];
+  [handles cancelOpenAndReleaseAll];
+  XCTAssertEqual(adopted.finishCalls, 0);
+  XCTAssertFalse(adopted.finished);
+  XCTAssertEqual(owned.finishCalls, 1);
+  XCTAssertEqual(handles.liveCount, 0u);
+}
+
+- (void)testCancelOpenAndReleaseAllSurvivesASpanThatThrows {
+  BGSRNSpanHandles *handles = [BGSRNSpanHandles new];
+  BGSRNThrowingSpan *bad = [BGSRNThrowingSpan new];
+  BGSRNFakeSpan *next = [BGSRNFakeSpan new];
+  [handles retainSpan:bad adapter:bad];
+  [handles retainSpan:next adapter:next];
+  [handles cancelOpenAndReleaseAll];
+  XCTAssertEqual(next.finishCalls, 1);
   XCTAssertEqual(handles.liveCount, 0u);
 }
 
@@ -75,7 +138,7 @@
   BGSRNSpanHandles *handles = [BGSRNSpanHandles new];
   BGSRNFakeSpan *span = [BGSRNFakeSpan new];
   NSString *handle = [handles retainSpan:span adapter:span];
-  NSArray<NSString *> *released = [handles finishHandle:handle status:nil];
+  NSArray<NSString *> *released = BGSRNHandlesOf([handles finishHandle:handle status:nil]);
   XCTAssertEqualObjects(released, @[handle]);
   XCTAssertTrue(span.finished);
   XCTAssertNil(span.finishedWith);
@@ -90,7 +153,9 @@
   [parent.children addObject:child];
   NSString *parentHandle = [handles retainSpan:parent adapter:parent];
   NSString *childHandle = [handles retainSpan:child adapter:child];
-  NSArray<NSString *> *released = [handles finishHandle:parentHandle status:nil];
+  NSArray<NSDictionary *> *releasedItems = [handles finishHandle:parentHandle status:nil];
+  NSArray<NSString *> *released = BGSRNHandlesOf(releasedItems);
+  XCTAssertEqual([releasedItems[1][@"status"] integerValue], (NSInteger)BGSSpanStatusCancelled);
   XCTAssertTrue([released containsObject:parentHandle]);
   XCTAssertTrue([released containsObject:childHandle]);
   XCTAssertTrue(child.finished);
@@ -126,7 +191,7 @@
   BGSRNSpanHandles *handles = [BGSRNSpanHandles new];
   BGSRNStickySpan *span = [BGSRNStickySpan new];
   NSString *handle = [handles retainSpan:span adapter:span];
-  NSArray<NSString *> *released = [handles finishHandle:handle status:nil];
+  NSArray<NSString *> *released = BGSRNHandlesOf([handles finishHandle:handle status:nil]);
   XCTAssertEqualObjects(released, @[handle]);
   XCTAssertTrue(span.finishCalled);
   XCTAssertFalse(span.bgsrnIsFinished);

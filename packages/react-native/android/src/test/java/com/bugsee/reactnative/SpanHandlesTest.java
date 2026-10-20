@@ -21,23 +21,78 @@ import java.util.List;
 public class SpanHandlesTest {
 
     @Test
-    public void cancelOpenAndReleaseAllCancelsOpenSpansOnceAndClears() {
+    public void cancelOpenAndReleaseAllCancelsOwnedOpenSpansParentFirstAndOnce() {
         final SpanHandles handles = new SpanHandles();
-        final Fake parent = new Fake();
-        final Fake child = new Fake();
-        final Fake done = new Fake();
+        final List<Fake> order = new ArrayList<>();
+        final Fake parent = new Fake(order);
+        final Fake child = new Fake(order);
+        final Fake done = new Fake(order);
         done.finished = true;
         parent.children.add(child);
         handles.retain(parent, parent);
         handles.retain(child, child);
         handles.retain(done, done);
         handles.cancelOpenAndReleaseAll();
-        assertTrue(parent.finished);
+        assertEquals(1, parent.finishCalls);
         assertEquals(SpanStatus.CANCELLED, parent.finishedWith);
-        assertTrue(child.finished);
+        assertEquals(1, child.finishCalls);
         assertEquals(SpanStatus.CANCELLED, child.finishedWith);
-        assertNull(done.finishedWith);
+        assertEquals(0, done.finishCalls);
+        assertEquals(Arrays.asList(parent, child), order);
         assertEquals(0, handles.size());
+    }
+
+    @Test
+    public void cancelOpenAndReleaseAllDropsAdoptedSpansWithoutCancellingThem() {
+        final SpanHandles handles = new SpanHandles();
+        final Fake adopted = new Fake();
+        final Fake owned = new Fake();
+        handles.retain(adopted, adopted, false);
+        handles.retain(owned, owned, true);
+        handles.cancelOpenAndReleaseAll();
+        assertEquals(0, adopted.finishCalls);
+        assertFalse(adopted.finished);
+        assertEquals(1, owned.finishCalls);
+        assertEquals(0, handles.size());
+    }
+
+    @Test
+    public void aClosedRegistryRetainsNothing() {
+        final SpanHandles handles = new SpanHandles();
+        handles.cancelOpenAndReleaseAll();
+        final Fake late = new Fake();
+        assertEquals("", handles.retain(late, late));
+        assertEquals(0, handles.size());
+    }
+
+    @Test
+    public void aSpanThatThrowsDoesNotStopTheRest() {
+        final SpanHandles handles = new SpanHandles();
+        final Sticky bad = new Sticky() {
+            @Override
+            public void finish(final SpanStatus status) {
+                throw new IllegalStateException("boom");
+            }
+        };
+        final Fake next = new Fake();
+        handles.retain(bad, bad);
+        handles.retain(next, next);
+        handles.cancelOpenAndReleaseAll();
+        assertEquals(1, next.finishCalls);
+        assertEquals(0, handles.size());
+    }
+
+    @Test
+    public void finishReportsTheStatusTheSpanHoldsAfterward() {
+        final SpanHandles handles = new SpanHandles();
+        final Fake parent = new Fake();
+        final Fake child = new Fake();
+        parent.children.add(child);
+        final String p = handles.retain(parent, parent);
+        handles.retain(child, child);
+        final List<SpanHandles.Released> released = handles.finish(p, SpanStatus.ERROR);
+        assertEquals(SpanStatus.ERROR.ordinal(), released.get(0).status);
+        assertEquals(SpanStatus.CANCELLED.ordinal(), released.get(1).status);
     }
 
     @Test
@@ -45,7 +100,7 @@ public class SpanHandlesTest {
         final SpanHandles handles = new SpanHandles();
         final Fake span = new Fake();
         final String handle = handles.retain(span, span);
-        final List<String> released = handles.finish(handle, null);
+        final List<String> released = handles(handles.finish(handle, null));
         assertEquals(Arrays.asList(handle), released);
         assertTrue(span.finished);
         assertNull(span.finishedWith);
@@ -61,7 +116,7 @@ public class SpanHandlesTest {
         parent.children.add(child);
         final String parentHandle = handles.retain(parent, parent);
         final String childHandle = handles.retain(child, child);
-        final List<String> released = handles.finish(parentHandle, null);
+        final List<String> released = handles(handles.finish(parentHandle, null));
         assertTrue(released.contains(parentHandle));
         assertTrue(released.contains(childHandle));
         assertTrue(child.finished);
@@ -99,7 +154,7 @@ public class SpanHandlesTest {
         final SpanHandles handles = new SpanHandles();
         final Sticky span = new Sticky();
         final String handle = handles.retain(span, span);
-        final List<String> released = handles.finish(handle, null);
+        final List<String> released = handles(handles.finish(handle, null));
         assertEquals(Arrays.asList(handle), released);
         assertTrue(span.finishCalled);
         assertFalse(span.isFinished());
@@ -136,16 +191,38 @@ public class SpanHandlesTest {
     }
 
     /** A stand-in for the SDK span. Finishing a parent cancels its children. */
+    private static List<String> handles(final List<SpanHandles.Released> released) {
+        final List<String> out = new ArrayList<>();
+        for (final SpanHandles.Released item : released) {
+            out.add(item.handle);
+        }
+        return out;
+    }
+
+    /**
+     * Records every finish call and does not guard against a second one, so
+     * a registry that finishes a span twice shows in {@code finishCalls}.
+     * Finishing cascades Cancelled to children, like the SDK.
+     */
     private static final class Fake implements SpanHandles.Retained {
         boolean finished;
+        int finishCalls;
         SpanStatus finishedWith;
         final List<Fake> children = new ArrayList<>();
+        final List<Fake> order;
+
+        Fake() {
+            this(new ArrayList<Fake>());
+        }
+
+        Fake(final List<Fake> order) {
+            this.order = order;
+        }
 
         @Override
         public void finish(final SpanStatus status) {
-            if (finished) {
-                return;
-            }
+            finishCalls += 1;
+            order.add(this);
             finished = true;
             finishedWith = status;
             for (final Fake child : children) {
@@ -159,10 +236,15 @@ public class SpanHandlesTest {
         public boolean isFinished() {
             return finished;
         }
+
+        @Override
+        public int statusOrdinal() {
+            return finishedWith == null ? SpanStatus.OK.ordinal() : finishedWith.ordinal();
+        }
     }
 
     /** {@code finish} runs, and {@code isFinished} stays false. A no-op span can do that. */
-    private static final class Sticky implements SpanHandles.Retained {
+    private static class Sticky implements SpanHandles.Retained {
         boolean finishCalled;
 
         @Override
@@ -173,6 +255,11 @@ public class SpanHandlesTest {
         @Override
         public boolean isFinished() {
             return false;
+        }
+
+        @Override
+        public int statusOrdinal() {
+            return SpanStatus.UNKNOWN.ordinal();
         }
     }
 }
