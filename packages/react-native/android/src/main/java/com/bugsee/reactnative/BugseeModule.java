@@ -1696,10 +1696,10 @@ public class BugseeModule extends NativeBugseeSpec
     public WritableMap spanFinish(final String handle, final double status, final boolean statusSet) {
         final WritableMap result = Arguments.createMap();
         final WritableArray released = Arguments.createArray();
-        result.putArray("released", released);
         final SpanStatus parsed = statusSet ? SpanHandles.status((int) status) : null;
         if (statusSet && parsed == null) {
             Log.w(TAG, "span finish status is outside 0..5");
+            result.putArray("released", released);
             return result;
         }
         for (final SpanHandles.Released item : spanHandles.finish(handle, parsed)) {
@@ -1708,6 +1708,8 @@ public class BugseeModule extends NativeBugseeSpec
             entry.putInt("status", item.status);
             released.pushMap(entry);
         }
+        // Last: putArray hands the array over, and a later push would be refused.
+        result.putArray("released", released);
         return result;
     }
 
