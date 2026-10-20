@@ -223,6 +223,7 @@ public class BugseeModule extends NativeBugseeSpec
             promise.reject("E_TOKEN", "Bugsee.launch requires a non-empty app token");
             return;
         }
+        NetworkCaptureProbe.warnOnceIfNotInstrumented();
         // The Application, not the React context: the SDK registers activity
         // lifecycle callbacks on it and outlives any single React instance.
         Bugsee.launch(

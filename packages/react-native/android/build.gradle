@@ -148,6 +148,12 @@ dependencies {
     // a JS fetch would otherwise never reach a bundle. `api`, like the core
     // SDK: the interceptor class has to be in the app, not only this module.
     api "com.bugsee:bugsee-android-okhttp:${nativeVersions.android.sdk}"
+    // Only to probe, at launch, whether the Bugsee Gradle plugin injected its
+    // interceptor into OkHttpClient.Builder.build() (NetworkCaptureProbe).
+    // compileOnly: the app gets okhttp from react-android, at the version RN
+    // pins, and this must not add or move it.
+    compileOnly 'com.squareup.okhttp3:okhttp:4.12.0'
+    testImplementation 'com.squareup.okhttp3:okhttp:4.12.0'
     // For @Nullable/@NonNull. The SDK exposes these types in its own public
     // API, so a consumer has androidx.annotation on the classpath regardless.
     implementation 'androidx.annotation:annotation:1.9.1'
