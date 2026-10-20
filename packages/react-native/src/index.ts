@@ -830,18 +830,26 @@ class Bugsee {
 
   /**
    * Deletes collected data stored on the device. The SDK must be stopped
-   * first: while launched, both platforms refuse and this resolves `false`.
-   * The promise resolves with the SDK's own outcome, however long it takes.
+   * first: while launched, both platforms refuse (by design) and this
+   * resolves `false`. The promise resolves with the SDK's own outcome, however
+   * long the deletion takes. On iOS, if the SDK reports nothing for 60 s with
+   * `includingFinishedReports` set, it rejects with code `E_DELETE_TIMEOUT`:
+   * the outcome is unknown and the deletion may still finish.
    *
    * - `includingIntermediate`: `false` deletes the rolling capture data and
-   *   keeps finished reports; `true` also deletes intermediate data
-   *   (snapshots, exported reports).
+   *   keeps finished reports; `true` also deletes the data set aside for
+   *   reports not yet bundled (report snapshots on both platforms; on Android
+   *   also exported reports).
    * - `includingFinishedReports` (default `false`): also deletes the finished
    *   reports waiting for upload, which are otherwise still uploaded after
-   *   the data is deleted (use it when a user withdraws consent). On iOS this
-   *   calls the SDK's delete-everything form, which additionally deletes
-   *   crashes not yet reported and learned performance baselines, and
-   *   `includingIntermediate` is then moot (everything goes).
+   *   the data is deleted (use it when a user withdraws consent).
+   *
+   * Platform difference with `includingFinishedReports: true`: iOS calls the
+   * SDK's delete-everything form, which also deletes crashes not yet reported
+   * and the learned performance baselines, and cancels pending uploads
+   * (`includingIntermediate` is then moot). Android's 3-argument SDK method
+   * deletes the finished report bundles only; it does not touch crashes not
+   * yet reported. TODO: possible SDK follow-up to align the two.
    */
   deleteCollectedDataOnDevice(
     includingIntermediate: boolean,

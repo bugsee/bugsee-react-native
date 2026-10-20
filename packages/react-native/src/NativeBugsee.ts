@@ -608,12 +608,17 @@ export interface Spec extends TurboModule {
    * SDK's own flag. `includingFinishedReports` also deletes the finished
    * reports waiting for upload: Android's 3-argument
    * `Bugsee.deleteCollectedDataOnDevice(includingIntermediate,
-   * includingBundles, callback)`; iOS has no flags form for it, so `true`
-   * calls `deleteCollectedDataOnDevice:` (everything, `includingIntermediate`
-   * is then moot).
+   * includingBundles, callback)`, which deletes the finished bundles only;
+   * iOS has no flags form for it, so `true` calls `deleteCollectedDataOnDevice:`
+   * (everything: also crashes not yet reported and the performance baselines;
+   * `includingIntermediate` is then moot). That gap is a possible SDK
+   * follow-up. `includingIntermediate` covers the report snapshots on both
+   * platforms and, on Android, exported reports.
    *
    * Resolves to the SDK's completion value, however long the deletion takes.
-   * Both platforms refuse the deletion while launched and answer `false`.
+   * Both platforms refuse the deletion while launched and answer `false`
+   * (by design). iOS rejects with `E_DELETE_TIMEOUT` if the SDK reports
+   * nothing for 60 s; the deletion may still finish.
    */
   deleteCollectedDataOnDevice(
     includingIntermediate: boolean,

@@ -188,13 +188,16 @@ describe('deleteCollectedDataOnDevice', () => {
     const end = source.indexOf('- (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:', start);
     const method = source.slice(start, end);
 
-    it('resolves with the SDK completion and has no timeout that reports failure', () => {
+    // The settle-once/backstop behaviour is tested for real in
+    // ios/Support/Tests/.../BGSRNDeleteCollectedDataTests.m; this only pins the
+    // wiring to the SDK forms.
+    it('delegates settling to BGSRNDeleteCollectedData, with no resolve-false timeout', () => {
       expect(start).toBeGreaterThan(-1);
+      expect(method).toContain('BGSRNDeleteCollectedData(');
+      expect(method).toContain('BGSRNDeleteCollectedDataBackstopMs');
       expect(method).toContain('resolve(@(success))');
       expect(method).not.toContain('BGSRNSettleOnce');
-      expect(method).not.toContain('BGSRNUnhandledCompletionDeadlineMs');
       expect(method).not.toContain('resolve(@NO)');
-      expect(method).not.toContain('BGSRNRunOnMainSync');
     });
 
     it('calls the delete-everything form only when finished reports are included', () => {

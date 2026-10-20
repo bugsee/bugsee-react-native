@@ -37,6 +37,7 @@
 #import <BugseeRNSupport/BGSRNReactWindow.h>
 #import <BugseeRNSupport/BGSRNExceptions.h>
 #import <BugseeRNSupport/BGSRNSettleOnce.h>
+#import <BugseeRNSupport/BGSRNDeleteCollectedData.h>
 #import <BugseeRNSupport/BGSRNReportArgs.h>
 #import <BugseeRNSupport/BGSRNCreatedReports.h>
 #import <BugseeRNSupport/BGSRNCreatedReportOps.h>
@@ -65,6 +66,7 @@
 #import "BGSRNReactWindow.h"
 #import "BGSRNExceptions.h"
 #import "BGSRNSettleOnce.h"
+#import "BGSRNDeleteCollectedData.h"
 #import "BGSRNReportArgs.h"
 #import "BGSRNCreatedReports.h"
 #import "BGSRNCreatedReportOps.h"
@@ -2675,35 +2677,35 @@ static NSString *BGSRNHexFromColor(UIColor *color) {
   return hex;
 }
 
-/// Resolves with the SDK's own outcome, however long the deletion takes. iOS
-/// 7.0.0-beta7 always invokes the completion (on the main thread): `NO` when the
-/// SDK is not stopped, otherwise once the deletion has finished. There is no
-/// deadline here: a timeout would report "failed" for a deletion that may still
-/// complete. `includingFinishedReports` selects the SDK form that also deletes
-/// the report bundles waiting for upload (and the crashes not reported yet and
-/// the anomaly baselines); that form has no `includingIntermediate` flag because
-/// it deletes the snapshots too. A completion that arrives off main hops back
-/// first, and only the first completion resolves.
+/// Resolves with the SDK's own outcome. iOS 7.0.0-beta7 always invokes the
+/// completion (on the main thread): `NO` when the SDK is not stopped, otherwise
+/// once the deletion has finished. The only timer is the long backstop in
+/// `BGSRNDeleteCollectedData`, which REJECTS with `E_DELETE_TIMEOUT` (outcome
+/// unknown, the deletion may still finish) rather than resolving `false`.
+/// `includingFinishedReports` selects the SDK form that also deletes the report
+/// bundles waiting for upload, the crashes not reported yet and the anomaly
+/// baselines; that form has no `includingIntermediate` flag because it deletes
+/// the snapshots too.
 - (void)deleteCollectedDataOnDevice:(BOOL)includingIntermediate
             includingFinishedReports:(BOOL)includingFinishedReports
                              resolve:(RCTPromiseResolveBlock)resolve
                               reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
-    __block BOOL settled = NO;
-    void (^completion)(BOOL) = ^(BOOL success) {
-      BGSRNRunOnMain(^{
-        if (settled) {
-          return;
-        }
-        settled = YES;
-        resolve(@(success));
-      });
-    };
-    if (includingFinishedReports) {
-      [Bugsee deleteCollectedDataOnDevice:completion];
-    } else {
-      [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:completion];
-    }
+    BGSRNDeleteCollectedData(
+        ^(void (^completion)(BOOL)) {
+          if (includingFinishedReports) {
+            [Bugsee deleteCollectedDataOnDevice:completion];
+          } else {
+            [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:completion];
+          }
+        },
+        BGSRNDeleteCollectedDataBackstopMs, dispatch_get_main_queue(),
+        ^(BOOL success) {
+          resolve(@(success));
+        },
+        ^(NSString *code, NSString *message) {
+          reject(code, message, nil);
+        });
   });
 }
 
