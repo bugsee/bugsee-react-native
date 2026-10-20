@@ -94,10 +94,16 @@ function releaseExists(tag) {
   }
 }
 
+/** Whether an unpublished (draft) release for the tag exists: `gh release view` only finds published ones. */
+function draftExists(tag) {
+  const releases = JSON.parse(run('gh', ['release', 'list', '--limit', '200', '--json', 'tagName,isDraft']) || '[]');
+  return releases.some((r) => r.tagName === tag && r.isDraft);
+}
+
 if (isEntryPoint(import.meta.url)) {
   const sha = value('--sha');
   const tarballDir = value('--tarballs');
-  const npmTags = (value('--npm-tags') ?? '').split(',').map((t) => t.trim()).filter(Boolean);
+  const npmTags = [...new Set((value('--npm-tags') ?? '').split(',').map((t) => t.trim()).filter(Boolean))];
   const dryRun = argv.includes('--dry-run');
   if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) {
     console.error('--sha <40-hex commit> is required');
@@ -120,6 +126,12 @@ if (isEntryPoint(import.meta.url)) {
   if (releaseExists(tag)) {
     console.log(`skip     release ${tag} already exists`);
     process.exit(0);
+  }
+  // A published release is found above; a DRAFT is not (a failed asset upload leaves one). Creating a second
+  // release for the tag would be wrong and deleting someone's draft is not this script's call: stop and say so.
+  if (draftExists(tag)) {
+    console.error(`a draft release for ${tag} exists (an earlier run did not finish): publish or delete it, then re-run.`);
+    process.exit(1);
   }
   const tagged = remoteTagCommit(tag);
   if (tagged && tagged.toLowerCase() !== sha.toLowerCase()) {

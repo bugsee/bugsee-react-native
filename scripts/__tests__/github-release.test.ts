@@ -16,6 +16,7 @@ interface Setup {
   versions?: [string, string];
   releaseExists?: boolean;
   releaseLookupFails?: boolean;
+  draftExists?: boolean;
   remoteTag?: string; // commit the remote tag points at; '' = no tag
   args?: string[];
   tarballs?: boolean;
@@ -59,6 +60,10 @@ if [ "$1 $2" = "release view" ]; then
   [ -n "$STUB_RELEASE_EXISTS" ] && { echo '{"tagName":"x"}'; exit 0; }
   echo "release not found" >&2; exit 1
 fi
+if [ "$1 $2" = "release list" ]; then
+  [ -n "$STUB_DRAFT_EXISTS" ] && echo '[{"tagName":"v7.0.0-beta3","isDraft":true}]' || echo '[]'
+  exit 0
+fi
 exit 0
 `,
   );
@@ -82,6 +87,7 @@ exit 0
       STUB_RELEASE_EXISTS: setup.releaseExists ? '1' : '',
       STUB_LOOKUP_FAILS: setup.releaseLookupFails ? '1' : '',
       STUB_REMOTE_TAG: setup.remoteTag ?? '',
+      STUB_DRAFT_EXISTS: setup.draftExists ? '1' : '',
     },
   });
   const calls = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
@@ -129,6 +135,19 @@ describe('github-release.mjs', () => {
     const r = run({ releaseLookupFails: true });
     expect(r.status).not.toBe(0);
     expect(creates(r.calls)).toEqual([]);
+  });
+
+  it('stops, creating nothing, when an unfinished draft release exists for the tag', () => {
+    const r = run({ draftExists: true });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('draft release');
+    expect(creates(r.calls)).toEqual([]);
+  });
+
+  it('lists each dist-tag once in the notes', () => {
+    const r = run({ args: ['--sha', SHA, '--npm-tags', 'beta,latest,beta,'] });
+    const notes = (creates(r.calls)[0] ?? '').split('--notes ')[1] ?? '';
+    expect(notes.match(/`beta`/g)).toHaveLength(1);
   });
 
   it('fails, creating nothing, when the tag already exists at a different commit', () => {
