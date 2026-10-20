@@ -230,6 +230,22 @@ export function setExceptionCaptureEnabled(enabled: boolean): void {
   captureEnabled = enabled;
 }
 
+/**
+ * The user's own `detect.crash: false`, kept apart from the transient hold
+ * `Bugsee.attach()` puts on {@link setExceptionCaptureEnabled} while it reads
+ * the options (which stays on if that read rejects). `ErrorBoundary` reads
+ * this one, so a failed read never silences it.
+ */
+let crashDetectionOptedOut = false;
+
+export function setCrashDetectionOptedOut(optedOut: boolean): void {
+  crashDetectionOptedOut = optedOut;
+}
+
+export function isCrashDetectionOptedOut(): boolean {
+  return crashDetectionOptedOut;
+}
+
 /** Current R7 capture flag; `RootErrorReporter` reads this rather than copying it. */
 export function isExceptionCaptureEnabled(): boolean {
   return captureEnabled;

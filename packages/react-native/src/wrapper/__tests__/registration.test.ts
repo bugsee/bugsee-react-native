@@ -7,6 +7,7 @@ jest.mock('../../NativeBugsee', () => require('../../__mocks__/native').nativeMo
 jest.mock('../../exceptions/handlers', () => ({
   installExceptionHandlers: jest.fn(),
   setExceptionCaptureEnabled: jest.fn(),
+  setCrashDetectionOptedOut: jest.fn(),
 }));
 jest.mock('../../console/capture', () => ({
   installConsoleCapture: jest.fn(),
