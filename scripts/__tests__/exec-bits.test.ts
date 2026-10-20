@@ -27,6 +27,11 @@ describe('missingExecBits', () => {
     expect(missingExecBits(listing('-rwxr-xr-x'), ['scripts/bugsee-xcode.sh'])).toEqual([]);
   });
 
+  it('reports a file that is executable for the owner only (0744)', () => {
+    expect(missingExecBits(listing('-rwxr--r--'), ['scripts/bugsee-xcode.sh'])).toEqual(['scripts/bugsee-xcode.sh']);
+    expect(missingExecBits(listing('-rwxr-xr--'), ['scripts/bugsee-xcode.sh'])).toEqual(['scripts/bugsee-xcode.sh']);
+  });
+
   it('reports a file whose executable bit was dropped, as yarn pack did', () => {
     expect(missingExecBits(listing('-rw-r--r--'), ['scripts/bugsee-xcode.sh'])).toEqual(['scripts/bugsee-xcode.sh']);
   });

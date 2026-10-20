@@ -33,6 +33,7 @@ export function missingExecBits(tarListing: string, executable: string[]): strin
   }
   return executable.filter((path) => {
     const mode = modes.get(`package/${path}`);
-    return mode === undefined ? false : mode[3] !== 'x';
+    // owner, group and other: a 0744 file is not executable for a user who does not own the install
+    return mode === undefined ? false : !(mode[3] === 'x' && mode[6] === 'x' && mode[9] === 'x');
   });
 }
