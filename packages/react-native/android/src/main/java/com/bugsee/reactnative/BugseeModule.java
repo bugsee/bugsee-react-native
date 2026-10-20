@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.json.JSONException;
@@ -70,11 +71,14 @@ public class BugseeModule extends NativeBugseeSpec
     /** The wrapper's log tag, as ReportHandlerBridge and WrapperEventBus use. */
     private static final String TAG = "BugseeRN";
 
+    /** Whether a throwing log filter has been reported for {@link #log} yet. */
+    private static final AtomicBoolean LOG_FAULT_REPORTED = new AtomicBoolean();
+
     /** Production adapter: the SDK's handled / unhandled entry points. */
     private static final ExceptionBridge.Sdk PROD_EXCEPTION_SDK = new ExceptionBridge.Sdk() {
         @Override
-        public void logException(final Throwable t, @Nullable final Map<String, Object> options) {
-            Bugsee.logException(t, options);
+        public void logException(final Throwable t, @Nullable final String domain) {
+            Bugsee.logException(t, domain, 0);
         }
 
         @Override
@@ -225,9 +229,10 @@ public class BugseeModule extends NativeBugseeSpec
                 getReactApplicationContext().getApplicationContext(),
                 token,
                 withConfiguredEndpoint(toOptions(options)),
-                // The SDK reports whether it actually started. Declining — it
-                // is already running, or the token was rejected — is a normal
-                // outcome, so it resolves false rather than rejecting.
+                // The SDK reports whether it started. Declining (the token was
+                // rejected) is a normal outcome, so it resolves false rather
+                // than rejecting. When the SDK is already running it reports
+                // success and ignores the new options, so this resolves true.
                 launched -> {
                     // launch can replace the log filter. Put the pass-through
                     // (or the user filter, if one is already on) back.
@@ -398,10 +403,8 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     // --- Blackout and view-hierarchy capture (design doc §4.1) -----------
-    // Android ignores startBlackout/endBlackout before launch() (a logged
-    // no-op inside the SDK itself); iOS honours them regardless. Recorded in
-    // the plan as a candidate SDK issue, not patched here -- see the Phase 6
-    // preamble's "Planner decisions".
+    // Since 7.4.0 the SDK honours startBlackout/endBlackout before launch()
+    // and applies the state at launch (bugsee-android#248), as iOS does.
 
     @Override
     public void startBlackout() {
@@ -582,6 +585,32 @@ public class BugseeModule extends NativeBugseeSpec
             });
         } catch (final RuntimeException e) {
             Log.e(TAG, "showReportDialog failed: " + e.getClass().getName());
+        }
+    }
+
+    /**
+     * The app's own {@code Bugsee.log()} line, through the SDK's public
+     * {@code Bugsee.log} -- not the wrapper channel, which records nothing
+     * with {@code capture.logs} off. {@code requiresFiltering} is the app's
+     * choice, passed through: the app's log filter runs on the line only when
+     * it is {@code true}. The level maps by the channel's table.
+     *
+     * <p>When it runs, the app's filter runs on this thread, and an exception
+     * it throws comes back here, as on the channel
+     * ({@link WrapperChannelHolder#log}).
+     * This thread is React Native's, so it stops here and is reported once
+     * per process: the report is itself a logcat line, which the SDK's
+     * logcat capture can feed back into the same filter.
+     */
+    @Override
+    public void log(final String message, final double level, final boolean requiresFiltering) {
+        try {
+            Bugsee.log(message, WrapperChannelHolder.levelFor((int) level), requiresFiltering);
+        } catch (final Throwable e) {
+            if (LOG_FAULT_REPORTED.compareAndSet(false, true)) {
+                Log.w(TAG, "the app's log filter threw on a Bugsee.log line "
+                        + "(reported once per process): " + e.getClass().getName());
+            }
         }
     }
 

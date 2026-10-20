@@ -36,7 +36,7 @@ import {
 } from './harness';
 import { LUMA_BRIGHT_MIN, LUMA_DARK_MAX, imageSize, regionLuma } from './media';
 import { beginRetainingSuite, endRetainingSuite, frameCount } from './observe';
-import { type DeviceLog, type LogLine, adbStatus, devicectl, devicePidsOfApp, pidOf } from './scenario';
+import { type DeviceLog, type LogLine, adbStatus, devicePidsOfApp, pidOf } from './scenario';
 import { centreRegion, uiDump } from './screen';
 import { type StubServer, deviceStubUrl, releaseDeviceStub, startStubServerFor } from './stub-server';
 
@@ -197,23 +197,23 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
    */
   it.skip('[OPT-026] detect.early-crash: not isolable from JS -- a JS-raised crash is after Launched, where detect.crash recovers it either way (staging S-5)', () => {});
 
-  on(['X'])('[OPT-055] capture.mach-exceptions=false: a SIGSEGV is still recovered, as a signal', async () => {
+  on(['X'])('[OPT-052] capture.crash-handler-type=BSD: a SIGSEGV is still recovered, as a signal', async () => {
     await clearBundles();
-    const crash = await launch('mach-off', 'segv');
-    await apiMarker(log!, 'eff crashing case=mach-off', crash.run.scenario.nonce, 10_000, crash.run.start);
+    const crash = await launch('handler-bsd', 'segv');
+    await apiMarker(log!, 'eff crashing case=handler-bsd', crash.run.scenario.nonce, 10_000, crash.run.start);
     expect(await waitForExit(20_000)).toBe(true);
     await stopApp();
-    await launch('mach-off', 'idle');
+    await launch('handler-bsd', 'idle');
     const bundles = await awaitBundles(1, 60_000);
     await stopApp();
     const crashes = bundles.filter(b => b.request.type === 'crash');
     expect(crashes).toHaveLength(1);
     const text = JSON.stringify(crashOf(crashes[0]!));
-    report('mach-off crash (head)', text.slice(0, 600));
+    report('handler-bsd crash (head)', text.slice(0, 600));
     expect(text).toMatch(/SIGSEGV/);
   });
 
-  on(['X'])('[OPT-056] capture.on-device-symbolication names the frames the control leaves bare', async () => {
+  on(['X'])('[OPT-057] capture.on-device-symbolication names the frames the control leaves bare', async () => {
     const frames = async (name: string): Promise<string> => {
       await clearBundles();
       const crash = await launch(name, 'native');
@@ -238,7 +238,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   });
 
   // -------------------------------------------------------------------------
-  // Exit and kill detection
+  // Exit detection
 
   on(['A'])('[OPT-094][OPT-027][FLOW-46] detect.exit.user_requested: a force-stop is reported at the next launch, not without it', async () => {
     const after = async (name: string): Promise<PulledBundle[]> => {
@@ -260,29 +260,6 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     const control = await after('exit-control');
     expect(control).toEqual([]);
     expect(exit.length).toBeGreaterThan(0);
-  });
-
-  /**
-   * iOS 7.0.0-beta5: nothing in the library reads detect.kill -- it is only
-   * registered (BGSOptionsDescriptors.m) -- and a SIGKILL while running
-   * files nothing at the next launch (XS, 2026-10-07). Filed: bugsee-cocoa#203.
-   */
-  (HERE === 'X' ? it.failing : it.skip)('[OPT-068] detect.kill: a SIGKILL is reported at the next launch [known: iOS beta5 never reads detect.kill (bugsee-cocoa#203)]', async () => {
-    await clearBundles();
-    const first = await launch('kill', 'idle');
-    await apiMarker(log!, 'eff idle case=kill', first.run.scenario.nonce, 10_000, first.run.start);
-    await new Promise(resolve => setTimeout(resolve, 5_000));
-    for (const pid of await devicePidsOfApp()) {
-      await devicectl('process', 'signal', '--pid', String(pid), '--signal', 'SIGKILL');
-    }
-    expect(await waitForExit(15_000)).toBe(true);
-    await launch('kill', 'idle');
-    await new Promise(resolve => setTimeout(resolve, 20_000));
-    const names = await listBundles();
-    const bundles = names.length === 0 ? [] : await awaitBundles(names.length, 1_000);
-    await stopApp();
-    report('kill bundles', bundles.map(b => ({ type: b.request.type, summary: b.request.summary })));
-    expect(bundles.length).toBeGreaterThan(0);
   });
 
   // -------------------------------------------------------------------------
@@ -350,13 +327,10 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(control).not.toMatch(/api-secret-/);
   });
 
-  /**
-   * iOS 7.0.0-beta5 records the response twice under one URLSession event id
-   * ("complete", body null, then "complete" with the body), and the second
-   * carries the untyped body with body-without-type at its default (false)
-   * as well as with it on (XS, 2026-10-07): the option never withholds it.
-   * BGSNetworkHelperMethods.m gates only the first. Filed: bugsee-cocoa#204.
-   */
+  // iOS records the response twice under one URLSession event id ("complete"
+  // with the headers, then "complete" with the body), so every record is read.
+  // Before bugsee-cocoa#239 the second kept the untyped body with the option
+  // off (bugsee-cocoa#204).
   /** The response body fields (Android `body`, iOS `custom.body`) of `name`'s stub fetch, as JSON. */
   const untypedBodies = async (name: string): Promise<string> => {
     const outcome = await uploaded(name, 'bytes', true);
@@ -372,7 +346,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(await untypedBodies('body-no-type')).toContain('x'.repeat(32));
   });
 
-  (ON_IOS ? it.failing : on(['A']))(`[OPT-007] capture.network.body-without-type at its default (false) leaves a response body with no Content-Type out${ON_IOS ? ' [known: iOS keeps untyped bodies with the option off (bugsee-cocoa#204)]' : ''}`, async () => {
+  on(['A', 'S', 'X'])('[OPT-007] capture.network.body-without-type at its default (false) leaves a response body with no Content-Type out', async () => {
     expect(await untypedBodies('body-no-type-control')).not.toContain('x'.repeat(32));
   });
 
@@ -402,7 +376,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
    * on) records no websocket event for Metro's /hot socket on the XS, so
    * turning the option off has nothing to remove. Read back by N-06.
    */
-  it.skip('[OPT-062] capture.websocket=false: not observable -- the SDK records no React Native (SocketRocket) websocket even with the option on', () => {});
+  it.skip('[OPT-063] capture.websocket=false: not observable -- the SDK records no React Native (SocketRocket) websocket even with the option on', () => {});
 
   // -------------------------------------------------------------------------
   // Notify flush, breadcrumb extras, report UI fields
@@ -488,7 +462,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
   // -------------------------------------------------------------------------
   // iOS environment, os_log, frame-rate bounds
 
-  on(['S', 'X'])('[OPT-050][OPT-052][OPT-053][OPT-058][OPT-063][OPT-064][OPT-065] the iOS environment options change the report environment', async () => {
+  on(['S', 'X'])('[OPT-050][OPT-054][OPT-055][OPT-059][OPT-064][OPT-065][OPT-066] the iOS environment options change the report environment', async () => {
     const env = async (name: string) => {
       const outcome = await uploaded(name);
       return { outcome, environment: own(outcome, name).request.environment as Record<string, unknown> };
@@ -510,7 +484,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(added.length).toBeGreaterThan(0);
   });
 
-  on(['S', 'X'])('[OPT-054] capture.logs.oslog is accepted and ignored, as beta5 documents: no os_log line reaches the report either way', async () => {
+  on(['S', 'X'])('[OPT-056] capture.logs.oslog is accepted and ignored, as beta5 documents: no os_log line reaches the report either way', async () => {
     const lines = async (name: string): Promise<string[]> => {
       const outcome = await uploaded(name, 'oslog');
       return captureEvents(own(outcome, name), 'log')
@@ -527,7 +501,7 @@ describeDevice(`launch option effects on ${TARGET_NAME}`, () => {
     expect(control).toEqual([]);
   });
 
-  on(['S', 'X'])('[OPT-059][OPT-060] capture.video.max-frame-rate caps the frame count (min-frame-rate recorded)', async () => {
+  on(['S', 'X'])('[OPT-060][OPT-061] capture.video.max-frame-rate caps the frame count (min-frame-rate recorded)', async () => {
     const frames = async (name: string, step = 'run') => {
       const outcome = await uploaded(name, step);
       const video = (own(outcome, name).binaries.get('video') ?? [])[0];

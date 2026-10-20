@@ -93,10 +93,9 @@ export interface Spec extends TurboModule {
    * view hierarchy. Logs, network events, custom events and traces keep
    * recording throughout (design doc §4.1).
    *
-   * Android ignores this before `launch()` resolves -- a logged no-op, not an
-   * error -- while iOS honours it regardless of launch state. A caller that
-   * needs blackout to hold on both platforms must call this after `launch()`
-   * resolves.
+   * Both platforms honour it before `launch()`: blackout then holds from the
+   * first captured frame (Android 7.4.0 applies it at launch,
+   * bugsee-android#248).
    *
    * {@link isBlackout} verifies whether it actually took effect.
    */
@@ -210,8 +209,24 @@ export interface Spec extends TurboModule {
   traceBoolean(name: string, value: boolean): void;
 
   /**
+   * One line the app sent with `Bugsee.log()`, through the SDK's public
+   * `Bugsee.log`: source `Bugsee`, no tag.
+   *
+   * `level` is the SDK's by-value level, 1 Error .. 5 Verbose, already
+   * checked in JS; native maps anything else to Info. `capture.logs` does not
+   * gate it. `requiresFiltering` is the app's choice, passed through: the
+   * app's log filter runs on the line, natively and once, only when it is
+   * `true`. Fire-and-forget: before launch the SDK drops it.
+   *
+   * `log` in `src/logs/log.ts` is its only caller.
+   */
+  log(message: string, level: number, requiresFiltering: boolean): void;
+
+  /**
    * One log line into the SDK's wrapper channel, attributed to the wrapper
-   * (source `Custom`, no tag) rather than to the app's own `Bugsee.log`.
+   * (source `Custom`, no tag) rather than to the app's own `Bugsee.log`:
+   * output this wrapper captured on its own, which the SDKs drop with
+   * `capture.logs` off.
    *
    * `level` is the SDK's by-value level, 1 Error .. 5 Verbose, already
    * checked in JS; native maps anything else to Info. The line is filtered
@@ -219,8 +234,8 @@ export interface Spec extends TurboModule {
    * §10.3). Fire-and-forget: before launch the channel accepts and drops it.
    *
    * Internal. `forwardLog` in `src/wrapper/channel.ts` is its only caller;
-   * Phase 4's `log()` and Phase 9's console routing build on that, and must
-   * not add a second native route.
+   * Phase 9's console routing builds on that, and must not add a second
+   * native route. The app's own `log()` does not come here.
    */
   wrapperLog(message: string, level: number): void;
 
@@ -508,7 +523,7 @@ export interface Spec extends TurboModule {
   /** Uploads the created report. The handle is dead afterwards, whatever the result. */
   createdReportUpload(handleId: string): Promise<boolean>;
 
-  /** A handled JS exception. `payloadJson` is the Task 7.1a payload; `optionsJson` is `{domain?, labels?, includeVideo?}` or null. */
+  /** A handled JS exception. `payloadJson` is the Task 7.1a payload; `optionsJson` is `{domain?}` or null. */
   logException(payloadJson: string, optionsJson: string | null): void;
   /** An unhandled JS exception. Resolves once the SDK has the report; never rejects. */
   logUnhandledException(payloadJson: string): Promise<void>;

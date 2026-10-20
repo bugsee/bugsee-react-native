@@ -1,7 +1,6 @@
 package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -11,8 +10,6 @@ import androidx.annotation.Nullable;
 import org.junit.Test;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -29,18 +26,25 @@ public class ExceptionBridgeTest {
         static final class Call {
             final String kind;
             final Throwable throwable;
+            @Nullable final String domain;
             @Nullable final Map<String, Object> options;
 
-            Call(final String kind, final Throwable throwable, @Nullable final Map<String, Object> options) {
+            Call(
+                    final String kind,
+                    final Throwable throwable,
+                    @Nullable final String domain,
+                    @Nullable final Map<String, Object> options
+            ) {
                 this.kind = kind;
                 this.throwable = throwable;
+                this.domain = domain;
                 this.options = options;
             }
         }
 
         @Override
-        public void logException(final Throwable t, @Nullable final Map<String, Object> options) {
-            calls.add(new Call("handled", t, options));
+        public void logException(final Throwable t, @Nullable final String domain) {
+            calls.add(new Call("handled", t, domain, null));
             if (throwOnNext != null) {
                 final RuntimeException e = throwOnNext;
                 throwOnNext = null;
@@ -50,7 +54,7 @@ public class ExceptionBridgeTest {
 
         @Override
         public void logUnhandledException(final Throwable t, @Nullable final Map<String, Object> options) {
-            calls.add(new Call("unhandled", t, options));
+            calls.add(new Call("unhandled", t, null, options));
             if (throwOnNext != null) {
                 final RuntimeException e = throwOnNext;
                 throwOnNext = null;
@@ -78,20 +82,17 @@ public class ExceptionBridgeTest {
     }
 
     @Test
-    public void handledGoesToLogExceptionWithItsOptions() throws Exception {
+    public void handledGoesToLogExceptionWithItsDomain() throws Exception {
         final RecordingSdk sdk = new RecordingSdk();
         final String payload = "{\"name\":\"Error\",\"message\":\"x\"}";
-        final String optionsJson = "{\"domain\":\"auth\",\"labels\":[\"a\",\"b\"],\"includeVideo\":true}";
+        final String optionsJson = "{\"domain\":\"auth\"}";
         ExceptionBridge.logHandled(sdk, payload, optionsJson);
         assertEquals(1, sdk.calls.size());
         final RecordingSdk.Call call = sdk.calls.get(0);
         assertEquals("handled", call.kind);
         assertTrue(call.throwable instanceof ReactNativeWebException);
         assertEquals(payload, call.throwable.getMessage());
-        assertNotNull(call.options);
-        assertEquals("auth", call.options.get("domain"));
-        assertEquals(Arrays.asList("a", "b"), call.options.get("labels"));
-        assertEquals(Boolean.TRUE, call.options.get("includeVideo"));
+        assertEquals("auth", call.domain);
     }
 
     @Test
@@ -108,32 +109,20 @@ public class ExceptionBridgeTest {
     }
 
     @Test
-    public void optionsMapDomainLabelsAndIncludeVideo() throws Exception {
-        final Map<String, Object> options = ExceptionBridge.options(
-                "{\"domain\":\"d\",\"labels\":[\"one\",\"two\"],\"includeVideo\":false}");
-        assertNotNull(options);
-        assertEquals("d", options.get("domain"));
-        final Object labels = options.get("labels");
-        assertTrue(labels instanceof List);
-        @SuppressWarnings("unchecked")
-        final List<String> list = (List<String>) labels;
-        assertEquals(Arrays.asList("one", "two"), list);
-        assertTrue(options.get("includeVideo") instanceof Boolean);
-        assertEquals(Boolean.FALSE, options.get("includeVideo"));
+    public void theDomainIsReadFromTheOptions() throws Exception {
+        assertEquals("d", ExceptionBridge.domain("{\"domain\":\"d\"}"));
     }
 
     @Test
-    public void unknownOptionKeysAreDropped() throws Exception {
-        final Map<String, Object> options = ExceptionBridge.options(
-                "{\"domain\":\"d\",\"skipFrames\":2,\"extra\":true}");
-        assertNotNull(options);
-        assertEquals(Collections.singleton("domain"), options.keySet());
-        assertEquals("d", options.get("domain"));
+    public void everyOtherOptionKeyIsDropped() throws Exception {
+        assertEquals("d", ExceptionBridge.domain(
+                "{\"domain\":\"d\",\"labels\":[\"a\"],\"includeVideo\":true,\"skipFrames\":2}"));
+        assertNull(ExceptionBridge.domain("{\"labels\":[\"a\"],\"includeVideo\":true}"));
     }
 
     @Test
-    public void nullOptionsTextIsNullOptions() throws Exception {
-        assertNull(ExceptionBridge.options(null));
+    public void nullOptionsTextIsNoDomain() throws Exception {
+        assertNull(ExceptionBridge.domain(null));
     }
 
     @Test
@@ -145,16 +134,16 @@ public class ExceptionBridgeTest {
         final RecordingSdk.Call call = sdk.calls.get(0);
         assertEquals("handled", call.kind);
         assertEquals(payload, call.throwable.getMessage());
-        assertNull(call.options);
+        assertNull(call.domain);
     }
 
     @Test
-    public void aWronglyTypedLabelIsABadJson() {
+    public void aWronglyTypedDomainIsABadJson() {
         try {
-            ExceptionBridge.options("{\"labels\":[1,2]}");
-            fail("expected BadJson for non-string labels");
+            ExceptionBridge.domain("{\"domain\":3}");
+            fail("expected BadJson for a non-string domain");
         } catch (final BridgeJson.BadJson expected) {
-            // Reached: a number in labels is not a List<String>.
+            // Reached: a number is not a String domain.
         }
     }
 

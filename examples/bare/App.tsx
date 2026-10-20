@@ -22,7 +22,7 @@
  * `breadcrumb-filter` is scenarios/breadcrumb-filter.ts,
  * `network-filter` is scenarios/network-filter.ts,
  * `add-network-event` is scenarios/add-network-event.ts,
- * `feedback` is scenarios/feedback.ts, `apm` is scenarios/apm.ts, and
+ * `touch-capture` is scenarios/touches.ts, `feedback` is scenarios/feedback.ts, `apm` is scenarios/apm.ts, and
  * `cov-*` / `opt-<case>` are scenarios/coverage.ts. `early-report` is
  * scenarios/early-report.ts (it owns the launch).
  */
@@ -68,6 +68,11 @@ import {
 import { isNetworkScenario, runNetworkScenario } from './scenarios/network';
 import { SecureProbe, isSecureScenario } from './scenarios/secure';
 import {
+  SecureVisibleStage,
+  type SecureVisibleScenario,
+  isSecureVisibleScenario,
+} from './scenarios/secure-visible';
+import {
   isAttributeScenario,
   runAttributeScenario,
 } from './scenarios/attributes';
@@ -100,6 +105,7 @@ import {
   isLogFilterScenario,
   runLogFilterScenario,
 } from './scenarios/log-filter';
+import { isTouchesScenario, runTouchesScenario } from './scenarios/touches';
 import {
   isBreadcrumbFilterScenario,
   runBreadcrumbFilterScenario,
@@ -308,6 +314,10 @@ export default function App() {
   const [flowStage, setFlowStage] = useState<string | undefined>();
   /** Set by a campaign API scenario that puts something on screen (scenarios/api.tsx). */
   const [apiStage, setApiStage] = useState<ApiStageState | undefined>();
+  /** Set once Launched for scenarios/secure-visible.tsx (#86). */
+  const [secureVisible, setSecureVisible] = useState<
+    { scenario: SecureVisibleScenario; nonce: string } | undefined
+  >();
 
   useEffect(() => {
     let cancelled = false;
@@ -528,6 +538,11 @@ export default function App() {
           return;
         }
 
+        if (isTouchesScenario(choice.scenario)) {
+          runTouchesScenario(choice.nonce);
+          return;
+        }
+
         if (isLogFilterScenario(choice.scenario)) {
           runLogFilterScenario(choice.nonce);
           return;
@@ -559,6 +574,13 @@ export default function App() {
         if (isSecureScenario(choice.scenario)) {
           if (!cancelled) {
             setSecureNonce(choice.nonce);
+          }
+          return;
+        }
+
+        if (isSecureVisibleScenario(choice.scenario)) {
+          if (!cancelled) {
+            setSecureVisible({ scenario: choice.scenario, nonce: choice.nonce });
           }
           return;
         }
@@ -772,6 +794,9 @@ export default function App() {
       )}
       {flowStage !== undefined && <FlowStage />}
       {apiStage !== undefined && <ApiStage stage={apiStage} />}
+      {secureVisible !== undefined && (
+        <SecureVisibleStage scenario={secureVisible.scenario} nonce={secureVisible.nonce} />
+      )}
     </View>
   );
 }

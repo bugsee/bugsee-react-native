@@ -14,7 +14,7 @@ The single most important finding behind this design: **iOS 7.x and Android 7.x 
 
 ## 2. Goals
 
-- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.3.1** (7.3.0 first, pinned transitionally as `7.3.0-SNAPSHOT` while that release was pending — see the plan's Phase 3 rulings; 7.3.1 fixes bugsee-android #214–#221 found by the beta campaign) and iOS **7.0.0-beta5** (SPM only, iOS deployment target 15.0).
+- Ship a 7.x-native React Native SDK for the two current native lines: Android **7.4.2** (7.3.0 first, pinned transitionally as `7.3.0-SNAPSHOT` while that release was pending — see the plan's Phase 3 rulings; 7.3.1 fixes bugsee-android #214–#221 found by the beta campaign; beta validation pinned `7.3.2-SNAPSHOT` (bugsee-android main plus PR #265), released as 7.4.0; 7.4.1 adds the touch-capture fix for bugsee-android #267; 7.4.2 adds the lifecycle and secure-rectangle work the beta campaign ran against) and iOS **7.0.0-beta7** (SPM only, iOS deployment target 15.0).
 - Expose the capabilities 7.x added and 6.x never had: breadcrumbs, notification relay, APM, user identity, hang/HTTP-error/frustration/anomaly detection, SDK status, report handlers.
 - Make the wrapper's option surface **provably** consistent with the native SDKs, enforced in CI rather than by review.
 - Work on bare React Native and on Expo, including Expo apps that regenerate native projects with `prebuild`.
@@ -218,8 +218,8 @@ BugseeLaunchOptions (abstract)
 AndroidLaunchOptions extends …   videoMode, logsUseAllSources, the detect.exit*
                                  family, triggerByNotification/Broadcast, ndk,
                                  maxPendingReports/ReportAge, …
-IOSLaunchOptions     extends …   captureAVPlayer, machExceptions, bluetoothStatus,
-                                 diskSpace, killDetection, style, …
+IOSLaunchOptions     extends …   captureAVPlayer, crashSignals, crashHandlerType, bluetoothStatus,
+                                 diskSpace, style, …
 ```
 
 `createDefaultLaunchOptions()` selects by `Platform.OS`, unchanged.
@@ -285,18 +285,22 @@ What changes is the payload gaining a `debug_ids` member alongside name, message
 
 | | Android 7.x | iOS 7.x |
 |---|---|---|
-| handled | `logException(Throwable, Map)` | `logException:reason:options:completion:` |
+| handled | `logException(Throwable, String domain, int skipFrames)` (the `Map` overload is deprecated) | `logException:reason:domain:skipFrames:completion:` (7.0.0-beta7; beta6 and earlier: `logException:reason:options:completion:`) |
 | unhandled | `logUnhandledException(Throwable, Map)` | `logUnhandledException:reason:completion:` |
 
 `logUnhandledException` is new on Android and is a better fit than `onUncaughtException(Thread, Throwable)`, which exists to be called from a real `UncaughtExceptionHandler`.
 
-**Both exception-logging methods are two ObjC overloads each on iOS, and the RN bridge calls the `NSString`-pair one.** Verified against `Bugsee.h:367,374,380-381` (`packages/react-native/Bugsee.xcframework/ios-arm64/Bugsee.framework/Headers/`):
+**Both exception-logging methods are ObjC overloads on iOS, and the RN bridge calls the `NSString`-pair one.** As of 7.0.0-beta7 the handled ones are (`Bugsee.h` in the SDK's `Bugsee.xcframework/ios-arm64/Bugsee.framework/Headers/`; beta7 removed `BugseeExceptionLoggingOptions` and the `options:` overloads, so a beta6-or-earlier document of `logException:reason:options:completion:` is historical):
 
 ```objc
-+ (void)logException:(nonnull NSString *)name reason:(nonnull NSString *)reason options:(BugseeExceptionLoggingOptions *_Nullable)loggingOptions completion:(nullable BugseeEmptyBlock)completionBlock
-    NS_SWIFT_NAME(logException(name:reason:options:completion:));
-+ (void)logException:(nonnull NSException *)exception options:(BugseeExceptionLoggingOptions *_Nullable)loggingOptions completion:(nullable BugseeEmptyBlock)completionBlock
-    NS_SWIFT_NAME(logException(exception:options:completion:));
++ (void)logException:(nonnull NSString *)name reason:(nonnull NSString *)reason completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(name:reason:completion:));
++ (void)logException:(nonnull NSString *)name reason:(nonnull NSString *)reason domain:(nullable NSString *)domain skipFrames:(NSInteger)skipFrames completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(name:reason:domain:skipFrames:completion:));
++ (void)logException:(nonnull NSException *)exception completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(exception:completion:));
++ (void)logException:(nonnull NSException *)exception domain:(nullable NSString *)domain skipFrames:(NSInteger)skipFrames completion:(nullable BugseeEmptyBlock)completionBlock
+    NS_SWIFT_NAME(logException(exception:domain:skipFrames:completion:));
 
 + (void)logUnhandledException:(nonnull NSException *)exception completion:(nullable BugseeEmptyBlock)completionBlock
     NS_SWIFT_NAME(logUnhandledException(exception:completion:));
@@ -306,12 +310,12 @@ What changes is the payload gaining a `debug_ids` member alongside name, message
 
 The table's selectors are both the `NSString`-pair overload, which is the one the RN bridge has a name and a reason to hand it (a JS `Error`'s `name` and `message`), not a real `NSException`:
 
-- **handled** — `logException:reason:options:completion:`. Its **first** argument *is* the exception name (Swift label `name:`), the second is the reason; there is no `name:` selector segment because the first argument belongs to `logException:` itself. The `NSException`-overload's selector, `logException:options:completion:`, is the one this wrapper does not call.
+- **handled** — `logException:reason:domain:skipFrames:completion:`. Its **first** argument *is* the exception name (Swift label `name:`), the second is the reason; there is no `name:` selector segment because the first argument belongs to `logException:` itself. The `NSException` overloads (`logException:completion:`, `logException:domain:skipFrames:completion:`) are the ones this wrapper does not call.
 - **unhandled** — `logUnhandledException:reason:completion:`. Same shape: the first argument *is* the exception name (Swift label `name:` again), with no `name:` selector segment for the same reason. An `NSException`-taking overload also exists (`logUnhandledException:completion:`, Swift `logUnhandledException(exception:completion:)`), which this wrapper does not call either, since it never has a real `NSException` to hand it — only a JS error's name and message strings.
 
 (An earlier draft of this document mis-stated the unhandled selector as `logUnhandledException:name:reason:completion:` — that selector does not exist, because `name:` is a Swift argument label, not an ObjC selector segment.)
 
-The `ExceptionOptions` contract interface declares only `Domain` and `SkipFrames`, but the `logException` javadoc documents `"domain"`, `"labels"` and `"includeVideo"`. The parameter is `Map<String, Object>`, so the extra keys are accepted; the wrapper passes all three.
+The `ExceptionOptions` contract interface declares only `Domain` and `SkipFrames`, but the `logException` javadoc documents `"domain"`, `"labels"` and `"includeVideo"`. The parameter is `Map<String, Object>`, so the extra keys are accepted. **Superseded:** the SDKs no longer take per-call labels or `includeVideo` (iOS 7.0.0-beta7 removed `BugseeExceptionLoggingOptions`; Android ignores them), so `ExceptionOptions` is `{ domain }` only and labels are set through `setReportHandler`. The wrapper passes the domain alone: `logException(t, domain, 0)` on Android, `logException:reason:domain:skipFrames:completion:` on iOS.
 
 ### 9.2 Source maps
 
@@ -393,6 +397,15 @@ The wrapper captures two distinct streams and they need different handling. Neit
 > pass is not.
 
 Both send `LogSource.Custom`, which is what makes the source consistent across platforms.
+
+> **Changed 2026-10-12.** The app's own `Bugsee.log()` is not one of these streams, and no
+> longer goes through the channel. `com.bugsee.option.capture.logs` turns off automatic
+> capture only, and the SDKs now drop the channel's `log` with it off (`bugsee/specs#49`, spec text in #52,
+> `sdk/wrapper-channel`), so an explicit line sent there would vanish with the option off.
+> `log()` calls the native public `Bugsee.log`: source `Bugsee`, recorded whatever the
+> option says. **Changed 2026-10-13** (review of #80): as in the native SDKs, the app's log
+> filter skips the line unless the app passes `requiresFiltering: true`, which `log()` takes as
+> an optional third argument and passes through.
 
 **This fixes two divergences that exist today.** The iOS RN hook tags logs `source: 98` while Android tags the same logs `source: 4`, because neither platform exposed a source parameter publicly and Android's wrapper had no other route — so one `console.log` in one app is recorded differently per platform. And `BGSLoggerInterceptor.m:54` hard-codes `enforceFiltering:NO`, so React Native logs on iOS are **never** passed through the log filter: a customer's redaction silently does not apply to them, while the comparable Android logs are filtered. The second is a privacy gap, not a cosmetic one, and neither is fixable inside a hook with the flag baked in.
 
@@ -483,7 +496,7 @@ So iOS ends up with **two** build-time integrations, at different stages for dif
 
 GitHub Actions on `bugsee/bugsee-react-native`, matrixed across RN 0.81.x / 0.83.x / 0.86.x / 0.87.x. Jobs: lint + typecheck + unit; option-manifest parity; codegen freshness; declared-floor drift (`scripts/platform-floors.ts`); Android example build and test; iOS example build on macOS, asserting `Bugsee.framework` is actually embedded — the build alone proved nothing in the spike, since the `spm_dependency` variant built cleanly and then dyld-crashed; and `expo prebuild --clean` in `examples/expo` (`scripts/check-expo-prebuild.sh`), which checks every edit the config plugin makes and then requires a second `--no-clean` prebuild to change no file. It builds nothing yet: a build after the prebuild is still to be added, and it is the only thing that would prove the regenerated project compiles.
 
-Release via Changesets, matching `javascript/` and `rrweb`. Because the iOS SDK is beta, the package ships as `1.0.0-beta.N` on the **`beta`** npm dist-tag; `latest` stays unpublished until iOS reaches GA, so nobody installs a beta by accident.
+Release is a manual GitHub Actions workflow (`release.yml`) using npm trusted publishing (OIDC, no token), modelled on `javascript/`'s: a `check` job (lint, typecheck, unit tests, `scripts/check-publishable.mjs`, a dry-run pack) and a `publish` job in the `npm-publish` environment, restricted to `main`, which publishes exactly the tarballs `check` produced. There is no Changesets step: the two packages share one version, set by hand. The first release is `7.0.0-beta1` (2026-10-19), matching the 7.x native SDKs, under the `beta` dist-tag. Because the SDK is itself a beta, `latest` points at the beta too, so a plain `yarn add @bugsee/react-native` installs it (decided 2026-10-19: an earlier draft of this paragraph kept `latest` unpublished until iOS reached GA, which is unnecessary for a package that is itself a beta).
 
 Native versions live in `native-versions.json`, which generates and validates the two podspecs and the two Gradle files, so bumping iOS from `7.0.0-beta1` is one edit rather than four.
 
@@ -520,7 +533,7 @@ Work outside this repository that this design depends on or has surfaced.
 > of 2026-09-15. Phase 3 of the plan (rulings and *Verified facts*,
 > 2026-09-28) superseded them: Android moved to `7.3.0` (pinned transitionally
 > as `7.3.0-SNAPSHOT`), the Gradle plugin to `4.0.7`, and iOS to `7.0.0-beta3`
-> with a 15.0 deployment target; iOS then moved to `7.0.0-beta4` (2026-10-06) and `7.0.0-beta5`. Read this appendix for the shape of the
+> with a 15.0 deployment target; iOS then moved to `7.0.0-beta4` (2026-10-06), `7.0.0-beta5`, `7.0.0-beta6` and `7.0.0-beta7`. Read this appendix for the shape of the
 > verification (what was checked and how), not for the version numbers
 > themselves.
 

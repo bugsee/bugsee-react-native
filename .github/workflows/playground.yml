@@ -1,0 +1,148 @@
+name: playground
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'examples/playground/**'
+      - 'packages/**'
+      - '.github/workflows/playground.yml'
+      - 'yarn.lock'
+      - 'native-versions.json'
+      - 'package.json'
+      - 'eslint.config.mjs'
+      - 'tsconfig*.json'
+      - 'scripts/cli-check-no-internal-hosts.ts'
+      - 'scripts/check-no-internal-hosts.ts'
+      - 'settings.gradle'
+      - 'gradle.properties'
+      - 'gradle/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: playground-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never a real token: CI only builds, so a well-formed placeholder is enough.
+  BUGSEE_APP_TOKEN: 00000000-0000-4000-8000-000000000000
+  # A dead loopback port, so nothing a job runs can reach the Bugsee API.
+  BUGSEE_ENDPOINT: http://127.0.0.1:9
+
+jobs:
+  js:
+    name: playground typecheck, lint, tests, host check
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.18'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace bugsee-playground typecheck
+      - run: yarn eslint examples/playground
+      - run: yarn workspace bugsee-playground test --ci
+      - run: node scripts/cli-check-no-internal-hosts.ts
+
+  android:
+    name: playground android build
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Fails fast, before any setup or Gradle download: native-versions.json
+      # can pin a SNAPSHOT built from a private clone, which CI cannot
+      # resolve. Same guard as the android job in ci.yml.
+      - name: Refuse a local SNAPSHOT pin
+        run: |
+          sdk=$(jq -r '.android.sdk' native-versions.json)
+          if [[ "$sdk" == *-SNAPSHOT ]]; then
+            echo "::error title=Local SNAPSHOT pin::native-versions.json pins Android ${sdk}, built from a private clone; CI cannot resolve it."
+            exit 1
+          fi
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.18'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: corepack enable
+      - run: yarn install --immutable
+      - working-directory: examples/playground
+        run: CI=1 npx expo prebuild -p android --no-install
+      - name: Runner disk and memory
+        run: |
+          df -h
+          free -m
+      # CI only proves the build compiles and links, so build one ABI (the
+      # NDK module is still compiled). Edited in gradle.properties as well as
+      # passed with -P, because -P alone was seen not to narrow the build.
+      - working-directory: examples/playground/android
+        run: |
+          sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=x86_64/' gradle.properties
+          sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g/' gradle.properties
+          grep -E '^(reactNativeArchitectures|org.gradle.jvmargs)=' gradle.properties
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace -PreactNativeArchitectures=x86_64 -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+
+  ios:
+    name: playground ios simulator build
+    timeout-minutes: 60
+    # Expo 57's expo-modules-jsi does not compile with Xcode 26.3, the newest on macos-15.
+    runs-on: macos-26
+    env:
+      # expo-modules-jsi (Expo SDK 57) declares `swift-tools-version: 6.2` in apple/Package.swift, and its
+      # "Build ExpoModulesJSI xcframework" phase builds that package: Swift 6.2 ships with Xcode 26.0.
+      MIN_XCODE: '26.0'
+    steps:
+      - uses: actions/checkout@v7
+      # The runner's default Xcode can be older than Expo 57 needs; pick the newest one installed.
+      - name: Select the newest installed Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          version=$(xcodebuild -version | awk '/^Xcode /{print $2}')
+          if [ "$(printf '%s\n%s\n' "$MIN_XCODE" "$version" | sort -V | head -1)" != "$MIN_XCODE" ]; then
+            msg="Newest installed Xcode is $version ($xcode); Expo SDK 57 needs $MIN_XCODE+ (Swift 6.2)."
+            echo "::error title=Xcode too old::$msg"
+            exit 1
+          fi
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.18'
+      - run: corepack enable
+      - run: yarn install --immutable
+      # Without --no-install, so prebuild runs pod install and generates the
+      # .xcworkspace.
+      - working-directory: examples/playground
+        run: CI=1 npx expo prebuild -p ios
+      # The full log is kept in a file: on failure, print every `error:` line plus the last 80 lines.
+      - working-directory: examples/playground/ios
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/xcodebuild.log"
+          if ! xcodebuild -workspace BugseePlayground.xcworkspace -scheme BugseePlayground \
+            -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build > "$log" 2>&1; then
+            echo "::group::error: lines"
+            grep -n 'error:' "$log" || echo "(no error: lines)"
+            echo "::endgroup::"
+            echo "::group::last 80 lines"
+            tail -80 "$log"
+            echo "::endgroup::"
+            exit 1
+          fi
+          tail -5 "$log"
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playground-ios-xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore

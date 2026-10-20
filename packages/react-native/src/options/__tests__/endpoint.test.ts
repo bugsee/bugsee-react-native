@@ -10,35 +10,35 @@ import { BugseeLaunchOptions } from '../BugseeLaunchOptions';
 // its own base being version-exclusive.
 describe('endpointFor(ios)', () => {
   it('appends /v2 when absent', () => {
-    expect(endpointFor('ios', 'https://apidev.bugsee.com'))
-      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v2' });
+    expect(endpointFor('ios', 'https://staging.bugsee.invalid'))
+      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://staging.bugsee.invalid/v2' });
   });
 
   it('leaves an endpoint that already carries /v2 alone', () => {
-    expect(endpointFor('ios', 'https://apidev.bugsee.com/v2'))
-      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v2' });
+    expect(endpointFor('ios', 'https://staging.bugsee.invalid/v2'))
+      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://staging.bugsee.invalid/v2' });
   });
 
   // Appending to a trailing slash would produce "//v2".
   it('does not double the separator', () => {
-    expect(endpointFor('ios', 'https://apidev.bugsee.com/'))
-      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v2' });
+    expect(endpointFor('ios', 'https://staging.bugsee.invalid/'))
+      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://staging.bugsee.invalid/v2' });
   });
 
   it('strips a run of trailing slashes, not just one', () => {
-    expect(endpointFor('ios', 'https://apidev.bugsee.com///'))
-      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v2' });
+    expect(endpointFor('ios', 'https://staging.bugsee.invalid///'))
+      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://staging.bugsee.invalid/v2' });
   });
 
   it('normalises a trailing slash after /v2', () => {
-    expect(endpointFor('ios', 'https://apidev.bugsee.com/v2/'))
-      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v2' });
+    expect(endpointFor('ios', 'https://staging.bugsee.invalid/v2/'))
+      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://staging.bugsee.invalid/v2' });
   });
 
   // "/v20" ends with neither; matching on a bare "v2" substring would.
   it('does not mistake a longer path segment for the version', () => {
-    expect(endpointFor('ios', 'https://apidev.bugsee.com/v20'))
-      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v20/v2' });
+    expect(endpointFor('ios', 'https://staging.bugsee.invalid/v20'))
+      .toEqual({ [IOS_ENDPOINT_KEY]: 'https://staging.bugsee.invalid/v20/v2' });
   });
 
   it('keeps a path that merely contains v2 earlier', () => {
@@ -49,15 +49,15 @@ describe('endpointFor(ios)', () => {
 
 describe('endpointFor(android)', () => {
   it('passes the endpoint through untouched', () => {
-    expect(endpointFor('android', 'https://apidev.bugsee.com'))
-      .toEqual({ [ANDROID_ENDPOINT_KEY]: 'https://apidev.bugsee.com' });
+    expect(endpointFor('android', 'https://staging.bugsee.invalid'))
+      .toEqual({ [ANDROID_ENDPOINT_KEY]: 'https://staging.bugsee.invalid' });
   });
 
   // apiUrl() normalises either form, so a caller who supplied /v2 for iOS is
   // not punished for it here.
   it('accepts one that already carries /v2', () => {
-    expect(endpointFor('android', 'https://apidev.bugsee.com/v2'))
-      .toEqual({ [ANDROID_ENDPOINT_KEY]: 'https://apidev.bugsee.com/v2' });
+    expect(endpointFor('android', 'https://staging.bugsee.invalid/v2'))
+      .toEqual({ [ANDROID_ENDPOINT_KEY]: 'https://staging.bugsee.invalid/v2' });
   });
 
   it('uses a different key from iOS', () => {
@@ -99,27 +99,27 @@ describe('a value that is not a string', () => {
 describe('the endpoint accessor on each options class', () => {
   it('writes the iOS key, normalised', () => {
     const options = new IOSLaunchOptions();
-    options.endpoint = 'https://apidev.bugsee.com';
+    options.endpoint = 'https://staging.bugsee.invalid';
     expect(BugseeLaunchOptions.serialize(options))
-      .toEqual({ endpoint: 'https://apidev.bugsee.com/v2' });
+      .toEqual({ endpoint: 'https://staging.bugsee.invalid/v2' });
   });
 
   it('writes the Android key, verbatim', () => {
     const options = new AndroidLaunchOptions();
-    options.endpoint = 'https://apidev.bugsee.com';
+    options.endpoint = 'https://staging.bugsee.invalid';
     expect(BugseeLaunchOptions.serialize(options))
-      .toEqual({ 'com.bugsee.option.$$ENDPOINT': 'https://apidev.bugsee.com' });
+      .toEqual({ 'com.bugsee.option.$$ENDPOINT': 'https://staging.bugsee.invalid' });
   });
 
   it('reads back what the SDK will receive, not what was typed', () => {
     const options = new IOSLaunchOptions();
-    options.endpoint = 'https://apidev.bugsee.com';
-    expect(options.endpoint).toBe('https://apidev.bugsee.com/v2');
+    options.endpoint = 'https://staging.bugsee.invalid';
+    expect(options.endpoint).toBe('https://staging.bugsee.invalid/v2');
   });
 
   it('clears on undefined', () => {
     const options = new AndroidLaunchOptions();
-    options.endpoint = 'https://apidev.bugsee.com';
+    options.endpoint = 'https://staging.bugsee.invalid';
     options.endpoint = undefined;
     expect(BugseeLaunchOptions.serialize(options)).toEqual({});
   });

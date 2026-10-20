@@ -10,6 +10,101 @@ const { relativizeSource, relativizeSourceMap, uploadComposedSourceMap } = requi
 const TOKEN = '3f2a9c1e-0000-4abc-8def-5ca1ab1e0002';
 const ROOT = '/build/machine/app';
 
+// Symlinks need a POSIX filesystem; Windows resolves paths lexically here and a runner may refuse to create one.
+(process.platform === 'win32' ? describe.skip : describe)('relativizeSource through a symlinked project root', () => {
+  // macOS: Xcode reports the project under /tmp while Metro writes the real
+  // /private/tmp path into the map, so a plain relative() gave
+  // `../../../private/tmp/<build dir>/scenarios/a.ts`, the build machine's layout.
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const nodePath = require('node:path');
+  let base;
+  let realRoot;
+  let linkRoot;
+  beforeAll(() => {
+    base = fs.realpathSync(fs.mkdtempSync(nodePath.join(os.tmpdir(), 'bugsee-symroot-')));
+    realRoot = nodePath.join(base, 'real', 'app');
+    fs.mkdirSync(nodePath.join(realRoot, 'scenarios'), { recursive: true });
+    fs.mkdirSync(nodePath.join(base, 'real', 'packages', 'x'), { recursive: true });
+    fs.writeFileSync(nodePath.join(realRoot, 'scenarios', 'a.ts'), '');
+    fs.symlinkSync(nodePath.join(base, 'real'), nodePath.join(base, 'link'));
+    linkRoot = nodePath.join(base, 'link', 'app');
+  });
+  afterAll(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  it('a source under the real path is in the root when the root is given through the link', () => {
+    expect(relativizeSource(`${realRoot}/scenarios/a.ts`, linkRoot)).toBe('/scenarios/a.ts');
+  });
+
+  it('a source given through the link is in the root when the root is the real path', () => {
+    expect(relativizeSource(`${linkRoot}/scenarios/a.ts`, realRoot)).toBe('/scenarios/a.ts');
+  });
+
+  it('a file that does not exist is still resolved through its existing parent', () => {
+    expect(relativizeSource(`${realRoot}/scenarios/missing.ts`, linkRoot)).toBe('/scenarios/missing.ts');
+  });
+
+  it('a source that reaches the root through an in-tree symlink keeps its in-tree form', () => {
+    // A linked workspace package under node_modules: Metro may write either spelling.
+    fs.symlinkSync(nodePath.join(base, 'real', 'packages', 'x'), nodePath.join(realRoot, 'linked-pkg'));
+    expect(relativizeSource(`${realRoot}/linked-pkg/a.js`, realRoot)).toBe('/linked-pkg/a.js');
+    // Root given through a symlink as well: the plain paths escape the root, so real paths
+    // are compared and the package's real location comes out, still without the build layout.
+    expect(relativizeSource(`${realRoot}/linked-pkg/a.js`, linkRoot)).toBe('../packages/x/a.js');
+  });
+
+  it('one map resolves the root once, however many sources it has', () => {
+    const spy = jest.spyOn(fs, 'realpathSync');
+    try {
+      const sources = Array.from({ length: 50 }, (_, i) => `${realRoot}/scenarios/file${i}.ts`);
+      const text = JSON.stringify({ version: 3, sources, mappings: '' });
+      const out = JSON.parse(relativizeSourceMap(text, linkRoot));
+      expect(out.sources.every((source, i) => source === `/scenarios/file${i}.ts`)).toBe(true);
+      // One lookup per file (it may itself be a symlink) plus the root and its
+      // directories once each, not the root again for every entry (2 x 50 or more).
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(50 + 3);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('an outside-root file that is itself a symlink to a file inside the root maps to the in-root path', () => {
+    fs.mkdirSync(nodePath.join(base, 'real', 'elsewhere'), { recursive: true });
+    fs.symlinkSync(nodePath.join(realRoot, 'scenarios', 'a.ts'), nodePath.join(base, 'real', 'elsewhere', 'alias.ts'));
+    expect(relativizeSource(`${base}/real/elsewhere/alias.ts`, linkRoot)).toBe('/scenarios/a.ts');
+  });
+
+  it('a missing file under several missing directories is resolved through its nearest existing parent', () => {
+    expect(relativizeSource(`${realRoot}/newdir/sub/x.ts`, linkRoot)).toBe('/newdir/sub/x.ts');
+  });
+
+  it('missing directories below a symlink in the source are resolved through the existing parent of that link', () => {
+    // The source goes through the link and the root is the real path: only walking up to
+    // `link/app` (which exists) and resolving it gives the in-root form.
+    expect(relativizeSource(`${linkRoot}/newdir/sub/x.ts`, realRoot)).toBe('/newdir/sub/x.ts');
+  });
+
+  it('terminates at the filesystem root when nothing can be resolved at all', () => {
+    const spy = jest.spyOn(fs, 'realpathSync').mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+    try {
+      expect(relativizeSource(`${realRoot}/newdir/sub/x.ts`, linkRoot)).toBe('../../real/app/newdir/sub/x.ts');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('a source that is a link to the project root itself keeps its plain relative form', () => {
+    fs.symlinkSync(realRoot, nodePath.join(base, 'real', 'rootlink'));
+    expect(relativizeSource(`${base}/real/rootlink`, linkRoot)).toBe('../../real/rootlink');
+  });
+
+  it('a sibling package outside the root keeps its ../ form', () => {
+    expect(relativizeSource(`${realRoot}/../packages/x/a.js`, linkRoot)).toBe('../packages/x/a.js');
+  });
+});
+
 describe('relativizeSource', () => {
   it('makes an absolute path under the root project-relative with a leading slash', () => {
     expect(relativizeSource(`${ROOT}/scenarios/staging.ts`, ROOT)).toBe('/scenarios/staging.ts');
@@ -38,9 +133,18 @@ describe('relativizeSource', () => {
     expect(relativizeSource('\\\\host\\share\\app\\a.ts', '\\\\host\\share\\app')).toBe('/a.ts');
   });
 
+  it('a Windows source outside the root stays ../-relative without touching this machine\'s filesystem', () => {
+    expect(relativizeSource('C:\\build\\packages\\x\\a.js', 'C:\\build\\app')).toBe('../packages/x/a.js');
+  });
+
   it('handles Windows paths', () => {
     expect(relativizeSource('C:\\proj\\app\\src\\a.ts', 'C:\\proj\\app')).toBe('/src/a.ts');
     expect(relativizeSource('D:\\other\\a.ts', 'C:\\proj\\app')).toBe('D:\\other\\a.ts');
+  });
+
+  it('returns a map whose sources need no change byte for byte, not re-serialized', () => {
+    const pretty = '{\n  "version": 3,\n  "sources": ["src/app.js", "./b.js"],\n  "mappings": ""\n}\n';
+    expect(relativizeSourceMap(pretty, ROOT)).toBe(pretty);
   });
 
   it('passes non-strings through', () => {

@@ -46,7 +46,7 @@ static NSString *BGSRNStringOr(NSDictionary *source, NSString *key, NSString *fa
   // test compares the three so they cannot drift.
   return [self wrapperWithIdentity:@{
     @"type" : @"react_native",
-    @"version" : @"0.0.0",
+    @"version" : @"7.0.0-beta3",
     @"context" : @{},
   }];
 }

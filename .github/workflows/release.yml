@@ -1,0 +1,204 @@
+name: Release
+
+# Publishes @bugsee/react-native and @bugsee/react-native-feedback to npm through TRUSTED PUBLISHING
+# (OIDC): there is no npm token in this repository. Each package on npm has THIS workflow file
+# registered as its trusted publisher (`node scripts/npm-trust-all.mjs`), so npm accepts the
+# short-lived identity token GitHub mints for the run and nothing long-lived exists to leak.
+#
+# GitHub-hosted runner: npm trusted publishing does not support self-hosted runners
+# (docs.npmjs.com/trusted-publishers).
+#
+# The file NAME is part of the trust relationship. Renaming it silently breaks publishing until
+# every package is re-registered.
+#
+# Three jobs. `check` runs the gates, packs the tarballs and dry-runs the publish on any ref, and holds
+# no publish rights. `publish` needs it, runs only for a real publish, and is the only job with the
+# OIDC token and the `npm-publish` environment. `github-release` runs after a fully successful publish
+# and is the only job that can write to the repository (`contents: write`); it holds no npm credentials.
+# The gates are the same lint, typecheck and unit tests CI runs, the release metadata gate, and
+# `prepack`'s refusal to pack a SNAPSHOT pin.
+#
+# So a real release does three things, in this order: publish both packages to npm, create the tag
+# `v<version>` at the released commit, and create a GitHub release for it (a prerelease when the version
+# is one) with the packed tarballs attached and generated notes (scripts/github-release.mjs). It is
+# idempotent: re-running after a partial failure skips what exists, and a tag that already exists at a
+# different commit fails the run instead of being moved.
+#
+# The tag is a deliberate choice: it defaults to `beta`, and a prerelease may also go to `latest`
+# while the SDK itself is a beta.
+#
+# `npm publish` moves one dist-tag. `also_tag` (blank by default, so moving `latest` is always typed)
+# points a second tag at the same version afterwards, e.g. `latest` while the SDK is a beta. publish-all
+# never moves `latest` from a stable release to a prerelease. Moving a tag needs the
+# `dist-tag` permission ticked on the trusted publisher (npm 12.2.0, installed in the publish job, runs the
+# OIDC exchange for it); if a tag still cannot be moved every package is already published and the step
+# exits non-zero listing the commands to run by hand.
+#
+# A version already on npm is not published again, but the tags are still applied to it: a re-run with
+# another `tag` or an `also_tag` moves the tag instead of reporting success and doing nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: npm dist-tag to publish under
+        type: choice
+        options: [beta, next, latest]
+        default: beta
+        required: true
+      also_tag:
+        description: Second dist-tag to point at the same version (npm publish moves only one). Blank for none. Moving latest is a deliberate choice.
+        default: ''
+        required: false
+      dry_run:
+        description: Pack and `npm publish --dry-run` only; publishes nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # Never a real token; the gates only read these, and nothing here reaches the Bugsee API.
+  BUGSEE_TOKEN_IOS: 00000000-0000-4000-8000-000000000000
+  BUGSEE_TOKEN_ANDROID: 00000000-0000-4000-8000-000000000000
+  BUGSEE_ENDPOINT: http://127.0.0.1:9
+
+jobs:
+  check:
+    name: gates and dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - run: corepack enable
+
+      # The same npm as the publish job, so the dry run validates the tarballs and the publish path with the
+      # npm that will do the real publish (see the publish job for why 12.2.0).
+      - name: Install the npm the publish job uses
+        run: |
+          npm install -g npm@12.2.0
+          test "$(npm --version)" = "12.2.0"
+          echo "npm $(npm --version)"
+
+      - run: yarn install --immutable
+
+      - name: Gates (the same as CI's js job)
+        run: |
+          yarn lint
+          yarn typecheck
+          yarn test
+
+      - name: Release gate (metadata, one version, peer ranges)
+        run: node scripts/check-publishable.mjs
+
+      # Inputs go in through the environment, never interpolated into the script text: a `${{ }}`
+      # inside `run:` is textually pasted into the shell.
+      - name: Dry-run publish
+        env:
+          NPM_TAG: ${{ inputs.tag }}
+          ALSO_TAG: ${{ inputs.also_tag }}
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --also-tag "$ALSO_TAG" --dry-run --pack-to "$RUNNER_TEMP/tarballs"
+
+      # The bytes that passed the gates are the bytes `publish` uploads to npm.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/tarballs
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish
+    needs: check
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # The control that actually limits who can publish. npm's trusted publisher is registered by
+    # repository, workflow file and THIS environment, and the environment's deployment-branch rule
+    # restricts it to main, so a branch that edits this file cannot mint a publish token. The guard
+    # step below is a convenience, not the control.
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # the OIDC token npm exchanges for publish rights
+    steps:
+      - name: A real publish runs from main only
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::a real publish runs only from main (this run is on $REF)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1 for `npm publish`, and a newer npm for `npm dist-tag`: the
+      # runner's npm 11.19 does the OIDC exchange only for publish, so moving `latest` failed with E401
+      # in the first release (7.0.0-beta2). npm 12.2.0 runs the exchange for `dist-tag` too. Pinned
+      # exactly, installed before any package is published, and verified, so the run fails here and not
+      # half-way through a release if the right npm cannot be had.
+      - name: Install the npm that can move dist-tags
+        run: |
+          npm install -g npm@12.2.0
+          test "$(npm --version)" = "12.2.0"
+          echo "npm $(npm --version)"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/tarballs
+
+      # No `yarn install` and no lifecycle script runs here: this job holds the OIDC token, so it
+      # only publishes the tarballs `check` packed and validated.
+      - name: Publish
+        env:
+          NPM_TAG: ${{ inputs.tag }}
+          ALSO_TAG: ${{ inputs.also_tag }}
+        run: node scripts/publish-all.mjs --tag "$NPM_TAG" --also-tag "$ALSO_TAG" --tarballs "$RUNNER_TEMP/tarballs"
+
+  github-release:
+    name: tag and GitHub release
+    needs: publish
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The only job that writes to the repository, and it has no npm credentials: the tag and the release
+    # can be created or fixed without touching the publish rights, and the publish job cannot write here.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/tarballs
+
+      # No install step: the script uses Node built-ins only. The tag is created at the commit this run
+      # packed and published, never at a branch tip that could have moved.
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_TAG: ${{ inputs.tag }}
+          ALSO_TAG: ${{ inputs.also_tag }}
+        run: node scripts/github-release.mjs --sha "$GITHUB_SHA" --tarballs "$RUNNER_TEMP/tarballs" --npm-tags "$NPM_TAG,$ALSO_TAG"

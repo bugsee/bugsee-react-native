@@ -136,7 +136,9 @@ describeDevice(`log filter on ${TARGET_NAME}`, () => {
     expect(matches).toHaveLength(1);
     const [event] = matches as [Record<string, unknown>];
     expect(event.message).toBe(want);
-    expect(event.source).toBe(98);
+    // The app's own line goes through the native Bugsee.log, not the wrapper
+    // channel: source Bugsee (4), not Custom (98).
+    expect(event.source).toBe(4);
     expect(event.level).toBe(2);
     const leaked = events.filter(event => messageOf(event).includes(`log-filter immediate ${nonce} SECRET`));
     expect(leaked).toHaveLength(0);
@@ -151,7 +153,9 @@ describeDevice(`log filter on ${TARGET_NAME}`, () => {
     expect(matches).toHaveLength(1);
     const [event] = matches as [Record<string, unknown>];
     expect(event.message).toBe(want);
-    expect(event.source).toBe(98);
+    // The app's own line goes through the native Bugsee.log, not the wrapper
+    // channel: source Bugsee (4), not Custom (98).
+    expect(event.source).toBe(4);
     expect(event.level).toBe(2);
   });
 
@@ -163,5 +167,19 @@ describeDevice(`log filter on ${TARGET_NAME}`, () => {
     expect(hang).toHaveLength(0);
     const leaked = events.filter(event => messageOf(event).includes(`log-filter hang ${nonce} SECRET`));
     expect(leaked).toHaveLength(0);
+  });
+
+  // As in the native SDKs, the app's filter runs on a Bugsee.log line only
+  // when requiresFiltering is true. This one is sent without it.
+  it('a Bugsee.log line without requiresFiltering skips the filter', () => {
+    expect(bundles).toHaveLength(1);
+    const events = logEventsOf(bundles[0]!);
+    const matches = events.filter(event => messageOf(event).includes(`log-filter unfiltered ${nonce}`));
+    report('unfiltered matches', matches);
+    expect(matches).toHaveLength(1);
+    const [event] = matches as [Record<string, unknown>];
+    expect(event.message).toBe(`log-filter unfiltered ${nonce} SECRET`);
+    expect(event.source).toBe(4);
+    expect(event.level).toBe(2);
   });
 });

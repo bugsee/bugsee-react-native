@@ -1180,10 +1180,8 @@ RCT_EXPORT_MODULE(Bugsee)
 
 #pragma mark - Blackout and view-hierarchy capture (design doc §4.1)
 
-// iOS honours startBlackout/endBlackout regardless of launch state, unlike
-// Android, which ignores them (a logged no-op) before launch() resolves.
-// Recorded in the plan as a candidate SDK issue, not patched here -- see the
-// Phase 6 preamble's "Planner decisions".
+// iOS honours startBlackout/endBlackout regardless of launch state; Android
+// does too since 7.4.0 (bugsee-android#248).
 
 - (void)startBlackout {
   BGSRNRunOnMain(^{
@@ -1259,9 +1257,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     return;
   }
   BGSRNRunOnMain(^{
-    // launchWithToken: returns the instance, or nil when the SDK declines —
-    // already running, or the token was rejected. Declining is a normal
-    // outcome, so it resolves false rather than rejecting.
+    // launchWithToken: returns the instance, or nil when the SDK declines
+    // (the token was rejected). Declining is a normal outcome, so it
+    // resolves false rather than rejecting. When the SDK is already running
+    // it returns the running instance, so this resolves true and the new
+    // options are ignored.
     Bugsee *instance = [Bugsee launchWithToken:token andOptions:BGSRNResolvedLaunchOptions(options)];
     // launch can replace the log filter. Put the pass-through, or the user
     // filter if one is already on, back. This does not set the filter to nil.
@@ -1344,14 +1344,14 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 }
 
 /// A handled JS exception. `payloadJson` is the Task 7.1a payload, forwarded
-/// verbatim as the reason; `optionsJson` is `{domain?, labels?, includeVideo?}`
-/// or null. Unparseable options are logged and the exception is still sent
-/// with nil options — a void method has no promise to reject.
+/// verbatim as the reason; `optionsJson` is `{domain?}` or null. Unparseable
+/// options are logged and the exception is still sent, without a domain — a
+/// void method has no promise to reject.
 - (void)logException:(NSString *)payloadJson
          optionsJson:(NSString * _Nullable)optionsJson {
   BGSRNRunOnMain(^{
     NSError *error = nil;
-    BugseeExceptionLoggingOptions *opts =
+    BGSRNExceptionOptions *opts =
         [BGSRNExceptions loggingOptionsFromJSON:optionsJson error:&error];
     if (optionsJson != nil && opts == nil) {
       NSLog(@"BugseeRN exception options unparseable: %@", BGSRNErrorMessage(error));
@@ -1366,9 +1366,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
         return;
       }
       const BugseeStatus status = BGSRNCurrentStatus();
+      // 7.0.0-beta7 has no options object: the domain is an argument.
       [Bugsee logException:BGSRNReactNativeExceptionName
                     reason:payloadJson
-                   options:opts
+                    domain:opts.domain
+                skipFrames:0
                 completion:nil];
       // "sent" only for a call the SDK accepts: it drops one made when it is
       // not Launched (before launch(), or after stop()).
@@ -1539,6 +1541,26 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   BGSRNRunOnMain(^{
     [Bugsee trace:name value:BGSRNBoolNumber(value)];
   });
+}
+
+/// The app's own `Bugsee.log()` line, through the SDK's public `+[Bugsee
+/// log:level:requiresFiltering:]` -- not the wrapper channel, which records
+/// nothing with `capture.logs` off. `requiresFiltering` is the app's choice,
+/// passed through: the app's log filter runs on the line only when it is YES.
+///
+/// Not a channel line, so no `BGSRNBeginChannelLine`: the echo drop in the log
+/// filter never takes a line that is neither stdout/stderr nor a console stamp.
+/// Level by value, rounded as in `wrapperLog:` below.
+///
+/// Not hopped to main. Android's `log` calls `Bugsee.log` on the native-modules
+/// thread too, and `wrapperLog:` reached the same SDK log core from this queue.
+/// Staying here keeps these lines in JS order with the console lines.
+- (void)log:(NSString *)message
+                level:(double)level
+    requiresFiltering:(BOOL)requiresFiltering {
+  [Bugsee log:message
+                  level:BGSRNLogLevelForWireValue((NSInteger)llround(level))
+      requiresFiltering:requiresFiltering];
 }
 
 /// Forwards a JS log line through the wrapper channel (tag nil,

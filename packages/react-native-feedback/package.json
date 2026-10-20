@@ -1,8 +1,8 @@
 {
   "name": "@bugsee/react-native-feedback",
-  "version": "0.0.0",
+  "version": "7.0.0-beta3",
   "description": "In-app feedback UI for the Bugsee React Native SDK",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "homepage": "https://www.bugsee.com",
   "main": "src/index.ts",
   "files": [
@@ -19,7 +19,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@bugsee/react-native": "*",
+    "@bugsee/react-native": "^7.0.0-beta3",
     "react": "*",
     "react-native": ">=0.81.0"
   },
@@ -42,5 +42,13 @@
         "BugseeFeedbackModule": "BugseeFeedbackModule"
       }
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bugsee/bugsee-react-native.git",
+    "directory": "packages/react-native-feedback"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

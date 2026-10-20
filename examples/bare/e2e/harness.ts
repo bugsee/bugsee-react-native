@@ -11,7 +11,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { checkLaunch, launchFactsOf, parseCampaignMode } from '../../../scripts/campaign-endpoint-guard';
+import { checkLaunch, launchFactsOf, parseCampaignMode, stagingEndpointOf } from '../../../scripts/campaign-endpoint-guard';
 import { parseNoWipe } from './flow-config';
 import { androidBannerOf, checkAndroidBanner, logcatPid } from '../../../scripts/sdk-banner';
 import { readNativeVersions } from '../../../scripts/native-versions';
@@ -48,9 +48,11 @@ export const ON_IOS = PLATFORM === 'ios';
 export const describeDevice = ON_ANDROID || ON_IOS ? describe : describe.skip;
 
 /**
- * `E2E_STAGING=1` is the STAGING lane (a real token, exactly
- * https://apidev.bugsee.com); anything else is offline (the placeholder token
- * and the dead endpoint). Every launch is checked against it (`checkRun`).
+ * `E2E_STAGING=1` is the STAGING lane (a real token, exactly the endpoint in
+ * BUGSEE_STAGING_ENDPOINT); anything else is offline (the placeholder token
+ * and the dead endpoint). The staging endpoint is read from the environment
+ * only: the credentials file the app launches with cannot vouch for itself.
+ * Every launch is checked against it (`checkRun`).
  */
 export const CAMPAIGN_MODE = parseCampaignMode(process.env.E2E_STAGING);
 
@@ -218,7 +220,7 @@ async function checkRun(ran: LogLine, start: number): Promise<void> {
   const verdict =
     facts === undefined
       ? { ok: false, reason: "the app's launch line names no token kind and endpoint" }
-      : checkLaunch(CAMPAIGN_MODE, facts);
+      : checkLaunch(CAMPAIGN_MODE, facts, stagingEndpointOf(process.env.BUGSEE_STAGING_ENDPOINT));
   if (!verdict.ok) {
     await stopApp().catch(() => {});
     throw new Error(`campaign endpoint guard (N-30, ${CAMPAIGN_MODE} mode) refused this launch: ${verdict.reason}. The app was stopped.`);

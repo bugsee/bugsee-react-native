@@ -27,8 +27,8 @@ jobs:
     env:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - run: corepack enable
@@ -39,7 +39,7 @@ jobs:
         run: node scripts/cli-mutation.ts shard ${{ inputs.gate }} ${{ matrix.shard }} ${{ inputs.shards }}
       - name: Mutate
         run: yarn stryker run reports/mutation/${{ inputs.gate }}/shard-${{ matrix.shard }}.stryker.json --concurrency 4
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mutation-${{ inputs.gate }}-shard-${{ matrix.shard }}
           path: reports/mutation/${{ inputs.gate }}/shard-${{ matrix.shard }}.json
@@ -51,15 +51,15 @@ jobs:
     needs: shard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - run: corepack enable
       # For Stryker's instrumenter (to re-derive the plan and check that no
       # mutant went missing) and mutation-testing-metrics (to score).
       - run: yarn install --immutable
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: mutation-${{ inputs.gate }}-shard-*
           path: reports/mutation/${{ inputs.gate }}
@@ -67,7 +67,7 @@ jobs:
       - name: Merge and enforce the break threshold
         run: node scripts/cli-mutation.ts merge ${{ inputs.gate }} ${{ inputs.shards }}
       # Kept under the threshold too: that is when someone needs to look.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: mutation-${{ inputs.gate }}

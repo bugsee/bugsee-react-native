@@ -57,6 +57,13 @@ export default tseslint.config(
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },
   {
+    // Release tooling run by the Release workflow: plain Node ESM.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { console: 'readonly', process: 'readonly', setTimeout: 'readonly' },
+    },
+  },
+  {
     files: ['scripts/**/*.ts'],
     languageOptions: {
       globals: { console: 'readonly', process: 'readonly', require: 'readonly', module: 'readonly', __dirname: 'readonly' },
@@ -84,6 +91,9 @@ export default tseslint.config(
       globals: {
         console: 'readonly', process: 'readonly', fetch: 'readonly',
         setTimeout: 'readonly', clearTimeout: 'readonly',
+        XMLHttpRequest: 'readonly', WebSocket: 'readonly', AbortController: 'readonly',
+        URLSearchParams: 'readonly', btoa: 'readonly', setInterval: 'readonly',
+        clearInterval: 'readonly', globalThis: 'readonly',
         __dirname: 'readonly', require: 'readonly', module: 'writable',
       },
     },

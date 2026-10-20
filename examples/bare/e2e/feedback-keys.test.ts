@@ -60,16 +60,6 @@ const EMAIL_PIXEL: Record<'android' | 'ios', readonly string[]> = {
 };
 
 /**
- * iOS 7.0.0-beta5's feedback (BugseeFeedback, SwiftUI) has no e-mail screen:
- * showFeedbackUI() presents FeedbackChatView with Bugsee.getUserIdentifier()
- * as the e-mail, nothing asks for one -- seen on the simulator after a
- * reinstall and a Keychain reset (2026-10-07). Android shows one. The
- * feedbackEmail* theme keys therefore paint nothing. Filed: bugsee-cocoa#202.
- */
-const IOS_NO_EMAIL_SCREEN = 'iOS beta5 feedback has no e-mail screen (bugsee-cocoa#202)';
-const IOS_NO_EMAIL_SCREEN_KEY = 'iOS beta5 feedback has no e-mail screen to paint (bugsee-cocoa#202)';
-
-/**
  * Keys a platform reads back but never paints, pinned (it.failing). Android
  * 7.3.0 never read Feedback::ActionBarColor or EmailContinueNotActiveColor
  * and drew the hint from InputTextColor (bugsee-android#218); 7.3.1 paints
@@ -77,11 +67,7 @@ const IOS_NO_EMAIL_SCREEN_KEY = 'iOS beta5 feedback has no e-mail screen to pain
  */
 const KNOWN_NOT_PAINTED: Record<'android' | 'ios', Record<string, string>> = {
   android: {},
-  ios: {
-    emailBackgroundColor: IOS_NO_EMAIL_SCREEN_KEY,
-    emailContinueNotActiveColor: IOS_NO_EMAIL_SCREEN_KEY,
-    emailSkipColor: IOS_NO_EMAIL_SCREEN_KEY,
-  },
+  ios: {},
 };
 
 /** One pixel test: `it`, or `it.failing` with the known reason in the title. */
@@ -259,7 +245,7 @@ describeDevice(`the feedback package's keys, nulls and pre-launch use on ${TARGE
       }
     });
 
-    (ON_IOS ? itFresh.failing : itFresh)(`[FB-06] the first open shows the e-mail screen, not the chat${ON_IOS ? ` [known: ${IOS_NO_EMAIL_SCREEN}]` : ''}`, async () => {
+    itFresh('[FB-06] the first open shows the e-mail screen, not the chat', async () => {
       if (ON_ANDROID) {
         expect(await androidTopActivity()).toBe(FEEDBACK_ACTIVITY);
         // An e-mail field to type into, which the chat screen does not have.

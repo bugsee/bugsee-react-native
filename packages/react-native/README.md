@@ -7,6 +7,18 @@ Wraps the native Bugsee SDKs — it is not a reimplementation — so a report fr
 a React Native app is the same report a native app produces, with the JS layer
 added.
 
+## Status: beta
+
+This is a beta (`7.0.0-beta3`), built on the 7.x native SDKs, and the iOS SDK it
+bundles is itself a beta. `latest` and `beta` both point at it for now, so a plain
+`yarn add @bugsee/react-native` installs it; the `@beta` form in [Install](#install)
+keeps following betas once a stable release exists. The API can still change
+between betas.
+
+It replaces `react-native-bugsee` (6.x), which stays on its own line. The two
+are different packages with different APIs, not an upgrade in place: remove the
+old one and follow this README.
+
 ## Requirements
 
 | | |
@@ -28,8 +40,11 @@ build fails on 0.86 and 0.87.
 ## Install
 
 ```sh
-yarn add @bugsee/react-native
+yarn add @bugsee/react-native@beta
 ```
+
+`npm install @bugsee/react-native@beta` and `pnpm add @bugsee/react-native@beta` work the
+same way.
 
 **iOS.** React Native 0.87 and later resolve the SDK through Swift Package
 Manager. Earlier versions use CocoaPods, where the podspec vendors the same
@@ -57,18 +72,132 @@ React Native itself also needs `nodeLinker: hoisted` under pnpm.
 ## Use
 
 ```ts
-import Bugsee, { BugseeLaunchOptions, createDefaultLaunchOptions } from '@bugsee/react-native';
+import Bugsee, { createDefaultLaunchOptions } from '@bugsee/react-native';
 
 const options = createDefaultLaunchOptions();
 options.captureLogs = true;
 
-await Bugsee.launch('<your app token>', BugseeLaunchOptions.serialize(options));
+await Bugsee.launch('<your app token>', options);
 ```
+
+`launch` and `relaunch` take the options object as is. They also accept the plain
+`com.bugsee.option.*` map, for options you build or merge yourself; the object's
+`BugseeLaunchOptions.serialize(options)` returns exactly that map.
 
 `launch` resolves to whether the SDK started. It can decline — already
 running, or a token the backend rejects — without that being an error worth
 throwing on. Capture comes up asynchronously, so poll `getStatus()` rather
 than assuming a resolved `launch` means recording has begun.
+
+### Reporting render errors
+
+Wrap part of the tree (or the whole app) in `<ErrorBoundary>` to report an error thrown while rendering
+and show a fallback instead of an empty screen:
+
+```tsx
+import { ErrorBoundary } from '@bugsee/react-native';
+
+<ErrorBoundary
+  fallback={({ error, componentStack, resetError }) => (
+    <ErrorScreen onRetry={resetError} />
+  )}
+  onError={(error, componentStack) => console.warn('render failed', error)}
+  options={{ domain: 'checkout' }}
+>
+  <App />
+</ErrorBoundary>
+```
+
+| Prop | |
+|---|---|
+| `fallback` | What to render after an error: an element, or a function that receives `error`, `componentStack` and `resetError()`. Without it the boundary renders nothing, so give it one. |
+| `onError(error, componentStack)` | Called after the boundary has caught the error, and after it has reported it unless the error was already reported (see the list below). |
+| `onReset(error, componentStack)` | Called when `resetError()` is called, just before the children render again. |
+| `options` | Handled-exception options for the report. `{ domain }` only, as for `Bugsee.logException`. An invalid value logs a warning and the error is reported without options. |
+
+What it does and does not do:
+
+- The error is reported as a **handled** exception, with the React component stack attached as an extra
+  (not as the error's `cause`).
+- An error object the SDK has already reported is not reported again, so a boundary and
+  `Bugsee.logException` (or the global handler) do not file the same error twice.
+- `children` is a plain React node. The function-as-children form from 6.x is not supported.
+- Like any React error boundary it only catches errors thrown while **rendering**. Errors in event
+  handlers, timers and promises are not caught by it; the global handlers `launch` installs report the
+  uncaught ones.
+
+### Hiding a view from recordings
+
+Wrap anything that must never be recorded in `<BugseeSecure>`:
+
+```tsx
+import { BugseeSecure } from '@bugsee/react-native';
+
+<BugseeSecure>
+  <Text>{accountNumber}</Text>
+</BugseeSecure>
+```
+
+The part of it that is on screen is masked, and taps on it are dropped, while
+it is mounted and `enabled` (default `true`). It follows scrolling, hidden
+screens, react-native-screens push and pop transitions, sliding `<Modal>`s and
+`Animated` transforms driven by the native driver, masking more rather than
+less where it cannot tell exactly. `enabled={false}` unmasks at once; an
+unmount keeps the mask for about half a second, as native may still draw the
+view.
+
+Known limits:
+
+- Content that mounts in a pushed screen or an opening `<Modal>` after it
+  came (behind a spinner), or that is first shown on the screen a pop
+  uncovers, is masked for the rest of the transition. When a screen came or
+  went is known only if a `<BugseeSecure>` saw it; otherwise the first one to
+  look masks as if it happened then (the whole screen, or the Modal's band,
+  for under a second).
+- A value a native event drives (an `Animated.event` in an `Animated`
+  component's `onScroll` or `onGestureEvent`, or `Animated.attachNativeEvent`,
+  which React Native's own ScrollView uses for `stickyHeaderIndices`) moves
+  with the scroll or the gesture. What it transforms is masked wherever it can
+  be drawn, for as long as the event is attached, idle or not:
+  - a clamped interpolation, one whose ends are flat (a swipeable row without
+    overshoot), or a `diffClamp`: over its output range;
+  - on Android, a ScrollView's `contentOffset`, vertical or horizontal (a
+    collapsing or parallax header, a sticky header): over the offsets the
+    ScrollView can reach, from its measured content and viewport, plus 64 dp
+    either way for a fling's overrun (AOSP flings 6 dp past an end; the
+    margin assumes no device flings more than ten times that). A view inside
+    the content of the ScrollView whose offset drives it (a sticky header,
+    from `stickyHeaderIndices` or a `SectionList`) moves with that content
+    too, natively ahead of what JS measures: it is masked over that
+    ScrollView's whole viewport;
+  - anything else (a gesture's translation through an interpolation that
+    extends, an iOS ScrollView, which bounces and can be scrolled anywhere by
+    `scrollTo`, a ScrollView in another React root, or under a scale other
+    than 1): the whole surface around it, cut by the clipping ancestors above
+    it (a list's viewport, say).
+- Native events are followed from when `@bugsee/react-native` is first
+  evaluated: with Metro's `inlineRequires`, its first use. Import it (or call
+  `Bugsee.launch`) at the top of `index.js` to follow them from the start.
+  A value made native before then is masked as if anything could drive it,
+  until JS next animates or sets it. A native event attached without
+  `Animated` (code that calls React Native's native Animated module itself)
+  is not seen at all, and the value it drives is taken to be where JS last
+  had it.
+- A transform animated from JS (`useNativeDriver: false`) is followed every
+  frame while its animation runs. Other styles a JS animation moves (`top`,
+  `left`, `margin`, a size) are followed by the 100 ms re-measure only.
+- Reanimated runs its animations on the UI thread, out of JS's sight. A
+  Reanimated component whose style sets a transform through an animated
+  style, sets a shared value inline, or uses a CSS animation or transition
+  masks the whole surface around it; other Reanimated motion (an animated
+  style that adds a transform only later, layout animations,
+  `entering`/`exiting`, shared element transitions) is not followed.
+- An interactive back gesture (iOS swipe-back, Android predictive back) moves
+  a mounted screen without anything JS can see.
+- The mask is published in the same JS task that starts a native animation
+  (or sets, resets or offsets an `Animated.Value`), but the two reach native
+  separately: under heavy load the animation's first frame could still be
+  drawn before the mask lands.
 
 ## Expo config plugin
 
@@ -374,7 +503,23 @@ cd ios && RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1 pod install
 
 With it set, the Archive's `dSYMs/` folder includes React's dSYMs and the
 post-action uploads them with the rest. A bare app has to export it wherever
-it runs `pod install`, including CI. With the Expo config plugin it is opt-in:
+it runs `pod install`, including CI.
+
+The dSYMs are fetched together with the prebuilt `React-Core-prebuilt` pod, so
+the variable does nothing for a pod that is already in `ios/Pods` (or in
+CocoaPods' cache) from an earlier `pod install` without it: the log shows no
+`Resolved stable dSYMs`, and the Archive has no `React.framework.dSYM`. On such
+a machine remove the pod first and install again, from the app's root
+directory:
+
+```sh
+rm -rf ios/Pods/React-Core-prebuilt
+pod cache clean React-Core-prebuilt --all
+(cd ios && RCT_SYMBOLICATE_PREBUILT_FRAMEWORKS=1 pod install)
+```
+
+A fresh CI checkout is not affected. The check that it worked is the Archive's
+`dSYMs/React.framework.dSYM`. With the Expo config plugin it is opt-in:
 
 ```json
 ["@bugsee/react-native", { "appToken": "…", "symbolicateReactNativeFrameworks": true }]
@@ -419,6 +564,32 @@ then run `pod install` again:
     end
 ```
 
+**`TypeError: ExceptionOptions has unknown key "labels"` (or
+`"includeVideo"`).** `Bugsee.logException` takes `{ domain }` only, as the
+7.x native SDKs do, and throws on any other key before anything is sent.
+Earlier betas accepted `labels` and `includeVideo`. Set labels from the
+report handler instead. It has no per-call context: the labels it sets land
+on every report it handles, not only on one `logException` call's.
+`onAfterReportCreated` may run more than once, so set the labels rather than
+append to them:
+
+```ts
+Bugsee.setReportHandler({
+  onAfterReportCreated: report => report.setLabels(['checkout']),
+});
+```
+
+The handler sees only the reports that reach JavaScript. An Android NDK
+relaunch never does, and an iOS report recovered at launch is best-effort;
+`BugseeReportHandler` has the details.
+
+`includeVideo` has no replacement: neither SDK can leave the video out of a
+single report.
+
+## Examples
+
+[`examples/playground`](https://github.com/bugsee/bugsee-react-native/tree/main/examples/playground) is a sample app with a button for every SDK API, a demo shop and a manual validation map.
+
 ## Licence
 
-Commercial. See [LICENSE](./LICENSE) and https://www.bugsee.com/terms.
+The React Native wrapper is MIT. See [LICENSE](./LICENSE). The native Bugsee SDKs it bundles (iOS and Android) are separate packages with their own terms.

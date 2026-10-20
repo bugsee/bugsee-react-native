@@ -21,7 +21,7 @@ writes two gitignored files:
 ```sh
 export BUGSEE_TOKEN_IOS=…
 export BUGSEE_TOKEN_ANDROID=…
-export BUGSEE_ENDPOINT=https://apidev.bugsee.com
+export BUGSEE_ENDPOINT=…   # your staging endpoint (set BUGSEE_STAGING_ENDPOINT)
 yarn credentials
 ```
 
@@ -71,6 +71,14 @@ A debug build here does **not** need Metro: the iPhone's Local Network
 permission is off, `RCTBundleURLProvider` cannot reach the packager and falls
 back to the `main.jsbundle` the build phase produced. JS changes therefore need
 a rebuild, not just a reload.
+
+### Native symbolication: Archive, not build
+
+The iOS dSYMs are uploaded by the scheme's Archive post-action, so only an
+Archive does it; `yarn device:ios` is a plain build and its native crashes stay
+unsymbolicated. `scripts/archive-ios.sh` archives with a real token, makes sure
+React's dSYMs are fetched too, and exports an IPA that `IOS_IPA=… scripts/run-ios.sh`
+installs (its header lists the variables and the follow-up commands).
 
 ### The other delivery path: SwiftPM
 

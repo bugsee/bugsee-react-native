@@ -55,7 +55,7 @@ describe('the feedback package pins the same native versions as the core', () =>
     expect(gradle).toMatch(
       /api\s+"com\.bugsee:bugsee-android:\$\{nativeVersions\.android\.sdk\}"/,
     );
-    expect(versions.android.sdk).toBe('7.3.1');
+    expect(versions.android.sdk).toBe('7.4.2');
   });
 
   it('reaches Android feedback through Bugsee.ext(Feedback.class)', () => {

@@ -3,6 +3,12 @@
 The in-app feedback chat for `@bugsee/react-native`. Apps that never show it
 do not have to depend on this package.
 
+## Status: beta
+
+At the same version as `@bugsee/react-native` (`7.0.0-beta3`); the npm `latest` and `beta` tags
+both point at it for now. Install both with `@beta` to keep following betas. The two must be the
+same release.
+
 ## Requirements
 
 The same as `@bugsee/react-native`: React Native 0.81 or later with the New
@@ -14,12 +20,12 @@ React Native.
 ## Install
 
 ```sh
-yarn add @bugsee/react-native @bugsee/react-native-feedback
+yarn add @bugsee/react-native@beta @bugsee/react-native-feedback@beta
 ```
 
 No Expo config plugin. Autolinking adds `bugsee-android-feedback` on Android.
 On iOS the podspec vendors the `bugsee/feedback-spm` sources for the same
-`7.0.0-beta5` pin as the core SDK, and React Native 0.87 resolves that
+`7.0.0-beta7` pin as the core SDK, and React Native 0.87 resolves that
 package through Swift Package Manager. There is no `spm_dependency`: that
 helper does not embed the framework.
 
@@ -54,8 +60,14 @@ published surface:
 appearance.backgroundColor = '#112233';
 ```
 
-The `feedback-spm` 7.0.0-beta5 SwiftUI chat (its sources are unchanged
-since 7.0.0-beta3) hard-codes `Color.accentColor`
-and `Color.gray` and does not read `BugseeTheme`, so that assignment does
-not change the chat in this beta. The setter still stores the color on
-`BugseeTheme`.
+The `feedback-spm` 7.0.0-beta6 SwiftUI chat paints its background with
+`feedbackBackgroundColor`, and its e-mail screen (new in beta6, shown once
+before the chat, as on Android) reads `feedbackEmailBackgroundColor`,
+`feedbackEmailSkipColor`, `feedbackEmailContinueActiveColor` and
+`feedbackEmailContinueNotActiveColor`. The message bubbles still hard-code
+`Color.accentColor` and `Color.gray`, so the other colors are stored on
+`BugseeTheme` but do not change the chat in this beta.
+
+## Licence
+
+The React Native feedback package is MIT. See [LICENSE](./LICENSE). The native Bugsee feedback SDKs it bundles (iOS and Android) are separate packages with their own terms.

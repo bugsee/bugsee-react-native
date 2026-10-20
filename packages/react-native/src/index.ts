@@ -5,6 +5,9 @@ import { wrap } from './viewtree/anchor';
 import { collectWrapperFacts } from './wrapper/collect';
 import { wrapperIdentity } from './wrapper/identity';
 import { setOwnerRectangles } from './secure/registry';
+// For its effect, eagerly (Metro's inlineRequires defers only what is read): follows native Animated events
+// from here on, so those attached before the first <BugseeSecure> mounts are counted too.
+import './secure/followEvents';
 import type { SecureRectangle } from './secure/rectangles';
 import { Status } from './status';
 import { statusForEvent } from './wrapper/events';
@@ -12,7 +15,7 @@ import type { LifecycleEvent } from './wrapper/events';
 import { setReportHandler as installReportHandler } from './report/dispatcher';
 import { createReport as openCreatedReport } from './report/CreatedReport';
 import type { BugseeCreatedReport, BugseeReportHandler } from './report/types';
-import { forwardLog } from './wrapper/channel';
+import { log as sendLog } from './logs/log';
 import { installConsoleCapture } from './console/capture';
 import { setLogFilter as installLogFilter } from './logs/filter';
 import type { LogFilter } from './logs/filter';
@@ -24,6 +27,7 @@ import type { NetworkFilter } from './network/filter';
 import { addNetworkEvent as recordNetworkEvent } from './network/add';
 import type { AddedNetworkEvent } from './network/add';
 import { type IssueSeverity, LogLevel } from './options/enums';
+import { BugseeLaunchOptions } from './options/BugseeLaunchOptions';
 import { labelsArgument, severityArgument } from './report/fields';
 import {
   assertEventOrTraceName,
@@ -101,11 +105,25 @@ function toAttributeError(error: unknown): unknown {
 
 export type LaunchOptions = Record<string, unknown>;
 
+/**
+ * What `launch` and `relaunch` take: the options object (`createDefaultLaunchOptions()` and its
+ * accessors), or the plain `com.bugsee.option.*` map it serialises to. Both are the same payload.
+ */
+export type LaunchOptionsInput = BugseeLaunchOptions | LaunchOptions;
+
+/** The native payload for either form. An options object is serialised here, once, so callers never have to. */
+function nativeOptionsOf(options: LaunchOptionsInput): LaunchOptions {
+  return options instanceof BugseeLaunchOptions
+    ? BugseeLaunchOptions.serialize(options)
+    : options;
+}
+
 class Bugsee {
   /**
-   * Starts the SDK. Resolves to whether the native side actually launched —
-   * it can decline (already running, token rejected) without that being an
-   * error the caller should throw on.
+   * Starts the SDK. `options` is the options object from `createDefaultLaunchOptions()` as is, or
+   * the plain option map; there is no serialise step to call. Resolves to whether the native side
+   * launched. It can decline (token rejected) without that being an error the caller should
+   * throw on. When the SDK is already running it resolves `true` and new native SDK options are ignored.
    *
    * Installs the global JS exception handlers (ErrorUtils and unhandled
    * promise rejections). On Hermes, the last caller of
@@ -117,16 +135,17 @@ class Bugsee {
    * does not install the patch. A later call does not wrap the functions
    * again; it does re-read `com.bugsee.option.capture.logs`.
    */
-  async launch(token: string, options: LaunchOptions = {}): Promise<boolean> {
+  async launch(token: string, options: LaunchOptionsInput = {}): Promise<boolean> {
     assertUsableToken(token);
+    const nativeOptions = nativeOptionsOf(options);
     // Registered before launching, not after: the SDK reads the wrapper while
     // composing a report's environment, and a crash during start-up would
     // otherwise produce a report that does not say what wrapper it came from.
     this.registerWrapper();
     installExceptionHandlers();
-    applyExceptionCaptureFromOptions(options);
-    const launched = await NativeBugsee.launch(token, options);
-    installConsoleCapture(options);
+    applyExceptionCaptureFromOptions(nativeOptions);
+    const launched = await NativeBugsee.launch(token, nativeOptions);
+    installConsoleCapture(nativeOptions);
     return launched;
   }
 
@@ -148,12 +167,13 @@ class Bugsee {
    * Installs the console patch after the native call resolves, same as
    * {@link launch}. A second install does not wrap again.
    */
-  async relaunch(options: LaunchOptions = {}): Promise<boolean> {
+  async relaunch(options: LaunchOptionsInput = {}): Promise<boolean> {
+    const nativeOptions = nativeOptionsOf(options);
     this.registerWrapper();
     installExceptionHandlers();
-    applyExceptionCaptureFromOptions(options);
-    const relaunched = await NativeBugsee.relaunch(options);
-    installConsoleCapture(options);
+    applyExceptionCaptureFromOptions(nativeOptions);
+    const relaunched = await NativeBugsee.relaunch(nativeOptions);
+    installConsoleCapture(nativeOptions);
     return relaunched;
   }
 
@@ -192,9 +212,10 @@ class Bugsee {
    * view hierarchy. Logs, network events, custom events and traces keep
    * recording throughout (design doc §4.1).
    *
-   * Android ignores this before `launch()` resolves -- a logged no-op, not an
-   * error -- while iOS honours it regardless of launch state. Call this after
-   * `launch()` resolves when blackout must hold on both platforms.
+   * Both platforms honour it before `launch()`: blackout then holds from the
+   * first captured frame (Android 7.4.0 applies it at launch,
+   * bugsee-android#248). Call it before `launch()` to keep the first seconds
+   * of a session redacted.
    *
    * {@link isBlackout} verifies whether it actually took effect.
    */
@@ -402,12 +423,15 @@ class Bugsee {
   }
 
   /**
-   * One line into the Bugsee log, attributed to the wrapper (source Custom, no
-   * tag) and filtered natively by the app's log filter, exactly once. Dropped
-   * before launch() -- the channel is inert until then.
+   * One line into the Bugsee log: the app's own, through the native
+   * `Bugsee.log` (source Bugsee, no tag). Recorded with
+   * `com.bugsee.option.capture.logs` false, which turns off only what is
+   * captured automatically. The app's log filter ({@link setLogFilter}) runs
+   * on it natively, once, only when `requiresFiltering` is `true`; by
+   * default it does not, as in the native SDKs. Dropped before launch().
    */
-  log(message: string, level: LogLevel = LogLevel.Info): void {
-    forwardLog(message, level);
+  log(message: string, level: LogLevel = LogLevel.Info, requiresFiltering: boolean = false): void {
+    sendLog(message, level, requiresFiltering);
   }
 
   /**
@@ -807,10 +831,10 @@ class Bugsee {
   /**
    * Deletes collected data stored on the device.
    *
-   * `includingIntermediate` crosses unchanged: `true` also deletes
-   * intermediate capture data (snapshots, partial bundles); `false` deletes
-   * only fully processed data. Android 7.3.1 also deletes the rolling
-   * capture with `false` (https://github.com/bugsee/bugsee-android/issues/250).
+   * `includingIntermediate` crosses unchanged. Both SDKs delete the rolling
+   * capture data whatever it is, and keep finished bundles:
+   * - `false`: deletes the capture data, keeps finished bundles.
+   * - `true`: also deletes intermediate data (snapshots, exported reports).
    * The SDK must be stopped for the deletion to succeed. While launched, both
    * platforms refuse it and this resolves `false`.
    */
@@ -883,6 +907,7 @@ export { IOSLaunchOptions } from './options/IOSLaunchOptions';
 export { createDefaultLaunchOptions } from './options/createDefaultLaunchOptions';
 export { endpointFor } from './options/endpoint';
 export {
+  CrashHandlerType,
   FrameRate,
   IssueSeverity,
   LogLevel,

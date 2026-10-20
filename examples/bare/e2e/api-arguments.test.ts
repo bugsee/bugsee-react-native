@@ -142,7 +142,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
     expect(jsonAfter<number[]>(line.text, 'keptStatus')).toEqual([3, 0]);
   });
 
-  describe('logException with values that are not Errors, and includeVideo', () => {
+  describe('logException with values that are not Errors', () => {
     let run: Run;
     let done: LogLine;
     let errors: PulledBundle[] = [];
@@ -151,7 +151,7 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       if (ON_SIMULATOR) {
         return;
       }
-      const result = await runFor(log!, 'api-exc-values', 'exc-values done', 5);
+      const result = await runFor(log!, 'api-exc-values', 'exc-values done', 3);
       run = result.run;
       done = result.line;
       errors = result.bundles.filter(b => b.request.type === 'error');
@@ -170,22 +170,9 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       report('payload reasons', reasons);
       expect(reasons.filter(r => r === `api-exc string ${nonce}`)).toHaveLength(1);
       expect(reasons.filter(r => r === 'Non-Error thrown: object')).toHaveLength(2);
-      // The three values plus the two includeVideo errors.
-      expect(errors).toHaveLength(5);
+      expect(errors).toHaveLength(3);
     });
 
-    // iOS ignores includeVideo too: https://github.com/bugsee/bugsee-cocoa/issues/226
-    itReports('[API-11d] includeVideo is accepted and changes nothing', () => {
-      const nonce = run.scenario.nonce;
-      const video = jsonAfter<Record<string, Settled>>(done.text, 'video');
-      expect(video.on!.ok && video.off!.ok).toBe(true);
-      const on = errors.find(b => payloadReason(b) === `api-exc video-on ${nonce}`);
-      const off = errors.find(b => payloadReason(b) === `api-exc video-off ${nonce}`);
-      expect(on).toBeDefined();
-      expect(off).toBeDefined();
-      report('includeVideo files', { on: types(on!), off: types(off!) });
-      expect(types(on!)).toEqual(types(off!));
-    });
   });
 
   describe('ErrorBoundary with a fallback function and options', () => {
@@ -227,12 +214,6 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       }
     });
 
-    /** Android 7.3.0 ignores logException labels (R10, exceptions.test.ts case 7): the same path.
-     * https://github.com/bugsee/bugsee-android/issues/247 */
-    (ON_ANDROID ? it.failing : itReports)('[API-13d] the options prop: labels reach the report', () => {
-      expect(bundles).toHaveLength(1);
-      expect(bundles[0]!.request.labels).toEqual(expect.arrayContaining([`api-label-${run.scenario.nonce}`]));
-    });
   });
 
   it('[API-15b-d] notify() carries severity, fields and urgent into the relay record; a sixth argument throws', async () => {
@@ -372,9 +353,11 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
       await stopApp();
     });
 
-    it('[API-20a] log(message) with no level is Custom (98) at Info (3)', () => {
+    // The app's own line goes through the native Bugsee.log, not the wrapper
+    // channel: source Bugsee (4), not Custom (98).
+    it('[API-20a] log(message) with no level is Bugsee (4) at Info (3)', () => {
       const lines = captureEvents(bundle, 'log').filter(e => e.message === `api-log default ${run.scenario.nonce}`);
-      expect(lines.map(e => ({ level: e.level, source: e.source }))).toEqual([{ level: 3, source: 98 }]);
+      expect(lines.map(e => ({ level: e.level, source: e.source }))).toEqual([{ level: 3, source: 4 }]);
     });
 
     it('[API-21] event(name) with no params reaches the report; a bad name or bad params throw', () => {
@@ -486,11 +469,11 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
   });
 
   /**
-   * Android 7.3.1 deletes every capture generation for `false` too (3/3 on
-   * WOD_LX1: 49 parts -> 0, the bundle kept), against its javadoc and ours.
-   * https://github.com/bugsee/bugsee-android/issues/250
+   * Both SDKs delete the rolling capture for `false` too and keep the finished
+   * bundles (Android 7.4.0 javadoc, bugsee-android#250; iOS 7.0.0-beta6, whose
+   * header is stale: https://github.com/bugsee/bugsee-cocoa/issues/231).
    */
-  (ON_ANDROID ? it.failing : it)('[API-41c] deleteCollectedDataOnDevice(false) after stop resolves and reports what it kept', async () => {
+  it('[API-41c] deleteCollectedDataOnDevice(false) after stop deletes the capture, resolves true and keeps the bundle', async () => {
     await clearBundles();
     const run = await startRun('api-delete-false');
     const uploaded = await apiMarker(log!, 'delete uploaded', run.scenario.nonce, 30_000, run.start);
@@ -505,8 +488,10 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
     expect(jsonAfter<Settled>(done.text, 'stopped')).toEqual({ ok: true, value: true });
     expect(jsonAfter<Settled>(done.text, 'deleted')).toEqual({ ok: true, value: true });
     expect(bundlesBefore.length).toBe(1);
-    // Documented semantics (index.ts): `false` keeps the rolling capture.
-    expect(partsAfter.length).toBeGreaterThan(0);
+    // Documented semantics (index.ts): `false` deletes the capture, keeps finished bundles.
+    expect(partsBefore.length).toBeGreaterThan(0);
+    expect(partsAfter).toEqual([]);
+    expect(bundlesAfter.length).toBe(1);
   });
 
   it('[API-31] <BugseeSecure enabled={false}> is recorded in the clear, its enabled twin masked', async () => {

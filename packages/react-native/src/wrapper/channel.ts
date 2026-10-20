@@ -6,9 +6,12 @@ const LEVELS: ReadonlySet<number> = new Set(Object.values(LogLevel));
 /**
  * Sends one line into the SDK's wrapper channel, attributed to the wrapper.
  *
- * Internal, and deliberately not exported from the package entry: Phase 4's
- * `log()` and Phase 9's `console.*` routing build on this, and there is to be
- * one native route for wrapper lines, not two.
+ * Internal, and deliberately not exported from the package entry. Its
+ * callers forward output this wrapper captured on its own -- Phase 9's
+ * `console.*` routing -- and there is to be one native route for those
+ * lines, not two. The app's own `Bugsee.log()` does not come here
+ * (`logs/log.ts`): with `capture.logs` off the SDKs record nothing from the
+ * channel.
  *
  * The app's log filter is NOT run here. Every channel line is filtered
  * natively, once (design doc §10.3); running it in JS as well would call a

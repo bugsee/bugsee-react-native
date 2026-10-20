@@ -9,6 +9,8 @@ import { create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 import type { LayoutChangeEvent } from 'react-native';
 import { BugseeSecure } from '../BugseeSecure';
+import { SECURE_TRANSITION_HOLD_MS } from '../transition';
+import { SECURE_SHRINK_HOLD_MS } from '../hold';
 import * as registry from '../registry';
 import { native } from '../../__mocks__/native';
 
@@ -52,6 +54,10 @@ beforeEach(() => {
 afterEach(() => {
   act(() => mounted.forEach((renderer) => renderer.unmount()));
   mounted = [];
+  // What an unmount leaves held runs out on the tick.
+  act(() => {
+    jest.advanceTimersByTime(SECURE_TRANSITION_HOLD_MS + 200);
+  });
   registry.clearOwner('manual:0');
   expect(jest.getTimerCount()).toBe(0);
   jest.useRealTimers();
@@ -119,20 +125,28 @@ describe('<BugseeSecure>', () => {
     tick();
     expect(measureInWindow).toHaveBeenCalledTimes(before + 1);
 
-    // An ancestor scrolled: no layout event, but the region follows.
+    // An ancestor scrolled: no layout event, but the region follows at once,
+    // and the old one is held until SECURE_SHRINK_HOLD_MS has passed.
     measureInWindow.mockImplementation(measuresAt(10, 70, 30, 40));
     tick();
-    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220, ...MEASURED]);
 
     tick(3);
     expect(measureInWindow).toHaveBeenCalledTimes(before + 5);
+    tick(3);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220]);
   });
 
-  it('removes its rectangle on unmount', () => {
+  // Native draws the view until it mounts the commit that removed it.
+  it('keeps its rectangle for the hold after unmount, then removes it', () => {
     const renderer = render(<BugseeSecure />);
 
     act(() => renderer.unmount());
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, MEASURED);
+    tick(SECURE_SHRINK_HOLD_MS / 100 - 1);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, MEASURED);
 
+    tick(2);
     expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, []);
     expect(jest.getTimerCount()).toBe(0);
   });
@@ -142,6 +156,7 @@ describe('<BugseeSecure>', () => {
     const renderer = render(<BugseeSecure />);
 
     act(() => renderer.unmount());
+    tick(SECURE_SHRINK_HOLD_MS / 100 + 1);
 
     expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [2, 4, 8, 12]);
   });
@@ -156,6 +171,7 @@ describe('<BugseeSecure>', () => {
     expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [...MEASURED, ...MEASURED]);
 
     update(renderer, <><BugseeSecure key="a" /></>);
+    tick(SECURE_SHRINK_HOLD_MS / 100 + 1);
 
     expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, MEASURED);
   });
@@ -202,7 +218,8 @@ describe('<BugseeSecure>', () => {
 
     measureInWindow.mockImplementation(measuresAt(10, 70, 30, 40));
     tick();
-    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220]);
+    // The last good rectangle is held for a while after the region moved.
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [20, 140, 80, 220, ...MEASURED]);
   });
 
   // A measurement the registry rejects (a detached view can report NaN) is
@@ -230,6 +247,7 @@ describe('<BugseeSecure>', () => {
 
     act(() => renderer.unmount());
     pending?.(10, 20, 30, 40);
+    tick(SECURE_SHRINK_HOLD_MS / 100 + 1);
 
     expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, []);
   });
@@ -253,7 +271,7 @@ describe('<BugseeSecure>', () => {
 
     layout(renderer);
 
-    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [0, 0, 100, 100]);
+    expect(native.setSecureRectangles).toHaveBeenLastCalledWith(0, [0, 0, 100, 100, ...MEASURED]);
   });
 
   it("calls the caller's onLayout", () => {
@@ -388,6 +406,7 @@ describe('<BugseeSecure> surfaces', () => {
     const renderer = renderWithNode(<BugseeSecure />, { __internalInstanceHandle: fiberUnder(modalHost()) });
 
     act(() => renderer.unmount());
+    tick(SECURE_SHRINK_HOLD_MS / 100 + 1);
 
     expect(native.setSecureRectanglesOnSurface).toHaveBeenLastCalledWith(0, MODAL_TAG, []);
   });

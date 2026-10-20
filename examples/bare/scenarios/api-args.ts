@@ -6,8 +6,7 @@
  *   api-token        before launch(): launch('') / '   ' / 42 must reject
  *                    without starting anything; then the app launches.
  *   api-subs         remove() on onLifecycleEvent and onStatusChange.
- *   api-exc-values   logException(string | plain object | null) and
- *                    {includeVideo: true | false}.
+ *   api-exc-values   logException(string | plain object | null).
  *   api-notify       notify() with severity, fields and urgent, and bare.
  *   api-spans        every SpanStatus through finish(status), startChildSpan,
  *                    setStatus then finish(), a dead handle, startSpan with no
@@ -137,11 +136,7 @@ async function exceptionValues(nonce: string): Promise<void> {
     null: await settled(() => Bugsee.logException(null)),
   };
   await delay(1_500);
-  const video = {
-    on: await settled(() => Bugsee.logException(new Error(`api-exc video-on ${nonce}`), { includeVideo: true })),
-    off: await settled(() => Bugsee.logException(new Error(`api-exc video-off ${nonce}`), { includeVideo: false })),
-  };
-  mark(`exc-values done nonce=${nonce} results=${JSON.stringify(results)} video=${JSON.stringify(video)}`);
+  mark(`exc-values done nonce=${nonce} results=${JSON.stringify(results)}`);
 }
 
 async function notifications(nonce: string): Promise<void> {
@@ -235,11 +230,13 @@ async function filters(nonce: string): Promise<void> {
   Bugsee.setNetworkFilter();
   await fetchQuietly(deadEndpointUrl(`net-noarg-${nonce}`));
 
+  // Both lines ask for the filter: without requiresFiltering a Bugsee.log line
+  // skips it, and the second line would not show that the filter is gone.
   Bugsee.setLogFilter(line => (line.includes(nonce) ? null : line));
-  Bugsee.log(`api-log filtered ${nonce}`);
+  Bugsee.log(`api-log filtered ${nonce}`, LogLevel.Info, true);
   await delay(1_000);
   Bugsee.setLogFilter(null);
-  Bugsee.log(`api-log cleared ${nonce}`);
+  Bugsee.log(`api-log cleared ${nonce}`, LogLevel.Info, true);
 
   for (const level of BREADCRUMB_LEVELS_FOR_E2E) {
     Bugsee.addBreadcrumb({ category: 'api', level, message: `api-crumb ${level} ${nonce}`, type: 'user' });

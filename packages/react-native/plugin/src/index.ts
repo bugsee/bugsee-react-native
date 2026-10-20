@@ -342,4 +342,4 @@ export function listSchemes(iosRoot: string): string[] {
   return schemes;
 }
 
-export default createRunOncePlugin(withBugsee, '@bugsee/react-native', '0.0.0');
+export default createRunOncePlugin(withBugsee, '@bugsee/react-native', '7.0.0-beta3');

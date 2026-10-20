@@ -108,10 +108,13 @@ export const READBACK_IOS: Readonly<Record<string, unknown>> = {
   [`${P}capture.avplayer`]: true,
   [`${P}capture.bluetooth-status`]: true,
   [`${P}capture.camera-preview`]: true,
+  /** BSD: the SDK default is MachAndBSD (3). */
+  [`${P}capture.crash-handler-type`]: 1,
+  /** ABRT | SEGV | ILL; the SDK default is every signal. */
+  [`${P}capture.crash-signals`]: 11,
   [`${P}capture.device-network-names`]: true,
   [`${P}capture.disk-space`]: true,
   [`${P}capture.logs.oslog`]: true,
-  [`${P}capture.mach-exceptions`]: false,
   [`${P}capture.on-device-symbolication`]: true,
   [`${P}capture.sample-buffer-display-layer`]: true,
   [`${P}capture.status-bar-info`]: true,
@@ -123,7 +126,6 @@ export const READBACK_IOS: Readonly<Record<string, unknown>> = {
   [`${P}config.build-type`]: 'api-e2e-type',
   [`${P}detect.crash.fill_empty_exception_stacks`]: true,
   [`${P}detect.crash.swift_async_stacktraces`]: false,
-  [`${P}detect.kill`]: true,
   /** BugseeStyleDusk (1); the default is BugseeStyleSystem (3). */
   [`${P}reporting.ui.style`]: 1,
 };
@@ -159,9 +161,9 @@ export const ACCESSOR_KEYS = {
   },
   ios: {
     captureAVPlayer: `${P}capture.avplayer`,
-    captureMachExceptions: `${P}capture.mach-exceptions`,
+    crashSignals: `${P}capture.crash-signals`,
+    crashHandlerType: `${P}capture.crash-handler-type`,
     captureDiskSpace: `${P}capture.disk-space`,
-    detectAndReportKill: `${P}detect.kill`,
   },
 } as const;
 
@@ -192,7 +194,6 @@ export const EFFECT_OPTIONS: Readonly<Record<string, Readonly<Record<string, unk
   'crash-off': { [`${P}detect.crash`]: false },
   exit: { [`${P}detect.exit`]: true, [`${P}detect.exit.user_requested`]: true },
   'exit-control': { [`${P}detect.exit`]: true, [`${P}detect.exit.user_requested`]: false },
-  kill: { [`${P}detect.kill`]: true },
   hang: { [`${P}detect.hang`]: true, [`${P}detect.hang.level.fair`]: 2000 },
   'hang-control': { [`${P}detect.hang`]: false },
   'http-errors': { [`${P}detect.http-errors`]: true },
@@ -226,7 +227,7 @@ export const EFFECT_OPTIONS: Readonly<Record<string, Readonly<Record<string, unk
   'oslog-control': {},
   allsources: { [`${P}capture.logs.allsources`]: true },
   'allsources-control': {},
-  'mach-off': { [`${P}capture.mach-exceptions`]: false },
+  'handler-bsd': { [`${P}capture.crash-handler-type`]: 1 },
   'ondevice-sym': { [`${P}capture.on-device-symbolication`]: true },
   'ondevice-sym-control': { [`${P}capture.on-device-symbolication`]: false },
   'fps-max': { [`${P}capture.video.max-frame-rate`]: 2 },
