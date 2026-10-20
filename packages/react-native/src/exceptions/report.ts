@@ -1,7 +1,7 @@
 /**
  * Builds and crosses a JS exception payload to the TurboModule stubs.
  *
- * Dedupes object values through a WeakSet (`markReported`). Handled
+ * Dedupes object values through two WeakSets, one per kind (`markReported`). Handled
  * `AggregateError`s are split (R14, first {@link EXCEPTION_MAX_AGGREGATE});
  * unhandled ones stay one report. Never throws from `reportHandled`; never
  * rejects from `reportUnhandled`.
@@ -108,8 +108,8 @@ function sendHandled(
  * at most {@link EXCEPTION_MAX_AGGREGATE} inner reports.
  *
  * Callers claim the value with {@link markReported} first. This function does
- * not re-claim the top-level `error` (handlers and the facade share one
- * WeakSet); it still marks AggregateError inners so a shared Error crosses
+ * not re-claim the top-level `error` (handlers and the facade share the
+ * same WeakSets); it still marks AggregateError inners so a shared Error crosses
  * once whichever route saw it first.
  */
 export function reportHandled(
@@ -154,7 +154,7 @@ function warnUnhandledNativeFailureOnce(): void {
  * {@link unhandledReportWaitMs}, whichever is first; never rejects.
  *
  * Callers claim the value with {@link markReported} first (same shared
- * WeakSet as {@link reportHandled}).
+ * WeakSets as {@link reportHandled}; a prior handled claim does not block a crash).
  */
 export async function reportUnhandled(
   error: unknown,

@@ -64,6 +64,16 @@ describe('exceptions facade', () => {
     await result;
   });
 
+  it('logException then logUnhandledException of the same error reports both (real dedup)', async () => {
+    const error = new Error('logged then rethrown');
+    Bugsee.logException(error);
+    await Bugsee.logUnhandledException(error);
+    await Bugsee.logUnhandledException(error);
+    Bugsee.logException(error);
+    expect(native.logException).toHaveBeenCalledTimes(1);
+    expect(native.logUnhandledException).toHaveBeenCalledTimes(1);
+  });
+
   it('ExceptionOptions is exported', () => {
     const _probe: ExceptionOptions = { domain: 'd' };
     expect(_probe.domain).toBe('d');
