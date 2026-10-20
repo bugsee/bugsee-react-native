@@ -1878,7 +1878,8 @@ public class BugseeModule extends NativeBugseeSpec
         @Override
         public int statusOrdinal() {
             final SpanStatus status = span.getStatus();
-            return status == null ? 0 : status.ordinal();
+            // The SDK holding nothing is not OK: report Unknown, like a no-op span.
+            return (status == null ? SpanStatus.UNKNOWN : status).ordinal();
         }
     }
 }
