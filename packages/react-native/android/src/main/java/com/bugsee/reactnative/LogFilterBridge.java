@@ -130,6 +130,14 @@ final class LogFilterBridge {
      */
     private final AtomicReference<Sink> armedFor = new AtomicReference<>();
 
+    /** True from {@link #holdUntilJs} until JS first calls {@link #setEnabled}. For the watchdog only. */
+    private final AtomicBoolean held = new AtomicBoolean();
+
+    /** Whether the startup hold is still waiting for JS to call {@code setLogFilter}. */
+    boolean isHeld() {
+        return held.get();
+    }
+
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private LogFilterBridge() {
         this(new DaemonScheduler(), System::currentTimeMillis, Bugsee::setLogEventFilter);
@@ -194,6 +202,22 @@ final class LogFilterBridge {
     }
 
     /**
+     * Installs the filter before JS has asked for it, so a manifest
+     * auto-launch does not record log lines unfiltered until
+     * {@code setLogFilter} runs (see {@link StartupHold}). It is the state of
+     * an app whose filter is on but whose runtime has not armed it: lines are
+     * dropped. {@link #attachModule} keeps it, so it also holds while the
+     * module is constructed ahead of its JS. {@code setEnabled(true)} arms
+     * the filter, and {@code setEnabled(false)} (what {@code setLogFilter(null)}
+     * sends) releases it to the pass-through.
+     */
+    void holdUntilJs() {
+        held.set(true);
+        userFilter.set(true);
+        ensureInstalled();
+    }
+
+    /**
      * The module {@code caller}'s JS now answers requests. Ignored unless
      * {@code caller} is still the attached module: a stale module's late
      * enable must not arm the new runtime, which has not subscribed.
@@ -253,6 +277,7 @@ final class LogFilterBridge {
             // A superseded module must neither arm nor disable the process-wide filter.
             return;
         }
+        held.set(false);
         if (enabled) {
             if (caller != null) {
                 arm(caller);

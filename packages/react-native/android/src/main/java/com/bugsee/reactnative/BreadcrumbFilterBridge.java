@@ -20,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * The app's breadcrumb filter, as a round trip into JS.
@@ -106,6 +107,22 @@ final class BreadcrumbFilterBridge {
 
     /** Tests construct their own. Production uses {@link #shared()}. */
     BreadcrumbFilterBridge() {
+        this(Bugsee::setBreadcrumbFilter);
+    }
+
+    /** Tests pass the call that installs (or, with null, removes) the SDK's filter. */
+    BreadcrumbFilterBridge(@NonNull final Consumer<EventFilter<Breadcrumb>> installer) {
+        this.installer = installer;
+    }
+
+    private final Consumer<EventFilter<Breadcrumb>> installer;
+
+    /** True from {@link #holdUntilJs} until JS first calls {@link #setEnabled}. For the watchdog only. */
+    private final AtomicBoolean held = new AtomicBoolean();
+
+    /** Whether the startup hold is still waiting for JS to call {@code setBreadcrumbFilter}. */
+    boolean isHeld() {
+        return held.get();
     }
 
     private final EventFilter<Breadcrumb> filter = new EventFilter<Breadcrumb>() {
@@ -183,6 +200,26 @@ final class BreadcrumbFilterBridge {
         }
     }
 
+    /**
+     * Installs the filter before JS has asked for it, so a manifest
+     * auto-launch does not record breadcrumbs unfiltered until
+     * {@code setBreadcrumbFilter} runs (see {@link StartupHold}). With no
+     * module attached yet the filter drops every crumb, and so does one whose
+     * JS has not armed it (the armed gate), so no crumb waits on a reply that
+     * cannot come. {@code
+     * setEnabled(false)}, which {@code setBreadcrumbFilter(null)} sends,
+     * removes it again. A second call, or one after {@code setEnabled(true)},
+     * is a no-op.
+     */
+    void holdUntilJs() {
+        withSdkLock(() -> {
+            held.set(true);
+            if (installed.compareAndSet(false, true)) {
+                installer.accept(filter);
+            }
+        });
+    }
+
     /** Installs the filter, or removes it. A second {@code true} is a no-op. */
     void setEnabled(final boolean enabled) {
         setEnabled(enabled, sink.get());
@@ -195,17 +232,18 @@ final class BreadcrumbFilterBridge {
                 // A superseded module must neither arm nor disable the process-wide filter.
                 return;
             }
+            held.set(false);
             if (enabled) {
                 if (caller != null) {
                     arm(caller);
                 }
                 if (installed.compareAndSet(false, true)) {
-                    Bugsee.setBreadcrumbFilter(filter);
+                    installer.accept(filter);
                 }
                 return;
             }
             if (installed.compareAndSet(true, false)) {
-                Bugsee.setBreadcrumbFilter(null);
+                installer.accept(null);
             }
         });
     }

@@ -1,6 +1,7 @@
 package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -271,6 +272,107 @@ public class LogFilterBridgeTest {
         assertNull(liveCallback.last);
         assertEquals(0, recycledCallback.runs);
         assertEquals(0, recycled.setMessageCalls);
+    }
+
+    // A manifest auto-launch records before JS runs. A held bridge must not
+    // pass a line through unfiltered in that window, with or without a module.
+    @Test
+    public void aHeldBridgeDropsLinesBeforeAnyModuleIsAttached() {
+        bridge.holdUntilJs();
+        final RecordingCallback callback = new RecordingCallback();
+
+        bridge.route(new MutableLog("secret"), callback);
+
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aHeldBridgeDropsAtOnceOnceAModuleIsAttachedButNotArmed() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.holdUntilJs();
+        bridge.attachModule(sink);
+        final RecordingCallback callback = new RecordingCallback();
+
+        bridge.route(new MutableLog("secret"), callback);
+
+        assertTrue(sink.ids.isEmpty());
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void callingSetLogFilterWithNullReleasesTheHoldToPassThrough() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.holdUntilJs();
+        bridge.attachModule(sink);
+        assertTrue(bridge.isHeld());
+
+        bridge.setEnabled(false, sink);
+
+        assertFalse(bridge.isHeld());
+        final MutableLog line = new MutableLog("public");
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(line, callback);
+        assertEquals(1, callback.runs);
+        assertSame(line, callback.last);
+    }
+
+    @Test
+    public void callingSetLogFilterWithAFunctionArmsItAndAsksJs() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.holdUntilJs();
+        bridge.attachModule(sink);
+
+        bridge.setEnabled(true, sink);
+
+        assertFalse(bridge.isHeld());
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), callback);
+        assertEquals(1, sink.ids.size());
+        assertEquals(0, callback.runs);
+    }
+
+    @Test
+    public void aSupersededModuleCannotReleaseTheHold() {
+        final RecordingSink old = new RecordingSink();
+        final RecordingSink next = new RecordingSink();
+        bridge.holdUntilJs();
+        bridge.attachModule(old);
+        bridge.attachModule(next);
+
+        bridge.setEnabled(false, old);
+
+        assertTrue(bridge.isHeld());
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), callback);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aReloadBeforeJsRunsStaysHeld() {
+        bridge.holdUntilJs();
+        bridge.attachModule(new RecordingSink());
+        bridge.attachModule(new RecordingSink());
+
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), callback);
+
+        assertTrue(bridge.isHeld());
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aBridgeThatWasNeverHeldIsThePassThrough() {
+        bridge.attachModule(new RecordingSink());
+        assertFalse(bridge.isHeld());
+        final MutableLog line = new MutableLog("public");
+        final RecordingCallback callback = new RecordingCallback();
+
+        bridge.route(line, callback);
+
+        assertSame(line, callback.last);
+        assertEquals(1, callback.runs);
     }
 
     /**
@@ -544,7 +646,7 @@ public class LogFilterBridgeTest {
 
         assertEquals(0, next.ids.size());
         assertEquals(1, callback.runs);
-        assertTrue(!callback.sawNull);
+        assertFalse(callback.sawNull);
     }
 
     /** A late enable from the module a reload replaced must not arm the new, unsubscribed runtime. */

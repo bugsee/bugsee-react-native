@@ -152,7 +152,7 @@ class Bugsee {
   /**
    * Tells the SDK what wrapper it is running under.
    *
-   * Idempotent and cheap, so `launch` and `relaunch` can both call it; the
+   * Idempotent and cheap, so `launch`, `relaunch` and `attach` can all call it; the
    * SDK replaces whatever was registered.
    */
   private registerWrapper(): void {
@@ -680,6 +680,11 @@ class Bugsee {
    * from `com.bugsee.app-token` manifest metadata. Deliberately makes no
    * native launch call; doing so would start a second session.
    *
+   * Registers the full wrapper identity first, as `launch` and `relaunch`
+   * do: the native side registered only the type and version at process
+   * start, so without this every report of an auto-launched session lacks
+   * the context (React Native version, JS engine, dev build).
+   *
    * Reads `com.bugsee.option.detect.crash` from the native launch options and
    * applies it before the global handlers are installed (R7). Capture is held
    * off during that read: the default is on, and the read yields, so a render
@@ -689,6 +694,7 @@ class Bugsee {
    * handlers; a rejected read does not install it either.
    */
   async attach(): Promise<void> {
+    this.registerWrapper();
     setExceptionCaptureEnabled(false);
     const options = await this.getLaunchOptions();
     applyExceptionCaptureFromOptions(options);

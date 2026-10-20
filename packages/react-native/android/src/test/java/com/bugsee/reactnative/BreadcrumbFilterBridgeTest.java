@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 
 import com.bugsee.library.contracts.common.Callback1;
 import com.bugsee.library.contracts.exchange.Breadcrumb;
+import com.bugsee.library.contracts.exchange.EventFilter;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -471,5 +472,89 @@ public class BreadcrumbFilterBridgeTest {
         bridge.ask(ev, asked);
         assertEquals(1, next.json.size());
         assertEquals(0, asked.runs);
+    }
+
+    // The startup hold (#134): the SDK's filter is installed before JS exists.
+    private final List<EventFilter<Breadcrumb>> installs = new ArrayList<>();
+
+    private BreadcrumbFilterBridge installing() {
+        return new BreadcrumbFilterBridge(installs::add);
+    }
+
+    @Test
+    public void holdUntilJsInstallsTheFilterOnceAndDropsBeforeAnyModule() {
+        final BreadcrumbFilterBridge held = installing();
+
+        held.holdUntilJs();
+        held.holdUntilJs();
+
+        assertEquals(1, installs.size());
+        assertTrue(held.isHeld());
+        final RecordingCallback callback = new RecordingCallback();
+        installs.get(0).filter(new MutableCrumb(), callback);
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aHeldBridgeDropsAtOnceWhileAModuleIsAttachedButNotArmed() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+        final RecordingCallback callback = new RecordingCallback();
+
+        held.ask(new MutableCrumb(), callback);
+
+        // Nothing is left pending for a reply that cannot come.
+        assertTrue(sink.ids.isEmpty());
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void setBreadcrumbFilterWithNullRemovesTheHeldFilter() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(false, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(2, installs.size());
+        assertNull(installs.get(1));
+    }
+
+    @Test
+    public void setBreadcrumbFilterWithAFunctionKeepsTheInstalledFilterAndArmsIt() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(true, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(1, installs.size());
+        held.ask(new MutableCrumb(), new RecordingCallback());
+        assertEquals(1, sink.ids.size());
+    }
+
+    @Test
+    public void aSupersededModuleCannotReleaseTheBreadcrumbHold() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink old = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(old);
+        held.attach(new RecordingSink());
+
+        held.setEnabled(false, old);
+
+        assertTrue(held.isHeld());
+    }
+
+    @Test
+    public void aBridgeThatWasNeverHeldReportsNotHeld() {
+        assertFalse(installing().isHeld());
     }
 }

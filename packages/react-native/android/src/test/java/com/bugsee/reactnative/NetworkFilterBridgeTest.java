@@ -10,6 +10,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.bugsee.library.contracts.common.Callback1;
+import com.bugsee.library.contracts.exchange.EventFilter;
 import com.bugsee.library.contracts.exchange.NetworkEvent;
 import com.bugsee.library.contracts.options.Options;
 import com.bugsee.library.contracts.options.OptionsContainer;
@@ -519,5 +520,92 @@ public class NetworkFilterBridgeTest {
         bridge.ask(ev, asked);
         assertEquals(1, next.ids.size());
         assertEquals(0, asked.runs);
+    }
+
+    // The startup hold (#134): the SDK's filter is installed before JS exists.
+    private final List<EventFilter<NetworkEvent>> installs = new ArrayList<>();
+
+    private NetworkFilterBridge installing() {
+        return new NetworkFilterBridge(scheduler, () -> false, installs::add);
+    }
+
+    @Test
+    public void holdUntilJsInstallsTheFilterOnceAndDropsBeforeAnyModule() {
+        final NetworkFilterBridge held = installing();
+
+        held.holdUntilJs();
+        held.holdUntilJs();
+
+        assertEquals(1, installs.size());
+        assertTrue(installs.get(0) != null);
+        assertTrue(held.isHeld());
+        final RecordingCallback callback = new RecordingCallback();
+        installs.get(0).filter(new MutableNetwork("https://secret.example/token"), callback);
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aHeldBridgeDropsAtOnceWhileAModuleIsAttachedButNotArmed() {
+        final NetworkFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+        final RecordingCallback callback = new RecordingCallback();
+
+        held.ask(new MutableNetwork("https://secret.example/token"), callback);
+
+        assertTrue(sink.ids.isEmpty());
+        assertTrue(callback.sawNull);
+        assertTrue(scheduler.tasks.isEmpty());
+    }
+
+    @Test
+    public void setNetworkFilterWithNullRemovesTheHeldFilter() {
+        final NetworkFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(false, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(2, installs.size());
+        assertNull(installs.get(1));
+    }
+
+    @Test
+    public void setNetworkFilterWithAFunctionKeepsTheInstalledFilterAndArmsIt() {
+        final NetworkFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(true, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(1, installs.size());
+        final RecordingCallback callback = new RecordingCallback();
+        held.ask(new MutableNetwork("https://secret.example/token"), callback);
+        assertEquals(1, sink.ids.size());
+    }
+
+    @Test
+    public void aSupersededModuleCannotReleaseTheNetworkHold() {
+        final NetworkFilterBridge held = installing();
+        final RecordingSink old = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(old);
+        held.attach(new RecordingSink());
+
+        held.setEnabled(false, old);
+
+        assertTrue(held.isHeld());
+        assertEquals(1, installs.size());
+    }
+
+    @Test
+    public void aBridgeThatWasNeverHeldReportsNotHeld() {
+        assertFalse(installing().isHeld());
     }
 }

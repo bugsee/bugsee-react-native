@@ -1,8 +1,13 @@
 package com.bugsee.reactnative;
 
+import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.bugsee.library.BugseeExtensionInitProviderBase;
 
@@ -29,6 +34,9 @@ import com.bugsee.library.BugseeExtensionInitProviderBase;
  * bridge is up. An early report is therefore attributed to
  * {@code react_native} with a correct wrapper version and an empty context,
  * which is strictly better than the alternative of no attribution at all.
+ *
+ * <p>The same early hook can close the privacy window of an auto-launched
+ * SDK, opt-in: see {@link StartupHold}.
  */
 public final class ReactNativeWrapperInitProvider extends BugseeExtensionInitProviderBase {
 
@@ -39,8 +47,45 @@ public final class ReactNativeWrapperInitProvider extends BugseeExtensionInitPro
         // Through the registrar, like every registration: setWrapperInfo
         // re-registers from another thread once JS is up.
         registerEarly(WrapperRegistrar::register);
+        // Opt-in: close the window before JS installs the app's filters.
+        holdFiltersEarly(holdFiltersMetaData(getContext()), StartupHold.BRIDGES);
         // Conventional for an init provider: we expose no content.
         return false;
+    }
+
+    /**
+     * The {@value StartupHold#META_DATA} meta-data, or null when it is absent
+     * or cannot be read. Never throws: see {@link #registerEarly}.
+     */
+    @Nullable
+    static Object holdFiltersMetaData(@Nullable final Context context) {
+        try {
+            if (context == null) {
+                return null;
+            }
+            final ApplicationInfo info = context.getPackageManager()
+                    .getApplicationInfo(context.getPackageName(), PackageManager.GET_META_DATA);
+            return holdFiltersValueOf(info);
+        } catch (Throwable t) {
+            Log.e(TAG, "could not read " + StartupHold.META_DATA + ": " + t.getClass().getName());
+            return null;
+        }
+    }
+
+    /** The meta-data value in {@code info}, or null. */
+    @Nullable
+    static Object holdFiltersValueOf(@NonNull final ApplicationInfo info) {
+        final Bundle data = info.metaData;
+        return data == null ? null : data.get(StartupHold.META_DATA);
+    }
+
+    /** Never throws; see {@link StartupHold#apply}. */
+    static void holdFiltersEarly(@Nullable final Object metaData, @NonNull final StartupHold.Targets targets) {
+        try {
+            StartupHold.apply(metaData, targets);
+        } catch (Throwable t) {
+            Log.e(TAG, "could not hold the filters at process start: " + t.getClass().getName());
+        }
     }
 
     /**

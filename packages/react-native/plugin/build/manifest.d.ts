@@ -46,3 +46,20 @@ export declare const SDK_ENDPOINT_KEPT: string;
  * endpoint behind, and one with a new value replaces the old one.
  */
 export declare function endpointMetaData(input: EndpointMetaDataInput): EndpointMetaDataEdit;
+/**
+ * The wrapper's own meta-data for the startup filter hold: a comma list of
+ * the filters the Android native module installs, fail closed, in its init
+ * provider, before the SDK can launch. See `ReactNativeWrapperInitProvider`.
+ * The name is the wrapper's, so a value found under it is this plugin's and is
+ * replaced or removed freely.
+ */
+export declare const RN_HOLD_FILTERS_META_DATA = "com.bugsee.reactnative.hold-filters";
+export declare const HOLDABLE_FILTERS: readonly ["network", "log", "breadcrumb"];
+export type HoldableFilter = (typeof HOLDABLE_FILTERS)[number];
+export declare const HOLD_FILTERS_NOT_VALID: string;
+/**
+ * The `holdFilters` option as the meta-data value, or null when none is
+ * written (unset, `false` or an empty list). `true` holds all three. Anything
+ * else is refused, so a typo cannot silently leave a filter open.
+ */
+export declare function holdFiltersValue(option: unknown): string | null;

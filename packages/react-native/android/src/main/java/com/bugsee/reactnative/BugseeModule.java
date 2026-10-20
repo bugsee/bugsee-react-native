@@ -146,6 +146,8 @@ public class BugseeModule extends NativeBugseeSpec
         NetworkFilterBridge.shared().attach(this);
         LogFilterBridge.shared().attachModule(this);
         BreadcrumbFilterBridge.shared().attach(this);
+        // Says so if a startup filter hold is still waiting for JS well after this.
+        StartupHold.watchFromModule();
     }
 
     /**
