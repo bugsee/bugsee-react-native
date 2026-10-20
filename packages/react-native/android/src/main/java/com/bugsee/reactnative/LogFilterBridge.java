@@ -120,6 +120,15 @@ final class LogFilterBridge {
     /** True only while the app has a log callback. False is the native pass-through. */
     private final AtomicBoolean userFilter = new AtomicBoolean();
 
+    /**
+     * True once the CURRENT module's JS has installed its filter with
+     * {@code setEnabled(true)}. A reload attaches a new module whose JS has
+     * not subscribed yet, while this bridge (and the SDK's filter) outlive
+     * the old runtime. Until JS arms it again, a request would be emitted to
+     * nobody, so it is dropped at once instead: fail closed, no wait.
+     */
+    private final AtomicBoolean armed = new AtomicBoolean();
+
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private LogFilterBridge() {
         this(new DaemonScheduler(), System::currentTimeMillis, Bugsee::setLogEventFilter);
@@ -163,6 +172,15 @@ final class LogFilterBridge {
 
     void attach(@NonNull final Sink next) {
         sink.set(next);
+        // A new module's JS has not subscribed yet; see armed. userFilter is
+        // deliberately kept: a redaction the app relied on must not silently
+        // stop applying across a reload.
+        armed.set(false);
+    }
+
+    /** The current module's JS now answers requests. {@link #setEnabled}{@code (true)} calls this. */
+    void arm() {
+        armed.set(true);
     }
 
     /**
@@ -196,6 +214,9 @@ final class LogFilterBridge {
      * {@link Bugsee#setLogEventFilter}.
      */
     void setEnabled(final boolean enabled) {
+        if (enabled) {
+            arm();
+        }
         userFilter.set(enabled);
         ensureInstalled();
     }
@@ -285,7 +306,7 @@ final class LogFilterBridge {
     ) {
         final String line = event.getMessage();
         final Sink current = sink.get();
-        if (line == null || current == null) {
+        if (line == null || current == null || !armed.get()) {
             drop(callback);
             return;
         }

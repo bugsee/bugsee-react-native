@@ -170,6 +170,7 @@ public class BreadcrumbFilterBridgeTest {
         assertEquals(2, Breadcrumb.Level.WARNING.ordinal());
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.level = Breadcrumb.Level.WARNING;
         crumb.message = "secret";
@@ -190,6 +191,7 @@ public class BreadcrumbFilterBridgeTest {
     public void snapshotIncludesDataAndAStampedTimestamp() throws Exception {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.category = "ui";
         crumb.message = "tap";
@@ -213,6 +215,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aReplyWritesGetValueNotTheOrdinal() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.level = Breadcrumb.Level.FATAL;
         final RecordingCallback callback = new RecordingCallback();
@@ -230,6 +233,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aNullReplyDropsWithoutPassingTheCrumbThrough() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         crumb.level = Breadcrumb.Level.ERROR;
@@ -249,6 +253,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aKeepRewritesTheNamedFieldsAndClearsDataWithNull() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.category = "ui";
         crumb.message = "secret";
@@ -274,6 +279,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aReplyWritesData() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -293,6 +299,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aReplyThatDoesNotStickDropsTheCrumb() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.category = "secret";
         crumb.stick = false;
@@ -312,6 +319,7 @@ public class BreadcrumbFilterBridgeTest {
     public void anIntegerLevelDropsTheCrumb() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.level = Breadcrumb.Level.INFO;
         final RecordingCallback callback = new RecordingCallback();
@@ -339,6 +347,7 @@ public class BreadcrumbFilterBridgeTest {
         final RecordingSink sink = new RecordingSink();
         sink.throwOnEmit = true;
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -355,6 +364,7 @@ public class BreadcrumbFilterBridgeTest {
     public void detachDropsAPendingCrumbAndALaterReplyDoesNotWriteIt() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -374,6 +384,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aSecondReplyIsANoOp() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -392,6 +403,7 @@ public class BreadcrumbFilterBridgeTest {
     public void dataThatCannotBeSerialisedDropsTheCrumb() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final Map<String, Object> data = new HashMap<>();
@@ -403,5 +415,38 @@ public class BreadcrumbFilterBridgeTest {
         assertTrue(sink.ids.isEmpty());
         assertTrue(callback.sawNull);
         assertEquals("secret", crumb.message);
+    }
+
+    @Test
+    public void aNewModuleThatHasNotArmedDropsTheCrumbAtOnce() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        bridge.arm();
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        assertEquals(0, next.json.size());
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void armingAgainAsksTheNewModule() {
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.arm();
+
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        assertEquals(1, next.json.size());
+        assertEquals(0, callback.runs);
     }
 }

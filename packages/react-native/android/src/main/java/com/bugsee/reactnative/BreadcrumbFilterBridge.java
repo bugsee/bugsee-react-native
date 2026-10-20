@@ -86,6 +86,15 @@ final class BreadcrumbFilterBridge {
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong();
     private final AtomicBoolean installed = new AtomicBoolean();
+
+    /**
+     * True once the CURRENT module's JS has installed its filter with
+     * {@code setEnabled(true)}. A reload attaches a new module whose JS has
+     * not subscribed yet, while this bridge (and the SDK's filter) outlive
+     * the old runtime. Until JS arms it again, a request would be emitted to
+     * nobody, so it is dropped at once instead: fail closed, no wait.
+     */
+    private final AtomicBoolean armed = new AtomicBoolean();
     private final Object sdkLock = new Object();
     /**
      * The id of the manual {@code addBreadcrumb} on this thread. Set only
@@ -115,6 +124,13 @@ final class BreadcrumbFilterBridge {
 
     void attach(@NonNull final Sink next) {
         sink.set(next);
+        // A new module's JS has not subscribed yet; see armed.
+        armed.set(false);
+    }
+
+    /** The current module's JS now answers requests. {@link #setEnabled}{@code (true)} calls this. */
+    void arm() {
+        armed.set(true);
     }
 
     /**
@@ -154,6 +170,7 @@ final class BreadcrumbFilterBridge {
     void setEnabled(final boolean enabled) {
         withSdkLock(() -> {
             if (enabled) {
+                arm();
                 if (installed.compareAndSet(false, true)) {
                     Bugsee.setBreadcrumbFilter(filter);
                 }
@@ -214,7 +231,7 @@ final class BreadcrumbFilterBridge {
             @NonNull final Callback1<Breadcrumb> callback
     ) {
         final Sink current = sink.get();
-        if (current == null) {
+        if (current == null || !armed.get()) {
             drop(callback);
             return;
         }

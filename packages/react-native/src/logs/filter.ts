@@ -27,6 +27,11 @@ let subscribed = false;
  * emitted in that gap stays in the pending table until process death. The
  * subscription stays: clearing the callback stops native from asking, and a
  * later callback must still be able to answer.
+ *
+ * After a JavaScript reload (Fast Refresh in development, or a recreated
+ * bridge) the native filter outlives the old runtime, but the new runtime has
+ * not installed it. Native fails closed until this is called again, so call
+ * it at startup on every launch of the JS runtime: lines are dropped, not recorded unfiltered.
  */
 export function setLogFilter(callback?: LogFilter | null): void {
   if (callback != null && typeof callback !== 'function') {

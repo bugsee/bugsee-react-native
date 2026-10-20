@@ -146,8 +146,11 @@ public class BugseeModule extends NativeBugseeSpec
         NetworkFilterBridge.shared().attach(this);
         LogFilterBridge.shared().attach(this);
         // The echo drop is installed even when the app never calls setLogFilter.
-        // setEnabled(false) is that pass-through; it does not remove the filter.
-        LogFilterBridge.shared().setEnabled(false);
+        // Not setEnabled(false): after a reload that would turn a redaction the
+        // app relied on into a silent pass-through. attach() above disarmed the
+        // bridge, so with a user filter still on, lines are dropped until the new
+        // runtime calls setLogFilter (re-arm) or clears it (pass-through).
+        LogFilterBridge.shared().ensureInstalled();
         BreadcrumbFilterBridge.shared().attach(this);
     }
 

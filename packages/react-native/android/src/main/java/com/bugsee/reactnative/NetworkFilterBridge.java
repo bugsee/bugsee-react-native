@@ -112,6 +112,15 @@ final class NetworkFilterBridge {
     private final AtomicLong ids = new AtomicLong();
     private final AtomicBoolean installed = new AtomicBoolean();
 
+    /**
+     * True once the CURRENT module's JS has installed its filter with
+     * {@code setEnabled(true)}. A reload attaches a new module whose JS has
+     * not subscribed yet, while this bridge (and the SDK's filter) outlive
+     * the old runtime. Until JS arms it again, a request would be emitted to
+     * nobody, so it is dropped at once instead: fail closed, no wait.
+     */
+    private final AtomicBoolean armed = new AtomicBoolean();
+
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private NetworkFilterBridge() {
         this(new DaemonScheduler(), NetworkFilterBridge::readDefaultSanitizerOption);
@@ -144,6 +153,13 @@ final class NetworkFilterBridge {
 
     void attach(@NonNull final Sink next) {
         sink.set(next);
+        // A new module's JS has not subscribed yet; see armed.
+        armed.set(false);
+    }
+
+    /** The current module's JS now answers requests. {@link #setEnabled}{@code (true)} calls this. */
+    void arm() {
+        armed.set(true);
     }
 
     /**
@@ -170,6 +186,7 @@ final class NetworkFilterBridge {
     /** Installs the filter, or removes it. A second {@code true} is a no-op. */
     void setEnabled(final boolean enabled) {
         if (enabled) {
+            arm();
             if (installed.compareAndSet(false, true)) {
                 Bugsee.setNetworkEventFilter(filter);
             }
@@ -221,6 +238,10 @@ final class NetworkFilterBridge {
             @NonNull final NetworkEvent event,
             @NonNull final Callback1<NetworkEvent> callback
     ) {
+        if (!armed.get()) {
+            drop(callback);
+            return;
+        }
         // setNetworkEventFilter skips DefaultNetworkDataSanitizer. The
         // capture provider runs it only when no filter is installed, and
         // only when CaptureNetworkUseDefaultSanitizer is on (default true).

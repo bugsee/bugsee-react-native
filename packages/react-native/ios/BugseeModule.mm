@@ -31,6 +31,7 @@
 #import <BugseeRNSupport/BGSRNValues.h>
 #import <BugseeRNSupport/BGSRNJSON.h>
 #import <BugseeRNSupport/BGSRNNetworkFilter.h>
+#import <BugseeRNSupport/BGSRNFilterArming.h>
 #import <BugseeRNSupport/BGSRNNetworkEvents.h>
 #import <BugseeRNSupport/BGSRNAttributes.h>
 #import <BugseeRNSupport/BGSRNDataRequestBridge.h>
@@ -59,6 +60,7 @@
 #import "BGSRNValues.h"
 #import "BGSRNJSON.h"
 #import "BGSRNNetworkFilter.h"
+#import "BGSRNFilterArming.h"
 #import "BGSRNNetworkEvents.h"
 #import "BGSRNAttributes.h"
 #import "BGSRNDataRequestBridge.h"
@@ -455,6 +457,14 @@ static void BGSRNSetAttribute(NSString *name,
 
 static __weak BugseeModule *BGSRNNetworkFilterModule = nil;
 static BOOL BGSRNNetworkFilterInstalled = NO;
+// Which module's JS installed the filter. A reload leaves the filter block in
+// place and attaches a new module that has not; see BGSRNFilterArming.
+static BGSRNFilterArming *BGSRNNetworkFilterArming(void) {
+  static BGSRNFilterArming *arming;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ arming = [BGSRNFilterArming new]; });
+  return arming;
+}
 static NSMutableDictionary<NSString *, BGSRNNetworkFilterPending *> *BGSRNNetworkFilterPendingTable;
 static int64_t BGSRNNetworkFilterNextId = 0;
 
@@ -499,6 +509,12 @@ static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
 
 static __weak BugseeModule *BGSRNLogFilterModule = nil;
 static BOOL BGSRNLogFilterInstalled = NO;
+static BGSRNFilterArming *BGSRNLogFilterArming(void) {
+  static BGSRNFilterArming *arming;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ arming = [BGSRNFilterArming new]; });
+  return arming;
+}
 /** The JS round trip. Off is the native pass-through, which stays installed. */
 static BOOL BGSRNLogFilterUserEnabled = NO;
 static NSMutableDictionary<NSString *, BGSRNLogFilterPending *> *BGSRNLogFilterPendingTable;
@@ -591,7 +607,10 @@ static void BGSRNInstallLogEventFilter(void) {
         return;
       }
       BugseeModule *module = BGSRNLogFilterModule;
-      if (module == nil) {
+      // A reload kept the user's filter on but the new runtime has not called
+      // setLogFilter yet: drop, never record unfiltered and never emit to a
+      // module whose JS is not listening.
+      if (module == nil || ![BGSRNLogFilterArming() isArmedFor:module]) {
         decision(nil);
         return;
       }
@@ -634,6 +653,12 @@ static void BGSRNInstallLogEventFilter(void) {
 
 static __weak BugseeModule *BGSRNBreadcrumbFilterModule = nil;
 static BOOL BGSRNBreadcrumbFilterInstalled = NO;
+static BGSRNFilterArming *BGSRNBreadcrumbFilterArming(void) {
+  static BGSRNFilterArming *arming;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ arming = [BGSRNFilterArming new]; });
+  return arming;
+}
 /// Bumped on every enable and every disable. A disable queued on main nils
 /// the filter only when this is still the generation it captured, so a later
 /// enable is not wiped by a nil that was already queued.
@@ -1607,6 +1632,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// only takes a lock, so it is safe on the JS thread.
 - (NSNumber *)setNetworkFilterEnabled:(BOOL)enabled {
   if (enabled) {
+    [BGSRNNetworkFilterArming() armFor:self];
     @synchronized (BGSRNNetworkFilterLock()) {
       if (BGSRNNetworkFilterInstalled) {
         return @YES;
@@ -1622,7 +1648,9 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           return;
         }
         BugseeModule *module = BGSRNNetworkFilterModule;
-        if (module == nil) {
+        // After a reload the new module's JS has not installed its filter:
+        // drop now rather than leave the event pending forever.
+        if (module == nil || ![BGSRNNetworkFilterArming() isArmedFor:module]) {
           decision(nil);
           return;
         }
@@ -1729,6 +1757,9 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// console line written on the next line could be captured before a queued
 /// flag flip landed. The flag write and the SDK setter only take locks.
 - (NSNumber *)setLogFilterEnabled:(BOOL)enabled {
+  if (enabled) {
+    [BGSRNLogFilterArming() armFor:self];
+  }
   @synchronized (BGSRNLogFilterLock()) {
     BGSRNLogFilterUserEnabled = enabled;
   }
@@ -1792,6 +1823,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// still records.
 - (NSNumber *)setBreadcrumbFilterEnabled:(BOOL)enabled {
   if (enabled) {
+    [BGSRNBreadcrumbFilterArming() armFor:self];
     @synchronized (BGSRNBreadcrumbFilterLock()) {
       BGSRNBreadcrumbFilterGeneration += 1;
       if (BGSRNBreadcrumbFilterInstalled) {
@@ -1808,7 +1840,8 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           return;
         }
         BugseeModule *module = BGSRNBreadcrumbFilterModule;
-        if (module == nil) {
+        // Same reload case as the network filter.
+        if (module == nil || ![BGSRNBreadcrumbFilterArming() isArmedFor:module]) {
           decision(nil);
           return;
         }

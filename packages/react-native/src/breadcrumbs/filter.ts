@@ -64,6 +64,11 @@ function claimBreadcrumbFilter(id: string | undefined): BreadcrumbFilter | undef
  * crumb filtered on the installing turn still has a listener. The subscription
  * stays: clearing the callback stops native from asking, and a later callback
  * must still be able to answer.
+ *
+ * After a JavaScript reload (Fast Refresh in development, or a recreated
+ * bridge) the native filter outlives the old runtime, but the new runtime has
+ * not installed it. Native fails closed until this is called again, so call
+ * it at startup on every launch of the JS runtime: crumbs are dropped, not recorded.
  */
 export function setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
   if (callback != null && typeof callback !== 'function') {

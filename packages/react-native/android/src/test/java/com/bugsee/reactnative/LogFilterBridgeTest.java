@@ -139,6 +139,7 @@ public class LogFilterBridgeTest {
     public void aReplyAfterTheMessageChangedDoesNotTouchTheEntry() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableLog event = new MutableLog("secret");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -158,6 +159,7 @@ public class LogFilterBridgeTest {
     public void detachingAnOldSinkDropsItsPendingWithoutTouchingARecycledEntry() {
         final RecordingSink stale = new RecordingSink();
         bridge.attach(stale);
+        bridge.arm();
         final MutableLog event = new MutableLog("secret");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -166,6 +168,7 @@ public class LogFilterBridgeTest {
         event.message = "another line";
         final RecordingSink current = new RecordingSink();
         bridge.attach(current);
+        bridge.arm();
         bridge.detach(stale);
 
         assertEquals(0, callback.runs);
@@ -193,6 +196,7 @@ public class LogFilterBridgeTest {
         assertTrue(LogFilterBridge.BORROW_MS < 10_000L);
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableLog event = new MutableLog("secret");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -214,6 +218,7 @@ public class LogFilterBridgeTest {
     public void aDeadlineForgetsThePendingWithoutCallingTheCallback() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableLog event = new MutableLog("secret");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -231,6 +236,7 @@ public class LogFilterBridgeTest {
     public void aReplyWhileTheEntryIsStillTheOriginalWritesItBack() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableLog event = new MutableLog("secret");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -249,6 +255,7 @@ public class LogFilterBridgeTest {
     public void detachDropsALiveBorrowAndSkipsARecycledOne() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableLog live = new MutableLog("keep-or-drop");
         final RecordingCallback liveCallback = new RecordingCallback();
         bridge.ask(live, liveCallback);
@@ -275,6 +282,7 @@ public class LogFilterBridgeTest {
     public void routeAsksTheChannelLineAndDropsItsLogcatEcho() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         bridge.setEnabled(true);
         bridge.noteEcho("hello");
         final RecordingCallback channelCallback = new RecordingCallback();
@@ -313,6 +321,7 @@ public class LogFilterBridgeTest {
     public void anEchoFilteredBeforeTheChannelLineIsDroppedAndTheChannelLineAsked() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         bridge.setEnabled(true);
         bridge.noteEcho("dedup-raw n");
 
@@ -338,6 +347,7 @@ public class LogFilterBridgeTest {
     public void twoIdenticalConsoleLinesAreAskedTwiceAndBothEchoesDropped() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         bridge.setEnabled(true);
         bridge.noteEcho("same");
         bridge.noteEcho("same");
@@ -369,6 +379,7 @@ public class LogFilterBridgeTest {
     public void anEchoFilteredBeforeItsNoteIsKept() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         bridge.setEnabled(true);
 
         final RecordingCallback echoCallback = new RecordingCallback();
@@ -459,5 +470,51 @@ public class LogFilterBridgeTest {
         public String getTag() {
             return tag;
         }
+    }
+
+    /**
+     * The reload case: the app had a log filter, the new module attaches but
+     * its JS has not called setLogFilter. Lines are dropped, never recorded
+     * unfiltered, and no request is left pending.
+     */
+    @Test
+    public void afterAReloadAUserFilterStaysOnAndDropsUntilJsArmsAgain() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        bridge.setEnabled(true);
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.ensureInstalled();
+
+        final RecordingCallback dropped = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), dropped);
+        assertEquals(0, next.ids.size());
+        assertEquals(1, dropped.runs);
+        assertTrue(dropped.sawNull);
+        assertEquals(0, scheduler.tasks.size());
+
+        bridge.setEnabled(true);
+        final RecordingCallback asked = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), asked);
+        assertEquals(1, next.ids.size());
+        assertEquals(0, asked.runs);
+    }
+
+    @Test
+    public void afterAReloadClearingTheFilterIsThePassThrough() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        bridge.setEnabled(true);
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+
+        bridge.setEnabled(false);
+        final MutableLog event = new MutableLog("kept");
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(event, callback);
+
+        assertEquals(0, next.ids.size());
+        assertEquals(1, callback.runs);
+        assertTrue(!callback.sawNull);
     }
 }
