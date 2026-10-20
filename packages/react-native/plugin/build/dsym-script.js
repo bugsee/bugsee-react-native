@@ -6,10 +6,10 @@
 // dependency from the CLI directory. Otherwise the JS entry comes from the
 // CLI package bin field. Without a real token (none, or the placeholder) the
 // script stops, exit 0, before any of that (TOKEN_GUARD). A token or endpoint
-// the Expo plugin baked in comes first; the environment and credentials.json
-// follow it.
+// the Expo plugin baked in comes first; the environment, .xcode.env(.local) and
+// credentials.json follow it.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DSYM_POST_ACTION_SCRIPT = exports.CLI_OUTPUT_FILTER = exports.TOKEN_GUARD = exports.RESOLVE_BUGSEE_CLI_PACKAGE = void 0;
+exports.DSYM_POST_ACTION_SCRIPT = exports.CLI_OUTPUT_FILTER = exports.ENV_FILE_TOKEN = exports.TOKEN_GUARD = exports.RESOLVE_BUGSEE_CLI_PACKAGE = void 0;
 exports.resolveNativeCliPackageSource = resolveNativeCliPackageSource;
 exports.dsymPostActionScript = dsymPostActionScript;
 const locateBugseeCliPackage = [
@@ -59,6 +59,32 @@ exports.TOKEN_GUARD = [
     'esac',
 ];
 /**
+ * Looks for the token in ios/.xcode.env and ios/.xcode.env.local, the files
+ * the README sends a bare app's `export BUGSEE_APP_TOKEN=...` to for the
+ * bundle phase. A GUI Archive does not inherit a shell, so the post-action
+ * reads them itself, and only when no earlier source gave a token. The files
+ * may also set NODE_BINARY; an executable one from Xcode's own environment
+ * wins, as it did before the files were read here. Shared with the bare
+ * example's scheme (scripts/__tests__/dsym-scheme-post-action.test.ts).
+ */
+exports.ENV_FILE_TOKEN = [
+    'if [ -z "$TOKEN" ]; then',
+    '  SAVED_NODE_BINARY="$NODE_BINARY"',
+    '  for ENV_FILE in "${PROJECT_DIR}/.xcode.env" "${PROJECT_DIR}/.xcode.env.local"; do',
+    '    if [ -f "$ENV_FILE" ]; then',
+    '      . "$ENV_FILE"',
+    '    fi',
+    '  done',
+    '  TOKEN="$BUGSEE_APP_TOKEN"',
+    '  if [ -z "$TOKEN" ]; then',
+    '    TOKEN="$BUGSEE_TOKEN_IOS"',
+    '  fi',
+    '  if [ -x "$SAVED_NODE_BINARY" ]; then',
+    '    NODE_BINARY="$SAVED_NODE_BINARY"',
+    '  fi',
+    'fi',
+];
+/**
  * Relays bugsee-cli output with Xcode's `error:` diagnostics turned into
  * `warning: bugsee: ...`, and returns the CLI's exit status. A failed upload
  * must never read as a build error. Post-action output is not parsed for
@@ -92,6 +118,7 @@ function dsymPostActionScript(bakedToken, bakedEndpoint) {
         'if [ -z "$TOKEN" ]; then',
         '  TOKEN="$BUGSEE_TOKEN_IOS"',
         'fi',
+        ...exports.ENV_FILE_TOKEN,
         'if [ -z "$TOKEN" ] && [ -f "$CREDS" ]; then',
         '  TOKEN=$(/usr/bin/plutil -extract ios raw -o - "$CREDS" 2>/dev/null || true)',
         'fi',

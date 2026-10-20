@@ -425,6 +425,23 @@ function relativizeSourceMap(mapText, projectRoot) {
   return changed ? JSON.stringify(map) : mapText;
 }
 
+/**
+ * Drops `sourcesContent` (the app's source code) from a map's JSON text.
+ * Returns the text unchanged when the map has none. The debug id and the
+ * mappings stay, so symbolication still works.
+ */
+function stripSourcesContent(mapText) {
+  const map = JSON.parse(mapText);
+  if (!('sourcesContent' in map)) return mapText;
+  delete map.sourcesContent;
+  return JSON.stringify(map);
+}
+
+/** On when BUGSEE_STRIP_SOURCES_CONTENT says so. */
+function stripSourcesContentRequested(env) {
+  return ON_VALUES.has(String(env.BUGSEE_STRIP_SOURCES_CONTENT).trim().toLowerCase());
+}
+
 const PLACEHOLDER_TOKEN = /^0{12}[0-9a-f]0{3}[0-9a-f]0{15}$/i;
 
 function readMapDebugId(mapPath) {
@@ -451,6 +468,7 @@ function uploadComposedSourceMap({
   cliPath,
   nodePath,
   projectRoot,
+  stripSources = false,
 }) {
   if (!enabled) {
     say('source map upload skipped: uploadSourcemaps is off');
@@ -492,7 +510,8 @@ function uploadComposedSourceMap({
   let uploadPath = composedMapPath;
   try {
     const original = fs.readFileSync(composedMapPath, 'utf8');
-    const rewritten = relativizeSourceMap(original, projectRoot);
+    let rewritten = relativizeSourceMap(original, projectRoot);
+    if (stripSources) rewritten = stripSourcesContent(rewritten);
     if (rewritten !== original) {
       stage = fs.mkdtempSync(path.join(os.tmpdir(), 'bugsee-upload-'));
       uploadPath = path.join(stage, path.basename(composedMapPath));
@@ -545,6 +564,7 @@ function uploadFromArgs(args) {
     appVersion: args['app-version'],
     appBuild: args['app-build'],
     projectRoot: args['project-root'],
+    stripSources: stripSourcesContentRequested(process.env),
   });
 }
 
@@ -617,6 +637,8 @@ module.exports = {
   uploadArgv,
   uploadComposedSourceMap,
   uploadDisabled,
+  stripSourcesContent,
+  stripSourcesContentRequested,
 };
 
 /** Command-line entry: a failure prints its reason and sets exit code 1. */

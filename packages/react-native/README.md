@@ -216,6 +216,8 @@ Known limits:
 hooks and the iOS dSYM Archive action. Release builds then upload their source
 maps, and Archives upload their dSYMs, whenever a real token is set.
 `uploadSourcemaps: false` and `uploadSymbols: false` turn those uploads off.
+`editGradleFiles: false` stops the plugin editing the three Android Gradle
+files, for a project whose files are Kotlin DSL (see "refuses" below).
 A committed `ios/` (`project.pbxproj` and the shared scheme) or
 `android/bugsee.properties` carries the token.
 
@@ -270,7 +272,9 @@ with certainty it refuses the prebuild with one error that names the file,
 the reason and the fix, and writes nothing. It refuses:
 
 - a Kotlin DSL `settings.gradle.kts`, `build.gradle.kts` or app
-  `build.gradle.kts`;
+  `build.gradle.kts` (make the edits by hand, then set
+  `"editGradleFiles": false` in the plugin options and prebuild again: the
+  plugin then leaves all three Gradle files alone);
 - a Gradle file it cannot read for sure: a string that does not close on its
   line, a comment or string still open at the end of the file, braces that do
   not balance, or a `/` that could start a slashy string as well as divide;
@@ -480,6 +484,15 @@ in the build environment (for example `export BUGSEE_APP_TOKEN=…` in
 `ios/.xcode.env.local`). Without one the phase bundles as usual and says it
 skipped the upload; `BUGSEE_UPLOAD_SOURCEMAPS=false` turns the upload off,
 and a failed upload warns without failing the build. Debug builds skip it.
+
+`.xcode.env` and `.xcode.env.local` are read for the token by the Archive
+dSYM post-action as well, so a token exported there also reaches Xcode GUI
+Archives.
+
+Source maps are uploaded with `sourcesContent`, the source code of your app,
+so the dashboard can show it. `BUGSEE_STRIP_SOURCES_CONTENT=true` in the
+build environment (iOS and Android) removes it from the uploaded copy; the
+map on disk is not touched, and symbolication still works.
 
 Native iOS frames come from the dSYMs. The config plugin adds an Archive
 post-action that uploads them with `bugsee-cli xcode post-action`; a bare app

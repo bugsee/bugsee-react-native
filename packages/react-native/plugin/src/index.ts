@@ -84,6 +84,15 @@ export interface BugseePluginProps {
    * versions wrote. JS source-map hooks stay either way.
    */
   nativeCrashReporting?: boolean;
+  /**
+   * Defaults on. `false` stops the plugin editing android/settings.gradle,
+   * android/build.gradle and android/app/build.gradle at all, so a project
+   * whose Gradle files are Kotlin DSL (`.gradle.kts`), which the plugin
+   * refuses, can still prebuild. You then make those edits by hand (package
+   * README, "Android source maps"); everything else the plugin does
+   * (bugsee.properties, gradle.properties, the manifest, iOS) is unchanged.
+   */
+  editGradleFiles?: boolean;
   /** Defaults to native-versions.json `android.gradlePlugin`. */
   gradlePluginVersion?: string;
   /** Defaults off. Writes `com.bugsee.app-token` manifest meta-data. */
@@ -112,13 +121,15 @@ export const IOS_ENDPOINT_PLIST_KEY = 'BugseeReactNativeEndpoint';
 export const APP_GRADLE_NOT_GROOVY =
   `${CANNOT_EDIT} android/app/build.gradle: it is written in the Kotlin DSL (build.gradle.kts), which ` +
   '@bugsee/react-native does not edit. Apply scripts/bugsee-sourcemaps.gradle and set react.hermesCommand by hand ' +
-  '(see the package README, "Android source maps"), then run expo prebuild again';
+  '(see the package README, "Android source maps"), then set "editGradleFiles": false in the @bugsee/react-native ' +
+  'plugin options and run expo prebuild again';
 
 /** The settings or root Gradle file is Kotlin; the plugin edits Groovy only. */
 export function gradleNotGroovy(file: string): string {
   return (
     `${CANNOT_EDIT} ${file}: it is written in the Kotlin DSL, which @bugsee/react-native does not edit. ` +
-    'Make the Bugsee edits by hand (package README, "Android source maps"), then run expo prebuild again'
+    'Make the Bugsee edits by hand (package README, "Android source maps"), then set "editGradleFiles": false in the ' +
+    '@bugsee/react-native plugin options and run expo prebuild again'
   );
 }
 
@@ -187,6 +198,7 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   const iosToken = platformToken(options.appToken, 'ios');
   const uploadSourcemaps = options.uploadSourcemaps !== false;
   const uploadSymbols = options.uploadSymbols !== false;
+  const editGradleFiles = options.editGradleFiles !== false;
   const symbolicateReactNative = options.symbolicateReactNativeFrameworks === true;
   const endpoint = pluginEndpoint(options.endpoint);
   const versions = loadNativeVersions(__dirname);
@@ -196,20 +208,22 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
     uploadSymbols,
   };
 
-  config = withSettingsGradle(config, (cfg) => {
-    cfg.modResults.contents = editSettingsGradle(cfg.modResults);
-    return cfg;
-  });
+  if (editGradleFiles) {
+    config = withSettingsGradle(config, (cfg) => {
+      cfg.modResults.contents = editSettingsGradle(cfg.modResults);
+      return cfg;
+    });
 
-  config = withProjectBuildGradle(config, (cfg) => {
-    cfg.modResults.contents = editProjectBuildGradle(cfg.modResults, edits);
-    return cfg;
-  });
+    config = withProjectBuildGradle(config, (cfg) => {
+      cfg.modResults.contents = editProjectBuildGradle(cfg.modResults, edits);
+      return cfg;
+    });
 
-  config = withAppBuildGradle(config, (cfg) => {
-    cfg.modResults.contents = editAppBuildGradle(cfg.modResults, edits);
-    return cfg;
-  });
+    config = withAppBuildGradle(config, (cfg) => {
+      cfg.modResults.contents = editAppBuildGradle(cfg.modResults, edits);
+      return cfg;
+    });
+  }
 
   config = withGradleProperties(config, (cfg) => {
     cfg.modResults = applyUploadSourcemapsProperty(cfg.modResults, uploadSourcemaps);
@@ -221,7 +235,9 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
     async (cfg) => {
       // Dangerous mods run first: a Gradle file the plugin cannot edit is
       // refused here, before any file is written.
-      await refuseUnlessEditable(cfg.modRequest.projectRoot, edits);
+      if (editGradleFiles) {
+        await refuseUnlessEditable(cfg.modRequest.projectRoot, edits);
+      }
       await writeFile(
         join(cfg.modRequest.platformProjectRoot, 'bugsee.properties'),
         bugseePropertiesText({
