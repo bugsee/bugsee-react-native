@@ -182,9 +182,10 @@ public class BugseeModule extends NativeBugseeSpec
         // unanswered one is not recorded; a reply into this module after it
         // is gone has nowhere to land.
         BreadcrumbFilterBridge.shared().detach(this);
-        // The next runtime cannot know these handles. Drop them without
-        // finishing: a reload must not close a transaction the SDK still has.
-        spanHandles.releaseAll();
+        // The next runtime cannot know these handles, so nothing would ever
+        // finish them and the SDK would keep the transactions open. Cancel
+        // what is still open, then drop the handles.
+        spanHandles.cancelOpenAndReleaseAll();
         SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
         // This runtime's Modal surfaces cannot be cleared by its JS any more.

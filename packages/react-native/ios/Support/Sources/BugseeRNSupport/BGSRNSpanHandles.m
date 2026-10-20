@@ -86,6 +86,26 @@
   os_unfair_lock_unlock(&_lock);
 }
 
+- (void)cancelOpenAndReleaseAll {
+  os_unfair_lock_lock(&_lock);
+  NSArray<NSString *> *handles = [_byHandle.allKeys sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+    return [@(a.length) compare:@(b.length)] ?: [a compare:b];
+  }];
+  NSMutableArray<id<BGSRNRetainedSpan>> *adapters = [NSMutableArray array];
+  for (NSString *handle in handles) {
+    [adapters addObject:_byHandle[handle].adapter];
+  }
+  _closed = YES;
+  [_byHandle removeAllObjects];
+  [_byIdentity removeAllObjects];
+  os_unfair_lock_unlock(&_lock);
+  for (id<BGSRNRetainedSpan> adapter in adapters) {
+    if (![adapter bgsrnIsFinished]) {
+      [adapter bgsrnFinishWithStatus:@(3)];
+    }
+  }
+}
+
 - (BOOL)containsHandle:(NSString *)handle {
   os_unfair_lock_lock(&_lock);
   const BOOL contains = handle != nil && _byHandle[handle] != nil;

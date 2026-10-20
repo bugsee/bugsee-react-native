@@ -55,6 +55,21 @@
 
 @implementation BGSRNSpanHandlesTests
 
+/// A reload must not leave transactions open in the SDK.
+- (void)testCancelOpenAndReleaseAllCancelsOpenSpansAndClears {
+  BGSRNSpanHandles *handles = [BGSRNSpanHandles new];
+  BGSRNFakeSpan *parent = [BGSRNFakeSpan new];
+  BGSRNFakeSpan *child = [BGSRNFakeSpan new];
+  [parent.children addObject:child];
+  [handles retainSpan:parent adapter:parent];
+  [handles retainSpan:child adapter:child];
+  [handles cancelOpenAndReleaseAll];
+  XCTAssertTrue(parent.finished);
+  XCTAssertEqualObjects(parent.finishedWith, @(BGSSpanStatusCancelled));
+  XCTAssertEqualObjects(child.finishedWith, @(BGSSpanStatusCancelled));
+  XCTAssertEqual(handles.liveCount, 0u);
+}
+
 /// The pin: after finish the registry must not still hold the span.
 - (void)testAFinishedSpanIsReleased {
   BGSRNSpanHandles *handles = [BGSRNSpanHandles new];

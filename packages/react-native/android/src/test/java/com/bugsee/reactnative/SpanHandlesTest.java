@@ -21,6 +21,26 @@ import java.util.List;
 public class SpanHandlesTest {
 
     @Test
+    public void cancelOpenAndReleaseAllCancelsOpenSpansOnceAndClears() {
+        final SpanHandles handles = new SpanHandles();
+        final Fake parent = new Fake();
+        final Fake child = new Fake();
+        final Fake done = new Fake();
+        done.finished = true;
+        parent.children.add(child);
+        handles.retain(parent, parent);
+        handles.retain(child, child);
+        handles.retain(done, done);
+        handles.cancelOpenAndReleaseAll();
+        assertTrue(parent.finished);
+        assertEquals(SpanStatus.CANCELLED, parent.finishedWith);
+        assertTrue(child.finished);
+        assertEquals(SpanStatus.CANCELLED, child.finishedWith);
+        assertNull(done.finishedWith);
+        assertEquals(0, handles.size());
+    }
+
+    @Test
     public void aFinishedSpanIsReleased() {
         final SpanHandles handles = new SpanHandles();
         final Fake span = new Fake();

@@ -141,6 +141,41 @@ describe('spans', () => {
     expect(native.spanSetAttribute).not.toHaveBeenCalled();
   });
 
+  it('finish() with no argument reports OK, overwriting an earlier setStatus', () => {
+    native.startSpan.mockReturnValue(wire({ handle: freshHandle() }));
+    native.spanFinish.mockReturnValue([]);
+    const span = Bugsee.startSpan('db.query');
+    span.setStatus(SpanStatus.Error);
+    expect(span.status).toBe(SpanStatus.Error);
+    span.finish();
+    expect(span.status).toBe(SpanStatus.OK);
+  });
+
+  it('finish(status) leaves that status on the span', () => {
+    native.startSpan.mockReturnValue(wire({ handle: freshHandle() }));
+    native.spanFinish.mockReturnValue([]);
+    const span = Bugsee.startSpan('db.query');
+    span.finish(SpanStatus.Timeout);
+    expect(span.status).toBe(SpanStatus.Timeout);
+  });
+
+  it('a parent finish marks an open child Cancelled and keeps a finished child as it was', () => {
+    native.startTransaction.mockReturnValue(
+      wire({ handle: 'sp-p', name: 'checkout', sampled: true }),
+    );
+    native.spanStartChild
+      .mockReturnValueOnce(wire({ handle: 'sp-open', spanId: 'open' }))
+      .mockReturnValueOnce(wire({ handle: 'sp-done', spanId: 'done', finished: true, status: SpanStatus.Error }));
+    native.spanFinish.mockReturnValue(['sp-p', 'sp-open', 'sp-done']);
+    const txn = Bugsee.startTransaction('checkout', 'user.flow');
+    const open = txn.startChildSpan('a');
+    const done = txn.startChildSpan('b');
+    txn.finish();
+    expect(open.status).toBe(SpanStatus.Cancelled);
+    expect(open.finished).toBe(true);
+    expect(done.status).toBe(SpanStatus.Error);
+  });
+
   it('the first finish returns even when native omits the handle', () => {
     const handle = freshHandle();
     native.startSpan.mockReturnValue(wire({ handle, spanId: 'first' }));

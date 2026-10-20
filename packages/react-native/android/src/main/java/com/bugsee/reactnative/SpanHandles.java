@@ -88,6 +88,30 @@ final class SpanHandles {
         byIdentity.clear();
     }
 
+    /**
+     * Cancels every span that is still open, then drops every handle. Used
+     * when the module goes away: the next runtime cannot know these handles,
+     * so nothing would ever finish them. Entries are visited in the order
+     * they were retained, so a parent goes first and its open children are
+     * already finished (Cancelled by the SDK) when they are reached. A span
+     * that throws is skipped, and the registry is cleared regardless.
+     */
+    synchronized void cancelOpenAndReleaseAll() {
+        try {
+            for (final Entry entry : new ArrayList<>(byHandle.values())) {
+                try {
+                    if (!entry.retained.isFinished()) {
+                        entry.retained.finish(SpanStatus.CANCELLED);
+                    }
+                } catch (final RuntimeException ignored) {
+                    // One span the SDK refuses must not strand the others.
+                }
+            }
+        } finally {
+            releaseAll();
+        }
+    }
+
     synchronized boolean contains(final String handle) {
         return byHandle.containsKey(handle);
     }

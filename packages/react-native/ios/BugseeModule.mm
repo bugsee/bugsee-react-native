@@ -1071,8 +1071,9 @@ RCT_EXPORT_MODULE(Bugsee)
   if (BGSRNBreadcrumbFilterModule == self) {
     BGSRNBreadcrumbFilterModule = nil;
   }
-  // The next runtime cannot know these handles. Drop them without finishing:
-  // a reload must not close a transaction the SDK still has. The getter
+  // The next runtime cannot know these handles, so nothing would ever finish
+  // them and the SDK would keep the transactions open. Cancel what is still
+  // open, then drop the handles. The getter
   // must not allocate a fresh registry after this: a span call still in
   // flight would adopt into an object invalidate already abandoned.
   os_unfair_lock_lock(&_spanRegistryLock);
@@ -1080,7 +1081,12 @@ RCT_EXPORT_MODULE(Bugsee)
   BGSRNSpanHandles *previous = _spanHandles;
   _spanHandles = [BGSRNSpanHandles closedRegistry];
   os_unfair_lock_unlock(&_spanRegistryLock);
-  [previous releaseAll];
+  // Span calls run on the main thread; so does this finish. Async: invalidate
+  // can run while the main thread waits on the runtime, and a sync hop would
+  // deadlock. The registry is already swapped out, so nothing races it.
+  BGSRNRunOnMain(^{
+    [previous cancelOpenAndReleaseAll];
+  });
 }
 
 /// The SDK touches UIKit during start-up, so it must not be constructed on a

@@ -37,6 +37,12 @@ NS_ASSUME_NONNULL_BEGIN
 /// Drops every handle and refuses later retains. Does not finish the spans.
 - (void)releaseAll;
 
+/// Finishes every span that is still open with Cancelled (status 3), then
+/// does what `releaseAll` does. Parents are visited before their children,
+/// so a child a parent finish already cancelled is skipped. The adapter calls
+/// run outside the registry lock; the caller picks the thread.
+- (void)cancelOpenAndReleaseAll;
+
 /// The registry `invalidate` hands out. It retains nothing.
 + (BGSRNSpanHandles *)closedRegistry;
 

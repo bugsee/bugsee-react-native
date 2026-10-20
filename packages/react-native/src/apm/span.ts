@@ -97,7 +97,8 @@ function markReleased(handles: readonly string[]): void {
   for (const handle of handles) {
     const span = live.get(handle);
     if (span !== undefined) {
-      span.markDead();
+      // A child still open when its parent finished is ended as Cancelled.
+      span.markDead(span.isFinished ? undefined : SpanStatus.Cancelled);
     }
     live.delete(handle);
   }
@@ -193,6 +194,9 @@ class SpanObject {
     const explicit = status !== undefined;
     const wire = explicit ? assertStatus(status) : 0;
     const released = NativeBugsee.spanFinish(this.wire.handle, wire, explicit);
+    // No argument ends the span as OK on both SDKs, overwriting an earlier
+    // setStatus, so the JS status follows what native now holds.
+    this.status = explicit ? wire : SpanStatus.OK;
     markReleased(released);
     // Dead even when native omits this handle. A later call is what throws.
     this.markDead();
@@ -219,7 +223,10 @@ class SpanObject {
     return this.attributes;
   }
 
-  markDead(): void {
+  markDead(status?: SpanStatus): void {
+    if (status !== undefined) {
+      this.status = status;
+    }
     this.dead = true;
     this.finishedFlag = true;
   }
