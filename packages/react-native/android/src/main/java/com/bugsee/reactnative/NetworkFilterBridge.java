@@ -111,6 +111,8 @@ final class NetworkFilterBridge {
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong();
     private final AtomicBoolean installed = new AtomicBoolean();
+    /** Orders attach against setEnabled; see {@link #setEnabled(boolean, Sink)}. */
+    private final Object stateLock = new Object();
 
     /**
      * The module whose JS has installed its filter with
@@ -175,8 +177,10 @@ final class NetworkFilterBridge {
     void attach(@NonNull final Sink next) {
         // Disarm before the sink is visible: a request in the gap must not
         // reach a runtime that has not subscribed yet. See armedFor.
-        armedFor.set(null);
-        sink.set(next);
+        synchronized (stateLock) {
+            armedFor.set(null);
+            sink.set(next);
+        }
     }
 
     /**
@@ -243,22 +247,27 @@ final class NetworkFilterBridge {
 
     /** As above, on behalf of module {@code caller}; only the attached module can arm. */
     void setEnabled(final boolean enabled, final Sink caller) {
-        if (sink.get() != caller) {
-            // A superseded module must neither arm nor disable the process-wide filter.
-            return;
-        }
-        held.set(false);
-        if (enabled) {
-            if (caller != null) {
-                arm(caller);
+        // One lock for the identity check and the install, so a stale module
+        // cannot pass the check, pause, and remove a filter the new module
+        // has since relied on.
+        synchronized (stateLock) {
+            if (sink.get() != caller) {
+                // A superseded module must neither arm nor disable the process-wide filter.
+                return;
             }
-            if (installed.compareAndSet(false, true)) {
-                installer.accept(filter);
+            held.set(false);
+            if (enabled) {
+                if (caller != null) {
+                    arm(caller);
+                }
+                if (installed.compareAndSet(false, true)) {
+                    installer.accept(filter);
+                }
+                return;
             }
-            return;
-        }
-        if (installed.compareAndSet(true, false)) {
-            installer.accept(null);
+            if (installed.compareAndSet(true, false)) {
+                installer.accept(null);
+            }
         }
     }
 

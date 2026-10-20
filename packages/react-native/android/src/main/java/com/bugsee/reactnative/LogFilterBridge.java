@@ -119,6 +119,8 @@ final class LogFilterBridge {
     private final AtomicLong ids = new AtomicLong();
     /** True only while the app has a log callback. False is the native pass-through. */
     private final AtomicBoolean userFilter = new AtomicBoolean();
+    /** Orders attach against setEnabled; see {@link #setEnabled(boolean, Sink)}. */
+    private final Object stateLock = new Object();
 
     /**
      * The module whose JS has installed its filter with
@@ -184,8 +186,10 @@ final class LogFilterBridge {
         // reach a runtime that has not subscribed yet. See armedFor. userFilter
         // is deliberately kept: a redaction the app relied on must not silently
         // stop applying across a reload.
-        armedFor.set(null);
-        sink.set(next);
+        synchronized (stateLock) {
+            armedFor.set(null);
+            sink.set(next);
+        }
     }
 
     /**
@@ -245,8 +249,10 @@ final class LogFilterBridge {
      * forgotten and the callback is not touched.
      */
     void detach(@NonNull final Sink current) {
-        sink.compareAndSet(current, null);
-        armedFor.compareAndSet(current, null);
+        synchronized (stateLock) {
+            sink.compareAndSet(current, null);
+            armedFor.compareAndSet(current, null);
+        }
         final List<Pending> owned = new ArrayList<>();
         for (final Pending item : pending.values()) {
             if (item.owner == current && pending.remove(item.id, item)) {
@@ -273,17 +279,20 @@ final class LogFilterBridge {
 
     /** As above, on behalf of module {@code caller}; only the attached module can arm. */
     void setEnabled(final boolean enabled, final Sink caller) {
-        if (sink.get() != caller) {
-            // A superseded module must neither arm nor disable the process-wide filter.
-            return;
-        }
-        held.set(false);
-        if (enabled) {
-            if (caller != null) {
+        // One lock for the identity check and the write, so a stale module
+        // cannot pass the check, pause, and switch off a filter the new
+        // module has since turned on.
+        synchronized (stateLock) {
+            if (sink.get() != caller) {
+                // A superseded module must neither arm nor disable the process-wide filter.
+                return;
+            }
+            held.set(false);
+            if (enabled && caller != null) {
                 arm(caller);
             }
+            userFilter.set(enabled);
         }
-        userFilter.set(enabled);
         ensureInstalled();
     }
 
