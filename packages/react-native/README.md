@@ -111,7 +111,7 @@ import { ErrorBoundary } from '@bugsee/react-native';
 | Prop | |
 |---|---|
 | `fallback` | What to render after an error: an element, or a function that receives `error`, `componentStack` and `resetError()`. Without it the boundary renders nothing, so give it one. |
-| `onError(error, componentStack)` | Called after the error has been reported. |
+| `onError(error, componentStack)` | Called after the boundary has caught the error, and after it has reported it unless the error was already reported (see the list below). |
 | `onReset(error, componentStack)` | Called when `resetError()` is called, just before the children render again. |
 | `options` | Handled-exception options for the report. `{ domain }` only, as for `Bugsee.logException`. An invalid value logs a warning and the error is reported without options. |
 
