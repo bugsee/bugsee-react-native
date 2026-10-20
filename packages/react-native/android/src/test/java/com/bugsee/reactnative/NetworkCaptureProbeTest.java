@@ -7,6 +7,9 @@ import static org.junit.Assert.assertTrue;
 import java.util.Arrays;
 import java.util.Collections;
 
+import okhttp3.OkHttpClient;
+import com.bugsee.library.okhttp.BugseeOkHttpInterceptor;
+
 import org.junit.Before;
 import org.junit.Test;
 
@@ -25,11 +28,33 @@ public class NetworkCaptureProbeTest {
                 Class.forName(NetworkCaptureProbe.INTERCEPTOR_CLASS).getName());
     }
 
+    private static OkHttpClient plain() {
+        return new OkHttpClient.Builder().build();
+    }
+
+    private static OkHttpClient withBugsee() {
+        // What the Gradle plugin's rewritten build() call does to a builder.
+        return BugseeOkHttpInterceptor.addIfAbsent(new OkHttpClient.Builder()).build();
+    }
+
     @Test
-    public void plainClientHasNoBugseeInterceptor() {
-        // The Gradle plugin does not run in unit tests, so a client built here
-        // is exactly what a bare app gets.
-        assertFalse(NetworkCaptureProbe.isInstrumented());
+    public void plainClientIsNotInstrumented() {
+        assertFalse(NetworkCaptureProbe.isInstrumented(NetworkCaptureProbeTest::plain));
+    }
+
+    @Test
+    public void clientWithTheInjectedInterceptorIsInstrumented() {
+        assertTrue(NetworkCaptureProbe.isInstrumented(NetworkCaptureProbeTest::withBugsee));
+    }
+
+    @Test
+    public void aProbeThatCannotRunIsNoEvidence() {
+        assertTrue(NetworkCaptureProbe.isInstrumented(() -> {
+            throw new IllegalStateException("no client");
+        }));
+        assertTrue(NetworkCaptureProbe.isInstrumented(() -> {
+            throw new NoClassDefFoundError("okhttp3");
+        }));
     }
 
     @Test
@@ -41,11 +66,12 @@ public class NetworkCaptureProbeTest {
     }
 
     @Test
-    public void warnsOncePerProcess() {
-        assertTrue(NetworkCaptureProbe.warnOnceIfNotInstrumented());
-        assertFalse(NetworkCaptureProbe.warnOnceIfNotInstrumented());
+    public void warnsOncePerProcessOnlyWhenNotInstrumented() {
+        assertFalse(NetworkCaptureProbe.warnOnceIfNotInstrumented(NetworkCaptureProbeTest::withBugsee));
+        assertTrue(NetworkCaptureProbe.warnOnceIfNotInstrumented(NetworkCaptureProbeTest::plain));
+        assertFalse(NetworkCaptureProbe.warnOnceIfNotInstrumented(NetworkCaptureProbeTest::plain));
         NetworkCaptureProbe.resetForTest();
-        assertTrue(NetworkCaptureProbe.warnOnceIfNotInstrumented());
+        assertTrue(NetworkCaptureProbe.warnOnceIfNotInstrumented(NetworkCaptureProbeTest::plain));
     }
 
     @Test

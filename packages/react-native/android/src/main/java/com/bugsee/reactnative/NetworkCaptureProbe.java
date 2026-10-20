@@ -6,6 +6,7 @@ import androidx.annotation.NonNull;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import okhttp3.Interceptor;
@@ -20,6 +21,13 @@ import okhttp3.OkHttpClient;
  * and launches fine and records no network events, with nothing to say so.
  * {@link #warnOnceIfNotInstrumented()} makes that visible: it builds a client
  * the way RN does and looks for the interceptor on it.
+ *
+ * <p>The client has to come from React Native's own code
+ * ({@code OkHttpClientProvider.createClient()}, passed in by the module): the
+ * plugin rewrites the {@code build()} call sites it instruments, and a client
+ * built inside this package is not one of them (on a device with the plugin
+ * applied, such a client carried no interceptor, so probing here would warn on
+ * every correctly set-up app).
  */
 public final class NetworkCaptureProbe {
 
@@ -40,15 +48,15 @@ public final class NetworkCaptureProbe {
     private NetworkCaptureProbe() {}
 
     /**
-     * Whether a client built now carries the Bugsee interceptor. False only
+     * Whether a client from {@code clientSource} carries the Bugsee interceptor. False only
      * when a client was built and none of its interceptors is Bugsee's. A
      * probe that cannot run (OkHttp missing, the build threw) is no evidence
      * either way and answers true, so it never warns by mistake.
      */
-    static boolean isInstrumented() {
+    static boolean isInstrumented(@NonNull final Callable<OkHttpClient> clientSource) {
         final List<String> names = new ArrayList<>();
         try {
-            final OkHttpClient client = new OkHttpClient.Builder().build();
+            final OkHttpClient client = clientSource.call();
             collect(names, client.interceptors());
             collect(names, client.networkInterceptors());
         } catch (Throwable t) {
@@ -73,9 +81,12 @@ public final class NetworkCaptureProbe {
         WARNED.set(false);
     }
 
-    /** Logs {@link #MESSAGE} at WARN, at most once per process, if not instrumented. */
-    static boolean warnOnceIfNotInstrumented() {
-        if (isInstrumented() || !WARNED.compareAndSet(false, true)) {
+    /**
+     * Logs {@link #MESSAGE} at WARN, at most once per process, if the client
+     * from {@code clientSource} is not instrumented. Returns whether it logged.
+     */
+    static boolean warnOnceIfNotInstrumented(@NonNull final Callable<OkHttpClient> clientSource) {
+        if (isInstrumented(clientSource) || !WARNED.compareAndSet(false, true)) {
             return false;
         }
         Log.w(TAG, MESSAGE);

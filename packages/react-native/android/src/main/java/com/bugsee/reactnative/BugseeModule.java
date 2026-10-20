@@ -33,6 +33,7 @@ import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.UiThreadUtil;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.module.annotations.ReactModule;
+import com.facebook.react.modules.network.OkHttpClientProvider;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -223,7 +224,7 @@ public class BugseeModule extends NativeBugseeSpec
             promise.reject("E_TOKEN", "Bugsee.launch requires a non-empty app token");
             return;
         }
-        NetworkCaptureProbe.warnOnceIfNotInstrumented();
+        NetworkCaptureProbe.warnOnceIfNotInstrumented(OkHttpClientProvider::createClient);
         // The Application, not the React context: the SDK registers activity
         // lifecycle callbacks on it and outlives any single React instance.
         Bugsee.launch(
