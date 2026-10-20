@@ -514,6 +514,22 @@ public class LogFilterBridgeTest {
     }
 
     @Test
+    public void aStaleModulesDisableDoesNotClearTheNewModulesFilter() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attachModule(old);
+        final RecordingSink next = new RecordingSink();
+        bridge.attachModule(next);
+        bridge.setEnabled(true, next);
+
+        bridge.setEnabled(false, old);
+
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), callback);
+        assertEquals(1, next.ids.size());
+        assertEquals(0, callback.runs);
+    }
+
+    @Test
     public void afterAReloadClearingTheFilterIsThePassThrough() {
         final RecordingSink old = new RecordingSink();
         bridge.attach(old);

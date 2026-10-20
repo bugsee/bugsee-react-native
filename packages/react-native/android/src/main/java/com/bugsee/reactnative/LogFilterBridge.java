@@ -222,6 +222,7 @@ final class LogFilterBridge {
      */
     void detach(@NonNull final Sink current) {
         sink.compareAndSet(current, null);
+        armedFor.compareAndSet(current, null);
         final List<Pending> owned = new ArrayList<>();
         for (final Pending item : pending.values()) {
             if (item.owner == current && pending.remove(item.id, item)) {
@@ -248,6 +249,10 @@ final class LogFilterBridge {
 
     /** As above, on behalf of module {@code caller}; only the attached module can arm. */
     void setEnabled(final boolean enabled, final Sink caller) {
+        if (sink.get() != caller) {
+            // A superseded module must neither arm nor disable the process-wide filter.
+            return;
+        }
         if (enabled) {
             if (caller != null) {
                 arm(caller);

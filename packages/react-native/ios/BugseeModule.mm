@@ -1631,6 +1631,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// install landed, with its url, headers and body unfiltered. The SDK setter
 /// only takes a lock, so it is safe on the JS thread.
 - (NSNumber *)setNetworkFilterEnabled:(BOOL)enabled {
+  // A reload can attach the new module before this one is invalidated. A
+  // superseded module must neither arm nor disable the process-wide filter.
+  if (BGSRNNetworkFilterModule != self) {
+    return @YES;
+  }
   if (enabled) {
     [BGSRNNetworkFilterArming() armFor:self];
     @synchronized (BGSRNNetworkFilterLock()) {
@@ -1757,6 +1762,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// console line written on the next line could be captured before a queued
 /// flag flip landed. The flag write and the SDK setter only take locks.
 - (NSNumber *)setLogFilterEnabled:(BOOL)enabled {
+  // A reload can attach the new module before this one is invalidated. A
+  // superseded module must neither arm nor disable the process-wide filter.
+  if (BGSRNLogFilterModule != self) {
+    return @YES;
+  }
   if (enabled) {
     [BGSRNLogFilterArming() armFor:self];
   }
@@ -1822,6 +1832,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// filter. There is no timer that calls `decision(nil)`. A late decision
 /// still records.
 - (NSNumber *)setBreadcrumbFilterEnabled:(BOOL)enabled {
+  // A reload can attach the new module before this one is invalidated. A
+  // superseded module must neither arm nor disable the process-wide filter.
+  if (BGSRNBreadcrumbFilterModule != self) {
+    return @YES;
+  }
   if (enabled) {
     [BGSRNBreadcrumbFilterArming() armFor:self];
     @synchronized (BGSRNBreadcrumbFilterLock()) {
