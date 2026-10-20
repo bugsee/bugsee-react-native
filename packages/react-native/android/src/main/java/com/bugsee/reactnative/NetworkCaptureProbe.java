@@ -28,6 +28,11 @@ import okhttp3.OkHttpClient;
  * built inside this package is not one of them (on a device with the plugin
  * applied, such a client carried no interceptor, so probing here would warn on
  * every correctly set-up app).
+ *
+ * <p>This checks a proxy: RN's {@code createClient()}, not the per-request
+ * {@code newBuilder().build()} call site inside NetworkingModule. A custom
+ * client factory living in a package the plugin excludes can therefore give a
+ * rare false warning; it is a log line only.
  */
 public final class NetworkCaptureProbe {
 
@@ -38,12 +43,13 @@ public final class NetworkCaptureProbe {
 
     static final String MESSAGE =
             "JS fetch/XHR network events will not be recorded: the Bugsee Gradle plugin "
-                    + "(com.bugsee.android.gradle) is not applied to this app, so no Bugsee "
-                    + "interceptor is on React Native's OkHttp client. The same plugin uploads "
+                    + "(com.bugsee.android.gradle) is not applied to this app, or its OkHttp "
+                    + "instrumentation is disabled or excluded, so no Bugsee interceptor is on "
+                    + "React Native's OkHttp client. The same plugin uploads "
                     + "the R8 mapping and native symbols. See the Android: Bugsee Gradle plugin "
                     + "section of the @bugsee/react-native README.";
 
-    private static final AtomicBoolean WARNED = new AtomicBoolean(false);
+    private static final AtomicBoolean PROBED = new AtomicBoolean(false);
 
     private NetworkCaptureProbe() {}
 
@@ -78,15 +84,17 @@ public final class NetworkCaptureProbe {
 
     /** Test seam: forget that the warning was logged. */
     static void resetForTest() {
-        WARNED.set(false);
+        PROBED.set(false);
     }
 
     /**
-     * Logs {@link #MESSAGE} at WARN, at most once per process, if the client
-     * from {@code clientSource} is not instrumented. Returns whether it logged.
+     * Probes the client from {@code clientSource} and logs {@link #MESSAGE} at
+     * WARN if it is not instrumented. Runs at most once per process, so
+     * repeated launches build no further throwaway clients. Returns whether it
+     * logged.
      */
     static boolean warnOnceIfNotInstrumented(@NonNull final Callable<OkHttpClient> clientSource) {
-        if (isInstrumented(clientSource) || !WARNED.compareAndSet(false, true)) {
+        if (!PROBED.compareAndSet(false, true) || isInstrumented(clientSource)) {
             return false;
         }
         Log.w(TAG, MESSAGE);

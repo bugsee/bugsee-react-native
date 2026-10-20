@@ -15,17 +15,12 @@ import org.junit.Test;
 
 public class NetworkCaptureProbeTest {
 
+    // INTERCEPTOR_CLASS matching the class the Gradle plugin injects is only
+    // verified by the device run (plugin on: no warning; off: one warning).
+
     @Before
     public void reset() {
         NetworkCaptureProbe.resetForTest();
-    }
-
-    @Test
-    public void interceptorNameIsAClassTheSdkShips() throws Exception {
-        // A renamed class in a later SDK would turn the probe into a false alarm.
-        assertEquals(
-                NetworkCaptureProbe.INTERCEPTOR_CLASS,
-                Class.forName(NetworkCaptureProbe.INTERCEPTOR_CLASS).getName());
     }
 
     private static OkHttpClient plain() {
@@ -66,17 +61,35 @@ public class NetworkCaptureProbeTest {
     }
 
     @Test
-    public void warnsOncePerProcessOnlyWhenNotInstrumented() {
+    public void warnsWhenNotInstrumented() {
+        assertTrue(NetworkCaptureProbe.warnOnceIfNotInstrumented(NetworkCaptureProbeTest::plain));
+    }
+
+    @Test
+    public void staysQuietWhenInstrumented() {
         assertFalse(NetworkCaptureProbe.warnOnceIfNotInstrumented(NetworkCaptureProbeTest::withBugsee));
-        assertTrue(NetworkCaptureProbe.warnOnceIfNotInstrumented(NetworkCaptureProbeTest::plain));
-        assertFalse(NetworkCaptureProbe.warnOnceIfNotInstrumented(NetworkCaptureProbeTest::plain));
+    }
+
+    @Test
+    public void probesAtMostOncePerProcess() {
+        final int[] built = {0};
+        final java.util.concurrent.Callable<OkHttpClient> counting = () -> {
+            built[0]++;
+            return plain();
+        };
+        assertTrue(NetworkCaptureProbe.warnOnceIfNotInstrumented(counting));
+        assertFalse(NetworkCaptureProbe.warnOnceIfNotInstrumented(counting));
+        assertFalse(NetworkCaptureProbe.warnOnceIfNotInstrumented(counting));
+        assertEquals(1, built[0]);
         NetworkCaptureProbe.resetForTest();
-        assertTrue(NetworkCaptureProbe.warnOnceIfNotInstrumented(NetworkCaptureProbeTest::plain));
+        assertTrue(NetworkCaptureProbe.warnOnceIfNotInstrumented(counting));
+        assertEquals(2, built[0]);
     }
 
     @Test
     public void messageNamesThePluginAndTheConsequence() {
         assertTrue(NetworkCaptureProbe.MESSAGE.contains("com.bugsee.android.gradle"));
         assertTrue(NetworkCaptureProbe.MESSAGE.contains("fetch/XHR"));
+        assertTrue(NetworkCaptureProbe.MESSAGE.contains("disabled or excluded"));
     }
 }

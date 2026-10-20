@@ -51,7 +51,8 @@ Manager. Earlier versions use CocoaPods, where the podspec vendors the same
 XCFramework — run `pod install` as usual. Nothing is published to CocoaPods
 trunk, so no `pod repo update` is needed.
 
-**Android.** Autolinking picks the module up, and the app builds and
+**Android.** Requires the Bugsee Gradle plugin for network capture and Release
+symbolication. Autolinking picks the module up, and the app builds and
 launches with no Gradle changes, but without the Bugsee Gradle plugin it records
 **no network events** from JS `fetch`/XHR (the plugin injects Bugsee's OkHttp
 interceptor into React Native's networking), and Release symbolication needs
@@ -371,9 +372,12 @@ bundle and Metro's map get the id instead.
 ## Android: Bugsee Gradle plugin
 
 Required on Android for **network capture**: it injects Bugsee's OkHttp
-interceptor into every `OkHttpClient.Builder.build()`, which React Native's
-`fetch`/XHR use. Without it the app runs but records no JS network events; the
-wrapper logs a `BugseeRN` warning at launch when the interceptor is missing.
+interceptor into every `OkHttpClient.Builder.build()` call outside
+`com.bugsee.*`, `okhttp3.*` and your own excludes, which includes React Native's
+`fetch`/XHR. Without it the app runs but records no JS network events; the
+wrapper logs a `BugseeRN` warning at launch when the interceptor is missing,
+which also happens if the plugin's OkHttp instrumentation is disabled or
+excluded.
 It also uploads the R8/ProGuard mapping, the native (NDK) symbols and the build
 info of each Release build. It is a Gradle plugin, so autolinking cannot add
 it; the config plugin writes these same edits for an Expo app.
