@@ -1257,9 +1257,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     return;
   }
   BGSRNRunOnMain(^{
-    // launchWithToken: returns the instance, or nil when the SDK declines —
-    // already running, or the token was rejected. Declining is a normal
-    // outcome, so it resolves false rather than rejecting.
+    // launchWithToken: returns the instance, or nil when the SDK declines
+    // (the token was rejected). Declining is a normal outcome, so it
+    // resolves false rather than rejecting. When the SDK is already running
+    // it returns the running instance, so this resolves true and the new
+    // options are ignored.
     Bugsee *instance = [Bugsee launchWithToken:token andOptions:BGSRNResolvedLaunchOptions(options)];
     // launch can replace the log filter. Put the pass-through, or the user
     // filter if one is already on, back. This does not set the filter to nil.
