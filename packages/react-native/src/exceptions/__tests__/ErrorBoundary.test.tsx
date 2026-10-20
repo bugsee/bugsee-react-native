@@ -29,6 +29,7 @@ jest.mock('../report', () => {
   };
 });
 
+import { setExceptionCaptureEnabled } from '../handlers';
 import {
   ErrorBoundary,
   type ErrorBoundaryFallbackProps,
@@ -42,6 +43,7 @@ let consoleError: jest.SpyInstance;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  setExceptionCaptureEnabled(true);
   markReported.mockImplementation(() => true);
   consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 });
@@ -262,6 +264,22 @@ describe('ErrorBoundary', () => {
       }),
     );
     warn.mockRestore();
+  });
+
+  it('detect.crash false: the boundary shows the fallback and calls onError but reports nothing', () => {
+    setExceptionCaptureEnabled(false);
+    const error = new Error('quiet');
+    const onError = jest.fn();
+    const renderer = render(
+      <ErrorBoundary onError={onError} fallback={createElement('fallback-el')}>
+        <ThrowOnce error={error} armed={{ value: true }} />
+      </ErrorBoundary>,
+    );
+
+    expect(reportHandled).not.toHaveBeenCalled();
+    expect(markReported).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(error, expect.any(String));
+    expect(renderer.root.findByType('fallback-el' as never)).toBeTruthy();
   });
 
   it('an error reported once is not reported again by the boundary', () => {

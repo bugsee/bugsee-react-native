@@ -280,6 +280,23 @@ describe('exception handlers', () => {
     expect(previous).toHaveBeenCalledWith(error, false);
   });
 
+  it('a fatal error already reported as handled is still reported as a crash (log then rethrow)', () => {
+    const {
+      installExceptionHandlers,
+      setExceptionCaptureEnabled,
+      markReported,
+      reportUnhandled,
+      getHandler,
+      env,
+    } = load();
+    installExceptionHandlers(env);
+    setExceptionCaptureEnabled(true);
+    const error = new Error('logged then rethrown');
+    expect(markReported(error)).toBe(true);
+    getHandler()(error, true);
+    expect(reportUnhandled).toHaveBeenCalledWith(error);
+  });
+
   it('detect.crash false: nothing is reported, and the previous handler still runs', () => {
     const {
       installExceptionHandlers,

@@ -176,7 +176,7 @@ function installErrorUtils(env: HandlerEnv): void {
     };
 
     try {
-      if (captureEnabled && markReported(error)) {
+      if (captureEnabled && markReported(error, isFatal === true ? 'unhandled' : 'handled')) {
         if (isFatal === true) {
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
           const timeout = new Promise<void>((resolve) => {

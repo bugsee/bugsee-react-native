@@ -747,7 +747,7 @@ class Bugsee {
    * on iOS, 5 s on Android). iOS surfaces it at the next launch.
    */
   logUnhandledException(error: unknown): Promise<void> {
-    if (!markReported(error)) {
+    if (!markReported(error, 'unhandled')) {
       return Promise.resolve();
     }
     const extras =
