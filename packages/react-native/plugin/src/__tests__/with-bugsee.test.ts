@@ -263,6 +263,14 @@ describe('withBugsee through the Expo mod compiler', () => {
     expect(read('manifest')).toContain(`android:value="${ANDROID_TOKEN}"`);
   });
 
+  it('removes the manifest token a later prebuild no longer writes', async () => {
+    await prebuild({ appToken: ANDROID_TOKEN, autoLaunch: true });
+    expect(read('manifest')).toContain('android:name="com.bugsee.app-token"');
+    await prebuild({ appToken: ANDROID_TOKEN });
+    expect(read('manifest')).not.toContain('com.bugsee.app-token');
+    expect(read('manifest')).not.toContain('com.bugsee.reactnative.app-token');
+  });
+
   it('honours a gradlePluginVersion override and rewrites it on the next run', async () => {
     await prebuild({ gradlePluginVersion: '9.9.9' });
     expect(read('root')).toContain("id 'com.bugsee.android.gradle' version '9.9.9' apply false");

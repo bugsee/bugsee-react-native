@@ -1,7 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SDK_ENDPOINT_KEPT = exports.SDK_ENDPOINT_MARKER = exports.SDK_ENDPOINT_META_DATA = exports.RN_ENDPOINT_META_DATA = void 0;
+exports.SDK_ENDPOINT_KEPT = exports.SDK_ENDPOINT_MARKER = exports.SDK_ENDPOINT_META_DATA = exports.RN_ENDPOINT_META_DATA = exports.APP_TOKEN_MARKER = exports.APP_TOKEN_META_DATA = void 0;
 exports.manifestAutoLaunchToken = manifestAutoLaunchToken;
+exports.appTokenMetaData = appTokenMetaData;
 exports.endpointMetaData = endpointMetaData;
 const properties_1 = require("./properties");
 /**
@@ -18,6 +19,35 @@ function manifestAutoLaunchToken(input) {
         return null;
     }
     return token;
+}
+/**
+ * The Android SDK's auto-launch token. The customer may have written it, so a
+ * later prebuild removes it only when `APP_TOKEN_MARKER` says this plugin
+ * wrote that exact value.
+ */
+exports.APP_TOKEN_META_DATA = 'com.bugsee.app-token';
+exports.APP_TOKEN_MARKER = 'com.bugsee.reactnative.app-token';
+/**
+ * The meta-data edits for auto-launch. An entry this plugin wrote earlier is
+ * removed first, so a later prebuild with `autoLaunch` off (or no usable
+ * token) leaves none behind. Entries from plugin versions that wrote no
+ * marker are not recognised and stay until a clean prebuild.
+ */
+function appTokenMetaData(input) {
+    const remove = [];
+    const set = {};
+    const marker = input.existing(exports.APP_TOKEN_MARKER);
+    if (marker !== undefined) {
+        remove.push(exports.APP_TOKEN_MARKER);
+        if (input.existing(exports.APP_TOKEN_META_DATA) === marker) {
+            remove.push(exports.APP_TOKEN_META_DATA);
+        }
+    }
+    if (input.token !== null) {
+        set[exports.APP_TOKEN_META_DATA] = input.token;
+        set[exports.APP_TOKEN_MARKER] = input.token;
+    }
+    return { remove, set };
 }
 /**
  * The wrapper's own meta-data: the `endpoint` option, which the native module
