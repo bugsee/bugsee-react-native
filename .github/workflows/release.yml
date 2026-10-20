@@ -177,7 +177,7 @@ jobs:
     needs: publish
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     # The only job that writes to the repository, and it has no npm credentials: the tag and the release
     # can be created or fixed without touching the publish rights, and the publish job cannot write here.
     permissions:

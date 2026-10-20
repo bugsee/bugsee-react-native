@@ -7,7 +7,11 @@
 // - The tag is `v<version>` (every publishable package ships one version, checked here again), created
 //   at the commit the workflow ran on, the one `check` packed and validated.
 // - A prerelease version (a hyphen before any +build metadata) is marked as a prerelease.
-// - The packed tarballs are attached, so the release carries the exact bytes that went to npm.
+// - The packed tarballs are attached, so the release carries the exact bytes that went to npm. That holds
+//   only if THIS run published them: before creating anything the script compares each tarball's integrity
+//   with what npm has for that version, and refuses on a mismatch (a version published earlier from another
+//   commit, then a fresh run that skipped the publish as already done). npm may need a few minutes to show a
+//   new version, so a not-yet-visible version is retried.
 // - Notes: a short header (npm packages, tags, native SDK pins, docs) followed by GitHub's generated
 //   notes (the PRs merged since the previous tag).
 //
@@ -18,6 +22,7 @@
 // Node built-ins only (no install step in the job that runs it): scripts/__tests__/release-scripts-imports.test.ts
 // holds the line. Needs `gh` and `git` on PATH and GH_TOKEN in the environment.
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,6 +70,7 @@ export function plan({ npmTags = [] } = {}) {
   const nativePath = join(root, 'native-versions.json');
   const native = existsSync(nativePath) ? JSON.parse(readFileSync(nativePath, 'utf8')) : undefined;
   return {
+    packages,
     version,
     tag: `v${version}`,
     prerelease: isPrerelease(version),
@@ -94,6 +100,43 @@ function releaseExists(tag) {
   }
 }
 
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/** The registry's integrity string for a file: `sha512-<base64>`, as npm records it for a tarball. */
+export const integrityOf = (file) => `sha512-${createHash('sha512').update(readFileSync(file)).digest('base64')}`;
+
+/**
+ * Refuses unless npm has, for each package at this version, exactly the tarball about to be attached. A version
+ * that is not visible yet (E404, the registry takes minutes) is retried; any other failure is an error.
+ */
+async function verifyPublished(packages, version, tarballDir) {
+  const attempts = Number(process.env.VERIFY_ATTEMPTS ?? 12);
+  const delay = Number(process.env.VERIFY_RETRY_DELAY_MS ?? 20000);
+  for (const { json } of packages) {
+    const file = join(resolve(tarballDir), `${json.name.replace('@', '').replace('/', '-')}-${version}.tgz`);
+    if (!existsSync(file)) throw new Error(`${json.name}: ${file} is missing from the tarballs`);
+    const expected = integrityOf(file);
+    let seen;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        seen = run('npm', ['view', `${json.name}@${version}`, 'dist.integrity', '--prefer-online']).trim();
+        break;
+      } catch (error) {
+        const text = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+        if (!/E404|not found/i.test(text)) throw error;
+        if (attempt === attempts) throw new Error(`${json.name}@${version} is not visible on npm after ${attempts} attempts`);
+        await sleep(delay);
+      }
+    }
+    if (seen !== expected) {
+      throw new Error(
+        `${json.name}@${version} on npm (${seen}) is not the tarball this run packed (${expected}): the version was published from a different commit. Not creating a release.`,
+      );
+    }
+    console.log(`verified ${json.name}@${version} matches the tarball`);
+  }
+}
+
 /** Whether an unpublished (draft) release for the tag exists: `gh release view` only finds published ones. */
 function draftExists(tag) {
   const releases = JSON.parse(run('gh', ['release', 'list', '--limit', '200', '--json', 'tagName,isDraft']) || '[]');
@@ -109,7 +152,7 @@ if (isEntryPoint(import.meta.url)) {
     console.error('--sha <40-hex commit> is required');
     process.exit(2);
   }
-  const { version, tag, prerelease, notes } = plan({ npmTags });
+  const { packages, version, tag, prerelease, notes } = plan({ npmTags });
   const assets = tarballDir
     ? readdirSync(resolve(tarballDir))
         .filter((f) => f.endsWith('.tgz'))
@@ -131,6 +174,16 @@ if (isEntryPoint(import.meta.url)) {
   // release for the tag would be wrong and deleting someone's draft is not this script's call: stop and say so.
   if (draftExists(tag)) {
     console.error(`a draft release for ${tag} exists (an earlier run did not finish): publish or delete it, then re-run.`);
+    process.exit(1);
+  }
+  if (!tarballDir) {
+    console.error('--tarballs <dir> is required for a real release: it is what gets attached and verified against npm');
+    process.exit(2);
+  }
+  try {
+    await verifyPublished(packages, version, tarballDir);
+  } catch (error) {
+    console.error(error.message);
     process.exit(1);
   }
   const tagged = remoteTagCommit(tag);

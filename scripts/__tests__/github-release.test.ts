@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,14 +12,19 @@ import { join } from 'node:path';
 const repoScripts = join(__dirname, '..');
 const SHA = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);
+// Both fake tarballs are empty files.
+const EMPTY_INTEGRITY = `sha512-${createHash('sha512').update('').digest('base64')}`;
 
 interface Setup {
   versions?: [string, string];
   releaseExists?: boolean;
   releaseLookupFails?: boolean;
   draftExists?: boolean;
-  remoteTag?: string; // commit the remote tag points at; '' = no tag
+  remoteTag?: string; // the sha `git ls-remote` prints on refs/tags/<tag>; '' = no tag
+  remoteTagDeref?: string; // the sha it prints on refs/tags/<tag>^{} (an annotated tag's commit)
+  npm?: 'match' | 'mismatch' | 'notfound' | 'late' | 'error'; // what `npm view ... dist.integrity` answers (default match)
   args?: string[];
+  npmTags?: string;
   tarballs?: boolean;
 }
 
@@ -45,8 +51,8 @@ function run(setup: Setup = {}) {
   const tarballs = join(dir, 'tarballs');
   mkdirSync(tarballs);
   if (setup.tarballs !== false) {
-    writeFileSync(join(tarballs, 'bugsee-react-native-7.tgz'), '');
-    writeFileSync(join(tarballs, 'bugsee-react-native-feedback-7.tgz'), '');
+    writeFileSync(join(tarballs, `bugsee-react-native-${versions[0]}.tgz`), '');
+    writeFileSync(join(tarballs, `bugsee-react-native-feedback-${versions[1]}.tgz`), '');
   }
   const log = join(dir, 'calls.log');
   const bin = join(dir, 'bin');
@@ -71,13 +77,33 @@ exit 0
     join(bin, 'git'),
     `#!/bin/sh
 { printf 'git'; for a in "$@"; do printf ' %s' "$a"; done; echo; } >> "${log}"
-if [ "$1" = "ls-remote" ] && [ -n "$STUB_REMOTE_TAG" ]; then printf '%s\\trefs/tags/%s\\n' "$STUB_REMOTE_TAG" "$4" | sed 's#refs/tags/refs/tags/#refs/tags/#'; fi
+if [ "$1" = "ls-remote" ]; then
+  tag="\${4#refs/tags/}"
+  [ -n "$STUB_REMOTE_TAG" ] && printf '%s\trefs/tags/%s\n' "$STUB_REMOTE_TAG" "$tag"
+  [ -n "$STUB_REMOTE_TAG_DEREF" ] && printf '%s\trefs/tags/%s^{}\n' "$STUB_REMOTE_TAG_DEREF" "$tag"
+fi
 exit 0
 `,
   );
+  writeFileSync(
+    join(bin, 'npm'),
+    `#!/bin/sh
+{ printf 'npm'; for a in "$@"; do printf ' %s' "$a"; done; echo; } >> "${log}"
+count_file="${dir}/npm-count"
+n=$(cat "$count_file" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$count_file"
+case "$STUB_NPM" in
+  mismatch) echo "sha512-DIFFERENT"; exit 0;;
+  notfound) echo "npm error code E404" >&2; exit 1;;
+  error) echo "npm error code E503" >&2; exit 1;;
+  late) if [ "$n" -le 2 ]; then echo "npm error code E404" >&2; exit 1; fi; echo "${EMPTY_INTEGRITY}"; exit 0;;
+  *) echo "${EMPTY_INTEGRITY}"; exit 0;;
+esac
+`,
+  );
+  chmodSync(join(bin, 'npm'), 0o755);
   chmodSync(join(bin, 'gh'), 0o755);
   chmodSync(join(bin, 'git'), 0o755);
-  const args = setup.args ?? ['--sha', SHA, '--tarballs', tarballs, '--npm-tags', 'beta,latest'];
+  const args = setup.args ?? ['--sha', SHA, '--tarballs', tarballs, '--npm-tags', setup.npmTags ?? 'beta,latest'];
   const result = spawnSync('node', [join(root, 'scripts', 'github-release.mjs'), ...args], {
     cwd: root,
     encoding: 'utf8',
@@ -87,6 +113,10 @@ exit 0
       STUB_RELEASE_EXISTS: setup.releaseExists ? '1' : '',
       STUB_LOOKUP_FAILS: setup.releaseLookupFails ? '1' : '',
       STUB_REMOTE_TAG: setup.remoteTag ?? '',
+      STUB_REMOTE_TAG_DEREF: setup.remoteTagDeref ?? '',
+      STUB_NPM: setup.npm ?? 'match',
+      VERIFY_ATTEMPTS: '4',
+      VERIFY_RETRY_DELAY_MS: '10',
       STUB_DRAFT_EXISTS: setup.draftExists ? '1' : '',
     },
   });
@@ -105,8 +135,8 @@ describe('github-release.mjs', () => {
     expect(create).toContain(`--target ${SHA}`);
     expect(create).toContain('--prerelease');
     expect(create).toContain('--generate-notes');
-    expect(create).toContain('bugsee-react-native-7.tgz');
-    expect(create).toContain('bugsee-react-native-feedback-7.tgz');
+    expect(create).toContain('bugsee-react-native-7.0.0-beta3.tgz');
+    expect(create).toContain('bugsee-react-native-feedback-7.0.0-beta3.tgz');
   });
 
   it('puts the packages, dist-tags and native pins in the notes', () => {
@@ -145,7 +175,7 @@ describe('github-release.mjs', () => {
   });
 
   it('lists each dist-tag once in the notes', () => {
-    const r = run({ args: ['--sha', SHA, '--npm-tags', 'beta,latest,beta,'] });
+    const r = run({ npmTags: 'beta,latest,beta,' });
     const notes = (creates(r.calls)[0] ?? '').split('--notes ')[1] ?? '';
     expect(notes.match(/`beta`/g)).toHaveLength(1);
   });
@@ -162,6 +192,56 @@ describe('github-release.mjs', () => {
     expect(r.status).toBe(0);
     expect(creates(r.calls)).toHaveLength(1);
     expect(r.stdout).toContain('tag already existed at this commit');
+  });
+
+  it('verifies each tarball against npm before creating anything', () => {
+    const r = run();
+    expect(r.calls.filter((c) => c.startsWith('npm view'))).toHaveLength(2);
+    expect(r.stdout).toContain('verified @bugsee/react-native@7.0.0-beta3');
+  });
+
+  it('refuses, creating nothing, when npm has a different tarball for the version', () => {
+    const r = run({ npm: 'mismatch' });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('published from a different commit');
+    expect(creates(r.calls)).toEqual([]);
+  });
+
+  it('retries a version npm does not show yet, then succeeds', () => {
+    const r = run({ npm: 'late' });
+    expect(r.status).toBe(0);
+    expect(creates(r.calls)).toHaveLength(1);
+  });
+
+  it('gives up, creating nothing, when the version never shows up on npm', () => {
+    const r = run({ npm: 'notfound' });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('not visible on npm');
+    expect(creates(r.calls)).toEqual([]);
+  });
+
+  it('does not retry an npm failure that is not "not found"', () => {
+    const r = run({ npm: 'error' });
+    expect(r.status).toBe(1);
+    expect(r.calls.filter((c) => c.startsWith('npm view'))).toHaveLength(1);
+    expect(creates(r.calls)).toEqual([]);
+  });
+
+  it('reuses an annotated tag whose commit matches (the tag object has its own sha)', () => {
+    const r = run({ remoteTag: OTHER, remoteTagDeref: SHA });
+    expect(r.status).toBe(0);
+    expect(creates(r.calls)).toHaveLength(1);
+  });
+
+  it('fails when an annotated tag points at a different commit, whatever its own sha is', () => {
+    const r = run({ remoteTag: SHA, remoteTagDeref: OTHER });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('never moved');
+    expect(creates(r.calls)).toEqual([]);
+  });
+
+  it('requires the tarballs for a real release', () => {
+    expect(run({ args: ['--sha', SHA] }).status).toBe(2);
   });
 
   it('refuses packages that disagree on the version', () => {
