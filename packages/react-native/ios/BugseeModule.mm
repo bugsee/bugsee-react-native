@@ -447,6 +447,8 @@ static void BGSRNSetAttribute(NSString *name,
 /// SDK has no timeout, so the wrapper arms its own (`BGSRNFilterDeadlineMs`,
 /// fail closed): past it the event is dropped and a late reply is a no-op.
 @interface BGSRNNetworkFilterPending : NSObject
+/// The wrapper's 9 s deadline; cancelled when the request is taken.
+@property (nonatomic, copy, nullable) dispatch_block_t deadline;
 @property (nonatomic, strong) BugseeNetworkEvent *event;
 @property (nonatomic, copy) BugseeNetworkFilterDecisionBlock decision;
 @property (nonatomic, weak) BugseeModule *owner;
@@ -467,24 +469,6 @@ static id BGSRNNetworkFilterLock(void) {
     BGSRNNetworkFilterPendingTable = [NSMutableDictionary dictionary];
   });
   return lock;
-}
-
-/// Drops the event if JS has not answered `requestId` by
-/// `BGSRNFilterDeadlineMs`. The SDK has no timeout of its own on iOS, so this
-/// is what keeps a callback that never settles from holding its request
-/// until the process dies. `BGSRNTakePendingFilter` is the once-guard: a
-/// reply that got there first leaves this nothing to do, and a reply that
-/// comes after finds nothing. Fails closed: the decision is `nil`, never the
-/// original.
-static void BGSRNArmNetworkFilterDeadline(NSString *requestId) {
-  id lock = BGSRNNetworkFilterLock();
-  BGSRNArmFilterDeadline(BGSRNFilterDeadlineMs,
-                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-    BGSRNNetworkFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNNetworkFilterPendingTable, lock, requestId);
-    if (item.decision != nil) {
-      item.decision(nil);
-    }
-  });
 }
 
 /// Answers nil for every request `module` still holds, which drops the event.
@@ -509,6 +493,8 @@ static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
 
 
 @interface BGSRNLogFilterPending : NSObject
+/// The wrapper's 9 s deadline; cancelled when the request is taken.
+@property (nonatomic, copy, nullable) dispatch_block_t deadline;
 @property (nonatomic, strong) BugseeLogEvent *event;
 @property (nonatomic, copy) BugseeLogFilterDecisionBlock decision;
 @property (nonatomic, weak) BugseeModule *owner;
@@ -531,24 +517,6 @@ static id BGSRNLogFilterLock(void) {
     BGSRNLogFilterPendingTable = [NSMutableDictionary dictionary];
   });
   return lock;
-}
-
-/// Drops the line if JS has not answered `requestId` by
-/// `BGSRNFilterDeadlineMs`. The SDK has no timeout of its own on iOS, so this
-/// is what keeps a callback that never settles from holding its request
-/// until the process dies. `BGSRNTakePendingFilter` is the once-guard: a
-/// reply that got there first leaves this nothing to do, and a reply that
-/// comes after finds nothing. Fails closed: the decision is `nil`, never the
-/// original.
-static void BGSRNArmLogFilterDeadline(NSString *requestId) {
-  id lock = BGSRNLogFilterLock();
-  BGSRNArmFilterDeadline(BGSRNFilterDeadlineMs,
-                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-    BGSRNLogFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNLogFilterPendingTable, lock, requestId);
-    if (item.decision != nil) {
-      item.decision(nil);
-    }
-  });
 }
 
 /// Answers `nil` for every request `module` still holds, which drops the line.
@@ -642,18 +610,14 @@ static void BGSRNInstallLogEventFilter(void) {
         requestId = [NSString stringWithFormat:@"%lld", BGSRNLogFilterNextId];
         BGSRNLogFilterPendingTable[requestId] = item;
       }
-      BGSRNArmLogFilterDeadline(requestId);
+      BGSRNArmPendingFilterDeadline(
+          (NSMutableDictionary *)BGSRNLogFilterPendingTable,
+          BGSRNLogFilterLock(),
+          requestId);
       const BOOL delivered = [module emitLogFilterRequest:requestId line:line];
       if (!delivered) {
-        BugseeLogFilterDecisionBlock drop = nil;
-        @synchronized (BGSRNLogFilterLock()) {
-          BGSRNLogFilterPending *removed = BGSRNLogFilterPendingTable[requestId];
-          [BGSRNLogFilterPendingTable removeObjectForKey:requestId];
-          drop = removed.decision;
-        }
-        if (drop != nil) {
-          drop(nil);
-        }
+        BGSRNDropPendingFilter((NSMutableDictionary *)BGSRNLogFilterPendingTable,
+                                  BGSRNLogFilterLock(), requestId);
       }
     }];
 }
@@ -664,6 +628,8 @@ static void BGSRNInstallLogEventFilter(void) {
 /// the wrapper arms `BGSRNFilterDeadlineMs`, fail closed: past it the crumb
 /// is dropped and a late reply is a no-op.
 @interface BGSRNBreadcrumbFilterPending : NSObject
+/// The wrapper's 9 s deadline; cancelled when the request is taken.
+@property (nonatomic, copy, nullable) dispatch_block_t deadline;
 @property (nonatomic, strong) id<BGSBreadcrumb> breadcrumb;
 @property (nonatomic, copy) BugseeBreadcrumbFilterDecisionBlock decision;
 @property (nonatomic, weak) BugseeModule *owner;
@@ -692,24 +658,6 @@ static id BGSRNBreadcrumbFilterLock(void) {
     BGSRNBreadcrumbFilterPendingTable = [NSMutableDictionary dictionary];
   });
   return lock;
-}
-
-/// Drops the crumb if JS has not answered `requestId` by
-/// `BGSRNFilterDeadlineMs`. The SDK has no timeout of its own on iOS, so this
-/// is what keeps a callback that never settles from holding its request
-/// until the process dies. `BGSRNTakePendingFilter` is the once-guard: a
-/// reply that got there first leaves this nothing to do, and a reply that
-/// comes after finds nothing. Fails closed: the decision is `nil`, never the
-/// original.
-static void BGSRNArmBreadcrumbFilterDeadline(NSString *requestId) {
-  id lock = BGSRNBreadcrumbFilterLock();
-  BGSRNArmFilterDeadline(BGSRNFilterDeadlineMs,
-                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-    BGSRNBreadcrumbFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable, lock, requestId);
-    if (item.decision != nil) {
-      item.decision(nil);
-    }
-  });
 }
 
 /// Answers `nil` for every request `module` still holds, which drops the crumb.
@@ -1698,18 +1646,14 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           requestId = [NSString stringWithFormat:@"%lld", BGSRNNetworkFilterNextId];
           BGSRNNetworkFilterPendingTable[requestId] = item;
         }
-        BGSRNArmNetworkFilterDeadline(requestId);
+        BGSRNArmPendingFilterDeadline(
+            (NSMutableDictionary *)BGSRNNetworkFilterPendingTable,
+            BGSRNNetworkFilterLock(),
+            requestId);
         const BOOL delivered = [module emitNetworkFilterRequest:requestId eventJson:eventJson];
         if (!delivered) {
-          BugseeNetworkFilterDecisionBlock drop = nil;
-          @synchronized (BGSRNNetworkFilterLock()) {
-            BGSRNNetworkFilterPending *removed = BGSRNNetworkFilterPendingTable[requestId];
-            [BGSRNNetworkFilterPendingTable removeObjectForKey:requestId];
-            drop = removed.decision;
-          }
-          if (drop != nil) {
-            drop(nil);
-          }
+          BGSRNDropPendingFilter((NSMutableDictionary *)BGSRNNetworkFilterPendingTable,
+                                    BGSRNNetworkFilterLock(), requestId);
         }
   }];
   return @YES;
@@ -1735,13 +1679,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   if (requestId == nil) {
     return;
   }
-  BGSRNNetworkFilterPending *item = nil;
-  @synchronized (BGSRNNetworkFilterLock()) {
-    item = BGSRNNetworkFilterPendingTable[requestId];
-    if (item != nil) {
-      [BGSRNNetworkFilterPendingTable removeObjectForKey:requestId];
-    }
-  }
+  BGSRNNetworkFilterPending *item =
+      BGSRNTakePendingFilter(
+          (NSMutableDictionary *)BGSRNNetworkFilterPendingTable,
+          BGSRNNetworkFilterLock(),
+          requestId);
   if (item.decision == nil) {
     return;
   }
@@ -1802,18 +1744,17 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 
 /// `line` nil drops. A string is written onto the same event, so the level
 /// and the timestamp stay. If the write does not stick, the line is dropped
-/// rather than kept unredacted. A second reply is a no-op.
+/// rather than kept unredacted. A second reply is a no-op, and so is a reply
+/// after `BGSRNFilterDeadlineMs`: the deadline already dropped the line.
 - (void)replyLogFilter:(NSString *)requestId line:(NSString * _Nullable)line {
   if (requestId == nil) {
     return;
   }
-  BGSRNLogFilterPending *item = nil;
-  @synchronized (BGSRNLogFilterLock()) {
-    item = BGSRNLogFilterPendingTable[requestId];
-    if (item != nil) {
-      [BGSRNLogFilterPendingTable removeObjectForKey:requestId];
-    }
-  }
+  BGSRNLogFilterPending *item =
+      BGSRNTakePendingFilter(
+          (NSMutableDictionary *)BGSRNLogFilterPendingTable,
+          BGSRNLogFilterLock(),
+          requestId);
   if (item.decision == nil) {
     return;
   }
@@ -1883,7 +1824,10 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           requestId = [NSString stringWithFormat:@"%lld", BGSRNBreadcrumbFilterNextId];
           BGSRNBreadcrumbFilterPendingTable[requestId] = item;
         }
-        BGSRNArmBreadcrumbFilterDeadline(requestId);
+        BGSRNArmPendingFilterDeadline(
+            (NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable,
+            BGSRNBreadcrumbFilterLock(),
+            requestId);
         NSString *manualAddId = nil;
         @synchronized (BGSRNBreadcrumbFilterLock()) {
           manualAddId = BGSRNBreadcrumbManualAddId;
@@ -1899,15 +1843,8 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           }
         }
         if (!delivered) {
-          BugseeBreadcrumbFilterDecisionBlock drop = nil;
-          @synchronized (BGSRNBreadcrumbFilterLock()) {
-            BGSRNBreadcrumbFilterPending *removed = BGSRNBreadcrumbFilterPendingTable[requestId];
-            [BGSRNBreadcrumbFilterPendingTable removeObjectForKey:requestId];
-            drop = removed.decision;
-          }
-          if (drop != nil) {
-            drop(nil);
-          }
+          BGSRNDropPendingFilter((NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable,
+                                    BGSRNBreadcrumbFilterLock(), requestId);
         }
       }];
     return @YES;
@@ -1960,13 +1897,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   if (requestId == nil) {
     return;
   }
-  BGSRNBreadcrumbFilterPending *item = nil;
-  @synchronized (BGSRNBreadcrumbFilterLock()) {
-    item = BGSRNBreadcrumbFilterPendingTable[requestId];
-    if (item != nil) {
-      [BGSRNBreadcrumbFilterPendingTable removeObjectForKey:requestId];
-    }
-  }
+  BGSRNBreadcrumbFilterPending *item =
+      BGSRNTakePendingFilter(
+          (NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable,
+          BGSRNBreadcrumbFilterLock(),
+          requestId);
   if (item.decision == nil) {
     return;
   }

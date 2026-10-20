@@ -259,10 +259,10 @@ export interface Spec extends TurboModule {
    * `requestId` is native-minted and never reused within a process.
    * `eventJson` is the event (`setNetworkEventFilter`'s keep-value is the
    * event object on both SDKs, not a string). JS answers with
-   * {@link replyNetworkFilter}. A request not answered within 9 s is
-   * dropped by the native bridge on both platforms (Android's SDK drops at
-   * 10 s; iOS's SDK has no deadline, so the bridge supplies one); a later
-   * reply is ignored. Nothing here passes the original through.
+   * {@link replyNetworkFilter}. An answer after 9 s is ignored. iOS: the
+   * bridge drops the event at 9 s (the SDK has no deadline). Android: the
+   * bridge stops waiting at 9 s and the SDK drops the event at 10 s.
+   * Nothing here passes the original through.
    */
   readonly onNetworkFilterRequest: CodegenTypes.EventEmitter<{ requestId: string; eventJson: string }>;
   /**
@@ -297,9 +297,9 @@ export interface Spec extends TurboModule {
    *
    * `requestId` is native-minted and never reused within a process. `line`
    * is the text the SDK would store. JS answers with {@link replyLogFilter}.
-   * A request not answered within 9 s is dropped by the native bridge on
-   * both platforms (Android's SDK drops at 10 s; iOS's SDK has no
-   * deadline, so the bridge supplies one); a later reply is ignored.
+   * An answer after 9 s is ignored. iOS: the bridge drops the line at 9 s
+   * (the SDK has no deadline). Android: the bridge stops waiting at 9 s and
+   * the SDK drops the line at 10 s.
    */
   readonly onLogFilterRequest: CodegenTypes.EventEmitter<{ requestId: string; line: string }>;
   /**
@@ -316,8 +316,9 @@ export interface Spec extends TurboModule {
   /**
    * Answers one {@link onLogFilterRequest}. `line` is the replacement to
    * keep; `null` drops the line. A second reply for the same `requestId` is
-   * a no-op. Not answering within 9 s drops the line, and a later reply is
-   * ignored; nothing passes the original through.
+   * a no-op. Not answering drops the line (iOS: the bridge at 9 s; Android: the
+   * SDK at 10 s, the bridge having stopped waiting at 9 s), and a later
+   * reply is ignored; nothing passes the original through.
    */
   replyLogFilter(requestId: string, line: string | null): void;
 

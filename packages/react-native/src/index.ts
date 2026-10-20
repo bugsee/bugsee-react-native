@@ -483,8 +483,9 @@ class Bugsee {
    * replacement string. `null` or `undefined` drops the line. The native SDK
    * is what invokes the filter; the callback runs on a later turn, and this
    * method does not wait for it. A callback that throws, rejects, or does
-   * not settle within 9 s drops the line, and a late answer is ignored. It is
-   * not passed through.
+   * not settle within 9 s drops the line, and a late answer is ignored (iOS:
+   * the bridge drops at 9 s; Android: the bridge stops waiting at 9 s and the
+   * SDK drops at 10 s). It is not passed through.
    */
   setLogFilter(callback?: LogFilter | null): void {
     installLogFilter(callback);
@@ -517,7 +518,9 @@ class Bugsee {
    *
    * The callback runs on a later turn. This method does not wait for it. A
    * callback that throws, rejects, or does not settle within 9 s drops the
-   * crumb, and a late answer is ignored. The original is not passed through. A crumb
+   * crumb, and a late answer is ignored. On both platforms the bridge
+   * supplies that deadline: neither SDK has one. The original is not passed
+   * through. A crumb
    * already passed to `addBreadcrumb` is still offered to the callback that
    * was installed for it when this is cleared, or replaced with another
    * function, on that same turn.

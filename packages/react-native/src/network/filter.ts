@@ -6,10 +6,9 @@ import NativeBugsee from '../NativeBugsee';
  * The native keep-value is the event object (`Callback1<NetworkEvent>` on
  * Android, `BugseeNetworkFilterDecisionBlock` on iOS), so a replacement is
  * that object — not a string. `null` and `undefined` drop it. A promise is
- * waited on, for 9 s: the native bridge drops the event if the filter has
- * not settled by then, on both platforms, and ignores a later answer.
- * (Android's SDK drops at 10 s; iOS's has no deadline, so the bridge supplies
- * the 9 s.) This function does not add a timeout of its own: a timeout here
+ * waited on, for at most 9 s: an answer after that is ignored. On iOS the
+ * bridge drops the event at 9 s (the SDK has no deadline). On Android the
+ * bridge stops waiting at 9 s and the SDK drops the event at 10 s. This function does not add a timeout of its own: a timeout here
  * that then passed the original event would leak exactly what the filter
  * exists to remove.
  */
@@ -99,7 +98,7 @@ export function setNetworkFilter(callback?: NetworkFilter | null): void {
  * A key the snapshot omitted stays omitted: a `null` the callback wrote
  * for that key is left out of the reply, so `body: event.body ?? null`
  * does not clear a body the snapshot never had. A callback that does
- * not settle within 9 s is dropped natively, and its late answer ignored.
+ * not settle within 9 s drops the event, and its late answer is ignored.
  * Neither path replies with the original event.
  */
 function onNetworkFilterRequest(event: { requestId: string; eventJson: string }): void {

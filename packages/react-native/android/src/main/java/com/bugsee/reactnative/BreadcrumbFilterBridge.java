@@ -39,8 +39,9 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>What this bridge owns is its own pending request. It forgets one that
  * JS has not answered by {@link #DEADLINE_MS} and passes {@code null} to the
- * SDK, which discards the crumb: the same 9 s the log and network bridges
- * use, failing closed. A timer that passed the original crumb would leak
+ * SDK, which discards the crumb, failing closed. (The log and network bridges
+ * use the same 9 s, but only stop waiting then, without calling the callback:
+ * their SDK providers drop at 10 s themselves.) A timer that passed the original crumb would leak
  * exactly what the filter exists to redact. A reply after the deadline finds
  * nothing pending and is a no-op.
  *
@@ -87,7 +88,7 @@ final class BreadcrumbFilterBridge {
         @NonNull final Breadcrumb crumb;
         @NonNull final Callback1<Breadcrumb> callback;
         @NonNull final Sink owner;
-        @Nullable Cancellable deadline;
+        @Nullable volatile Cancellable deadline;
 
         Pending(
                 @NonNull final String id,

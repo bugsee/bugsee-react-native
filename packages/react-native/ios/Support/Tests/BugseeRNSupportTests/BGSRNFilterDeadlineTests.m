@@ -1,98 +1,189 @@
 @import XCTest;
 @import BugseeRNSupport;
 
+/// Shaped like the module's pending classes: the SDK's decision block, and
+/// the wrapper's deadline token.
+@interface BGSRNFakePendingFilter : NSObject
+@property (nonatomic, copy, nullable) void (^decision)(id _Nullable);
+@property (nonatomic, copy, nullable) dispatch_block_t deadline;
+@end
+@implementation BGSRNFakePendingFilter
+@end
+
 /// The wrapper's own deadline for a filter JS never answers. The SDK has none
 /// on iOS, so without it a hung callback keeps its request, and the event the
 /// request retains, until the process dies.
 @interface BGSRNFilterDeadlineTests : XCTestCase
+@property (nonatomic, strong) NSMutableDictionary<NSString *, id> *table;
+@property (nonatomic, strong) id lock;
+@property (nonatomic, strong) NSMutableArray *answers;
 @end
 
 @implementation BGSRNFilterDeadlineTests
+
+- (void)setUp {
+  self.table = [NSMutableDictionary dictionary];
+  self.lock = [NSObject new];
+  self.answers = [NSMutableArray array];
+}
+
+/// Pending item whose decision records what it was answered with. `NSNull`
+/// stands for nil, so a drop and a keep can be told apart.
+- (BGSRNFakePendingFilter *)addPending:(NSString *)requestId {
+  BGSRNFakePendingFilter *item = [BGSRNFakePendingFilter new];
+  __weak typeof(self) weakSelf = self;
+  item.decision = ^(id value) {
+    [weakSelf.answers addObject:value ?: [NSNull null]];
+  };
+  self.table[requestId] = item;
+  return item;
+}
 
 /// Same number as Android's log and network bridges.
 - (void)testTheDeadlineIsNineSeconds {
   XCTAssertEqual(BGSRNFilterDeadlineMs, 9000);
 }
 
-- (void)testExpireRunsAfterTheDeadlineAndNotBefore {
+- (void)testArmedBlockRunsOnTheQueueOnlyAfterTheDeadline {
+  dispatch_queue_t queue = dispatch_queue_create("test.deadline", DISPATCH_QUEUE_SERIAL);
   XCTestExpectation *fired = [self expectationWithDescription:@"expire"];
-  __block BOOL early = YES;
-  __block BOOL ranEarly = NO;
   CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
-  BGSRNArmFilterDeadline(100, dispatch_get_main_queue(), ^{
-    ranEarly = early;
-    XCTAssertGreaterThanOrEqual(CFAbsoluteTimeGetCurrent() - start, 0.09);
+  __block CFAbsoluteTime elapsed = 0;
+  BGSRNArmFilterDeadline(150, queue, ^{
+    elapsed = CFAbsoluteTimeGetCurrent() - start;
     [fired fulfill];
   });
-  early = NO;
-  XCTAssertFalse(ranEarly);
   [self waitForExpectations:@[ fired ] timeout:5];
-  XCTAssertFalse(ranEarly);
+  XCTAssertGreaterThanOrEqual(elapsed, 0.14);
+}
+
+- (void)testACancelledDeadlineNeverRuns {
+  dispatch_queue_t queue = dispatch_queue_create("test.deadline", DISPATCH_QUEUE_SERIAL);
+  __block BOOL ran = NO;
+  dispatch_block_t token = BGSRNArmFilterDeadline(50, queue, ^{
+    ran = YES;
+  });
+  XCTAssertNotNil(token);
+  BGSRNCancelFilterDeadline(token);
+  XCTestExpectation *later = [self expectationWithDescription:@"later"];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC), queue, ^{
+    [later fulfill];
+  });
+  [self waitForExpectations:@[ later ] timeout:5];
+  XCTAssertFalse(ran);
 }
 
 - (void)testArmingWithoutAQueueOrABlockIsANoOp {
-  BGSRNArmFilterDeadline(1, nil, ^{
-    XCTFail(@"no queue");
-  });
-  BGSRNArmFilterDeadline(1, dispatch_get_main_queue(), nil);
+  XCTAssertNil(BGSRNArmFilterDeadline(1, nil, ^{
+  }));
+  XCTAssertNil(BGSRNArmFilterDeadline(1, dispatch_get_main_queue(), nil));
+  BGSRNCancelFilterDeadline(nil);
 }
 
 /// The reply and the deadline race for the same item. Exactly one takes it.
 - (void)testOnlyTheFirstTakeGetsThePendingItem {
-  NSMutableDictionary<NSString *, id> *table = [NSMutableDictionary dictionary];
-  id lock = [NSObject new];
-  table[@"7"] = @"item";
-  table[@"8"] = @"other";
+  self.table[@"7"] = @"item";
+  self.table[@"8"] = @"other";
 
-  XCTAssertEqualObjects(BGSRNTakePendingFilter(table, lock, @"7"), @"item");
-  XCTAssertNil(BGSRNTakePendingFilter(table, lock, @"7"));
-  XCTAssertNil(table[@"7"]);
-  // Another request is untouched.
-  XCTAssertEqualObjects(table[@"8"], @"other");
+  XCTAssertEqualObjects(BGSRNTakePendingFilter(self.table, self.lock, @"7"), @"item");
+  XCTAssertNil(BGSRNTakePendingFilter(self.table, self.lock, @"7"));
+  XCTAssertNil(self.table[@"7"]);
+  XCTAssertEqualObjects(self.table[@"8"], @"other");
 }
 
 - (void)testTakingAnUnknownOrNilRequestReturnsNilAndKeepsTheTable {
-  NSMutableDictionary<NSString *, id> *table = [NSMutableDictionary dictionaryWithObject:@"item" forKey:@"1"];
-  id lock = [NSObject new];
+  self.table[@"1"] = @"item";
 
-  XCTAssertNil(BGSRNTakePendingFilter(table, lock, @"2"));
-  XCTAssertNil(BGSRNTakePendingFilter(table, lock, nil));
-  XCTAssertEqual(table.count, 1u);
+  XCTAssertNil(BGSRNTakePendingFilter(self.table, self.lock, @"2"));
+  XCTAssertNil(BGSRNTakePendingFilter(self.table, self.lock, nil));
+  XCTAssertEqual(self.table.count, 1u);
 }
 
-/// The way the module uses it: the deadline takes the item and drops it, and
-/// a reply after that finds nothing.
-- (void)testADeadlineThatTakesTheItemLeavesALateReplyNothing {
-  NSMutableDictionary<NSString *, id> *table = [NSMutableDictionary dictionary];
-  id lock = [NSObject new];
-  table[@"1"] = @"item";
-  XCTestExpectation *expired = [self expectationWithDescription:@"expired"];
-  __block id dropped = nil;
-  BGSRNArmFilterDeadline(10, dispatch_get_main_queue(), ^{
-    dropped = BGSRNTakePendingFilter(table, lock, @"1");
-    [expired fulfill];
+/// A reply takes the item through the same call, so it stops the timer too.
+- (void)testTakingAnItemCancelsItsDeadline {
+  BGSRNFakePendingFilter *item = [self addPending:@"1"];
+  __block BOOL ran = NO;
+  dispatch_queue_t queue = dispatch_queue_create("test.deadline", DISPATCH_QUEUE_SERIAL);
+  item.deadline = BGSRNArmFilterDeadline(50, queue, ^{
+    ran = YES;
   });
-  [self waitForExpectations:@[ expired ] timeout:5];
 
-  XCTAssertEqualObjects(dropped, @"item");
-  XCTAssertNil(BGSRNTakePendingFilter(table, lock, @"1"));
+  XCTAssertEqual(BGSRNTakePendingFilter(self.table, self.lock, @"1"), item);
+
+  XCTestExpectation *later = [self expectationWithDescription:@"later"];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC), queue, ^{
+    [later fulfill];
+  });
+  [self waitForExpectations:@[ later ] timeout:5];
+  XCTAssertFalse(ran);
 }
 
-/// The reply wins: the deadline then finds nothing and must not drop.
+/// What the deadline does to a request: answer the SDK's decision with nil,
+/// never with the item, and only once.
+- (void)testDroppingAnswersTheDecisionWithNilExactlyOnce {
+  [self addPending:@"1"];
+  [self addPending:@"2"];
+
+  XCTAssertTrue(BGSRNDropPendingFilter(self.table, self.lock, @"1"));
+  XCTAssertFalse(BGSRNDropPendingFilter(self.table, self.lock, @"1"));
+
+  XCTAssertEqual(self.answers.count, 1u);
+  XCTAssertEqualObjects(self.answers[0], [NSNull null]);
+  XCTAssertNil(self.table[@"1"]);
+  XCTAssertNotNil(self.table[@"2"]);
+}
+
+- (void)testDroppingAnUnknownRequestAnswersNothing {
+  XCTAssertFalse(BGSRNDropPendingFilter(self.table, self.lock, @"9"));
+  XCTAssertEqual(self.answers.count, 0u);
+}
+
+- (void)testDroppingAnItemWithoutADecisionStillRemovesIt {
+  self.table[@"1"] = [BGSRNFakePendingFilter new];
+
+  XCTAssertTrue(BGSRNDropPendingFilter(self.table, self.lock, @"1"));
+  XCTAssertNil(self.table[@"1"]);
+}
+
+/// The module's path end to end: armed on the request, the deadline passes,
+/// the decision gets nil, and a reply afterwards finds nothing.
+- (void)testAnArmedRequestIsDroppedAtTheDeadlineAndALateReplyFindsNothing {
+  BGSRNFakePendingFilter *item = [self addPending:@"1"];
+  dispatch_queue_t queue = dispatch_queue_create("test.deadline", DISPATCH_QUEUE_SERIAL);
+
+  BGSRNArmPendingFilterDeadlineAfter(50, queue, self.table, self.lock, @"1");
+  XCTAssertNotNil(item.deadline);
+  XCTAssertEqual(self.answers.count, 0u);
+
+  XCTestExpectation *later = [self expectationWithDescription:@"later"];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), queue, ^{
+    [later fulfill];
+  });
+  [self waitForExpectations:@[ later ] timeout:5];
+
+  XCTAssertEqual(self.answers.count, 1u);
+  XCTAssertEqualObjects(self.answers[0], [NSNull null]);
+  XCTAssertNil(BGSRNTakePendingFilter(self.table, self.lock, @"1"));
+}
+
+/// The reply wins: its take cancels the timer, so the decision is not
+/// answered a second time with nil.
 - (void)testAReplyBeforeTheDeadlineLeavesTheDeadlineNothing {
-  NSMutableDictionary<NSString *, id> *table = [NSMutableDictionary dictionary];
-  id lock = [NSObject new];
-  table[@"1"] = @"item";
-  XCTestExpectation *expired = [self expectationWithDescription:@"expired"];
-  __block id fromDeadline = @"unset";
-  BGSRNArmFilterDeadline(50, dispatch_get_main_queue(), ^{
-    fromDeadline = BGSRNTakePendingFilter(table, lock, @"1");
-    [expired fulfill];
-  });
-  XCTAssertEqualObjects(BGSRNTakePendingFilter(table, lock, @"1"), @"item");
-  [self waitForExpectations:@[ expired ] timeout:5];
+  [self addPending:@"1"];
+  dispatch_queue_t queue = dispatch_queue_create("test.deadline", DISPATCH_QUEUE_SERIAL);
+  BGSRNArmPendingFilterDeadlineAfter(100, queue, self.table, self.lock, @"1");
 
-  XCTAssertNil(fromDeadline);
+  BGSRNFakePendingFilter *item = BGSRNTakePendingFilter(self.table, self.lock, @"1");
+  item.decision(@"kept");
+
+  XCTestExpectation *later = [self expectationWithDescription:@"later"];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), queue, ^{
+    [later fulfill];
+  });
+  [self waitForExpectations:@[ later ] timeout:5];
+
+  XCTAssertEqual(self.answers.count, 1u);
+  XCTAssertEqualObjects(self.answers[0], @"kept");
 }
 
 @end
