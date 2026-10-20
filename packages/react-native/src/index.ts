@@ -122,9 +122,8 @@ class Bugsee {
   /**
    * Starts the SDK. `options` is the options object from `createDefaultLaunchOptions()` as is, or
    * the plain option map; there is no serialise step to call. Resolves to whether the native side
-   * actually launched —
-   * it can decline (already running, token rejected) without that being an
-   * error the caller should throw on.
+   * launched. It can decline (token rejected) without that being an error the caller should
+   * throw on. When the SDK is already running it resolves `true` and the new options are ignored.
    *
    * Installs the global JS exception handlers (ErrorUtils and unhandled
    * promise rejections). On Hermes, the last caller of

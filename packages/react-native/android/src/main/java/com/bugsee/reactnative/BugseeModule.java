@@ -229,9 +229,10 @@ public class BugseeModule extends NativeBugseeSpec
                 getReactApplicationContext().getApplicationContext(),
                 token,
                 withConfiguredEndpoint(toOptions(options)),
-                // The SDK reports whether it actually started. Declining — it
-                // is already running, or the token was rejected — is a normal
-                // outcome, so it resolves false rather than rejecting.
+                // The SDK reports whether it started. Declining (the token was
+                // rejected) is a normal outcome, so it resolves false rather
+                // than rejecting. When the SDK is already running it reports
+                // success and ignores the new options, so this resolves true.
                 launched -> {
                     // launch can replace the log filter. Put the pass-through
                     // (or the user filter, if one is already on) back.
