@@ -24,6 +24,6 @@ FOUNDATION_EXPORT void BGSRNDeleteCollectedData(BGSRNDeleteSDKCall sdkCall,
                                                 int64_t backstopMs,
                                                 dispatch_queue_t queue,
                                                 void (^resolve)(BOOL success),
-                                                void (^reject)(NSString *code, NSString *message));
+                                                void (^reject)(NSString *code));
 
 NS_ASSUME_NONNULL_END

@@ -28,7 +28,7 @@
           value = success;
           [done fulfill];
         },
-        ^(NSString *code, NSString *message) {
+        ^(NSString *code) {
           XCTFail(@"unexpected reject %@", code);
         });
     [self waitForExpectations:@[ done ] timeout:2];
@@ -53,7 +53,7 @@
         value = success;
         [done fulfill];
       },
-      ^(NSString *code, NSString *message) {
+      ^(NSString *code) {
         XCTFail(@"unexpected reject %@", code);
       });
   [self waitForExpectations:@[ done ] timeout:3];
@@ -70,7 +70,7 @@
       ^(BOOL success) {
         XCTFail(@"must not resolve");
       },
-      ^(NSString *code, NSString *message) {
+      ^(NSString *code) {
         rejectedCode = code;
         [done fulfill];
       });
@@ -93,7 +93,7 @@
       ^(BOOL success) {
         settles += 1;
       },
-      ^(NSString *code, NSString *message) {
+      ^(NSString *code) {
         settles += 1;
         [rejected fulfill];
       });
@@ -122,7 +122,7 @@
         settles += 1;
         XCTAssertTrue(success);
       },
-      ^(NSString *code, NSString *message) {
+      ^(NSString *code) {
         XCTFail(@"unexpected reject");
       });
   dispatch_async(queue, ^{

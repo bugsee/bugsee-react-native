@@ -2703,8 +2703,11 @@ static NSString *BGSRNHexFromColor(UIColor *color) {
         ^(BOOL success) {
           resolve(@(success));
         },
-        ^(NSString *code, NSString *message) {
-          reject(code, message, nil);
+        ^(NSString *code) {
+          reject(code,
+                 @"Bugsee did not report the outcome of deleteCollectedDataOnDevice in time; "
+                 @"the deletion may still finish.",
+                 nil);
         });
   });
 }

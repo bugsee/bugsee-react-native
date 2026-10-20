@@ -8,7 +8,7 @@ void BGSRNDeleteCollectedData(BGSRNDeleteSDKCall sdkCall,
                               int64_t backstopMs,
                               dispatch_queue_t queue,
                               void (^resolve)(BOOL success),
-                              void (^reject)(NSString *code, NSString *message)) {
+                              void (^reject)(NSString *code)) {
   // Every touch of `settled` is on `queue`, which is serial, so a plain flag
   // is enough: the completion and the backstop cannot interleave.
   __block BOOL settled = NO;
@@ -18,9 +18,7 @@ void BGSRNDeleteCollectedData(BGSRNDeleteSDKCall sdkCall,
       return;
     }
     settled = YES;
-    reject(BGSRNDeleteTimeoutCode,
-           @"Bugsee did not report the outcome of deleteCollectedDataOnDevice in time. "
-           @"The deletion may still finish.");
+    reject(BGSRNDeleteTimeoutCode);
   });
 
   sdkCall(^(BOOL success) {
