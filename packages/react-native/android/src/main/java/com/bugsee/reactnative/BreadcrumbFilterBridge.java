@@ -126,8 +126,10 @@ final class BreadcrumbFilterBridge {
     void attach(@NonNull final Sink next) {
         // Disarm before the sink is visible: a request in the gap must not
         // reach a runtime that has not subscribed yet. See armedFor.
-        armedFor.set(null);
-        sink.set(next);
+        withSdkLock(() -> {
+            armedFor.set(null);
+            sink.set(next);
+        });
     }
 
     /**
