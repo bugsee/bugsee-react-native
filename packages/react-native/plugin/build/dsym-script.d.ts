@@ -16,11 +16,11 @@ export declare const TOKEN_GUARD: readonly string[];
  * Looks for the token in ios/.xcode.env and ios/.xcode.env.local, the files
  * the README sends a bare app's `export BUGSEE_APP_TOKEN=...` to for the
  * bundle phase. A GUI Archive does not inherit a shell, so the post-action
- * reads them itself, and only when no earlier source gave a token. The files
- * may also set NODE_BINARY; an executable one from Xcode's own environment
- * wins, as it did before the files were read here; so does a BUGSEE_ENDPOINT
- * the plugin baked in or Xcode's environment already has. Shared with the bare
- * example's scheme (scripts/__tests__/dsym-scheme-post-action.test.ts).
+ * reads them itself, and only when no earlier source gave a token. Each file
+ * is sourced in a subshell that prints the token: a file written for bash, a
+ * syntax error or an `exit` in it cannot stop this script or change its
+ * NODE_BINARY or BUGSEE_ENDPOINT, and the later file (.local) wins. Shared
+ * with the bare example's scheme (scripts/__tests__/dsym-scheme-post-action.test.ts).
  */
 export declare const ENV_FILE_TOKEN: readonly string[];
 /**

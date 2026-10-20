@@ -432,9 +432,18 @@ function relativizeSourceMap(mapText, projectRoot) {
  */
 function stripSourcesContent(mapText) {
   const map = JSON.parse(mapText);
-  if (!('sourcesContent' in map)) return mapText;
-  delete map.sourcesContent;
-  return JSON.stringify(map);
+  let changed = false;
+  const strip = (node) => {
+    if (!node || typeof node !== 'object') return;
+    if ('sourcesContent' in node) {
+      delete node.sourcesContent;
+      changed = true;
+    }
+    // An indexed map keeps its sources in sections[].map.
+    if (Array.isArray(node.sections)) node.sections.forEach((section) => strip(section && section.map));
+  };
+  strip(map);
+  return changed ? JSON.stringify(map) : mapText;
 }
 
 /** On when BUGSEE_STRIP_SOURCES_CONTENT says so. */

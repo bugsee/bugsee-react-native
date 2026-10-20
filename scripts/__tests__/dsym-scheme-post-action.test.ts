@@ -285,6 +285,16 @@ describe('BareExample archive post-action refuses a missing or placeholder token
       expect(result.stdout).toBe(SKIP_PLACEHOLDER);
     });
 
+    it('survives a file with a syntax error or an exit, and one that sets a bad NODE_BINARY or endpoint', () => {
+      for (const bad of ['if [[ -n x ]]; then\n', 'exit 5\n', 'export BUGSEE_ENDPOINT=https://elsewhere.invalid\n']) {
+        const result = withEnvFile(`${bad}export BUGSEE_APP_TOKEN=${token}\n`);
+        // Statements after a bad one may not run; the script must still finish.
+        expect([0]).toContain(result.status);
+      }
+      const result = withEnvFile('export BUGSEE_ENDPOINT=https://elsewhere.invalid\nexport BUGSEE_APP_TOKEN=' + token + '\n');
+      expect(result.invoked).toBe(`token=${token}\n`);
+    });
+
     it("keeps Xcode's executable NODE_BINARY over the file's", () => {
       const result = withEnvFile(`export BUGSEE_APP_TOKEN=${token}\nexport NODE_BINARY=/nonexistent/node\n`);
       expect(result.invoked).toBe(`token=${token}\n`);

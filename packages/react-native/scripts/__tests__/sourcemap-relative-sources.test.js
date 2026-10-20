@@ -282,6 +282,18 @@ fs.writeFileSync(${JSON.stringify(captured)}, JSON.stringify({ p, text: fs.readF
       expect(JSON.parse(seen.text).sourcesContent).toEqual(['const secret = 1;']);
     });
 
+    it('strips the sections of an indexed map too', () => {
+      const { stripSourcesContent } = require('../hermes-sourcemaps');
+      const indexed = JSON.stringify({
+        version: 3,
+        sections: [{ offset: { line: 0, column: 0 }, map: { version: 3, sources: ['a.ts'], sourcesContent: ['x'], mappings: 'AAAA' } }],
+      });
+      const out = JSON.parse(stripSourcesContent(indexed));
+      expect(out.sections[0].map).not.toHaveProperty('sourcesContent');
+      expect(out.sections[0].map.mappings).toBe('AAAA');
+      expect(stripSourcesContent('{"version":3}')).toBe('{"version":3}');
+    });
+
     it('skips the upload, saying why, when the stripped copy cannot be made', () => {
       const mapPath = path.join(dir, 'main.jsbundle.composed.map');
       fs.writeFileSync(mapPath, 'not json');

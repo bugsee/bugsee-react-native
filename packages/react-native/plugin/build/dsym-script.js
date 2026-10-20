@@ -62,31 +62,22 @@ exports.TOKEN_GUARD = [
  * Looks for the token in ios/.xcode.env and ios/.xcode.env.local, the files
  * the README sends a bare app's `export BUGSEE_APP_TOKEN=...` to for the
  * bundle phase. A GUI Archive does not inherit a shell, so the post-action
- * reads them itself, and only when no earlier source gave a token. The files
- * may also set NODE_BINARY; an executable one from Xcode's own environment
- * wins, as it did before the files were read here; so does a BUGSEE_ENDPOINT
- * the plugin baked in or Xcode's environment already has. Shared with the bare
- * example's scheme (scripts/__tests__/dsym-scheme-post-action.test.ts).
+ * reads them itself, and only when no earlier source gave a token. Each file
+ * is sourced in a subshell that prints the token: a file written for bash, a
+ * syntax error or an `exit` in it cannot stop this script or change its
+ * NODE_BINARY or BUGSEE_ENDPOINT, and the later file (.local) wins. Shared
+ * with the bare example's scheme (scripts/__tests__/dsym-scheme-post-action.test.ts).
  */
 exports.ENV_FILE_TOKEN = [
     'if [ -z "$TOKEN" ]; then',
-    '  SAVED_NODE_BINARY="$NODE_BINARY"',
-    '  SAVED_ENDPOINT="$BUGSEE_ENDPOINT"',
     '  for ENV_FILE in "${PROJECT_DIR}/.xcode.env" "${PROJECT_DIR}/.xcode.env.local"; do',
     '    if [ -f "$ENV_FILE" ]; then',
-    '      . "$ENV_FILE"',
+    '      ENV_TOKEN=$( ( . "$ENV_FILE" >/dev/null 2>&1; if [ -n "$BUGSEE_APP_TOKEN" ]; then printf \'%s\' "$BUGSEE_APP_TOKEN"; else printf \'%s\' "$BUGSEE_TOKEN_IOS"; fi ) 2>/dev/null || true )',
+    '      if [ -n "$ENV_TOKEN" ]; then',
+    '        TOKEN="$ENV_TOKEN"',
+    '      fi',
     '    fi',
     '  done',
-    '  TOKEN="$BUGSEE_APP_TOKEN"',
-    '  if [ -z "$TOKEN" ]; then',
-    '    TOKEN="$BUGSEE_TOKEN_IOS"',
-    '  fi',
-    '  if [ -x "$SAVED_NODE_BINARY" ]; then',
-    '    NODE_BINARY="$SAVED_NODE_BINARY"',
-    '  fi',
-    '  if [ -n "$SAVED_ENDPOINT" ]; then',
-    '    BUGSEE_ENDPOINT="$SAVED_ENDPOINT"',
-    '  fi',
     'fi',
 ];
 /**
