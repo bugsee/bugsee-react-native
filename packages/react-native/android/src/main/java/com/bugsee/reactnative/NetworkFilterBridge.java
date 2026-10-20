@@ -188,8 +188,10 @@ final class NetworkFilterBridge {
      * forgotten and the callback is not touched.
      */
     void detach(@NonNull final Sink current) {
-        sink.compareAndSet(current, null);
-        armedFor.compareAndSet(current, null);
+        synchronized (stateLock) {
+            sink.compareAndSet(current, null);
+            armedFor.compareAndSet(current, null);
+        }
         final List<Pending> owned = new ArrayList<>();
         for (final Pending item : pending.values()) {
             if (item.owner == current && pending.remove(item.id, item)) {
