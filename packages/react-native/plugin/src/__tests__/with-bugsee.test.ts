@@ -296,8 +296,9 @@ describe('withBugsee through the Expo mod compiler', () => {
   });
 
   it('names editGradleFiles in the Kotlin refusals, and that option lets a Kotlin project prebuild', async () => {
-    expect(APP_GRADLE_NOT_GROOVY).toContain('"editGradleFiles": false');
-    expect(gradleNotGroovy('android/build.gradle')).toContain('"editGradleFiles": false');
+    for (const message of [APP_GRADLE_NOT_GROOVY, gradleNotGroovy('android/build.gradle')]) {
+      expect(message).toContain('set "editGradleFiles": false in the @bugsee/react-native plugin options and run expo prebuild again');
+    }
     const android = join(projectRoot, 'android');
     for (const [dir, name] of [
       [android, 'settings.gradle'],

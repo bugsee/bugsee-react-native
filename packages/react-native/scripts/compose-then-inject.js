@@ -48,7 +48,7 @@ function fail(message) {
 }
 
 /** Returns the process exit code. */
-function run(argv, env) {
+function run(argv, env, upload = uploadComposedSourceMap) {
   const realCompose = env.BUGSEE_REAL_COMPOSE;
   const bundlePath = env.BUGSEE_JS_BUNDLE;
   const bytecodePath = env.BUGSEE_BYTECODE_BUNDLE;
@@ -92,7 +92,7 @@ function run(argv, env) {
       credentialsPath: env.BUGSEE_CREDENTIALS_FILE,
       env,
     });
-    uploadComposedSourceMap({
+    upload({
       composedMapPath: output,
       enabled: !uploadDisabled(undefined, env),
       configuration: env.CONFIGURATION,

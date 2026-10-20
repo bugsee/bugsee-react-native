@@ -291,7 +291,11 @@ fs.writeFileSync(${JSON.stringify(captured)}, JSON.stringify({ p, text: fs.readF
       const out = JSON.parse(stripSourcesContent(indexed));
       expect(out.sections[0].map).not.toHaveProperty('sourcesContent');
       expect(out.sections[0].map.mappings).toBe('AAAA');
-      expect(stripSourcesContent('{"version":3}')).toBe('{"version":3}');
+      // Unchanged text comes back byte for byte, not re-serialised.
+      const plain = '{ "version": 3, "sections": [ null, {}, { "map": "x" }, { "map": { "version": 3 } } ] }';
+      expect(stripSourcesContent(plain)).toBe(plain);
+      expect(stripSourcesContent('{ "version": 3 }')).toBe('{ "version": 3 }');
+      expect(stripSourcesContent('{ "version": 3, "sourcesContent": [] }')).toBe('{"version":3}');
     });
 
     it('skips the upload, saying why, when the stripped copy cannot be made', () => {
@@ -306,6 +310,7 @@ fs.writeFileSync(${JSON.stringify(captured)}, JSON.stringify({ p, text: fs.readF
         stripSources: true,
       });
       expect(result).toEqual({ status: 'skipped', reason: 'strip-failed' });
+      expect(stderr.mock.calls.join('')).toContain('bugsee: source map upload skipped: could not remove sourcesContent from the map (');
       expect(fs.existsSync(captured)).toBe(false);
     });
 
@@ -313,6 +318,9 @@ fs.writeFileSync(${JSON.stringify(captured)}, JSON.stringify({ p, text: fs.readF
       const { stripSourcesContentRequested } = require('../hermes-sourcemaps');
       expect(stripSourcesContentRequested({ BUGSEE_STRIP_SOURCES_CONTENT: 'true' })).toBe(true);
       expect(stripSourcesContentRequested({ BUGSEE_STRIP_SOURCES_CONTENT: ' 1 ' })).toBe(true);
+      for (const on of ['yes', 'ON', 'True', '1']) {
+        expect(stripSourcesContentRequested({ BUGSEE_STRIP_SOURCES_CONTENT: on })).toBe(true);
+      }
       expect(stripSourcesContentRequested({ BUGSEE_STRIP_SOURCES_CONTENT: 'false' })).toBe(false);
       expect(stripSourcesContentRequested({})).toBe(false);
     });
