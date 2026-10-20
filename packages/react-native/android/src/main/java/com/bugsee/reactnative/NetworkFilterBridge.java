@@ -113,13 +113,14 @@ final class NetworkFilterBridge {
     private final AtomicBoolean installed = new AtomicBoolean();
 
     /**
-     * True once the CURRENT module's JS has installed its filter with
-     * {@code setEnabled(true)}. A reload attaches a new module whose JS has
+     * The module whose JS has installed its filter with
+     * {@code setEnabled(true)}, or null. Compared to the attached sink by
+     * identity, so a stale module cannot arm the new one. A reload attaches a new module whose JS has
      * not subscribed yet, while this bridge (and the SDK's filter) outlive
      * the old runtime. Until JS arms it again, a request would be emitted to
      * nobody, so it is dropped at once instead: fail closed, no wait.
      */
-    private final AtomicBoolean armed = new AtomicBoolean();
+    private final AtomicReference<Sink> armedFor = new AtomicReference<>();
 
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private NetworkFilterBridge() {
@@ -152,14 +153,29 @@ final class NetworkFilterBridge {
     };
 
     void attach(@NonNull final Sink next) {
+        // Disarm before the sink is visible: a request in the gap must not
+        // reach a runtime that has not subscribed yet. See armedFor.
+        armedFor.set(null);
         sink.set(next);
-        // A new module's JS has not subscribed yet; see armed.
-        armed.set(false);
     }
 
-    /** The current module's JS now answers requests. {@link #setEnabled}{@code (true)} calls this. */
+    /**
+     * The module {@code caller}'s JS now answers requests. Ignored unless
+     * {@code caller} is still the attached module: a stale module's late
+     * enable must not arm the new runtime, which has not subscribed.
+     */
+    void arm(@NonNull final Sink caller) {
+        if (sink.get() == caller) {
+            armedFor.set(caller);
+        }
+    }
+
+    /** Arms for whichever module is attached. For tests, which have no module identity of their own. */
     void arm() {
-        armed.set(true);
+        final Sink current = sink.get();
+        if (current != null) {
+            armedFor.set(current);
+        }
     }
 
     /**
@@ -185,8 +201,15 @@ final class NetworkFilterBridge {
 
     /** Installs the filter, or removes it. A second {@code true} is a no-op. */
     void setEnabled(final boolean enabled) {
+        setEnabled(enabled, sink.get());
+    }
+
+    /** As above, on behalf of module {@code caller}; only the attached module can arm. */
+    void setEnabled(final boolean enabled, final Sink caller) {
         if (enabled) {
-            arm();
+            if (caller != null) {
+                arm(caller);
+            }
             if (installed.compareAndSet(false, true)) {
                 Bugsee.setNetworkEventFilter(filter);
             }
@@ -238,7 +261,8 @@ final class NetworkFilterBridge {
             @NonNull final NetworkEvent event,
             @NonNull final Callback1<NetworkEvent> callback
     ) {
-        if (!armed.get()) {
+        final Sink asked = sink.get();
+        if (asked == null || armedFor.get() != asked) {
             drop(callback);
             return;
         }
@@ -264,7 +288,7 @@ final class NetworkFilterBridge {
             drop(callback);
             return;
         }
-        final Sink current = sink.get();
+        final Sink current = asked;
         // A null URL cannot tell a recycled entry (reset nulls the URL) from
         // the one we were asked about, so it is dropped rather than lent.
         if (url == null || current == null) {

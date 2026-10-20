@@ -144,13 +144,7 @@ public class BugseeModule extends NativeBugseeSpec
         ReportHandlerBridge.shared().attach(this);
         DataRequestBridge.shared().attach(dataRequestSink, originTracker::currentOrigin);
         NetworkFilterBridge.shared().attach(this);
-        LogFilterBridge.shared().attach(this);
-        // The echo drop is installed even when the app never calls setLogFilter.
-        // Not setEnabled(false): after a reload that would turn a redaction the
-        // app relied on into a silent pass-through. attach() above disarmed the
-        // bridge, so with a user filter still on, lines are dropped until the new
-        // runtime calls setLogFilter (re-arm) or clears it (pass-through).
-        LogFilterBridge.shared().ensureInstalled();
+        LogFilterBridge.shared().attachModule(this);
         BreadcrumbFilterBridge.shared().attach(this);
     }
 
@@ -659,7 +653,7 @@ public class BugseeModule extends NativeBugseeSpec
      */
     @Override
     public boolean setNetworkFilterEnabled(final boolean enabled) {
-        NetworkFilterBridge.shared().setEnabled(enabled);
+        NetworkFilterBridge.shared().setEnabled(enabled, this);
         return true;
     }
 
@@ -859,7 +853,7 @@ public class BugseeModule extends NativeBugseeSpec
      */
     @Override
     public boolean setLogFilterEnabled(final boolean enabled) {
-        LogFilterBridge.shared().setEnabled(enabled);
+        LogFilterBridge.shared().setEnabled(enabled, this);
         return true;
     }
 
@@ -896,7 +890,7 @@ public class BugseeModule extends NativeBugseeSpec
      */
     @Override
     public boolean setBreadcrumbFilterEnabled(final boolean enabled) {
-        BreadcrumbFilterBridge.shared().setEnabled(enabled);
+        BreadcrumbFilterBridge.shared().setEnabled(enabled, this);
         return true;
     }
 

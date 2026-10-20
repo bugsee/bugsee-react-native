@@ -498,4 +498,26 @@ public class NetworkFilterBridgeTest {
         assertEquals(1, next.ids.size());
         assertEquals(0, callback.runs);
     }
+
+    /** A late enable from the module a reload replaced must not arm the new, unsubscribed runtime. */
+    @Test
+    public void aStaleModulesEnableDoesNotArmTheNewModule() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.arm(old);
+
+        final MutableNetwork ev = new MutableNetwork("https://secret.example/token");
+        final RecordingCallback dropped = new RecordingCallback();
+        bridge.ask(ev, dropped);
+        assertEquals(0, next.ids.size());
+        assertEquals(1, dropped.runs);
+
+        bridge.arm(next);
+        final RecordingCallback asked = new RecordingCallback();
+        bridge.ask(ev, asked);
+        assertEquals(1, next.ids.size());
+        assertEquals(0, asked.runs);
+    }
 }

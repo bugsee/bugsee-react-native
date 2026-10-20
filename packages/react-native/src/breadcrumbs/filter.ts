@@ -65,10 +65,15 @@ function claimBreadcrumbFilter(id: string | undefined): BreadcrumbFilter | undef
  * stays: clearing the callback stops native from asking, and a later callback
  * must still be able to answer.
  *
- * After a JavaScript reload (Fast Refresh in development, or a recreated
- * bridge) the native filter outlives the old runtime, but the new runtime has
- * not installed it. Native fails closed until this is called again, so call
- * it at startup on every launch of the JS runtime: crumbs are dropped, not recorded.
+ * The native filter lives for the whole process, but the JavaScript side that
+ * answers it does not. After a full reload, `DevSettings.reload()`, or an OTA
+ * reload (`Updates.reloadAsync()`, CodePush `restartApp()`), the new runtime
+ * has not installed a filter yet, so native fails closed: crumbs are dropped, not recorded.
+ * That lasts until `setBreadcrumbFilter` is called again, which can be the rest of the
+ * process. Call it unconditionally at startup, on every launch of the JS
+ * runtime, not lazily or conditionally (after login or consent), and keep it
+ * in every OTA bundle. To opt out, call `setBreadcrumbFilter(null)`, which restores
+ * pass-through.
  */
 export function setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
   if (callback != null && typeof callback !== 'function') {

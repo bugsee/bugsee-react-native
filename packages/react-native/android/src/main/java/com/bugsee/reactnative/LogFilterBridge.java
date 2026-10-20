@@ -121,13 +121,14 @@ final class LogFilterBridge {
     private final AtomicBoolean userFilter = new AtomicBoolean();
 
     /**
-     * True once the CURRENT module's JS has installed its filter with
-     * {@code setEnabled(true)}. A reload attaches a new module whose JS has
+     * The module whose JS has installed its filter with
+     * {@code setEnabled(true)}, or null. Compared to the attached sink by
+     * identity, so a stale module cannot arm the new one. A reload attaches a new module whose JS has
      * not subscribed yet, while this bridge (and the SDK's filter) outlive
      * the old runtime. Until JS arms it again, a request would be emitted to
      * nobody, so it is dropped at once instead: fail closed, no wait.
      */
-    private final AtomicBoolean armed = new AtomicBoolean();
+    private final AtomicReference<Sink> armedFor = new AtomicReference<>();
 
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private LogFilterBridge() {
@@ -171,16 +172,44 @@ final class LogFilterBridge {
     };
 
     void attach(@NonNull final Sink next) {
-        sink.set(next);
-        // A new module's JS has not subscribed yet; see armed. userFilter is
-        // deliberately kept: a redaction the app relied on must not silently
+        // Disarm before the sink is visible: a request in the gap must not
+        // reach a runtime that has not subscribed yet. See armedFor. userFilter
+        // is deliberately kept: a redaction the app relied on must not silently
         // stop applying across a reload.
-        armed.set(false);
+        armedFor.set(null);
+        sink.set(next);
     }
 
-    /** The current module's JS now answers requests. {@link #setEnabled}{@code (true)} calls this. */
+    /**
+     * What a new module does at construction: attach, then put the echo drop
+     * in place even when the app never calls setLogFilter. Not
+     * {@code setEnabled(false)}: after a reload that would turn a redaction the
+     * app relied on into a silent pass-through. The attach disarms the bridge,
+     * so with a user filter still on, lines are dropped until the new runtime
+     * calls setLogFilter (re-arm) or clears it (pass-through).
+     */
+    void attachModule(@NonNull final Sink next) {
+        attach(next);
+        ensureInstalled();
+    }
+
+    /**
+     * The module {@code caller}'s JS now answers requests. Ignored unless
+     * {@code caller} is still the attached module: a stale module's late
+     * enable must not arm the new runtime, which has not subscribed.
+     */
+    void arm(@NonNull final Sink caller) {
+        if (sink.get() == caller) {
+            armedFor.set(caller);
+        }
+    }
+
+    /** Arms for whichever module is attached. For tests, which have no module identity of their own. */
     void arm() {
-        armed.set(true);
+        final Sink current = sink.get();
+        if (current != null) {
+            armedFor.set(current);
+        }
     }
 
     /**
@@ -214,8 +243,15 @@ final class LogFilterBridge {
      * {@link Bugsee#setLogEventFilter}.
      */
     void setEnabled(final boolean enabled) {
+        setEnabled(enabled, sink.get());
+    }
+
+    /** As above, on behalf of module {@code caller}; only the attached module can arm. */
+    void setEnabled(final boolean enabled, final Sink caller) {
         if (enabled) {
-            arm();
+            if (caller != null) {
+                arm(caller);
+            }
         }
         userFilter.set(enabled);
         ensureInstalled();
@@ -306,7 +342,7 @@ final class LogFilterBridge {
     ) {
         final String line = event.getMessage();
         final Sink current = sink.get();
-        if (line == null || current == null || !armed.get()) {
+        if (line == null || current == null || armedFor.get() != current) {
             drop(callback);
             return;
         }

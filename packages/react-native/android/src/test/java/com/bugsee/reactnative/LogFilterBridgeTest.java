@@ -483,8 +483,7 @@ public class LogFilterBridgeTest {
         bridge.attach(old);
         bridge.setEnabled(true);
         final RecordingSink next = new RecordingSink();
-        bridge.attach(next);
-        bridge.ensureInstalled();
+        bridge.attachModule(next);
 
         final RecordingCallback dropped = new RecordingCallback();
         bridge.route(new MutableLog("secret"), dropped);
@@ -498,6 +497,20 @@ public class LogFilterBridgeTest {
         bridge.route(new MutableLog("secret"), asked);
         assertEquals(1, next.ids.size());
         assertEquals(0, asked.runs);
+    }
+
+    @Test
+    public void attachModuleInstallsTheEchoDropAndKeepsTheUserFilter() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attachModule(old);
+        bridge.setEnabled(true, old);
+        final RecordingSink next = new RecordingSink();
+        bridge.attachModule(next);
+
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), callback);
+        assertTrue(callback.sawNull);
+        assertEquals(0, next.ids.size());
     }
 
     @Test
@@ -516,5 +529,27 @@ public class LogFilterBridgeTest {
         assertEquals(0, next.ids.size());
         assertEquals(1, callback.runs);
         assertTrue(!callback.sawNull);
+    }
+
+    /** A late enable from the module a reload replaced must not arm the new, unsubscribed runtime. */
+    @Test
+    public void aStaleModulesEnableDoesNotArmTheNewModule() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.setEnabled(true, old);
+
+        final MutableLog ev = new MutableLog("secret");
+        final RecordingCallback dropped = new RecordingCallback();
+        bridge.ask(ev, dropped);
+        assertEquals(0, next.ids.size());
+        assertEquals(1, dropped.runs);
+
+        bridge.setEnabled(true, next);
+        final RecordingCallback asked = new RecordingCallback();
+        bridge.ask(ev, asked);
+        assertEquals(1, next.ids.size());
+        assertEquals(0, asked.runs);
     }
 }
