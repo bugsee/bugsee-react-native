@@ -206,7 +206,7 @@ describeTarballs('executable bits (npm pack, the release tool)', () => {
         .filter((m): m is RegExpExecArray => m !== null)
         .map((m) => [m[2] as string, m[1] as string] as const),
     );
-  });
+  }, 240_000); // npm pack runs the prepack gate: as long as the file-level beforeAll, not Jest's 5 s default
 
   it.each([
     'scripts/bugsee-xcode.sh',
