@@ -186,3 +186,29 @@ describeTarballs('npm and yarn pack the same files', () => {
     expect(existsSync(join(repo, 'packages', pkg, 'native-versions.json'))).toBe(false);
   });
 });
+
+/**
+ * The shell scripts the build hooks exec directly must be executable in the tarball: React Native's
+ * Hermes task runs `hermesCommand` as a program and the bare Xcode phase runs `bugsee-xcode.sh` the
+ * same way. `yarn pack` drops the executable bit, which is why releases are packed with `npm pack`
+ * (7.0.0-beta1 and beta2 shipped these as 0644; see scripts/exec-bits.ts).
+ */
+describeTarballs('executable bits (npm pack, the release tool)', () => {
+  const tgz = pack('npm', 'react-native');
+  const modes = new Map(
+    execFileSync('tar', ['-tvzf', tgz], { encoding: 'utf8' })
+      .split('\n')
+      .map((line) => /^(\S{10})\s+.*?\s(package\/\S.*)$/.exec(line))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => [m[2] as string, m[1] as string] as const),
+  );
+
+  it.each([
+    'scripts/bugsee-xcode.sh',
+    'scripts/hermesc-preserve-js.sh',
+    'scripts/hermesc-preserve-js.js',
+    'scripts/compose-then-inject.js',
+  ])('%s is executable', (path) => {
+    expect(modes.get(`package/${path}`)?.[3]).toBe('x');
+  });
+});

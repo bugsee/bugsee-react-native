@@ -17,10 +17,12 @@
 // Auth is whatever `npm publish` finds: in CI that is the OIDC trusted-publisher exchange (no token);
 // for the one-time bootstrap it is NODE_AUTH_TOKEN / ~/.npmrc.
 //
-// Why `yarn pack` and then `npm publish <tarball>`: yarn 4 runs each package's `prepack`
-// (the SNAPSHOT-pin gate and the native-versions staging) and `postpack`, which `npm pack` would run
-// too but which a plain `npm publish` of a directory would not stage the same way. Publishing the
-// tarball with npm keeps the OIDC path on npm itself (>= 11.5.1), which yarn does not speak.
+// Why `npm pack` and then `npm publish <tarball>`: `npm pack` runs each package's `prepack` (the
+// SNAPSHOT-pin gate and the native-versions staging) and `postpack`, and it keeps the executable bit
+// of the package's shell scripts. `yarn pack` does not: 7.0.0-beta1 and beta2 were packed with it and
+// shipped bugsee-xcode.sh and hermesc-preserve-js.sh as 0644 (exec-bits.ts). Every freshly packed
+// tarball is checked against the modes git tracks. Publishing the tarball with npm keeps the OIDC
+// path on npm itself.
 //
 //   node scripts/publish-all.mjs --tag beta --also-tag latest        # then point `latest` at the same version
 //
@@ -47,6 +49,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isEntryPoint, loadPackages } from './load-packages.mjs';
+import { executablePaths, missingExecBits } from './exec-bits.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -225,7 +228,14 @@ if (isEntryPoint(import.meta.url)) {
           throw new Error(`${name}: ${tarball} is missing; pack it in the check job first`);
         }
       } else {
-        run('yarn', ['pack', '--out', tarball], { cwd });
+        run('npm', ['pack', '--pack-destination', out], { cwd });
+        const lost = missingExecBits(
+          run('tar', ['-tvzf', tarball]),
+          executablePaths(run('git', ['ls-files', '-s', '--', `packages/${dir}`], { cwd: root }), `packages/${dir}`),
+        );
+        if (lost.length > 0) {
+          throw new Error(`${name}: executable files lost their executable bit in the tarball: ${lost.join(', ')}`);
+        }
       }
       const args = ['publish', tarball, '--tag', tag, '--access', 'public'];
       if (dryRun) args.push('--dry-run');
