@@ -186,3 +186,35 @@ describeTarballs('npm and yarn pack the same files', () => {
     expect(existsSync(join(repo, 'packages', pkg, 'native-versions.json'))).toBe(false);
   });
 });
+
+/**
+ * The shell scripts the build hooks exec directly must be executable in the tarball: React Native's
+ * Hermes task runs `hermesCommand` as a program and the bare Xcode phase runs `bugsee-xcode.sh` the
+ * same way. `yarn pack` drops the executable bit, which is why releases are packed with `npm pack`
+ * (7.0.0-beta1 and beta2 shipped these as 0644; see scripts/exec-bits.ts).
+ */
+describeTarballs('executable bits (npm pack, the release tool)', () => {
+  // Packed in beforeAll, not while the describe callback is evaluated: Jest evaluates the callback of a
+  // skipped describe too, and packing runs the package's prepack gate, which refuses an unreleasable pin.
+  let modes = new Map<string, string>();
+  beforeAll(() => {
+    const tgz = pack('npm', 'react-native');
+    modes = new Map(
+      execFileSync('tar', ['-tvzf', tgz], { encoding: 'utf8' })
+        .split('\n')
+        .map((line) => /^(\S{10})\s+.*?\s(package\/\S.*)$/.exec(line))
+        .filter((m): m is RegExpExecArray => m !== null)
+        .map((m) => [m[2] as string, m[1] as string] as const),
+    );
+  }, 240_000); // npm pack runs the prepack gate: as long as the file-level beforeAll, not Jest's 5 s default
+
+  it.each([
+    'scripts/bugsee-xcode.sh',
+    'scripts/hermesc-preserve-js.sh',
+    'scripts/hermesc-preserve-js.js',
+    'scripts/compose-then-inject.js',
+  ])('%s is executable for everyone', (path) => {
+    const mode = modes.get(`package/${path}`);
+    expect([mode?.[3], mode?.[6], mode?.[9]]).toEqual(['x', 'x', 'x']);
+  });
+});

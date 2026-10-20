@@ -34,7 +34,7 @@ function run(args: string[], env: Env) {
   // node_modules, which the publish job does not have either.
   const root = join(dir, 'repo');
   mkdirSync(join(root, 'scripts'), { recursive: true });
-  for (const file of ['publish-all.mjs', 'load-packages.mjs']) {
+  for (const file of ['publish-all.mjs', 'load-packages.mjs', 'exec-bits.ts']) {
     copyFileSync(join(repoScripts, file), join(root, 'scripts', file));
   }
   for (const name of names) {
