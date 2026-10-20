@@ -64,12 +64,14 @@ exports.TOKEN_GUARD = [
  * bundle phase. A GUI Archive does not inherit a shell, so the post-action
  * reads them itself, and only when no earlier source gave a token. The files
  * may also set NODE_BINARY; an executable one from Xcode's own environment
- * wins, as it did before the files were read here. Shared with the bare
+ * wins, as it did before the files were read here; so does a BUGSEE_ENDPOINT
+ * the plugin baked in or Xcode's environment already has. Shared with the bare
  * example's scheme (scripts/__tests__/dsym-scheme-post-action.test.ts).
  */
 exports.ENV_FILE_TOKEN = [
     'if [ -z "$TOKEN" ]; then',
     '  SAVED_NODE_BINARY="$NODE_BINARY"',
+    '  SAVED_ENDPOINT="$BUGSEE_ENDPOINT"',
     '  for ENV_FILE in "${PROJECT_DIR}/.xcode.env" "${PROJECT_DIR}/.xcode.env.local"; do',
     '    if [ -f "$ENV_FILE" ]; then',
     '      . "$ENV_FILE"',
@@ -81,6 +83,9 @@ exports.ENV_FILE_TOKEN = [
     '  fi',
     '  if [ -x "$SAVED_NODE_BINARY" ]; then',
     '    NODE_BINARY="$SAVED_NODE_BINARY"',
+    '  fi',
+    '  if [ -n "$SAVED_ENDPOINT" ]; then',
+    '    BUGSEE_ENDPOINT="$SAVED_ENDPOINT"',
     '  fi',
     'fi',
 ];

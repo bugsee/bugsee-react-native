@@ -89,7 +89,10 @@ export interface BugseePluginProps {
    * android/build.gradle and android/app/build.gradle at all, so a project
    * whose Gradle files are Kotlin DSL (`.gradle.kts`), which the plugin
    * refuses, can still prebuild. You then make those edits by hand (package
-   * README, "Android source maps"); everything else the plugin does
+   * README, "Android source maps"). Edits an earlier prebuild already made
+   * stay as they are, and later option changes (`uploadSymbols`,
+   * `nativeCrashReporting`, `gradlePluginVersion`) no longer reach these
+   * files; change them by hand too. Everything else the plugin does
    * (bugsee.properties, gradle.properties, the manifest, iOS) is unchanged.
    */
   editGradleFiles?: boolean;

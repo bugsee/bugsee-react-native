@@ -187,6 +187,22 @@ fs.writeFileSync(out, JSON.stringify({ version: 3, mappings: 'CCCC' }));
     expect(written.join('')).not.toContain(TOKEN);
   });
 
+  it('asks the upload to strip sourcesContent only when BUGSEE_STRIP_SOURCES_CONTENT is on', () => {
+    const calls = [];
+    jest.isolateModules(() => {
+      jest.doMock('../hermes-sourcemaps', () => {
+        const real = jest.requireActual('../hermes-sourcemaps');
+        return { ...real, uploadComposedSourceMap: (options) => calls.push(options) };
+      });
+      const isolated = require('../compose-then-inject');
+      const versions = { MARKETING_VERSION: '1', CURRENT_PROJECT_VERSION: '1', BUGSEE_PLUGIN_APP_TOKEN: TOKEN };
+      expect(isolated.run(argv(), { ...env, ...versions })).toBe(0);
+      expect(isolated.run(argv(), { ...env, ...versions, BUGSEE_STRIP_SOURCES_CONTENT: 'true' })).toBe(0);
+    });
+    jest.dontMock('../hermes-sourcemaps');
+    expect(calls.map((call) => call.stripSources)).toEqual([false, true]);
+  });
+
   it('reads the iOS token from credentials.json and honours the off switch', () => {
     const credentials = path.join(dir, 'credentials.json');
     fs.writeFileSync(credentials, JSON.stringify({ ios: '00000000-0000-4000-8000-000000000000' }));

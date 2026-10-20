@@ -282,6 +282,21 @@ fs.writeFileSync(${JSON.stringify(captured)}, JSON.stringify({ p, text: fs.readF
       expect(JSON.parse(seen.text).sourcesContent).toEqual(['const secret = 1;']);
     });
 
+    it('skips the upload, saying why, when the stripped copy cannot be made', () => {
+      const mapPath = path.join(dir, 'main.jsbundle.composed.map');
+      fs.writeFileSync(mapPath, 'not json');
+      const result = uploadComposedSourceMap({
+        composedMapPath: mapPath,
+        token: TOKEN,
+        appVersion: '1',
+        appBuild: '1',
+        cliPath: cli,
+        stripSources: true,
+      });
+      expect(result).toEqual({ status: 'skipped', reason: 'strip-failed' });
+      expect(fs.existsSync(captured)).toBe(false);
+    });
+
     it('is requested through BUGSEE_STRIP_SOURCES_CONTENT', () => {
       const { stripSourcesContentRequested } = require('../hermes-sourcemaps');
       expect(stripSourcesContentRequested({ BUGSEE_STRIP_SOURCES_CONTENT: 'true' })).toBe(true);

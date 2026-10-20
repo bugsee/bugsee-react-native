@@ -508,8 +508,9 @@ function uploadComposedSourceMap({
   if (endpoint) env.BUGSEE_ENDPOINT = endpoint;
   let stage = null;
   let uploadPath = composedMapPath;
+  let original;
   try {
-    const original = fs.readFileSync(composedMapPath, 'utf8');
+    original = fs.readFileSync(composedMapPath, 'utf8');
     let rewritten = relativizeSourceMap(original, projectRoot);
     if (stripSources) rewritten = stripSourcesContent(rewritten);
     if (rewritten !== original) {
@@ -518,10 +519,15 @@ function uploadComposedSourceMap({
       fs.writeFileSync(uploadPath, rewritten);
     }
   } catch (err) {
-    say(`could not make source map paths project-relative (${err.message}); uploading the map as it is`);
     if (stage) remove(stage);
     stage = null;
     uploadPath = composedMapPath;
+    if (stripSources) {
+      // The map as it is would carry the app's source code the build asked to keep out.
+      say(`source map upload skipped: could not remove sourcesContent from the map (${err.message})`);
+      return { status: 'skipped', reason: 'strip-failed' };
+    }
+    say(`could not make source map paths project-relative (${err.message}); uploading the map as it is`);
   }
   let result;
   try {

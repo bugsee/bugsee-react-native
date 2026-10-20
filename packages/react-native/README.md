@@ -217,7 +217,9 @@ hooks and the iOS dSYM Archive action. Release builds then upload their source
 maps, and Archives upload their dSYMs, whenever a real token is set.
 `uploadSourcemaps: false` and `uploadSymbols: false` turn those uploads off.
 `editGradleFiles: false` stops the plugin editing the three Android Gradle
-files, for a project whose files are Kotlin DSL (see "refuses" below).
+files, for a project whose files are Kotlin DSL (see "refuses" below). Edits
+an earlier prebuild made stay, and later changes to `uploadSymbols`,
+`nativeCrashReporting` or `gradlePluginVersion` no longer reach those files.
 A committed `ios/` (`project.pbxproj` and the shared scheme) or
 `android/bugsee.properties` carries the token.
 
@@ -326,6 +328,25 @@ react {
 
 // At the end of the file. Applying it twice is harmless.
 apply from: new File(new File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle")
+```
+
+In a Kotlin DSL `android/app/build.gradle.kts` the same two edits read as
+follows (not run by the test suite; check them against your Gradle version):
+
+```kotlin
+val bugseeDir = File(
+    ProcessBuilder("node", "--print", "require.resolve('@bugsee/react-native/package.json')")
+        .directory(rootDir).start().inputStream.bufferedReader().readText().trim()
+).parentFile
+
+react {
+    hermesCommand.set(
+        File(File(bugseeDir, "scripts"), if (System.getProperty("os.name").startsWith("Windows")) "hermesc-preserve-js.cmd" else "hermesc-preserve-js.sh").absolutePath
+    )
+}
+
+// At the end of the file.
+apply(from = File(File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle"))
 ```
 
 The OS is checked when Gradle configures the build, so one `build.gradle`

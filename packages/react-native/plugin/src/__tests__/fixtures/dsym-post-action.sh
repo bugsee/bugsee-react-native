@@ -5,6 +5,7 @@ if [ -z "$TOKEN" ]; then
 fi
 if [ -z "$TOKEN" ]; then
   SAVED_NODE_BINARY="$NODE_BINARY"
+  SAVED_ENDPOINT="$BUGSEE_ENDPOINT"
   for ENV_FILE in "${PROJECT_DIR}/.xcode.env" "${PROJECT_DIR}/.xcode.env.local"; do
     if [ -f "$ENV_FILE" ]; then
       . "$ENV_FILE"
@@ -16,6 +17,9 @@ if [ -z "$TOKEN" ]; then
   fi
   if [ -x "$SAVED_NODE_BINARY" ]; then
     NODE_BINARY="$SAVED_NODE_BINARY"
+  fi
+  if [ -n "$SAVED_ENDPOINT" ]; then
+    BUGSEE_ENDPOINT="$SAVED_ENDPOINT"
   fi
 fi
 if [ -z "$TOKEN" ] && [ -f "$CREDS" ]; then

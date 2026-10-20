@@ -17,6 +17,7 @@ const {
   debugUploadAllowed,
   finishAfterCompose,
   resolveUploadSettings,
+  stripSourcesContentRequested,
   uploadComposedSourceMap,
   uploadDisabled,
 } = require('./hermes-sourcemaps');
@@ -101,6 +102,7 @@ function run(argv, env) {
       appVersion: env.MARKETING_VERSION,
       appBuild: env.CURRENT_PROJECT_VERSION,
       projectRoot: projectRootFrom(env),
+      stripSources: stripSourcesContentRequested(env),
     });
   }
   return 0;
