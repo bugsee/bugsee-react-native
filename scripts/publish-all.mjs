@@ -48,7 +48,7 @@ import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isEntryPoint, loadPackages } from './load-packages.mjs';
+import { isEntryPoint, isPrerelease, loadPackages } from './load-packages.mjs';
 import { executablePaths, missingExecBits } from './exec-bits.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -101,9 +101,6 @@ const published = (name, version) => {
 };
 
 const tagFailures = [];
-
-/** A prerelease has a hyphen before any `+build` metadata: `1.0.0+build-1` is stable, `1.0.0-beta.1+x` is not. */
-export const isPrerelease = (version) => (version.split('+', 1)[0] ?? '').includes('-');
 
 /** A dist-tag name npm will take as a tag: not an option (leading dash), not a version. */
 export const isTagName = (t) => /^[a-z][a-z0-9._-]*$/i.test(t) && !/^v?\d/.test(t);

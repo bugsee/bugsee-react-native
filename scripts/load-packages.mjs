@@ -16,6 +16,9 @@ export function loadPackages() {
     .filter(({ json }) => !json.private);
 }
 
+/** A prerelease has a hyphen before any `+build` metadata: `1.0.0+build-1` is stable, `1.0.0-beta.1+x` is not. */
+export const isPrerelease = (version) => (version.split('+', 1)[0] ?? '').includes('-');
+
 /**
  * True when `metaUrl` (a script's `import.meta.url`) is the file node was started on. Compares real
  * paths: through a symlinked directory (macOS /var -> /private/var, a linked checkout) the plain

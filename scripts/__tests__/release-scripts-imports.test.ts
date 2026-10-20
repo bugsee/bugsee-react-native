@@ -44,7 +44,7 @@ function closure(entry: string, seen = new Set<string>()): Set<string> {
 }
 
 describe('the publish entry point loads without installed dependencies', () => {
-  it.each(['publish-all.mjs', 'npm-trust-all.mjs'])('%s imports only Node built-ins and sibling files', (name) => {
+  it.each(['publish-all.mjs', 'npm-trust-all.mjs', 'github-release.mjs'])('%s imports only Node built-ins and sibling files', (name) => {
     const files = closure(join(scripts, name));
     for (const file of files) {
       expect(existsSync(file)).toBe(true);
