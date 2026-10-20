@@ -290,6 +290,36 @@ so when the root file already has one the pin goes into it (its braces must
 stand alone on their lines, or the prebuild refuses); a new block is written
 only when there is none.
 
+## Network privacy
+
+`Bugsee.setNetworkFilter` sees network events, and only network events. Two
+things differ from what you might assume. Both are behavior of the native
+SDKs, which this package passes through unchanged.
+
+- **Built-in redaction differs by platform.** On Android the built-in
+  sanitizer runs before your filter (when
+  `com.bugsee.option.capture.network.default-sanitizer` is on). On iOS an
+  installed filter replaces the built-in sanitizer, so raw events reach it
+  and anything it does not remove is recorded. Built-in header matching also
+  differs: iOS matches a fixed list of names, Android also matches substrings
+  such as `session`, `token` and `secret`. Write the filter as if it were
+  the only redaction.
+- **The filter does not reach every place a URL is recorded.** URLs also
+  appear in HTTP breadcrumbs, in `http.client` performance spans (with
+  performance monitoring on, the default) and in the `http_url` attribute of
+  `detect.http-errors` reports. The network filter is not applied to them.
+  Platform behavior differs: Android applies the built-in sanitizer to span
+  URLs, iOS applies only built-in query sanitization to breadcrumb URLs and
+  none to span URLs. If URLs can carry secrets, redact them at the source
+  (do not put secrets in URLs), use `setBreadcrumbFilter` for breadcrumbs, or
+  turn off the capture you do not want, such as breadcrumbs or performance
+  monitoring.
+
+Routing these URLs through the network filter, and running the built-in
+sanitizer ahead of the filter on iOS, needs changes in the native SDKs and
+is tracked in
+[#137](https://github.com/bugsee/bugsee-react-native/issues/137).
+
 ## Release symbolication
 
 A Release build has to send Bugsee what turns its crash frames back into
