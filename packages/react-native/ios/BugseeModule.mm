@@ -1272,6 +1272,9 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   });
 }
 
+// Deliberately NOT given the stop() treatment (#143): relaunch is one call that
+// restarts the SDK, not a session the app ended, and whether the iOS SDK keeps
+// a blackout across it is unverified; the app can call endBlackout().
 - (void)relaunch:(NSDictionary *)options
          resolve:(RCTPromiseResolveBlock)resolve
           reject:(RCTPromiseRejectBlock)reject {
@@ -1299,14 +1302,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (void)stop:(RCTPromiseResolveBlock)resolve
       reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
-    // The iOS SDK leaves a blackout on across stop() and the next launch();
-    // the contract (and Android) ends it on stop (#143). End it first, while
-    // the SDK is still launched, so BlackoutEnded is delivered.
-    BGSRNEndBlackoutForStop(^BOOL {
-      return [Bugsee isBlackout];
-    }, ^{
-      [Bugsee endBlackout];
-    });
+    // TODO(#143): temporary; the iOS SDK should end the blackout on stop
+    // itself (see BGSRNBlackout.h). End it first, while still launched, so
+    // BlackoutEnded is delivered. Skipped for a never-launched SDK so a
+    // pre-launch startBlackout() survives.
+    BGSRNEndBlackoutForStop();
     [Bugsee stop:^{
       resolve(@YES);
     }];

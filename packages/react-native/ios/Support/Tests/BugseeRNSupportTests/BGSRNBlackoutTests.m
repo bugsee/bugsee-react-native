@@ -1,33 +1,38 @@
 @import XCTest;
 @import BugseeRNSupport;
+@import Bugsee;
 
-/// Pins `BGSRNEndBlackoutForStop`: `stop()` ends a blackout on iOS as it does
-/// on Android (#143), and does not fabricate an end when none is in force.
+/// Pins `BGSRNEndBlackoutForStop` against the real SDK: `stop()` ends a
+/// blackout on iOS as it does on Android (#143), and a pre-launch
+/// `startBlackout()` on a never-launched SDK is left alone.
 @interface BGSRNBlackoutTests : XCTestCase
 @end
 
 @implementation BGSRNBlackoutTests
 
-- (void)testEndsABlackoutInForce {
-  __block NSInteger ended = 0;
-  BOOL result = BGSRNEndBlackoutForStop(^BOOL {
-    return YES;
-  }, ^{
-    ended += 1;
-  });
-  XCTAssertTrue(result);
-  XCTAssertEqual(ended, 1);
+- (void)tearDown {
+  [Bugsee endBlackout];
+  [super tearDown];
+}
+
+- (void)testEndsABlackoutWhenTheSdkIsNotStopped {
+  [Bugsee startBlackout];
+  XCTAssertTrue([Bugsee isBlackout]);
+  XCTAssertTrue(BGSRNEndBlackoutForStopWithStatus(BugseeStatusLaunched));
+  XCTAssertFalse([Bugsee isBlackout]);
+}
+
+- (void)testLeavesAPreLaunchBlackoutWhenStopped {
+  [Bugsee startBlackout];
+  XCTAssertFalse(BGSRNEndBlackoutForStopWithStatus(BugseeStatusStopped));
+  XCTAssertTrue([Bugsee isBlackout]);
+  XCTAssertFalse(BGSRNEndBlackoutForStop());  // never launched here: Stopped
+  XCTAssertTrue([Bugsee isBlackout]);
 }
 
 - (void)testDoesNothingWhenNoBlackout {
-  __block NSInteger ended = 0;
-  BOOL result = BGSRNEndBlackoutForStop(^BOOL {
-    return NO;
-  }, ^{
-    ended += 1;
-  });
-  XCTAssertFalse(result);
-  XCTAssertEqual(ended, 0);
+  XCTAssertFalse([Bugsee isBlackout]);
+  XCTAssertFalse(BGSRNEndBlackoutForStopWithStatus(BugseeStatusLaunched));
 }
 
 @end

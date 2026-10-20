@@ -1,9 +1,14 @@
 #import "BGSRNBlackout.h"
 
-BOOL BGSRNEndBlackoutForStop(BOOL (^isBlackout)(void), dispatch_block_t end) {
-  if (!isBlackout()) {
+BOOL BGSRNEndBlackoutForStopWithStatus(BugseeStatus status) {
+  if (status == BugseeStatusStopped || ![Bugsee isBlackout]) {
     return NO;
   }
-  end();
+  [Bugsee endBlackout];
   return YES;
+}
+
+BOOL BGSRNEndBlackoutForStop(void) {
+  Bugsee *instance = [Bugsee sharedInstance];
+  return BGSRNEndBlackoutForStopWithStatus(instance != nil ? instance.status : BugseeStatusStopped);
 }
