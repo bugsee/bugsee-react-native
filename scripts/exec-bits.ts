@@ -26,6 +26,11 @@ export function missingExecBits(tarListing: string, executable: string[]): strin
     const match = /^(\S{10})\s+.*?\s(package\/\S.*)$/.exec(line);
     if (match) modes.set(match[2] as string, match[1] as string);
   }
+  // Fail closed: a listing this parser cannot read (another tar's column layout, a changed format) would
+  // otherwise leave every file "not found" and pass vacuously. package.json is always packed.
+  if (!modes.has('package/package.json')) {
+    throw new Error('could not read the tar listing: package/package.json not found in it');
+  }
   return executable.filter((path) => {
     const mode = modes.get(`package/${path}`);
     return mode === undefined ? false : mode[3] !== 'x';

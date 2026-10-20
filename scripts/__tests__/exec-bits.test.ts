@@ -31,6 +31,13 @@ describe('missingExecBits', () => {
     expect(missingExecBits(listing('-rw-r--r--'), ['scripts/bugsee-xcode.sh'])).toEqual(['scripts/bugsee-xcode.sh']);
   });
 
+  it('fails closed when the listing cannot be parsed, instead of passing vacuously', () => {
+    expect(() => missingExecBits('drwxr-xr-x  0 0 0 0 Oct 26  1985 weird/format', ['scripts/bugsee-xcode.sh'])).toThrow(
+      /could not read the tar listing/,
+    );
+    expect(() => missingExecBits('', ['scripts/bugsee-xcode.sh'])).toThrow();
+  });
+
   it('ignores a file that is not in the tarball (the files field decides that)', () => {
     expect(missingExecBits(listing('-rw-r--r--'), ['scripts/other.sh'])).toEqual([]);
   });
