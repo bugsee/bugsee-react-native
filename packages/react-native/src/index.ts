@@ -832,8 +832,8 @@ class Bugsee {
    * Deletes collected data stored on the device. The SDK must be stopped
    * first: while launched, both platforms refuse (by design) and this
    * resolves `false`. The promise resolves with the SDK's own outcome, however
-   * long the deletion takes. On iOS, if the SDK reports nothing for 60 s with
-   * `includingFinishedReports` set, it rejects with code `E_DELETE_TIMEOUT`:
+   * long the deletion takes. On iOS, if the SDK reports nothing for 60 s (with either
+   * flag value), it rejects with code `E_DELETE_TIMEOUT`:
    * the outcome is unknown and the deletion may still finish.
    *
    * - `includingIntermediate`: `false` deletes the rolling capture data and
