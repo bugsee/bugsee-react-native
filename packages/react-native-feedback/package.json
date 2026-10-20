@@ -1,6 +1,6 @@
 {
   "name": "@bugsee/react-native-feedback",
-  "version": "7.0.0-beta2",
+  "version": "7.0.0-beta3",
   "description": "In-app feedback UI for the Bugsee React Native SDK",
   "license": "MIT",
   "homepage": "https://www.bugsee.com",
@@ -19,7 +19,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@bugsee/react-native": "^7.0.0-beta2",
+    "@bugsee/react-native": "^7.0.0-beta3",
     "react": "*",
     "react-native": ">=0.81.0"
   },

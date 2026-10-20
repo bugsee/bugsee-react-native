@@ -5,7 +5,7 @@ do not have to depend on this package.
 
 ## Status: beta
 
-At the same version as `@bugsee/react-native` (`7.0.0-beta2`); the npm `latest` and `beta` tags
+At the same version as `@bugsee/react-native` (`7.0.0-beta3`); the npm `latest` and `beta` tags
 both point at it for now. Install both with `@beta` to keep following betas. The two must be the
 same release.
 

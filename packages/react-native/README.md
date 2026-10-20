@@ -9,7 +9,7 @@ added.
 
 ## Status: beta
 
-This is a beta (`7.0.0-beta2`), built on the 7.x native SDKs, and the iOS SDK it
+This is a beta (`7.0.0-beta3`), built on the 7.x native SDKs, and the iOS SDK it
 bundles is itself a beta. `latest` and `beta` both point at it for now, so a plain
 `yarn add @bugsee/react-native` installs it; the `@beta` form in [Install](#install)
 keeps following betas once a stable release exists. The API can still change
