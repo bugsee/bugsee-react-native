@@ -32,7 +32,11 @@ import okhttp3.OkHttpClient;
  * <p>This checks a proxy: RN's {@code createClient()}, not the per-request
  * {@code newBuilder().build()} call site inside NetworkingModule. A custom
  * client factory living in a package the plugin excludes can therefore give a
- * rare false warning; it is a log line only.
+ * rare false warning; it is a log line only. An app's registered
+ * {@code OkHttpClientFactory} also runs once more, at the first launch(), as a
+ * side effect of the probe. That is deliberate: the factory's own build() is
+ * where the plugin's interceptor would be, so probing the default path instead
+ * would say nothing about the client JS really uses.
  */
 public final class NetworkCaptureProbe {
 
