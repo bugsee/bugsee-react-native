@@ -5,8 +5,13 @@
  *
  * The CLI is scripts/cli-check-no-internal-hosts.ts, run by `yarn lint`.
  */
-/** Public hosts: the production API, the CLI installer's download host, the marketing site. */
-export const ALLOWED_HOSTS: readonly string[] = ['api.bugsee.com', 'download.bugsee.com', 'www.bugsee.com'];
+/** Public hosts: the production API, the CLI installer's download host, the marketing site, the public documentation. */
+export const ALLOWED_HOSTS: readonly string[] = [
+  'api.bugsee.com',
+  'download.bugsee.com',
+  'www.bugsee.com',
+  'docs.bugsee.com',
+];
 
 export interface HostFinding {
   readonly line: number;

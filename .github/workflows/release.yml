@@ -11,10 +11,18 @@ name: Release
 # The file NAME is part of the trust relationship. Renaming it silently breaks publishing until
 # every package is re-registered.
 #
-# Two jobs. `check` runs the gates, packs the tarballs and dry-runs the publish on any ref, and holds
+# Three jobs. `check` runs the gates, packs the tarballs and dry-runs the publish on any ref, and holds
 # no publish rights. `publish` needs it, runs only for a real publish, and is the only job with the
-# OIDC token and the `npm-publish` environment. The gates are the same lint, typecheck and unit tests
-# CI runs, the release metadata gate, and `prepack`'s refusal to pack a SNAPSHOT pin.
+# OIDC token and the `npm-publish` environment. `github-release` runs after a fully successful publish
+# and is the only job that can write to the repository (`contents: write`); it holds no npm credentials.
+# The gates are the same lint, typecheck and unit tests CI runs, the release metadata gate, and
+# `prepack`'s refusal to pack a SNAPSHOT pin.
+#
+# So a real release does three things, in this order: publish both packages to npm, create the tag
+# `v<version>` at the released commit, and create a GitHub release for it (a prerelease when the version
+# is one) with the packed tarballs attached and generated notes (scripts/github-release.mjs). It is
+# idempotent: re-running after a partial failure skips what exists, and a tag that already exists at a
+# different commit fails the run instead of being moved.
 #
 # The tag is a deliberate choice: it defaults to `beta`, and a prerelease may also go to `latest`
 # while the SDK itself is a beta.
@@ -163,3 +171,34 @@ jobs:
           NPM_TAG: ${{ inputs.tag }}
           ALSO_TAG: ${{ inputs.also_tag }}
         run: node scripts/publish-all.mjs --tag "$NPM_TAG" --also-tag "$ALSO_TAG" --tarballs "$RUNNER_TEMP/tarballs"
+
+  github-release:
+    name: tag and GitHub release
+    needs: publish
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The only job that writes to the repository, and it has no npm credentials: the tag and the release
+    # can be created or fixed without touching the publish rights, and the publish job cannot write here.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tarballs
+          path: ${{ runner.temp }}/tarballs
+
+      # No install step: the script uses Node built-ins only. The tag is created at the commit this run
+      # packed and published, never at a branch tip that could have moved.
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_TAG: ${{ inputs.tag }}
+          ALSO_TAG: ${{ inputs.also_tag }}
+        run: node scripts/github-release.mjs --sha "$GITHUB_SHA" --tarballs "$RUNNER_TEMP/tarballs" --npm-tags "$NPM_TAG,$ALSO_TAG"
