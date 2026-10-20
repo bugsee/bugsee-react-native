@@ -37,6 +37,7 @@
 #import <BugseeRNSupport/BGSRNReactWindow.h>
 #import <BugseeRNSupport/BGSRNExceptions.h>
 #import <BugseeRNSupport/BGSRNSettleOnce.h>
+#import <BugseeRNSupport/BGSRNBlackout.h>
 #import <BugseeRNSupport/BGSRNReportArgs.h>
 #import <BugseeRNSupport/BGSRNCreatedReports.h>
 #import <BugseeRNSupport/BGSRNCreatedReportOps.h>
@@ -65,6 +66,7 @@
 #import "BGSRNReactWindow.h"
 #import "BGSRNExceptions.h"
 #import "BGSRNSettleOnce.h"
+#import "BGSRNBlackout.h"
 #import "BGSRNReportArgs.h"
 #import "BGSRNCreatedReports.h"
 #import "BGSRNCreatedReportOps.h"
@@ -1297,6 +1299,14 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (void)stop:(RCTPromiseResolveBlock)resolve
       reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
+    // The iOS SDK leaves a blackout on across stop() and the next launch();
+    // the contract (and Android) ends it on stop (#143). End it first, while
+    // the SDK is still launched, so BlackoutEnded is delivered.
+    BGSRNEndBlackoutForStop(^BOOL {
+      return [Bugsee isBlackout];
+    }, ^{
+      [Bugsee endBlackout];
+    });
     [Bugsee stop:^{
       resolve(@YES);
     }];

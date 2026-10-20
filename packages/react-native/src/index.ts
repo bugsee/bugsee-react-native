@@ -292,7 +292,10 @@ class Bugsee {
     });
   }
 
-  /** Stops the current session. */
+  /**
+   * Stops the current session. A blackout in force ends with it, on both
+   * platforms: it lasts until {@link endBlackout} or `stop()`.
+   */
   async stop(): Promise<boolean> {
     return NativeBugsee.stop();
   }
