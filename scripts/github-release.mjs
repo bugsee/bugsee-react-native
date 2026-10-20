@@ -124,7 +124,7 @@ async function verifyPublished(packages, version, tarballDir) {
       } catch (error) {
         const text = `${error.stdout ?? ''}${error.stderr ?? ''}`;
         if (!/E404|not found/i.test(text)) throw error;
-        if (attempt === attempts) throw new Error(`${json.name}@${version} is not visible on npm after ${attempts} attempts`);
+        if (attempt === attempts) throw new Error(`${json.name}@${version} is not visible on npm after ${attempts} attempts`, { cause: error });
         await sleep(delay);
       }
     }

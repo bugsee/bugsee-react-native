@@ -60,7 +60,7 @@ export default tseslint.config(
     // Release tooling run by the Release workflow: plain Node ESM.
     files: ['scripts/**/*.mjs'],
     languageOptions: {
-      globals: { console: 'readonly', process: 'readonly' },
+      globals: { console: 'readonly', process: 'readonly', setTimeout: 'readonly' },
     },
   },
   {
