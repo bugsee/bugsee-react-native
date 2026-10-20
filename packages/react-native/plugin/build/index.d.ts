@@ -81,7 +81,8 @@ export interface BugseePluginProps {
      * filter drops its events (log lines, network events, breadcrumbs) until JS
      * calls that `setXFilter`, with a function (filtering) or `null` (no filter,
      * pass-through). An app that never calls one therefore records none of that
-     * kind, so only list the filters the app installs. Needs no `autoLaunch`.
+     * kind, so only list the filters the app installs. Meant for `autoLaunch`:
+     * not verified with a JS `launch()`.
      * A later prebuild without it removes the meta-data again.
      */
     holdFilters?: boolean | readonly HoldableFilter[];
