@@ -5,10 +5,10 @@ import NativeBugsee from '../NativeBugsee';
  * One log line in, the line to keep out.
  *
  * A string replaces the line. `null` and `undefined` drop it. A promise is
- * waited on; the native SDK is what bounds that wait. This function does not
- * add a timeout of its own: both SDKs already drop a line whose filter does
- * not answer, and a timeout here that then passed the original line would
- * leak exactly what the filter exists to remove.
+ * waited on, for 9 s: the native bridge drops the line if the filter has not
+ * settled by then, on both platforms, and ignores a later answer. This
+ * function does not add a timeout of its own: a timeout here that then passed
+ * the original line would leak exactly what the filter exists to remove.
  */
 export type LogFilter = (
   line: string,
@@ -52,8 +52,8 @@ export function setLogFilter(callback?: LogFilter | null): void {
  * produced the line.
  *
  * A throw, a rejection, or a result that is not a string drops the line.
- * A callback that never settles does not reply at all — the SDK's own timeout
- * drops it. Neither path replies with the original line.
+ * A callback that does not settle within 9 s is dropped natively, and its
+ * late answer ignored. Neither path replies with the original line.
  */
 function onLogFilterRequest(event: { requestId: string; line: string }): void {
   const callback = current;

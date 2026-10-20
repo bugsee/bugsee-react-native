@@ -37,6 +37,7 @@
 #import <BugseeRNSupport/BGSRNReactWindow.h>
 #import <BugseeRNSupport/BGSRNExceptions.h>
 #import <BugseeRNSupport/BGSRNSettleOnce.h>
+#import <BugseeRNSupport/BGSRNFilterDeadline.h>
 #import <BugseeRNSupport/BGSRNReportArgs.h>
 #import <BugseeRNSupport/BGSRNCreatedReports.h>
 #import <BugseeRNSupport/BGSRNCreatedReportOps.h>
@@ -65,6 +66,7 @@
 #import "BGSRNReactWindow.h"
 #import "BGSRNExceptions.h"
 #import "BGSRNSettleOnce.h"
+#import "BGSRNFilterDeadline.h"
 #import "BGSRNReportArgs.h"
 #import "BGSRNCreatedReports.h"
 #import "BGSRNCreatedReportOps.h"
@@ -442,9 +444,8 @@ static void BGSRNSetAttribute(NSString *name,
 /// One in-flight network-filter request. The decision block is copied: the
 /// SDK's block argument is not guaranteed to outlive the filter call, and the
 /// reply comes back later, from JS. iOS's decision block is once-only and the
-/// provider does not recycle the event, so a late reply still records. There
-/// is no timer here: one that called `decision(nil)` would drop an event the
-/// SDK is still willing to keep.
+/// SDK has no timeout, so the wrapper arms its own (`BGSRNFilterDeadlineMs`,
+/// fail closed): past it the event is dropped and a late reply is a no-op.
 @interface BGSRNNetworkFilterPending : NSObject
 @property (nonatomic, strong) BugseeNetworkEvent *event;
 @property (nonatomic, copy) BugseeNetworkFilterDecisionBlock decision;
@@ -466,6 +467,24 @@ static id BGSRNNetworkFilterLock(void) {
     BGSRNNetworkFilterPendingTable = [NSMutableDictionary dictionary];
   });
   return lock;
+}
+
+/// Drops the event if JS has not answered `requestId` by
+/// `BGSRNFilterDeadlineMs`. The SDK has no timeout of its own on iOS, so this
+/// is what keeps a callback that never settles from holding its request
+/// until the process dies. `BGSRNTakePendingFilter` is the once-guard: a
+/// reply that got there first leaves this nothing to do, and a reply that
+/// comes after finds nothing. Fails closed: the decision is `nil`, never the
+/// original.
+static void BGSRNArmNetworkFilterDeadline(NSString *requestId) {
+  id lock = BGSRNNetworkFilterLock();
+  BGSRNArmFilterDeadline(BGSRNFilterDeadlineMs,
+                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    BGSRNNetworkFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNNetworkFilterPendingTable, lock, requestId);
+    if (item.decision != nil) {
+      item.decision(nil);
+    }
+  });
 }
 
 /// Answers nil for every request `module` still holds, which drops the event.
@@ -512,6 +531,24 @@ static id BGSRNLogFilterLock(void) {
     BGSRNLogFilterPendingTable = [NSMutableDictionary dictionary];
   });
   return lock;
+}
+
+/// Drops the line if JS has not answered `requestId` by
+/// `BGSRNFilterDeadlineMs`. The SDK has no timeout of its own on iOS, so this
+/// is what keeps a callback that never settles from holding its request
+/// until the process dies. `BGSRNTakePendingFilter` is the once-guard: a
+/// reply that got there first leaves this nothing to do, and a reply that
+/// comes after finds nothing. Fails closed: the decision is `nil`, never the
+/// original.
+static void BGSRNArmLogFilterDeadline(NSString *requestId) {
+  id lock = BGSRNLogFilterLock();
+  BGSRNArmFilterDeadline(BGSRNFilterDeadlineMs,
+                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    BGSRNLogFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNLogFilterPendingTable, lock, requestId);
+    if (item.decision != nil) {
+      item.decision(nil);
+    }
+  });
 }
 
 /// Answers `nil` for every request `module` still holds, which drops the line.
@@ -605,6 +642,7 @@ static void BGSRNInstallLogEventFilter(void) {
         requestId = [NSString stringWithFormat:@"%lld", BGSRNLogFilterNextId];
         BGSRNLogFilterPendingTable[requestId] = item;
       }
+      BGSRNArmLogFilterDeadline(requestId);
       const BOOL delivered = [module emitLogFilterRequest:requestId line:line];
       if (!delivered) {
         BugseeLogFilterDecisionBlock drop = nil;
@@ -622,8 +660,9 @@ static void BGSRNInstallLogEventFilter(void) {
 
 /// One in-flight breadcrumb-filter request. The decision block is copied: the
 /// SDK's block argument is not guaranteed to outlive the filter call, and the
-/// reply comes back later, from JS. There is no timer. The SDK does not time
-/// the filter out, and a late decision still records.
+/// reply comes back later, from JS. The SDK does not time the filter out, so
+/// the wrapper arms `BGSRNFilterDeadlineMs`, fail closed: past it the crumb
+/// is dropped and a late reply is a no-op.
 @interface BGSRNBreadcrumbFilterPending : NSObject
 @property (nonatomic, strong) id<BGSBreadcrumb> breadcrumb;
 @property (nonatomic, copy) BugseeBreadcrumbFilterDecisionBlock decision;
@@ -653,6 +692,24 @@ static id BGSRNBreadcrumbFilterLock(void) {
     BGSRNBreadcrumbFilterPendingTable = [NSMutableDictionary dictionary];
   });
   return lock;
+}
+
+/// Drops the crumb if JS has not answered `requestId` by
+/// `BGSRNFilterDeadlineMs`. The SDK has no timeout of its own on iOS, so this
+/// is what keeps a callback that never settles from holding its request
+/// until the process dies. `BGSRNTakePendingFilter` is the once-guard: a
+/// reply that got there first leaves this nothing to do, and a reply that
+/// comes after finds nothing. Fails closed: the decision is `nil`, never the
+/// original.
+static void BGSRNArmBreadcrumbFilterDeadline(NSString *requestId) {
+  id lock = BGSRNBreadcrumbFilterLock();
+  BGSRNArmFilterDeadline(BGSRNFilterDeadlineMs,
+                         dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    BGSRNBreadcrumbFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable, lock, requestId);
+    if (item.decision != nil) {
+      item.decision(nil);
+    }
+  });
 }
 
 /// Answers `nil` for every request `module` still holds, which drops the crumb.
@@ -1597,8 +1654,8 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// with. `enabled` registers the bridge; `NO` passes nil, which removes it.
 /// The write is synchronized and does not need the main queue, so it happens
 /// before this method returns: a later Bugsee call on the same turn already
-/// sees the filter. The block returns without waiting on JS. There is no
-/// deadline here.
+/// sees the filter. The block returns without waiting on JS. A request JS
+/// does not answer within `BGSRNFilterDeadlineMs` is dropped.
 ///
 /// Returns `@YES`. The return is what keeps the call on the JS thread:
 /// codegen queues a `void` TurboModule method onto the module queue, so a
@@ -1641,6 +1698,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           requestId = [NSString stringWithFormat:@"%lld", BGSRNNetworkFilterNextId];
           BGSRNNetworkFilterPendingTable[requestId] = item;
         }
+        BGSRNArmNetworkFilterDeadline(requestId);
         const BOOL delivered = [module emitNetworkFilterRequest:requestId eventJson:eventJson];
         if (!delivered) {
           BugseeNetworkFilterDecisionBlock drop = nil;
@@ -1671,8 +1729,8 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 }
 
 /// `eventJson` nil drops. A JSON object is written onto the same event, so
-/// the timestamp stays. A second reply is a no-op. A late reply still
-/// records: this method does not expire the decision.
+/// the timestamp stays. A second reply is a no-op, and so is a reply after
+/// `BGSRNFilterDeadlineMs`: the deadline already dropped the event.
 - (void)replyNetworkFilter:(NSString *)requestId eventJson:(NSString * _Nullable)eventJson {
   if (requestId == nil) {
     return;
@@ -1702,8 +1760,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// epoch milliseconds and builds a `BugseeNetworkEvent`. Beta3's exchange
 /// factory `createNetworkEvent` always returns nil, so this does not call it.
 /// The event is submitted with filtering required. The one-argument
-/// `addNetworkEvent:` passes NO and is not used. There is no timer that
-/// would pass the original through.
+/// `addNetworkEvent:` passes NO and is not used.
 - (void)addNetworkEvent:(NSString *)eventJson {
   NSError *error = nil;
   NSDictionary *object = BGSRNJSONObject(eventJson, &error);
@@ -1788,8 +1845,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// the nil cannot overtake the crumb. The generation this disable captured
 /// has to still be current or the nil does not run: a clear and then a new
 /// callback, before main runs, must not have the queued nil remove the newer
-/// filter. There is no timer that calls `decision(nil)`. A late decision
-/// still records.
+/// filter.
 - (NSNumber *)setBreadcrumbFilterEnabled:(BOOL)enabled {
   if (enabled) {
     @synchronized (BGSRNBreadcrumbFilterLock()) {
@@ -1827,6 +1883,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           requestId = [NSString stringWithFormat:@"%lld", BGSRNBreadcrumbFilterNextId];
           BGSRNBreadcrumbFilterPendingTable[requestId] = item;
         }
+        BGSRNArmBreadcrumbFilterDeadline(requestId);
         NSString *manualAddId = nil;
         @synchronized (BGSRNBreadcrumbFilterLock()) {
           manualAddId = BGSRNBreadcrumbManualAddId;
@@ -1886,7 +1943,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// The main-queue record dropped this id (no factory, no crumb, or the filter
 /// never asked). JS drops the owed callback. `crumbJson` is empty, so the
 /// callback does not run. The request id is not in the pending table, so the
-/// reply is a no-op. There is no timer.
+/// reply is a no-op.
 - (void)releaseBreadcrumbManualAdd:(NSString *)addId {
   if (addId.length == 0) {
     return;
@@ -1898,7 +1955,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// `timestamp` is not written: `BGSEvent.timestamp` is read-only, and the SDK
 /// pins the time it observed before the filter ran. If a write does not
 /// stick, the crumb is dropped rather than kept unredacted. A second reply
-/// is a no-op. There is no timer.
+/// is a no-op, and so is a reply after `BGSRNFilterDeadlineMs`.
 - (void)replyBreadcrumbFilter:(NSString *)requestId crumbJson:(NSString * _Nullable)crumbJson {
   if (requestId == nil) {
     return;

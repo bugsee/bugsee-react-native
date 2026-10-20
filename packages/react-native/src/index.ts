@@ -446,7 +446,7 @@ class Bugsee {
    * stays omitted: setting that key to `null` leaves it out of the reply.
    * `null` and `undefined` drop the event. The native SDK invokes the
    * filter; JS answers on a later turn, and a callback that throws,
-   * rejects, or never settles drops the event.
+   * rejects, or does not settle within 9 s drops the event.
    *
    * A JS filter replaces the iOS built-in sanitizer. Android runs the
    * default sanitizer before the callback when
@@ -483,8 +483,8 @@ class Bugsee {
    * replacement string. `null` or `undefined` drops the line. The native SDK
    * is what invokes the filter; the callback runs on a later turn, and this
    * method does not wait for it. A callback that throws, rejects, or does
-   * not settle before the SDK's own timeout drops the line. It is not passed
-   * through.
+   * not settle within 9 s drops the line, and a late answer is ignored. It is
+   * not passed through.
    */
   setLogFilter(callback?: LogFilter | null): void {
     installLogFilter(callback);
@@ -515,9 +515,9 @@ class Bugsee {
    * `undefined`, drops the crumb. A key the snapshot omitted stays omitted.
    * `data: null` clears data. `timestamp` is read-only and is not sent back.
    *
-   * The callback runs on a later turn. This method does not wait for it, and
-   * it does not add a timeout. A callback that throws, rejects, or never
-   * settles drops the crumb. The original is not passed through. A crumb
+   * The callback runs on a later turn. This method does not wait for it. A
+   * callback that throws, rejects, or does not settle within 9 s drops the
+   * crumb, and a late answer is ignored. The original is not passed through. A crumb
    * already passed to `addBreadcrumb` is still offered to the callback that
    * was installed for it when this is cleared, or replaced with another
    * function, on that same turn.

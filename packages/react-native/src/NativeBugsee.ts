@@ -259,9 +259,10 @@ export interface Spec extends TurboModule {
    * `requestId` is native-minted and never reused within a process.
    * `eventJson` is the event (`setNetworkEventFilter`'s keep-value is the
    * event object on both SDKs, not a string). JS answers with
-   * {@link replyNetworkFilter}. A request that never gets an answer is
-   * dropped by the SDK; this event is not a second timeout that would pass
-   * the original through.
+   * {@link replyNetworkFilter}. A request not answered within 9 s is
+   * dropped by the native bridge on both platforms (Android's SDK drops at
+   * 10 s; iOS's SDK has no deadline, so the bridge supplies one); a later
+   * reply is ignored. Nothing here passes the original through.
    */
   readonly onNetworkFilterRequest: CodegenTypes.EventEmitter<{ requestId: string; eventJson: string }>;
   /**
@@ -296,8 +297,9 @@ export interface Spec extends TurboModule {
    *
    * `requestId` is native-minted and never reused within a process. `line`
    * is the text the SDK would store. JS answers with {@link replyLogFilter}.
-   * A request that never gets an answer is dropped by the SDK's own timeout;
-   * this event is not a second one.
+   * A request not answered within 9 s is dropped by the native bridge on
+   * both platforms (Android's SDK drops at 10 s; iOS's SDK has no
+   * deadline, so the bridge supplies one); a later reply is ignored.
    */
   readonly onLogFilterRequest: CodegenTypes.EventEmitter<{ requestId: string; line: string }>;
   /**
@@ -314,8 +316,8 @@ export interface Spec extends TurboModule {
   /**
    * Answers one {@link onLogFilterRequest}. `line` is the replacement to
    * keep; `null` drops the line. A second reply for the same `requestId` is
-   * a no-op. Not answering drops the line — the SDK's timeout, not a reply
-   * that passes the original through.
+   * a no-op. Not answering within 9 s drops the line, and a later reply is
+   * ignored; nothing passes the original through.
    */
   replyLogFilter(requestId: string, line: string | null): void;
 
@@ -347,8 +349,9 @@ export interface Spec extends TurboModule {
    * `requestId` is native-minted and never reused within a process.
    * `crumbJson` is the snapshot: only the keys the crumb had, `level` as
    * its name, `timestamp` when it is set. JS answers with
-   * {@link replyBreadcrumbFilter}. A request that never gets an answer is
-   * not recorded; this event is not a second timeout, and the reply is never
+   * {@link replyBreadcrumbFilter}. A request not answered within 9 s is
+   * dropped by the native bridge on both platforms (neither SDK has a
+   * deadline for this filter); a later reply is ignored. The reply is never
    * the original crumb after a failed filter.
    *
    * `addId` is set only on the request for the manual `addBreadcrumb` that
@@ -377,8 +380,8 @@ export interface Spec extends TurboModule {
    * Answers one {@link onBreadcrumbFilterRequest}. `crumbJson` is the keep,
    * with every writable key the snapshot sent and `level` as its name;
    * `null` drops the crumb. A second reply for the same `requestId` is a
-   * no-op. Not answering leaves the crumb unrecorded — there is no reply
-   * that passes the original through.
+   * no-op. Not answering within 9 s drops the crumb, and a later reply is
+   * ignored; there is no reply that passes the original through.
    */
   replyBreadcrumbFilter(requestId: string, crumbJson: string | null): void;
 
