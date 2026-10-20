@@ -292,28 +292,36 @@ only when there is none.
 
 ## Network privacy
 
-`Bugsee.setNetworkFilter` sees network events, and only network events. Two
-things differ from what you might assume. Both are behavior of the native
-SDKs, which this package passes through unchanged.
+`Bugsee.setNetworkFilter` sees network events, and only network events.
+Write it as if it were your only redaction.
 
-- **Built-in redaction differs by platform.** On Android the built-in
-  sanitizer runs before your filter (when
-  `com.bugsee.option.capture.network.default-sanitizer` is on). On iOS an
-  installed filter replaces the built-in sanitizer, so raw events reach it
-  and anything it does not remove is recorded. Built-in header matching also
-  differs: iOS matches a fixed list of names, Android also matches substrings
-  such as `session`, `token` and `secret`. Write the filter as if it were
-  the only redaction.
-- **The filter does not reach every place a URL is recorded.** URLs also
-  appear in HTTP breadcrumbs, in `http.client` performance spans (with
-  performance monitoring on, the default) and in the `http_url` attribute of
-  `detect.http-errors` reports. The network filter is not applied to them.
-  Platform behavior differs: Android applies the built-in sanitizer to span
-  URLs, iOS applies only built-in query sanitization to breadcrumb URLs and
-  none to span URLs. If URLs can carry secrets, redact them at the source
-  (do not put secrets in URLs), use `setBreadcrumbFilter` for breadcrumbs, or
-  turn off the capture you do not want, such as breadcrumbs or performance
-  monitoring.
+- **Built-in redaction differs by platform.** On Android this package runs the
+  built-in sanitizer on each event before your filter (when
+  `com.bugsee.option.capture.network.default-sanitizer` is on). On iOS your
+  filter replaces the built-in sanitizer, so raw events reach it and anything
+  it does not remove is recorded. The built-in rules differ too. iOS matches a
+  fixed set of header names plus fixed query and body keys, and does not strip
+  credentials from URLs. Android also matches substrings such as `password`,
+  `secret`, `token`, `session` and `apikey` in header, query and body keys,
+  strips `user:password` from URLs and redacts error messages.
+- **The filter does not reach every place a URL is recorded:**
+  - **HTTP breadcrumbs** (only when `captureBreadcrumbs` is enabled). Android
+    records the URL unredacted, without even the built-in query redaction.
+    iOS applies the built-in query redaction when `default-sanitizer` is on.
+    Use `setBreadcrumbFilter` to clean them.
+  - **`http.client` performance spans** (performance monitoring,
+    `com.bugsee.option.performance.enabled`, is on by default). Android always
+    applies its built-in sanitizer to span URLs, even with `default-sanitizer`
+    off. iOS applies no sanitization to span URLs. To turn them off:
+
+    ```ts
+    const options = createDefaultLaunchOptions();
+    options.setCustomOption('com.bugsee.option.performance.enabled', false);
+    ```
+
+  - **`detect.http-errors` reports** (off by default) carry the request URL in
+    `http_url` without its query or fragment. Path segments are not passed
+    through your filter.
 
 Routing these URLs through the network filter, and running the built-in
 sanitizer ahead of the filter on iOS, needs changes in the native SDKs and

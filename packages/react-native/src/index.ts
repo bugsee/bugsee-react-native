@@ -448,17 +448,19 @@ class Bugsee {
    * filter; JS answers on a later turn, and a callback that throws,
    * rejects, or never settles drops the event.
    *
-   * A JS filter replaces the iOS built-in sanitizer. Android runs the
-   * default sanitizer before the callback when
-   * `com.bugsee.option.capture.network.default-sanitizer` is on. Raw events
-   * therefore reach the filter on iOS, and what it does not remove is
-   * recorded. The built-in header matching also differs by platform.
+   * On Android this package runs the built-in sanitizer on each event
+   * before the callback, when
+   * `com.bugsee.option.capture.network.default-sanitizer` is on. On iOS the
+   * callback replaces the built-in sanitizer, so raw events reach it and
+   * what it does not remove is recorded. The built-in rules also differ by
+   * platform.
    *
-   * This filter sees network events only. It is not applied to the URLs in
-   * HTTP breadcrumbs, `http.client` performance spans (performance
-   * monitoring, on by default) or the `http_url` attribute of
-   * `detect.http-errors` reports. Redact those separately, or turn the
-   * capture off. See "Network privacy" in the package README.
+   * This filter sees network events only. It is not applied to URLs in HTTP
+   * breadcrumbs (when breadcrumb capture is on) or `http.client` performance
+   * spans (on by default), and path segments in the `http_url` attribute of
+   * `detect.http-errors` reports (off by default) are not passed through it.
+   * Redact breadcrumbs with {@link setBreadcrumbFilter}, or turn the capture
+   * off. See "Network privacy" in the package README.
    */
   setNetworkFilter(callback?: NetworkFilter | null): void {
     installNetworkFilter(callback);
