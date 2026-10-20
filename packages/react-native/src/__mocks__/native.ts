@@ -367,7 +367,7 @@ export const native = {
 
   setAppearanceColor: jest.fn<boolean, [string, number, number, number, number]>(),
   getAppearanceColor: jest.fn<string, [string]>(),
-  deleteCollectedDataOnDevice: jest.fn<Promise<boolean>, [boolean]>(),
+  deleteCollectedDataOnDevice: jest.fn<Promise<boolean>, [boolean, boolean]>(),
 
   /**
    * Resets every mock on this object, found rather than listed.

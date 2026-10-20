@@ -2675,47 +2675,35 @@ static NSString *BGSRNHexFromColor(UIColor *color) {
   return hex;
 }
 
-/// iOS 7.0.0-beta3 and beta4 return without invoking `completion` when the SDK is
-/// not stopped, so a launched call resolves `false` immediately. That is the
-/// missing completion, not a wait. Stopped, including a nil instance, still
-/// calls the SDK method and settles through `BGSRNSettleOnce`: the
-/// completion's success, or `false` if the deadline fires first. Status and
-/// both SDK calls run on the main queue. A completion that arrives off main
-/// hops back before it writes the result the settler resolves.
+/// Resolves with the SDK's own outcome, however long the deletion takes. iOS
+/// 7.0.0-beta7 always invokes the completion (on the main thread): `NO` when the
+/// SDK is not stopped, otherwise once the deletion has finished. There is no
+/// deadline here: a timeout would report "failed" for a deletion that may still
+/// complete. `includingFinishedReports` selects the SDK form that also deletes
+/// the report bundles waiting for upload (and the crashes not reported yet and
+/// the anomaly baselines); that form has no `includingIntermediate` flag because
+/// it deletes the snapshots too. A completion that arrives off main hops back
+/// first, and only the first completion resolves.
 - (void)deleteCollectedDataOnDevice:(BOOL)includingIntermediate
-                            resolve:(RCTPromiseResolveBlock)resolve
-                             reject:(RCTPromiseRejectBlock)reject {
+            includingFinishedReports:(BOOL)includingFinishedReports
+                             resolve:(RCTPromiseResolveBlock)resolve
+                              reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
-    Bugsee *instance = [Bugsee sharedInstance];
-    BugseeStatus status = instance != nil ? instance.status : BugseeStatusStopped;
-    if (status != BugseeStatusStopped) {
-      __block BOOL settled = NO;
-      [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
-        BGSRNRunOnMain(^{
-          if (settled) {
-            return;
-          }
-          settled = YES;
-          resolve(@(success));
-        });
-      }];
-      if (!settled) {
-        settled = YES;
-        resolve(@NO);
-      }
-      return;
-    }
-    __block NSNumber *result = @NO;
-    dispatch_block_t done =
-        BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs, dispatch_get_main_queue(), ^{
-          resolve(result);
-        });
-    [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
+    __block BOOL settled = NO;
+    void (^completion)(BOOL) = ^(BOOL success) {
       BGSRNRunOnMain(^{
-        result = @(success);
-        done();
+        if (settled) {
+          return;
+        }
+        settled = YES;
+        resolve(@(success));
       });
-    }];
+    };
+    if (includingFinishedReports) {
+      [Bugsee deleteCollectedDataOnDevice:completion];
+    } else {
+      [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:completion];
+    }
   });
 }
 
