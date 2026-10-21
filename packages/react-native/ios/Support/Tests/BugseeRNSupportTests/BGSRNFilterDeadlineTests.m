@@ -6,6 +6,7 @@
 @interface BGSRNFakePendingFilter : NSObject
 @property (nonatomic, copy, nullable) void (^decision)(id _Nullable);
 @property (nonatomic, copy, nullable) dispatch_block_t deadline;
+@property (nonatomic, strong, nullable) NSNumber *expiresAt;
 @end
 @implementation BGSRNFakePendingFilter
 @end
@@ -184,6 +185,46 @@
 
   XCTAssertEqual(self.answers.count, 1u);
   XCTAssertEqualObjects(self.answers[0], @"kept");
+}
+
+/// The deadline's queue is starved, so its block has not run, but the
+/// deadline has passed. A reply that takes the item first is refused: the
+/// decision is answered nil and nothing is returned to apply.
+- (void)testAReplyPastTheDeadlineIsRefusedEvenIfTheTimerBlockHasNotRun {
+  BGSRNFakePendingFilter *item = [self addPending:@"1"];
+  dispatch_queue_t queue = dispatch_queue_create("test.starved", DISPATCH_QUEUE_SERIAL);
+  dispatch_semaphore_t release = dispatch_semaphore_create(0);
+  dispatch_async(queue, ^{
+    dispatch_semaphore_wait(release, DISPATCH_TIME_FOREVER);
+  });
+
+  BGSRNArmPendingFilterDeadlineAfter(30, queue, self.table, self.lock, @"1");
+  XCTAssertNotNil(item.expiresAt);
+  [NSThread sleepForTimeInterval:0.15];
+
+  XCTAssertNil(BGSRNTakePendingFilter(self.table, self.lock, @"1"));
+  XCTAssertEqual(self.answers.count, 1u);
+  XCTAssertEqualObjects(self.answers[0], [NSNull null]);
+  XCTAssertNil(self.table[@"1"]);
+
+  // The starved timer finally runs and finds nothing.
+  dispatch_semaphore_signal(release);
+  XCTestExpectation *drained = [self expectationWithDescription:@"drained"];
+  dispatch_async(queue, ^{
+    [drained fulfill];
+  });
+  [self waitForExpectations:@[ drained ] timeout:5];
+  XCTAssertEqual(self.answers.count, 1u);
+}
+
+/// Inside the deadline a reply is still taken normally.
+- (void)testAReplyInsideTheDeadlineIsStillTaken {
+  BGSRNFakePendingFilter *item = [self addPending:@"1"];
+  dispatch_queue_t queue = dispatch_queue_create("test.deadline", DISPATCH_QUEUE_SERIAL);
+  BGSRNArmPendingFilterDeadlineAfter(5000, queue, self.table, self.lock, @"1");
+
+  XCTAssertEqual(BGSRNTakePendingFilter(self.table, self.lock, @"1"), item);
+  XCTAssertEqual(self.answers.count, 0u);
 }
 
 @end

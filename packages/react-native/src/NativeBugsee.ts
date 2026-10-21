@@ -611,14 +611,25 @@ export interface Spec extends TurboModule {
   getAppearanceColor(name: string): string;
   /**
    * Deletes collected data on the device. `includingIntermediate` is the
-   * SDK's own flag: Android `Bugsee.deleteCollectedDataOnDevice` and iOS
-   * `deleteCollectedDataOnDevice:completion:`.
+   * SDK's own flag. `includingFinishedReports` also deletes the finished
+   * reports waiting for upload: Android's 3-argument
+   * `Bugsee.deleteCollectedDataOnDevice(includingIntermediate,
+   * includingBundles, callback)`, which deletes the finished bundles only;
+   * iOS has no flags form for it, so `true` calls `deleteCollectedDataOnDevice:`
+   * (everything: also crashes not yet reported and the performance baselines;
+   * `includingIntermediate` is then moot). That gap is a possible SDK
+   * follow-up. `includingIntermediate` covers the report snapshots on both
+   * platforms and, on Android, exported reports.
    *
-   * Resolves to the SDK's completion value. Both platforms refuse the
-   * deletion while launched; the promise still settles (`false`) so a
-   * caller is not left waiting on a completion the SDK does not invoke.
+   * Resolves to the SDK's completion value, however long the deletion takes.
+   * Both platforms refuse the deletion while launched and answer `false`
+   * (by design). iOS rejects with `E_DELETE_TIMEOUT` if the SDK reports
+   * nothing for 60 s; the deletion may still finish.
    */
-  deleteCollectedDataOnDevice(includingIntermediate: boolean): Promise<boolean>;
+  deleteCollectedDataOnDevice(
+    includingIntermediate: boolean,
+    includingFinishedReports: boolean,
+  ): Promise<boolean>;
 }
 
 // Before the lookup: on the legacy architecture getEnforcing does not throw,

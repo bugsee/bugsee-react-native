@@ -38,6 +38,7 @@
 #import <BugseeRNSupport/BGSRNExceptions.h>
 #import <BugseeRNSupport/BGSRNSettleOnce.h>
 #import <BugseeRNSupport/BGSRNFilterDeadline.h>
+#import <BugseeRNSupport/BGSRNDeleteCollectedData.h>
 #import <BugseeRNSupport/BGSRNBlackout.h>
 #import <BugseeRNSupport/BGSRNReportArgs.h>
 #import <BugseeRNSupport/BGSRNCreatedReports.h>
@@ -68,6 +69,7 @@
 #import "BGSRNExceptions.h"
 #import "BGSRNSettleOnce.h"
 #import "BGSRNFilterDeadline.h"
+#import "BGSRNDeleteCollectedData.h"
 #import "BGSRNBlackout.h"
 #import "BGSRNReportArgs.h"
 #import "BGSRNCreatedReports.h"
@@ -451,6 +453,8 @@ static void BGSRNSetAttribute(NSString *name,
 @interface BGSRNNetworkFilterPending : NSObject
 /// The wrapper's 9 s deadline; cancelled when the request is taken.
 @property (nonatomic, copy, nullable) dispatch_block_t deadline;
+/// Monotonic instant (ns) after which a reply is refused.
+@property (nonatomic, strong, nullable) NSNumber *expiresAt;
 @property (nonatomic, strong) BugseeNetworkEvent *event;
 @property (nonatomic, copy) BugseeNetworkFilterDecisionBlock decision;
 @property (nonatomic, weak) BugseeModule *owner;
@@ -501,6 +505,8 @@ static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
 @interface BGSRNLogFilterPending : NSObject
 /// The wrapper's 9 s deadline; cancelled when the request is taken.
 @property (nonatomic, copy, nullable) dispatch_block_t deadline;
+/// Monotonic instant (ns) after which a reply is refused.
+@property (nonatomic, strong, nullable) NSNumber *expiresAt;
 @property (nonatomic, strong) BugseeLogEvent *event;
 @property (nonatomic, copy) BugseeLogFilterDecisionBlock decision;
 @property (nonatomic, weak) BugseeModule *owner;
@@ -640,6 +646,8 @@ static void BGSRNInstallLogEventFilter(void) {
 @interface BGSRNBreadcrumbFilterPending : NSObject
 /// The wrapper's 9 s deadline; cancelled when the request is taken.
 @property (nonatomic, copy, nullable) dispatch_block_t deadline;
+/// Monotonic instant (ns) after which a reply is refused.
+@property (nonatomic, strong, nullable) NSNumber *expiresAt;
 @property (nonatomic, strong) id<BGSBreadcrumb> breadcrumb;
 @property (nonatomic, copy) BugseeBreadcrumbFilterDecisionBlock decision;
 @property (nonatomic, weak) BugseeModule *owner;
@@ -2704,47 +2712,38 @@ static NSString *BGSRNHexFromColor(UIColor *color) {
   return hex;
 }
 
-/// iOS 7.0.0-beta3 and beta4 return without invoking `completion` when the SDK is
-/// not stopped, so a launched call resolves `false` immediately. That is the
-/// missing completion, not a wait. Stopped, including a nil instance, still
-/// calls the SDK method and settles through `BGSRNSettleOnce`: the
-/// completion's success, or `false` if the deadline fires first. Status and
-/// both SDK calls run on the main queue. A completion that arrives off main
-/// hops back before it writes the result the settler resolves.
+/// Resolves with the SDK's own outcome. iOS 7.0.0-beta7 always invokes the
+/// completion (on the main thread): `NO` when the SDK is not stopped, otherwise
+/// once the deletion has finished. The only timer is the long backstop in
+/// `BGSRNDeleteCollectedData`, which REJECTS with `E_DELETE_TIMEOUT` (outcome
+/// unknown, the deletion may still finish) rather than resolving `false`.
+/// `includingFinishedReports` selects the SDK form that also deletes the report
+/// bundles waiting for upload, the crashes not reported yet and the anomaly
+/// baselines; that form has no `includingIntermediate` flag because it deletes
+/// the snapshots too.
 - (void)deleteCollectedDataOnDevice:(BOOL)includingIntermediate
-                            resolve:(RCTPromiseResolveBlock)resolve
-                             reject:(RCTPromiseRejectBlock)reject {
+            includingFinishedReports:(BOOL)includingFinishedReports
+                             resolve:(RCTPromiseResolveBlock)resolve
+                              reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
-    Bugsee *instance = [Bugsee sharedInstance];
-    BugseeStatus status = instance != nil ? instance.status : BugseeStatusStopped;
-    if (status != BugseeStatusStopped) {
-      __block BOOL settled = NO;
-      [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
-        BGSRNRunOnMain(^{
-          if (settled) {
-            return;
+    BGSRNDeleteCollectedData(
+        ^(void (^completion)(BOOL)) {
+          if (includingFinishedReports) {
+            [Bugsee deleteCollectedDataOnDevice:completion];
+          } else {
+            [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:completion];
           }
-          settled = YES;
+        },
+        BGSRNDeleteCollectedDataBackstopMs, dispatch_get_main_queue(),
+        ^(BOOL success) {
           resolve(@(success));
+        },
+        ^(NSString *code) {
+          reject(code,
+                 @"Bugsee did not report the outcome of deleteCollectedDataOnDevice in time; "
+                 @"the deletion may still finish.",
+                 nil);
         });
-      }];
-      if (!settled) {
-        settled = YES;
-        resolve(@NO);
-      }
-      return;
-    }
-    __block NSNumber *result = @NO;
-    dispatch_block_t done =
-        BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs, dispatch_get_main_queue(), ^{
-          resolve(result);
-        });
-    [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
-      BGSRNRunOnMain(^{
-        result = @(success);
-        done();
-      });
-    }];
   });
 }
 

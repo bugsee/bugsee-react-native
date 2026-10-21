@@ -8,6 +8,7 @@ import React from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import type { ExceptionOptions } from './options';
 import { encodeExceptionOptions, exceptionOptionsMessage } from './options';
+import { isCrashDetectionOptedOut } from './handlers';
 import { markReported, reportHandled } from './report';
 
 export interface ErrorBoundaryFallbackProps {
@@ -58,7 +59,9 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       );
       options = undefined;
     }
-    if (markReported(error)) {
+    // Honour com.bugsee.option.detect.crash like the root reporter and the
+    // global handlers do. The fallback and onError still run.
+    if (!isCrashDetectionOptedOut() && markReported(error)) {
       reportHandled(error, options, { componentStack });
     }
     this.props.onError?.(error, componentStack);

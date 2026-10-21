@@ -33,7 +33,12 @@ FOUNDATION_EXPORT void BGSRNCancelFilterDeadline(_Nullable dispatch_block_t toke
 /// reply and the deadline cannot both take the same item: whoever gets it
 /// calls the SDK's decision block, and the other does nothing. If the item has
 /// a `deadline` property, its timer is cancelled here, so every reply path
-/// that takes the item also stops its timer.
+/// that takes the item also stops its timer. If it has an `expiresAt`
+/// property (a monotonic `CLOCK_UPTIME_RAW` instant in nanoseconds, set when
+/// the deadline is armed) and that instant has passed, the item is overdue
+/// even though the timer block may not have run (a starved queue): it is
+/// answered with nil here and nil is returned, so a late reply is never
+/// applied.
 FOUNDATION_EXPORT _Nullable id BGSRNTakePendingFilter(NSMutableDictionary<NSString *, id> *table,
                                                       id lock,
                                                       NSString *_Nullable requestId);

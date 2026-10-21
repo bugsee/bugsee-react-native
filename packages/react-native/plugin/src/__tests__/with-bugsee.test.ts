@@ -320,6 +320,25 @@ describe('withBugsee through the Expo mod compiler', () => {
     expect(APP_GRADLE_NOT_GROOVY.startsWith(`${CANNOT_EDIT} android/app/build.gradle:`)).toBe(true);
   });
 
+  it('names editGradleFiles in the Kotlin refusals, and that option lets a Kotlin project prebuild', async () => {
+    for (const message of [APP_GRADLE_NOT_GROOVY, gradleNotGroovy('android/build.gradle')]) {
+      expect(message).toContain('set "editGradleFiles": false in the @bugsee/react-native plugin options and run expo prebuild again');
+    }
+    const android = join(projectRoot, 'android');
+    for (const [dir, name] of [
+      [android, 'settings.gradle'],
+      [android, 'build.gradle'],
+      [join(android, 'app'), 'build.gradle'],
+    ] as const) {
+      renameSync(join(dir, name), join(dir, `${name}.kts`));
+    }
+    await prebuild({ appToken: ANDROID_TOKEN, editGradleFiles: false }, ['android']);
+    expect(readFileSync(join(android, 'bugsee.properties'), 'utf8')).toContain(`app_token=${ANDROID_TOKEN}`);
+    for (const file of ['settings.gradle.kts', 'build.gradle.kts', 'app/build.gradle.kts']) {
+      expect(readFileSync(join(android, file), 'utf8')).not.toContain('bugsee');
+    }
+  });
+
   it('refuses a Kotlin settings or root file at prebuild', async () => {
     const android = join(projectRoot, 'android');
     renameSync(join(android, 'settings.gradle'), join(android, 'settings.gradle.kts'));

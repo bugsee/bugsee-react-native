@@ -50,6 +50,7 @@ import { encodeExceptionOptions } from './exceptions/options';
 import type { ExceptionOptions } from './exceptions/options';
 import {
   installExceptionHandlers,
+  setCrashDetectionOptedOut,
   setExceptionCaptureEnabled,
 } from './exceptions/handlers';
 import {
@@ -71,7 +72,9 @@ import type { ReportAppearance } from './appearance/report';
 const DETECT_CRASH_OPTION = 'com.bugsee.option.detect.crash';
 
 function applyExceptionCaptureFromOptions(options: LaunchOptions): void {
-  setExceptionCaptureEnabled(options[DETECT_CRASH_OPTION] !== false);
+  const enabled = options[DETECT_CRASH_OPTION] !== false;
+  setExceptionCaptureEnabled(enabled);
+  setCrashDetectionOptedOut(!enabled);
 }
 
 export { Status } from './status';
@@ -454,9 +457,19 @@ class Bugsee {
    * filter; JS answers on a later turn, and a callback that throws,
    * rejects, or does not settle within 9 s drops the event.
    *
-   * A JS filter replaces the iOS built-in sanitizer. Android runs the
-   * default sanitizer before the callback when
-   * `com.bugsee.option.capture.network.default-sanitizer` is on.
+   * On Android this package runs the built-in sanitizer on each event
+   * before the callback, when
+   * `com.bugsee.option.capture.network.default-sanitizer` is on. On iOS the
+   * callback replaces the built-in sanitizer, so raw events reach it and
+   * what it does not remove is recorded. The built-in rules also differ by
+   * platform.
+   *
+   * This filter sees network events only. It is not applied to URLs in HTTP
+   * breadcrumbs (when breadcrumb capture is on) or `http.client` performance
+   * spans (on by default), and path segments in the `http_url` attribute of
+   * `detect.http-errors` reports (off by default) are not passed through it.
+   * Redact breadcrumbs with {@link setBreadcrumbFilter}, or turn the capture
+   * off. See "Network privacy" in the package README.
    */
   setNetworkFilter(callback?: NetworkFilter | null): void {
     installNetworkFilter(callback);
@@ -755,7 +768,7 @@ class Bugsee {
    * on iOS, 5 s on Android). iOS surfaces it at the next launch.
    */
   logUnhandledException(error: unknown): Promise<void> {
-    if (!markReported(error)) {
+    if (!markReported(error, 'unhandled')) {
       return Promise.resolve();
     }
     const extras =
@@ -837,17 +850,36 @@ class Bugsee {
   }
 
   /**
-   * Deletes collected data stored on the device.
+   * Deletes collected data stored on the device. The SDK must be stopped
+   * first: while launched, both platforms refuse (by design) and this
+   * resolves `false`. The promise resolves with the SDK's own outcome, however
+   * long the deletion takes. On iOS, if the SDK reports nothing for 60 s (with either
+   * flag value), it rejects with code `E_DELETE_TIMEOUT`:
+   * the outcome is unknown and the deletion may still finish.
    *
-   * `includingIntermediate` crosses unchanged. Both SDKs delete the rolling
-   * capture data whatever it is, and keep finished bundles:
-   * - `false`: deletes the capture data, keeps finished bundles.
-   * - `true`: also deletes intermediate data (snapshots, exported reports).
-   * The SDK must be stopped for the deletion to succeed. While launched, both
-   * platforms refuse it and this resolves `false`.
+   * - `includingIntermediate`: `false` deletes the rolling capture data and
+   *   keeps finished reports; `true` also deletes the data set aside for
+   *   reports not yet bundled (report snapshots on both platforms; on Android
+   *   also exported reports).
+   * - `includingFinishedReports` (default `false`): also deletes the finished
+   *   reports waiting for upload, which are otherwise still uploaded after
+   *   the data is deleted (use it when a user withdraws consent).
+   *
+   * Platform difference with `includingFinishedReports: true`: iOS calls the
+   * SDK's delete-everything form, which also deletes crashes not yet reported
+   * and the learned performance baselines, and cancels pending uploads
+   * (`includingIntermediate` is then moot). Android's 3-argument SDK method
+   * deletes the finished report bundles only; it does not touch crashes not
+   * yet reported. TODO: possible SDK follow-up to align the two.
    */
-  deleteCollectedDataOnDevice(includingIntermediate: boolean): Promise<boolean> {
-    return NativeBugsee.deleteCollectedDataOnDevice(includingIntermediate);
+  deleteCollectedDataOnDevice(
+    includingIntermediate: boolean,
+    includingFinishedReports: boolean = false,
+  ): Promise<boolean> {
+    return NativeBugsee.deleteCollectedDataOnDevice(
+      includingIntermediate,
+      includingFinishedReports,
+    );
   }
 }
 
