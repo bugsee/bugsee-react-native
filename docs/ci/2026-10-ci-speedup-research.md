@@ -113,7 +113,7 @@ This PR edits ci.yml and scripts/, so the classifier selects every job and every
 
 | | Baseline (all 3 gates) | Draft PR (all 3 gates) |
 |---|---|---|
-| ci jobs (checks) | 45 | 37 (-8: compat -6, pack install -6, src shards +2, one more mid job +1 -> net -8 after counting) |
+| ci jobs (checks) | 47 (sampled run 39557738505 listed 45) | 37 (-10: compat -6, pack install -6, src shards +2) |
 | mutation (src) slowest shard (run time) | 26-36 min (median shard 24.5) | 20.7 min (shards 8.3-20.7) |
 | rn compat | 7 jobs x 0.4 | 1 job, 0.9 min |
 | pack install typecheck-only minors | 5 jobs x 0.8-1.4 | 1 job, 1.7 min |
