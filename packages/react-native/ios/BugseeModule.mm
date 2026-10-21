@@ -470,8 +470,10 @@ static BOOL BGSRNNetworkFilterInstalled = NO;
 // place and attaches a new module that has not; see BGSRNFilterArming.
 /// Orders a module's claim of the three filter pointers against a setter's
 /// ownership check and arm, so a superseded module cannot pass the check,
-/// pause, and arm or disable after the replacement attached. Held only for
-/// the check and the arm or flag write, never across an SDK call.
+/// pause, and arm or disable after the replacement attached. Lock order is
+/// this lock, then a filter's own lock. The setters hold it across the SDK
+/// uninstall on the disable paths (those calls only take locks); the filter
+/// blocks the SDK calls never take it.
 static id BGSRNFilterOwnerLock(void) {
   static id lock;
   static dispatch_once_t once;
@@ -1756,10 +1758,18 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   }];
   return @YES;
   }
-  @synchronized (BGSRNNetworkFilterLock()) {
-    BGSRNNetworkFilterInstalled = NO;
+  // Ownership is checked again under the owner lock and held through the
+  // uninstall: a stale module that passed the check above must not remove a
+  // filter the replacement has since relied on. The SDK setter only takes
+  // locks.
+  @synchronized (BGSRNFilterOwnerLock()) {
+    if (BGSRNNetworkFilterModule == self) {
+      @synchronized (BGSRNNetworkFilterLock()) {
+        BGSRNNetworkFilterInstalled = NO;
+      }
+      [Bugsee setNetworkEventFilter:nil];
+    }
   }
-  [Bugsee setNetworkEventFilter:nil];
   return @YES;
 }
 
@@ -1980,12 +1990,20 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     generation = BGSRNBreadcrumbFilterGeneration;
   }
   BGSRNRunOnMain(^{
-    @synchronized (BGSRNBreadcrumbFilterLock()) {
-      if (BGSRNBreadcrumbFilterGeneration != generation) {
+    // The generation does not catch a stale disable that captured it after
+    // the replacement's enable, so ownership is checked here too, under the
+    // owner lock held through the uninstall.
+    @synchronized (BGSRNFilterOwnerLock()) {
+      if (BGSRNBreadcrumbFilterModule != self) {
         return;
       }
-      BGSRNBreadcrumbFilterInstalled = NO;
-      [Bugsee setBreadcrumbFilter:nil];
+      @synchronized (BGSRNBreadcrumbFilterLock()) {
+        if (BGSRNBreadcrumbFilterGeneration != generation) {
+          return;
+        }
+        BGSRNBreadcrumbFilterInstalled = NO;
+        [Bugsee setBreadcrumbFilter:nil];
+      }
     }
   });
   return @YES;
