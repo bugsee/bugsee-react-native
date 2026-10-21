@@ -77,6 +77,8 @@ jobs:
   # min, one job each; plugin did not finish. At 3/2/10 shards: src 6-18,
   # scripts 3-17, plugin 4-17 min a shard. Shards balance by mutant count,
   # not cost (raw-messages.ts and index.ts mutants are dearer), hence 4/3.
+  # src is now 6: its slowest of 4 shards took 22-36 min on every PR touching
+  # src, which made it the critical path of the whole run.
   #
   # Tests that read files at runtime (the corpus a parser is scored against)
   # list those paths in GATE_INPUTS in scripts/mutation-shards.ts.
@@ -131,7 +133,7 @@ jobs:
     uses: ./.github/workflows/mutation-gate.yml
     with:
       gate: src
-      shards: 4
+      shards: 6
 
   mutation-scripts:
     name: mutation (scripts)
