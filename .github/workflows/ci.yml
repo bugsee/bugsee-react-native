@@ -319,6 +319,9 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's dependency and wrapper caches (~/.gradle). Runs on main write
+      # it; pull requests only read, so a PR cannot poison it.
+      - uses: gradle/actions/setup-gradle@v6
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn workspace bugsee-example-bare credentials
@@ -411,6 +414,14 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      # CocoaPods' download cache (RN's prebuilt tarballs, Hermes, the SDK
+      # pods): content-addressed, so a stale entry cannot change what installs.
+      - uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: cocoapods-${{ runner.os }}-${{ hashFiles('examples/bare/ios/Podfile.lock') }}
+          restore-keys: cocoapods-${{ runner.os }}-
 
       - name: Install pods
         working-directory: examples/bare/ios
@@ -531,6 +542,15 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn workspace bugsee-example-bare credentials
+
+      # CocoaPods' download cache (RN's prebuilt tarballs, Hermes, the SDK
+      # pods): content-addressed, so a stale entry cannot change what installs.
+      - uses: actions/cache@v6
+        if: matrix.delivery == 'cocoapods'
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: cocoapods-${{ runner.os }}-${{ hashFiles('examples/bare/ios/Podfile.lock') }}
+          restore-keys: cocoapods-${{ runner.os }}-
 
       - name: Install pods
         if: matrix.delivery == 'cocoapods'
