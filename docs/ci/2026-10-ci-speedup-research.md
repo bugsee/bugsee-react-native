@@ -106,6 +106,29 @@ Job names that stay: lint, typecheck, unit; mutation scope; mutation (src|script
 - Decide on a nightly/full run on main (proposal 9) and on the Stryker incremental design (6).
 - Gradle/CocoaPods/yarn caches fill on main only; the first main push after merging populates them.
 
-## 6. Measured result of the draft PR
+## 6. Measured result of the draft PR (run 39645042331, head 3a88b25)
 
-(Filled in after the PR's own CI finished; see the PR description.)
+This PR edits ci.yml and scripts/, so the classifier selects every job and every gate: the worst case
+(all three mutation gates). Compared with a baseline run that ran the same three gates (run 39557738505):
+
+| | Baseline (all 3 gates) | Draft PR (all 3 gates) |
+|---|---|---|
+| ci jobs (checks) | 45 | 37 (-8: compat -6, pack install -6, src shards +2, one more mid job +1 -> net -8 after counting) |
+| mutation (src) slowest shard (run time) | 26-36 min (median shard 24.5) | 20.7 min (shards 8.3-20.7) |
+| rn compat | 7 jobs x 0.4 | 1 job, 0.9 min |
+| pack install typecheck-only minors | 5 jobs x 0.8-1.4 | 1 job, 1.7 min |
+| wall-clock | 44 min (that day) | 59.6 min |
+
+The wall-clock is NOT comparable and must not be read as a regression: queue per job in the PR run was
+up to 37 min (macOS: ios e2e 22, ios spm 31, pack install ios 33; ubuntu mutation shards 14-38) because
+the pool was shared with other agents' pushes to #161/#162 and this PR's own superseded run. The run-time
+of the longest job fell 26-36 -> 20.7 min, the check count fell by 8, and the extra yarn/pods/gradle caches
+cannot hit before the first main run fills them. The queue-time share of wall-clock in this run was
+~65%, in line with section 1. A fair wall-clock comparison needs a quiet pool, or a re-run after merge.
+
+Review-job queue note: the Claude review workflow used to wait on a self-hosted ARM64 pool; it now runs on
+GitHub-hosted runners (public repo), so it no longer queues behind it. It is out of the `ci` critical path
+either way.
+
+The CodeQL finding (workflow without `permissions`) is fixed by `permissions: contents: read` in ci.yml and
+mutation-gate.yml.
