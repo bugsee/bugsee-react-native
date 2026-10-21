@@ -229,8 +229,10 @@ final class NetworkFilterBridge {
      * forgotten and the callback is not touched.
      */
     void detach(@NonNull final Sink current) {
-        sink.compareAndSet(current, null);
-        armedFor.compareAndSet(current, null);
+        synchronized (stateLock) {
+            sink.compareAndSet(current, null);
+            armedFor.compareAndSet(current, null);
+        }
         final List<Pending> owned = new ArrayList<>();
         for (final Pending item : pending.values()) {
             if (item.owner == current && pending.remove(item.id, item)) {
@@ -356,10 +358,9 @@ final class NetworkFilterBridge {
             drop(callback);
             return;
         }
-        final Sink current = asked;
         // A null URL cannot tell a recycled entry (reset nulls the URL) from
         // the one we were asked about, so it is dropped rather than lent.
-        if (url == null || current == null) {
+        if (url == null) {
             drop(callback);
             return;
         }
@@ -371,11 +372,11 @@ final class NetworkFilterBridge {
             return;
         }
         final String requestId = Long.toString(ids.incrementAndGet());
-        final Pending item = new Pending(requestId, event, id, url, callback, current);
+        final Pending item = new Pending(requestId, event, id, url, callback, asked);
         pending.put(requestId, item);
         try {
             item.deadline = scheduler.schedule(() -> forget(requestId), BORROW_MS);
-            current.onNetworkFilterRequest(requestId, eventJson);
+            asked.onNetworkFilterRequest(requestId, eventJson);
         } catch (final Throwable e) {
             if (pending.remove(requestId, item)) {
                 cancel(item.deadline);
