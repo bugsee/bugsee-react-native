@@ -313,12 +313,16 @@ Write it as if it were your only redaction.
     on `http` crumbs:
 
     ```ts
+    // Drops user:password@, the query and the fragment.
+    const stripUrl = (url: string) =>
+      url.replace(/\/\/[^/?#@]*@/, '//').split(/[?#]/)[0];
+
     Bugsee.setBreadcrumbFilter(crumb => {
       const data = crumb.data as { url?: unknown } | null | undefined;
       if (crumb.type !== 'http' || typeof data?.url !== 'string') {
         return crumb;
       }
-      return { ...crumb, data: { ...data, url: data.url.split(/[?#]/)[0] } };
+      return { ...crumb, data: { ...data, url: stripUrl(data.url) } };
     });
     ```
   - **`http.client` performance spans** (performance monitoring,
