@@ -50,6 +50,7 @@ import { encodeExceptionOptions } from './exceptions/options';
 import type { ExceptionOptions } from './exceptions/options';
 import {
   installExceptionHandlers,
+  setCrashDetectionOptedOut,
   setExceptionCaptureEnabled,
 } from './exceptions/handlers';
 import {
@@ -71,7 +72,9 @@ import type { ReportAppearance } from './appearance/report';
 const DETECT_CRASH_OPTION = 'com.bugsee.option.detect.crash';
 
 function applyExceptionCaptureFromOptions(options: LaunchOptions): void {
-  setExceptionCaptureEnabled(options[DETECT_CRASH_OPTION] !== false);
+  const enabled = options[DETECT_CRASH_OPTION] !== false;
+  setExceptionCaptureEnabled(enabled);
+  setCrashDetectionOptedOut(!enabled);
 }
 
 export { Status } from './status';
@@ -753,7 +756,7 @@ class Bugsee {
    * on iOS, 5 s on Android). iOS surfaces it at the next launch.
    */
   logUnhandledException(error: unknown): Promise<void> {
-    if (!markReported(error)) {
+    if (!markReported(error, 'unhandled')) {
       return Promise.resolve();
     }
     const extras =

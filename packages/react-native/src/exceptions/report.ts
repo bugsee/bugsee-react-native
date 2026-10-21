@@ -1,7 +1,7 @@
 /**
  * Builds and crosses a JS exception payload to the TurboModule stubs.
  *
- * Dedupes object values through a WeakSet (`markReported`). Handled
+ * Dedupes object values through two WeakSets, one per kind (`markReported`). Handled
  * `AggregateError`s are split (R14, first {@link EXCEPTION_MAX_AGGREGATE});
  * unhandled ones stay one report. Never throws from `reportHandled`; never
  * rejects from `reportUnhandled`.
@@ -34,17 +34,39 @@ export function unhandledReportWaitMs(): number {
 }
 export const EXCEPTION_MAX_AGGREGATE = 10;
 
+/** Objects reported in any form (handled or unhandled). */
 const reported = new WeakSet<object>();
+/** Objects reported as a crash. A handled report does not enter this set. */
+const reportedUnhandled = new WeakSet<object>();
 
-/** true the first time an object is seen (WeakSet); always true for a primitive. */
-export function markReported(error: unknown): boolean {
+/**
+ * true the first time an object is seen (WeakSet); always true for a primitive.
+ *
+ * A crash is never blocked by an earlier handled report of the same object,
+ * so `logException(e)` followed by a rethrow that ends the app still reports
+ * the crash. Anything already reported as a crash blocks every later report,
+ * handled or not. Pass `'unhandled'` from the crash routes.
+ */
+export function markReported(
+  error: unknown,
+  kind: 'handled' | 'unhandled' = 'handled',
+): boolean {
   if (error === null || (typeof error !== 'object' && typeof error !== 'function')) {
     return true;
   }
-  if (reported.has(error as object)) {
+  const key = error as object;
+  if (kind === 'unhandled') {
+    if (reportedUnhandled.has(key)) {
+      return false;
+    }
+    reportedUnhandled.add(key);
+    reported.add(key);
+    return true;
+  }
+  if (reported.has(key)) {
     return false;
   }
-  reported.add(error as object);
+  reported.add(key);
   return true;
 }
 
@@ -86,8 +108,8 @@ function sendHandled(
  * at most {@link EXCEPTION_MAX_AGGREGATE} inner reports.
  *
  * Callers claim the value with {@link markReported} first. This function does
- * not re-claim the top-level `error` (handlers and the facade share one
- * WeakSet); it still marks AggregateError inners so a shared Error crosses
+ * not re-claim the top-level `error` (handlers and the facade share the
+ * same WeakSets); it still marks AggregateError inners so a shared Error crosses
  * once whichever route saw it first.
  */
 export function reportHandled(
@@ -132,7 +154,7 @@ function warnUnhandledNativeFailureOnce(): void {
  * {@link unhandledReportWaitMs}, whichever is first; never rejects.
  *
  * Callers claim the value with {@link markReported} first (same shared
- * WeakSet as {@link reportHandled}).
+ * WeakSets as {@link reportHandled}; a prior handled claim does not block a crash).
  */
 export async function reportUnhandled(
   error: unknown,

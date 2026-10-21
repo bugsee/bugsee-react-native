@@ -120,11 +120,34 @@ What it does and does not do:
 - The error is reported as a **handled** exception, with the React component stack attached as an extra
   (not as the error's `cause`).
 - An error object the SDK has already reported is not reported again, so a boundary and
-  `Bugsee.logException` (or the global handler) do not file the same error twice.
+  `Bugsee.logException` (or the global handler) do not file the same error twice, unless it later ends the app as a crash. Deduplication applies to
+  error objects only: a thrown string or number is never deduplicated.
+- When `com.bugsee.option.detect.crash` is `false` the boundary reports nothing, as the global handlers
+  do; it still shows the fallback and calls `onError`. (`Bugsee.logException` is an explicit call and
+  always reports.)
 - `children` is a plain React node. The function-as-children form from 6.x is not supported.
 - Like any React error boundary it only catches errors thrown while **rendering**. Errors in event
   handlers, timers and promises are not caught by it; the global handlers `launch` installs report the
   uncaught ones.
+
+### Exception capture: what to know
+
+- **Render errors need `Bugsee.wrap`.** On React Native 0.81+ an uncaught render error never reaches
+  `ErrorUtils`, so it is reported as a crash only when the app root is wrapped:
+  `AppRegistry.registerComponent(name, () => Bugsee.wrap(App))`. An error boundary above the app
+  that swallows the error hides it from Bugsee; put an `<ErrorBoundary>` below it, or call
+  `Bugsee.logException` from your own boundary.
+- **Log, then rethrow.** Deduplication is per error object and per kind. `Bugsee.logException(e)`
+  followed by a rethrow that ends the app is still reported as a crash, and
+  `Bugsee.logUnhandledException(e)` after `logException(e)` is reported. Once an error has been
+  reported as a crash, no later report of it is sent. A report dropped because the SDK had not
+  launched yet still counts as sent.
+- **Unhandled promise rejections** are reported as handled errors, not crashes. Hermes has no getter
+  for the active rejection tracker, so if another library installs one after `launch()`, the last
+  one installed wins and Bugsee stops seeing rejections. Likewise Bugsee replaces any tracker installed
+  before `launch()`, and chains only React Native's own dev-mode options.
+- **iOS Simulator.** The Simulator slice of the iOS SDK has no crash reporter, and
+  `logUnhandledException` does nothing there. Exercise crash capture on a device.
 
 ### Hiding a view from recordings
 
