@@ -129,3 +129,44 @@ export function endpointMetaData(input: EndpointMetaDataInput): EndpointMetaData
   set[SDK_ENDPOINT_MARKER] = input.endpoint;
   return { remove, set };
 }
+
+/**
+ * The wrapper's own meta-data for the startup filter hold: a comma list of
+ * the filters the Android native module installs, fail closed, in its init
+ * provider, before the SDK can launch. See `ReactNativeWrapperInitProvider`.
+ * The name is the wrapper's, so a value found under it is this plugin's and is
+ * replaced or removed freely.
+ */
+export const RN_HOLD_FILTERS_META_DATA = 'com.bugsee.reactnative.hold-filters';
+
+export const HOLDABLE_FILTERS = ['network', 'log', 'breadcrumb'] as const;
+export type HoldableFilter = (typeof HOLDABLE_FILTERS)[number];
+
+export const HOLD_FILTERS_NOT_VALID =
+  `@bugsee/react-native: holdFilters must be true, false, or a list of ${HOLDABLE_FILTERS.join(', ')}`;
+
+/**
+ * The `holdFilters` option as the meta-data value, or null when none is
+ * written (unset, `false` or an empty list). `true` holds all three. Anything
+ * else is refused, so a typo cannot silently leave a filter open.
+ */
+export function holdFiltersValue(option: unknown): string | null {
+  if (option === undefined || option === null || option === false) {
+    return null;
+  }
+  if (option === true) {
+    return HOLDABLE_FILTERS.join(',');
+  }
+  if (!Array.isArray(option)) {
+    throw new Error(HOLD_FILTERS_NOT_VALID);
+  }
+  const held = new Set<string>();
+  for (const name of option) {
+    if (!(HOLDABLE_FILTERS as readonly unknown[]).includes(name)) {
+      throw new Error(HOLD_FILTERS_NOT_VALID);
+    }
+    held.add(name as string);
+  }
+  const ordered = HOLDABLE_FILTERS.filter((name) => held.has(name));
+  return ordered.length === 0 ? null : ordered.join(',');
+}

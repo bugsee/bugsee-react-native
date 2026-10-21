@@ -1,9 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SDK_ENDPOINT_KEPT = exports.SDK_ENDPOINT_MARKER = exports.SDK_ENDPOINT_META_DATA = exports.RN_ENDPOINT_META_DATA = exports.APP_TOKEN_MARKER = exports.APP_TOKEN_META_DATA = void 0;
+exports.HOLD_FILTERS_NOT_VALID = exports.HOLDABLE_FILTERS = exports.RN_HOLD_FILTERS_META_DATA = exports.SDK_ENDPOINT_KEPT = exports.SDK_ENDPOINT_MARKER = exports.SDK_ENDPOINT_META_DATA = exports.RN_ENDPOINT_META_DATA = exports.APP_TOKEN_MARKER = exports.APP_TOKEN_META_DATA = void 0;
 exports.manifestAutoLaunchToken = manifestAutoLaunchToken;
 exports.appTokenMetaData = appTokenMetaData;
 exports.endpointMetaData = endpointMetaData;
+exports.holdFiltersValue = holdFiltersValue;
 const properties_1 = require("./properties");
 /**
  * The `com.bugsee.app-token` meta-data value, or null when the manifest
@@ -95,5 +96,40 @@ function endpointMetaData(input) {
     set[exports.SDK_ENDPOINT_META_DATA] = input.endpoint;
     set[exports.SDK_ENDPOINT_MARKER] = input.endpoint;
     return { remove, set };
+}
+/**
+ * The wrapper's own meta-data for the startup filter hold: a comma list of
+ * the filters the Android native module installs, fail closed, in its init
+ * provider, before the SDK can launch. See `ReactNativeWrapperInitProvider`.
+ * The name is the wrapper's, so a value found under it is this plugin's and is
+ * replaced or removed freely.
+ */
+exports.RN_HOLD_FILTERS_META_DATA = 'com.bugsee.reactnative.hold-filters';
+exports.HOLDABLE_FILTERS = ['network', 'log', 'breadcrumb'];
+exports.HOLD_FILTERS_NOT_VALID = `@bugsee/react-native: holdFilters must be true, false, or a list of ${exports.HOLDABLE_FILTERS.join(', ')}`;
+/**
+ * The `holdFilters` option as the meta-data value, or null when none is
+ * written (unset, `false` or an empty list). `true` holds all three. Anything
+ * else is refused, so a typo cannot silently leave a filter open.
+ */
+function holdFiltersValue(option) {
+    if (option === undefined || option === null || option === false) {
+        return null;
+    }
+    if (option === true) {
+        return exports.HOLDABLE_FILTERS.join(',');
+    }
+    if (!Array.isArray(option)) {
+        throw new Error(exports.HOLD_FILTERS_NOT_VALID);
+    }
+    const held = new Set();
+    for (const name of option) {
+        if (!exports.HOLDABLE_FILTERS.includes(name)) {
+            throw new Error(exports.HOLD_FILTERS_NOT_VALID);
+        }
+        held.add(name);
+    }
+    const ordered = exports.HOLDABLE_FILTERS.filter((name) => held.has(name));
+    return ordered.length === 0 ? null : ordered.join(',');
 }
 //# sourceMappingURL=manifest.js.map

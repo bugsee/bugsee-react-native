@@ -8,7 +8,7 @@ import type { ExpoConfig } from '@expo/config-types';
 
 import withBugsee, { APP_GRADLE_NOT_GROOVY, gradleNotGroovy, platformToken } from '../index';
 import { ENDPOINT_HAS_VERSION, ENDPOINT_NOT_VALID } from '../endpoint';
-import { SDK_ENDPOINT_KEPT } from '../manifest';
+import { HOLD_FILTERS_NOT_VALID, SDK_ENDPOINT_KEPT, holdFiltersValue } from '../manifest';
 import type { BugseePluginProps } from '../index';
 import { CANNOT_EDIT } from '../gradle';
 import type * as NativeVersions from '../native-versions';
@@ -261,6 +261,61 @@ describe('withBugsee through the Expo mod compiler', () => {
     await prebuild({ appToken: ANDROID_TOKEN, autoLaunch: true });
     expect(read('manifest')).toContain('android:name="com.bugsee.app-token"');
     expect(read('manifest')).toContain(`android:value="${ANDROID_TOKEN}"`);
+  });
+
+  describe('holdFiltersValue', () => {
+    it.each([
+      [undefined, null],
+      [null, null],
+      [false, null],
+      [[], null],
+      [true, 'network,log,breadcrumb'],
+      [['log'], 'log'],
+      [['breadcrumb', 'log', 'log'], 'log,breadcrumb'],
+      [['network', 'log', 'breadcrumb'], 'network,log,breadcrumb'],
+    ])('%j is %j', (option, expected) => {
+      expect(holdFiltersValue(option)).toBe(expected);
+    });
+
+    it.each([['network'], [0], [1], [{}], [['Log']], [['network', 'x']], [[null]], [''], [[['log']]]])(
+      'refuses %j',
+      (option) => {
+        expect(() => holdFiltersValue(option)).toThrow(HOLD_FILTERS_NOT_VALID);
+      },
+    );
+  });
+
+  describe('holdFilters', () => {
+    const HOLD_META = 'android:name="com.bugsee.reactnative.hold-filters"';
+
+    it('writes nothing when it is unset, false or empty', async () => {
+      for (const holdFilters of [undefined, false, []] as const) {
+        await prebuild({ appToken: ANDROID_TOKEN, holdFilters });
+        expect(read('manifest')).not.toContain('hold-filters');
+      }
+    });
+
+    it('holds all three for true, and the named ones in a fixed order for a list', async () => {
+      await prebuild({ appToken: ANDROID_TOKEN, holdFilters: true });
+      expect(read('manifest')).toContain(`<meta-data ${HOLD_META} android:value="network,log,breadcrumb"/>`);
+      await prebuild({ appToken: ANDROID_TOKEN, holdFilters: ['breadcrumb', 'network', 'network'] });
+      expect(read('manifest')).toContain(`<meta-data ${HOLD_META} android:value="network,breadcrumb"/>`);
+      expect(read('manifest').split(HOLD_META)).toHaveLength(2);
+    });
+
+    it('is written without autoLaunch, and removed again byte for byte', async () => {
+      await prebuild({ appToken: ANDROID_TOKEN });
+      const without = snapshot(projectRoot);
+      await prebuild({ appToken: ANDROID_TOKEN, holdFilters: ['log'] });
+      expect(read('manifest')).toContain(`${HOLD_META} android:value="log"`);
+      expect(read('manifest')).not.toContain('com.bugsee.app-token');
+      await prebuild({ appToken: ANDROID_TOKEN });
+      expect(snapshot(projectRoot)).toEqual(without);
+    });
+
+    it.each([[['logs']], ['network'], [1], [[1]]])('fails the prebuild for %j', async (holdFilters) => {
+      await expect(prebuild({ holdFilters } as unknown as BugseePluginProps)).rejects.toThrow(HOLD_FILTERS_NOT_VALID);
+    });
   });
 
   it('removes the manifest token a later prebuild no longer writes', async () => {

@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 
 import com.bugsee.library.contracts.common.Callback1;
 import com.bugsee.library.contracts.exchange.Breadcrumb;
+import com.bugsee.library.contracts.exchange.EventFilter;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -216,6 +217,7 @@ public class BreadcrumbFilterBridgeTest {
         assertEquals(2, Breadcrumb.Level.WARNING.ordinal());
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.level = Breadcrumb.Level.WARNING;
         crumb.message = "secret";
@@ -236,6 +238,7 @@ public class BreadcrumbFilterBridgeTest {
     public void snapshotIncludesDataAndAStampedTimestamp() throws Exception {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.category = "ui";
         crumb.message = "tap";
@@ -259,6 +262,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aReplyWritesGetValueNotTheOrdinal() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.level = Breadcrumb.Level.FATAL;
         final RecordingCallback callback = new RecordingCallback();
@@ -276,6 +280,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aNullReplyDropsWithoutPassingTheCrumbThrough() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         crumb.level = Breadcrumb.Level.ERROR;
@@ -295,6 +300,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aKeepRewritesTheNamedFieldsAndClearsDataWithNull() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.category = "ui";
         crumb.message = "secret";
@@ -320,6 +326,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aReplyWritesData() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -339,6 +346,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aReplyThatDoesNotStickDropsTheCrumb() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.category = "secret";
         crumb.stick = false;
@@ -358,6 +366,7 @@ public class BreadcrumbFilterBridgeTest {
     public void anIntegerLevelDropsTheCrumb() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.level = Breadcrumb.Level.INFO;
         final RecordingCallback callback = new RecordingCallback();
@@ -385,6 +394,7 @@ public class BreadcrumbFilterBridgeTest {
         final RecordingSink sink = new RecordingSink();
         sink.throwOnEmit = true;
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -401,6 +411,7 @@ public class BreadcrumbFilterBridgeTest {
     public void detachDropsAPendingCrumbAndALaterReplyDoesNotWriteIt() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -420,6 +431,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aSecondReplyIsANoOp() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -438,6 +450,7 @@ public class BreadcrumbFilterBridgeTest {
     public void dataThatCannotBeSerialisedDropsTheCrumb() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final Map<String, Object> data = new HashMap<>();
@@ -455,6 +468,7 @@ public class BreadcrumbFilterBridgeTest {
     public void anUnansweredCrumbIsDroppedAtTheDeadlineAndALateReplyIsANoOp() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -479,6 +493,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aReplyBeforeTheDeadlineCancelsItAndFiringLaterDoesNothing() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -497,6 +512,7 @@ public class BreadcrumbFilterBridgeTest {
         final RecordingSink sink = new RecordingSink();
         sink.throwOnEmit = true;
         bridge.attach(sink);
+        bridge.arm();
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(new MutableCrumb(), callback);
 
@@ -509,6 +525,7 @@ public class BreadcrumbFilterBridgeTest {
     public void detachCancelsTheDeadline() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(new MutableCrumb(), callback);
 
@@ -523,6 +540,7 @@ public class BreadcrumbFilterBridgeTest {
     public void eachCrumbHasItsOwnDeadline() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final RecordingCallback first = new RecordingCallback();
         final RecordingCallback second = new RecordingCallback();
         bridge.ask(new MutableCrumb(), first);
@@ -541,6 +559,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aReplyAfterTheDeadlineIsRefusedEvenIfTheTimerHasNotRun() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -562,6 +581,7 @@ public class BreadcrumbFilterBridgeTest {
     public void aReplyJustInsideTheDeadlineIsAccepted() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableCrumb crumb = new MutableCrumb();
         crumb.message = "secret";
         final RecordingCallback callback = new RecordingCallback();
@@ -573,5 +593,174 @@ public class BreadcrumbFilterBridgeTest {
 
         assertEquals("redacted", crumb.message);
         assertSame(crumb, callback.last);
+    }
+
+    @Test
+    public void aNewModuleThatHasNotArmedDropsTheCrumbAtOnce() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        bridge.arm();
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        assertEquals(0, next.json.size());
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void armingAgainAsksTheNewModule() {
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.arm();
+
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        assertEquals(1, next.json.size());
+        assertEquals(0, callback.runs);
+    }
+
+    /** A late enable from the module a reload replaced must not arm the new, unsubscribed runtime. */
+    @Test
+    public void aStaleModulesEnableDoesNotArmTheNewModule() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.arm(old);
+
+        final MutableCrumb ev = new MutableCrumb();
+        ev.message = "secret";
+        final RecordingCallback dropped = new RecordingCallback();
+        bridge.ask(ev, dropped);
+        assertEquals(0, next.json.size());
+        assertEquals(1, dropped.runs);
+
+        bridge.arm(next);
+        final RecordingCallback asked = new RecordingCallback();
+        bridge.ask(ev, asked);
+        assertEquals(1, next.json.size());
+        assertEquals(0, asked.runs);
+    }
+
+    // The startup hold (#134): the SDK's filter is installed before JS exists.
+    private final List<EventFilter<Breadcrumb>> installs = new ArrayList<>();
+
+    private BreadcrumbFilterBridge installing() {
+        return new BreadcrumbFilterBridge(scheduler, System::nanoTime, installs::add);
+    }
+
+    @Test
+    public void holdUntilJsInstallsTheFilterOnceAndDropsBeforeAnyModule() {
+        final BreadcrumbFilterBridge held = installing();
+
+        held.holdUntilJs();
+        held.holdUntilJs();
+
+        assertEquals(1, installs.size());
+        assertTrue(held.isHeld());
+        final RecordingCallback callback = new RecordingCallback();
+        installs.get(0).filter(new MutableCrumb(), callback);
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aHeldBridgeDropsAtOnceWhileAModuleIsAttachedButNotArmed() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+        final RecordingCallback callback = new RecordingCallback();
+
+        held.ask(new MutableCrumb(), callback);
+
+        // Nothing is left pending for a reply that cannot come.
+        assertTrue(sink.ids.isEmpty());
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void setBreadcrumbFilterWithNullRemovesTheHeldFilter() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(false, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(2, installs.size());
+        assertNull(installs.get(1));
+    }
+
+    @Test
+    public void setBreadcrumbFilterWithAFunctionKeepsTheInstalledFilterAndArmsIt() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(true, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(1, installs.size());
+        held.ask(new MutableCrumb(), new RecordingCallback());
+        assertEquals(1, sink.ids.size());
+    }
+
+    @Test
+    public void aSupersededModuleCannotReleaseTheBreadcrumbHold() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink old = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(old);
+        held.attach(new RecordingSink());
+
+        held.setEnabled(false, old);
+
+        assertTrue(held.isHeld());
+    }
+
+    @Test
+    public void aBridgeThatWasNeverHeldReportsNotHeld() {
+        assertFalse(installing().isHeld());
+    }
+
+    @Test
+    public void aFailedEarlyInstallIsRetriedByTheNextSetEnabled() {
+        final int[] attempts = {0};
+        final java.util.function.Consumer<EventFilter<Breadcrumb>> failingOnce = filter -> {
+            attempts[0]++;
+            if (attempts[0] == 1) {
+                throw new IllegalStateException("SDK not ready");
+            }
+            installs.add(filter);
+        };
+        final BreadcrumbFilterBridge bridge2 = new BreadcrumbFilterBridge(scheduler, System::nanoTime, failingOnce);
+        final RecordingSink sink = new RecordingSink();
+        bridge2.attach(sink);
+
+        try {
+            bridge2.holdUntilJs();
+            org.junit.Assert.fail("the install failure is rethrown for StartupHold to log");
+        } catch (final IllegalStateException expected) {
+            // StartupHold logs it and goes on.
+        }
+        // Not installed, so not reported as held.
+        assertFalse(bridge2.isHeld());
+
+        bridge2.setEnabled(true, sink);
+
+        assertEquals(2, attempts[0]);
+        assertEquals(1, installs.size());
     }
 }

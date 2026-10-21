@@ -28,7 +28,14 @@ import {
   ensureMavenCentral,
   ensureSymbolUploads,
 } from './gradle';
-import { appTokenMetaData, endpointMetaData, manifestAutoLaunchToken } from './manifest';
+import {
+  RN_HOLD_FILTERS_META_DATA,
+  appTokenMetaData,
+  endpointMetaData,
+  holdFiltersValue,
+  manifestAutoLaunchToken,
+} from './manifest';
+import type { HoldableFilter } from './manifest';
 import { loadNativeVersions } from './native-versions';
 import { insertSymbolicatePrebuilt, removeSymbolicatePrebuilt } from './podfile';
 import { bugseePropertiesText } from './properties';
@@ -116,6 +123,20 @@ export interface BugseePluginProps {
    * one of these again.
    */
   endpoint?: string;
+  /**
+   * Android only; defaults off. Keeps the JS log, network and breadcrumb
+   * filters fail closed from process start. With `autoLaunch` the SDK records
+   * before JavaScript has run, so until `setLogFilter` / `setNetworkFilter` /
+   * `setBreadcrumbFilter` installs the app's filter, everything is recorded
+   * unfiltered. `true` holds all three; a list holds those named. A held
+   * filter drops its events (log lines, network events, breadcrumbs) until JS
+   * calls that `setXFilter`, with a function (filtering) or `null` (no filter,
+   * pass-through). An app that never calls one therefore records none of that
+   * kind, so only list the filters the app installs. Meant for `autoLaunch`:
+   * not verified with a JS `launch()`.
+   * A later prebuild without it removes the meta-data again.
+   */
+  holdFilters?: boolean | readonly HoldableFilter[];
 }
 
 /** The Info.plist key the iOS native module reads `endpoint` from. */
@@ -204,6 +225,7 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
   const editGradleFiles = options.editGradleFiles !== false;
   const symbolicateReactNative = options.symbolicateReactNativeFrameworks === true;
   const endpoint = pluginEndpoint(options.endpoint);
+  const holdFilters = holdFiltersValue(options.holdFilters);
   const versions = loadNativeVersions(__dirname);
   const edits: GradleEdits = {
     gradlePluginVersion: options.gradlePluginVersion ?? versions.gradlePlugin,
@@ -273,6 +295,10 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
     }
     if (edit.warning) {
       console.warn(edit.warning);
+    }
+    AndroidConfig.Manifest.removeMetaDataItemFromMainApplication(mainApplication, RN_HOLD_FILTERS_META_DATA);
+    if (holdFilters !== null) {
+      AndroidConfig.Manifest.addMetaDataItemToMainApplication(mainApplication, RN_HOLD_FILTERS_META_DATA, holdFilters);
     }
     return cfg;
   });

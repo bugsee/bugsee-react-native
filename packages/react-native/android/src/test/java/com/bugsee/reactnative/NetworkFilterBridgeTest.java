@@ -10,6 +10,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.bugsee.library.contracts.common.Callback1;
+import com.bugsee.library.contracts.exchange.EventFilter;
 import com.bugsee.library.contracts.exchange.NetworkEvent;
 import com.bugsee.library.contracts.options.Options;
 import com.bugsee.library.contracts.options.OptionsContainer;
@@ -233,6 +234,7 @@ public class NetworkFilterBridgeTest {
     public void aReplyAfterTheUrlChangedDoesNotTouchTheEntry() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://secret.example/token");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -252,6 +254,7 @@ public class NetworkFilterBridgeTest {
     public void aDeadlineForgetsThePendingWithoutCallingTheCallback() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://secret.example/token");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -268,6 +271,7 @@ public class NetworkFilterBridgeTest {
     public void aReplyWhileTheEntryIsStillTheOriginalWritesItBack() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://secret.example/token");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -285,6 +289,7 @@ public class NetworkFilterBridgeTest {
     public void aNullReplyDropsALiveBorrow() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://secret.example/token");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -301,6 +306,7 @@ public class NetworkFilterBridgeTest {
     public void detachDropsALiveBorrowAndSkipsARecycledOne() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork live = new MutableNetwork("https://live.example");
         final RecordingCallback liveCallback = new RecordingCallback();
         bridge.ask(live, liveCallback);
@@ -328,6 +334,7 @@ public class NetworkFilterBridgeTest {
         final NetworkFilterBridge sanitizing = new NetworkFilterBridge(localScheduler, () -> true);
         final RecordingSink sink = new RecordingSink();
         sanitizing.attach(sink);
+        sanitizing.arm();
         final MutableNetwork event = new MutableNetwork(
                 "https://api.example/v1/items?token=bugsee-secret-token-value&ok=1"
         );
@@ -361,6 +368,7 @@ public class NetworkFilterBridgeTest {
     public void snapshotCarriesTheOverrideFlagAndAReplyCannotChangeIt() throws Exception {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork start = new MutableNetwork("https://api.example/v1/items");
         final MutableNetwork supplement = new MutableNetwork("https://api.example/v1/items");
         supplement.override = true;
@@ -388,6 +396,7 @@ public class NetworkFilterBridgeTest {
     public void jsonNullClearsErrorFieldsAndStatusText() throws Exception {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://api.example/v1/items");
         event.errorDescription = "gateway";
         event.errorShortMessage = "late";
@@ -416,6 +425,7 @@ public class NetworkFilterBridgeTest {
     public void aDisabledDefaultSanitizerLeavesTheTokenQuery() throws Exception {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final String url = "https://api.example/v1/items?token=bugsee-secret-token-value&ok=1";
         final MutableNetwork event = new MutableNetwork(url);
         bridge.ask(event, new RecordingCallback());
@@ -453,5 +463,178 @@ public class NetworkFilterBridgeTest {
                     return null;
                 }
         );
+    }
+
+    /**
+     * A reload attaches a new module whose JS has not installed its filter.
+     * The request is dropped at once: not emitted to nobody, not left to the
+     * 9s forget and the SDK's 10s timeout.
+     */
+    @Test
+    public void aNewModuleThatHasNotArmedDropsAtOnceAndNothingIsPending() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        bridge.arm();
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(new MutableNetwork("https://secret.example/token"), callback);
+
+        assertEquals(0, next.ids.size());
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+        assertEquals(0, scheduler.tasks.size());
+    }
+
+    @Test
+    public void armingAgainAsksTheNewModule() {
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.arm();
+
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(new MutableNetwork("https://secret.example/token"), callback);
+
+        assertEquals(1, next.ids.size());
+        assertEquals(0, callback.runs);
+    }
+
+    /** A late enable from the module a reload replaced must not arm the new, unsubscribed runtime. */
+    @Test
+    public void aStaleModulesEnableDoesNotArmTheNewModule() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.arm(old);
+
+        final MutableNetwork ev = new MutableNetwork("https://secret.example/token");
+        final RecordingCallback dropped = new RecordingCallback();
+        bridge.ask(ev, dropped);
+        assertEquals(0, next.ids.size());
+        assertEquals(1, dropped.runs);
+
+        bridge.arm(next);
+        final RecordingCallback asked = new RecordingCallback();
+        bridge.ask(ev, asked);
+        assertEquals(1, next.ids.size());
+        assertEquals(0, asked.runs);
+    }
+
+    // The startup hold (#134): the SDK's filter is installed before JS exists.
+    private final List<EventFilter<NetworkEvent>> installs = new ArrayList<>();
+
+    private NetworkFilterBridge installing() {
+        return new NetworkFilterBridge(scheduler, () -> false, installs::add);
+    }
+
+    @Test
+    public void holdUntilJsInstallsTheFilterOnceAndDropsBeforeAnyModule() {
+        final NetworkFilterBridge held = installing();
+
+        held.holdUntilJs();
+        held.holdUntilJs();
+
+        assertEquals(1, installs.size());
+        assertTrue(installs.get(0) != null);
+        assertTrue(held.isHeld());
+        final RecordingCallback callback = new RecordingCallback();
+        installs.get(0).filter(new MutableNetwork("https://secret.example/token"), callback);
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aHeldBridgeDropsAtOnceWhileAModuleIsAttachedButNotArmed() {
+        final NetworkFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+        final RecordingCallback callback = new RecordingCallback();
+
+        held.ask(new MutableNetwork("https://secret.example/token"), callback);
+
+        assertTrue(sink.ids.isEmpty());
+        assertTrue(callback.sawNull);
+        assertTrue(scheduler.tasks.isEmpty());
+    }
+
+    @Test
+    public void setNetworkFilterWithNullRemovesTheHeldFilter() {
+        final NetworkFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(false, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(2, installs.size());
+        assertNull(installs.get(1));
+    }
+
+    @Test
+    public void setNetworkFilterWithAFunctionKeepsTheInstalledFilterAndArmsIt() {
+        final NetworkFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(true, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(1, installs.size());
+        final RecordingCallback callback = new RecordingCallback();
+        held.ask(new MutableNetwork("https://secret.example/token"), callback);
+        assertEquals(1, sink.ids.size());
+    }
+
+    @Test
+    public void aSupersededModuleCannotReleaseTheNetworkHold() {
+        final NetworkFilterBridge held = installing();
+        final RecordingSink old = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(old);
+        held.attach(new RecordingSink());
+
+        held.setEnabled(false, old);
+
+        assertTrue(held.isHeld());
+        assertEquals(1, installs.size());
+    }
+
+    @Test
+    public void aBridgeThatWasNeverHeldReportsNotHeld() {
+        assertFalse(installing().isHeld());
+    }
+
+    @Test
+    public void aFailedEarlyInstallIsRetriedByTheNextSetEnabled() {
+        final int[] attempts = {0};
+        final java.util.function.Consumer<EventFilter<NetworkEvent>> failingOnce = filter -> {
+            attempts[0]++;
+            if (attempts[0] == 1) {
+                throw new IllegalStateException("SDK not ready");
+            }
+            installs.add(filter);
+        };
+        final NetworkFilterBridge bridge2 = new NetworkFilterBridge(scheduler, () -> false, failingOnce);
+        final RecordingSink sink = new RecordingSink();
+        bridge2.attach(sink);
+
+        try {
+            bridge2.holdUntilJs();
+            org.junit.Assert.fail("the install failure is rethrown for StartupHold to log");
+        } catch (final IllegalStateException expected) {
+            // StartupHold logs it and goes on.
+        }
+        // Not installed, so not reported as held.
+        assertFalse(bridge2.isHeld());
+
+        bridge2.setEnabled(true, sink);
+
+        assertEquals(2, attempts[0]);
+        assertEquals(1, installs.size());
     }
 }

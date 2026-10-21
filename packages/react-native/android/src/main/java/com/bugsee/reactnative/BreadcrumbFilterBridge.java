@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 /**
@@ -108,7 +109,7 @@ final class BreadcrumbFilterBridge {
         }
     }
 
-    private static final BreadcrumbFilterBridge SHARED = new BreadcrumbFilterBridge(new DaemonScheduler());
+    private static final BreadcrumbFilterBridge SHARED = new BreadcrumbFilterBridge(new DaemonScheduler(), System::nanoTime, Bugsee::setBreadcrumbFilter);
 
     @NonNull
     static BreadcrumbFilterBridge shared() {
@@ -119,6 +120,16 @@ final class BreadcrumbFilterBridge {
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong();
     private final AtomicBoolean installed = new AtomicBoolean();
+
+    /**
+     * The module whose JS has installed its filter with
+     * {@code setEnabled(true)}, or null. Compared to the attached sink by
+     * identity, so a stale module cannot arm the new one. A reload attaches a new module whose JS has
+     * not subscribed yet, while this bridge (and the SDK's filter) outlive
+     * the old runtime. Until JS arms it again, a request would be emitted to
+     * nobody, so it is dropped at once instead: fail closed, no wait.
+     */
+    private final AtomicReference<Sink> armedFor = new AtomicReference<>();
     private final Object sdkLock = new Object();
     /**
      * The id of the manual {@code addBreadcrumb} on this thread. Set only
@@ -137,8 +148,64 @@ final class BreadcrumbFilterBridge {
 
     /** Tests also pass a clock, to pass the deadline without the timer having run. */
     BreadcrumbFilterBridge(@NonNull final Scheduler scheduler, @NonNull final LongSupplier nanoClock) {
+        this(scheduler, nanoClock, installed -> { });
+    }
+
+    /** As above, and the call that installs (or, with null, removes) the SDK's filter. */
+    BreadcrumbFilterBridge(
+            @NonNull final Scheduler scheduler,
+            @NonNull final LongSupplier nanoClock,
+            @NonNull final Consumer<EventFilter<Breadcrumb>> installer
+    ) {
         this.scheduler = scheduler;
         this.nanoClock = nanoClock;
+        this.installer = installer;
+    }
+
+    private final Consumer<EventFilter<Breadcrumb>> installer;
+
+    /** True from {@link #holdUntilJs} until JS first calls {@link #setEnabled}. For the watchdog only. */
+    private final AtomicBoolean held = new AtomicBoolean();
+
+    /** Whether the startup hold is still waiting for JS to call {@code setBreadcrumbFilter}. */
+    boolean isHeld() {
+        return held.get();
+    }
+
+    /**
+     * Installs the filter with the SDK. A throw (the SDK not ready that early)
+     * leaves {@code installed} false, so a later {@code setEnabled(true)}
+     * installs it instead of believing it already is, and is rethrown for the
+     * caller to log.
+     */
+    private void install() {
+        if (installed.compareAndSet(false, true)) {
+            boolean ok = false;
+            try {
+                installer.accept(filter);
+                ok = true;
+            } finally {
+                if (!ok) {
+                    installed.set(false);
+                }
+            }
+        }
+    }
+
+    /**
+     * Installs the filter before JS has asked for it, so a manifest
+     * auto-launch does not record breadcrumbs unfiltered until
+     * {@code setBreadcrumbFilter} runs (see {@link StartupHold}). With no module
+     * attached yet the filter drops everything, and so does one whose JS has
+     * not armed it (the armed gate), so nothing waits on a reply that cannot
+     * come. {@code setEnabled(false)}, which {@code setBreadcrumbFilter(null)} sends, removes
+     * it again. A second call, or one after {@code setEnabled(true)}, is a no-op.
+     */
+    void holdUntilJs() {
+        withSdkLock(() -> {
+            install();
+            held.set(true);
+        });
     }
 
     private final EventFilter<Breadcrumb> filter = new EventFilter<Breadcrumb>() {
@@ -157,7 +224,31 @@ final class BreadcrumbFilterBridge {
     };
 
     void attach(@NonNull final Sink next) {
-        sink.set(next);
+        // Disarm before the sink is visible: a request in the gap must not
+        // reach a runtime that has not subscribed yet. See armedFor.
+        withSdkLock(() -> {
+            armedFor.set(null);
+            sink.set(next);
+        });
+    }
+
+    /**
+     * The module {@code caller}'s JS now answers requests. Ignored unless
+     * {@code caller} is still the attached module: a stale module's late
+     * enable must not arm the new runtime, which has not subscribed.
+     */
+    void arm(@NonNull final Sink caller) {
+        if (sink.get() == caller) {
+            armedFor.set(caller);
+        }
+    }
+
+    /** Arms for whichever module is attached. For tests, which have no module identity of their own. */
+    void arm() {
+        final Sink current = sink.get();
+        if (current != null) {
+            armedFor.set(current);
+        }
     }
 
     /**
@@ -167,7 +258,10 @@ final class BreadcrumbFilterBridge {
      * callback is run with {@code null}, which discards the crumb.
      */
     void detach(@NonNull final Sink current) {
-        sink.compareAndSet(current, null);
+        withSdkLock(() -> {
+            sink.compareAndSet(current, null);
+            armedFor.compareAndSet(current, null);
+        });
         final List<Pending> owned = new ArrayList<>();
         for (final Pending item : pending.values()) {
             if (item.owner == current && pending.remove(item.id, item)) {
@@ -196,15 +290,26 @@ final class BreadcrumbFilterBridge {
 
     /** Installs the filter, or removes it. A second {@code true} is a no-op. */
     void setEnabled(final boolean enabled) {
+        setEnabled(enabled, sink.get());
+    }
+
+    /** As above, on behalf of module {@code caller}; only the attached module can arm. */
+    void setEnabled(final boolean enabled, final Sink caller) {
         withSdkLock(() -> {
+            if (sink.get() != caller) {
+                // A superseded module must neither arm nor disable the process-wide filter.
+                return;
+            }
+            held.set(false);
             if (enabled) {
-                if (installed.compareAndSet(false, true)) {
-                    Bugsee.setBreadcrumbFilter(filter);
+                if (caller != null) {
+                    arm(caller);
                 }
+                install();
                 return;
             }
             if (installed.compareAndSet(true, false)) {
-                Bugsee.setBreadcrumbFilter(null);
+                installer.accept(null);
             }
         });
     }
@@ -265,7 +370,7 @@ final class BreadcrumbFilterBridge {
             @NonNull final Callback1<Breadcrumb> callback
     ) {
         final Sink current = sink.get();
-        if (current == null) {
+        if (current == null || armedFor.get() != current) {
             drop(callback);
             return;
         }
