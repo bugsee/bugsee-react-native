@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege: no job here writes to the repo, issues or PRs.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
