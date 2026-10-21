@@ -494,6 +494,34 @@ describeDevice(`overloads and arguments on ${TARGET_NAME}`, () => {
     expect(bundlesAfter.length).toBe(1);
   });
 
+  /**
+   * The consent-withdrawal case (#142): the report is waiting for upload (dead
+   * endpoint), so only the finished-reports flag removes it. Android calls the
+   * SDK's 3-argument method; iOS its delete-everything form.
+   */
+  it('[API-41d] deleteCollectedDataOnDevice(false, true) after stop deletes the finished report, and nothing is filed after a relaunch', async () => {
+    await clearBundles();
+    const run = await startRun('api-delete-reports');
+    const uploaded = await apiMarker(log!, 'delete-reports uploaded', run.scenario.nonce, 30_000, run.start);
+    const bundlesBefore = await listBundles();
+    const done = await apiMarker(log!, 'delete-reports done', run.scenario.nonce, 40_000, uploaded.index, run.start);
+    await new Promise(resolve => setTimeout(resolve, 2_000));
+    const bundlesAfter = await listBundles();
+    await stopApp();
+    // A relaunch must not find a report to file: the bundle is gone, not hidden.
+    const relaunch = await startRun('api-token');
+    await apiMarker(log!, 'token launched', relaunch.scenario.nonce, 30_000, relaunch.start);
+    await new Promise(resolve => setTimeout(resolve, 5_000));
+    const bundlesRelaunched = await listBundles();
+    await stopApp();
+    report('delete(false, true)', { done: done.text.trim(), bundlesBefore, bundlesAfter, bundlesRelaunched });
+    expect(jsonAfter<Settled>(done.text, 'stopped')).toEqual({ ok: true, value: true });
+    expect(jsonAfter<Settled>(done.text, 'deleted')).toEqual({ ok: true, value: true });
+    expect(bundlesBefore.length).toBe(1);
+    expect(bundlesAfter).toEqual([]);
+    expect(bundlesRelaunched).toEqual([]);
+  });
+
   it('[API-31] <BugseeSecure enabled={false}> is recorded in the clear, its enabled twin masked', async () => {
     const { run, bundles } = await runFor(log!, 'api-secure-off', 'secure-off uploaded', 1);
     await stopApp();

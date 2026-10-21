@@ -848,17 +848,36 @@ class Bugsee {
   }
 
   /**
-   * Deletes collected data stored on the device.
+   * Deletes collected data stored on the device. The SDK must be stopped
+   * first: while launched, both platforms refuse (by design) and this
+   * resolves `false`. The promise resolves with the SDK's own outcome, however
+   * long the deletion takes. On iOS, if the SDK reports nothing for 60 s (with either
+   * flag value), it rejects with code `E_DELETE_TIMEOUT`:
+   * the outcome is unknown and the deletion may still finish.
    *
-   * `includingIntermediate` crosses unchanged. Both SDKs delete the rolling
-   * capture data whatever it is, and keep finished bundles:
-   * - `false`: deletes the capture data, keeps finished bundles.
-   * - `true`: also deletes intermediate data (snapshots, exported reports).
-   * The SDK must be stopped for the deletion to succeed. While launched, both
-   * platforms refuse it and this resolves `false`.
+   * - `includingIntermediate`: `false` deletes the rolling capture data and
+   *   keeps finished reports; `true` also deletes the data set aside for
+   *   reports not yet bundled (report snapshots on both platforms; on Android
+   *   also exported reports).
+   * - `includingFinishedReports` (default `false`): also deletes the finished
+   *   reports waiting for upload, which are otherwise still uploaded after
+   *   the data is deleted (use it when a user withdraws consent).
+   *
+   * Platform difference with `includingFinishedReports: true`: iOS calls the
+   * SDK's delete-everything form, which also deletes crashes not yet reported
+   * and the learned performance baselines, and cancels pending uploads
+   * (`includingIntermediate` is then moot). Android's 3-argument SDK method
+   * deletes the finished report bundles only; it does not touch crashes not
+   * yet reported. TODO: possible SDK follow-up to align the two.
    */
-  deleteCollectedDataOnDevice(includingIntermediate: boolean): Promise<boolean> {
-    return NativeBugsee.deleteCollectedDataOnDevice(includingIntermediate);
+  deleteCollectedDataOnDevice(
+    includingIntermediate: boolean,
+    includingFinishedReports: boolean = false,
+  ): Promise<boolean> {
+    return NativeBugsee.deleteCollectedDataOnDevice(
+      includingIntermediate,
+      includingFinishedReports,
+    );
   }
 }
 

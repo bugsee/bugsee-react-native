@@ -1818,10 +1818,12 @@ public class BugseeModule extends NativeBugseeSpec
     @Override
     public void deleteCollectedDataOnDevice(
             final boolean includingIntermediate,
+            final boolean includingFinishedReports,
             final Promise promise
     ) {
         Bugsee.deleteCollectedDataOnDevice(
                 includingIntermediate,
+                includingFinishedReports,
                 success -> promise.resolve(Boolean.TRUE.equals(success))
         );
     }
