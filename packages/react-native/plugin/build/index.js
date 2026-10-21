@@ -21,11 +21,13 @@ const scheme_1 = require("./scheme");
 exports.IOS_ENDPOINT_PLIST_KEY = 'BugseeReactNativeEndpoint';
 exports.APP_GRADLE_NOT_GROOVY = `${gradle_1.CANNOT_EDIT} android/app/build.gradle: it is written in the Kotlin DSL (build.gradle.kts), which ` +
     '@bugsee/react-native does not edit. Apply scripts/bugsee-sourcemaps.gradle and set react.hermesCommand by hand ' +
-    '(see the package README, "Android source maps"), then run expo prebuild again';
+    '(see the package README, "Android source maps"), then set "editGradleFiles": false in the @bugsee/react-native ' +
+    'plugin options and run expo prebuild again';
 /** The settings or root Gradle file is Kotlin; the plugin edits Groovy only. */
 function gradleNotGroovy(file) {
     return (`${gradle_1.CANNOT_EDIT} ${file}: it is written in the Kotlin DSL, which @bugsee/react-native does not edit. ` +
-        'Make the Bugsee edits by hand (package README, "Android source maps"), then run expo prebuild again');
+        'Make the Bugsee edits by hand (package README, "Android source maps"), then set "editGradleFiles": false in the ' +
+        '@bugsee/react-native plugin options and run expo prebuild again');
 }
 // One function per file, shared by the mods and by the check that runs them
 // all first: a refusal in any file then leaves every file as it was.
@@ -72,6 +74,7 @@ const withBugsee = (config, props) => {
     const iosToken = platformToken(options.appToken, 'ios');
     const uploadSourcemaps = options.uploadSourcemaps !== false;
     const uploadSymbols = options.uploadSymbols !== false;
+    const editGradleFiles = options.editGradleFiles !== false;
     const symbolicateReactNative = options.symbolicateReactNativeFrameworks === true;
     const endpoint = (0, endpoint_1.pluginEndpoint)(options.endpoint);
     const versions = (0, native_versions_1.loadNativeVersions)(__dirname);
@@ -80,18 +83,20 @@ const withBugsee = (config, props) => {
         ndkVersion: options.nativeCrashReporting === false ? null : versions.sdk,
         uploadSymbols,
     };
-    config = (0, config_plugins_1.withSettingsGradle)(config, (cfg) => {
-        cfg.modResults.contents = editSettingsGradle(cfg.modResults);
-        return cfg;
-    });
-    config = (0, config_plugins_1.withProjectBuildGradle)(config, (cfg) => {
-        cfg.modResults.contents = editProjectBuildGradle(cfg.modResults, edits);
-        return cfg;
-    });
-    config = (0, config_plugins_1.withAppBuildGradle)(config, (cfg) => {
-        cfg.modResults.contents = editAppBuildGradle(cfg.modResults, edits);
-        return cfg;
-    });
+    if (editGradleFiles) {
+        config = (0, config_plugins_1.withSettingsGradle)(config, (cfg) => {
+            cfg.modResults.contents = editSettingsGradle(cfg.modResults);
+            return cfg;
+        });
+        config = (0, config_plugins_1.withProjectBuildGradle)(config, (cfg) => {
+            cfg.modResults.contents = editProjectBuildGradle(cfg.modResults, edits);
+            return cfg;
+        });
+        config = (0, config_plugins_1.withAppBuildGradle)(config, (cfg) => {
+            cfg.modResults.contents = editAppBuildGradle(cfg.modResults, edits);
+            return cfg;
+        });
+    }
     config = (0, config_plugins_1.withGradleProperties)(config, (cfg) => {
         cfg.modResults = (0, gradle_1.applyUploadSourcemapsProperty)(cfg.modResults, uploadSourcemaps);
         return cfg;
@@ -101,7 +106,9 @@ const withBugsee = (config, props) => {
         async (cfg) => {
             // Dangerous mods run first: a Gradle file the plugin cannot edit is
             // refused here, before any file is written.
-            await refuseUnlessEditable(cfg.modRequest.projectRoot, edits);
+            if (editGradleFiles) {
+                await refuseUnlessEditable(cfg.modRequest.projectRoot, edits);
+            }
             await (0, promises_1.writeFile)((0, node_path_1.join)(cfg.modRequest.platformProjectRoot, 'bugsee.properties'), (0, properties_1.bugseePropertiesText)({
                 appToken: androidToken,
                 nativeCrashReporting: options.nativeCrashReporting,

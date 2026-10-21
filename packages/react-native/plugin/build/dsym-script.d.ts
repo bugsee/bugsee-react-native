@@ -13,6 +13,17 @@ export declare function resolveNativeCliPackageSource(packageJson: string): stri
  */
 export declare const TOKEN_GUARD: readonly string[];
 /**
+ * Looks for the token in ios/.xcode.env and ios/.xcode.env.local, the files
+ * the README sends a bare app's `export BUGSEE_APP_TOKEN=...` to for the
+ * bundle phase. A GUI Archive does not inherit a shell, so the post-action
+ * reads them itself, and only when no earlier source gave a token. Each file
+ * is sourced in a subshell that prints the token: a file written for bash, a
+ * syntax error or an `exit` in it cannot stop this script or change its
+ * NODE_BINARY or BUGSEE_ENDPOINT, and the later file (.local) wins. Shared
+ * with the bare example's scheme (scripts/__tests__/dsym-scheme-post-action.test.ts).
+ */
+export declare const ENV_FILE_TOKEN: readonly string[];
+/**
  * Relays bugsee-cli output with Xcode's `error:` diagnostics turned into
  * `warning: bugsee: ...`, and returns the CLI's exit status. A failed upload
  * must never read as a build error. Post-action output is not parsed for

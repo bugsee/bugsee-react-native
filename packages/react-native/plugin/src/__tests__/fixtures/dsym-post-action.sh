@@ -3,6 +3,16 @@ TOKEN="$BUGSEE_APP_TOKEN"
 if [ -z "$TOKEN" ]; then
   TOKEN="$BUGSEE_TOKEN_IOS"
 fi
+if [ -z "$TOKEN" ]; then
+  for ENV_FILE in "${PROJECT_DIR}/.xcode.env" "${PROJECT_DIR}/.xcode.env.local"; do
+    if [ -f "$ENV_FILE" ]; then
+      ENV_TOKEN=$( ( . "$ENV_FILE" >/dev/null 2>&1; if [ -n "$BUGSEE_APP_TOKEN" ]; then printf '%s' "$BUGSEE_APP_TOKEN"; else printf '%s' "$BUGSEE_TOKEN_IOS"; fi ) 2>/dev/null || true )
+      if [ -n "$ENV_TOKEN" ]; then
+        TOKEN="$ENV_TOKEN"
+      fi
+    fi
+  done
+fi
 if [ -z "$TOKEN" ] && [ -f "$CREDS" ]; then
   TOKEN=$(/usr/bin/plutil -extract ios raw -o - "$CREDS" 2>/dev/null || true)
 fi

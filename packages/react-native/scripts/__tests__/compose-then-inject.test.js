@@ -187,6 +187,15 @@ fs.writeFileSync(out, JSON.stringify({ version: 3, mappings: 'CCCC' }));
     expect(written.join('')).not.toContain(TOKEN);
   });
 
+  it('asks the upload to strip sourcesContent only when BUGSEE_STRIP_SOURCES_CONTENT is on', () => {
+    const calls = [];
+    const upload = (options) => calls.push(options);
+    const versions = { MARKETING_VERSION: '1', CURRENT_PROJECT_VERSION: '1', BUGSEE_PLUGIN_APP_TOKEN: TOKEN };
+    expect(run(argv(), { ...env, ...versions }, upload)).toBe(0);
+    expect(run(argv(), { ...env, ...versions, BUGSEE_STRIP_SOURCES_CONTENT: 'true' }, upload)).toBe(0);
+    expect(calls.map((call) => call.stripSources)).toEqual([false, true]);
+  });
+
   it('reads the iOS token from credentials.json and honours the off switch', () => {
     const credentials = path.join(dir, 'credentials.json');
     fs.writeFileSync(credentials, JSON.stringify({ ios: '00000000-0000-4000-8000-000000000000' }));
