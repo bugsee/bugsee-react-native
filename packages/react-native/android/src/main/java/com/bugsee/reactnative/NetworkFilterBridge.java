@@ -152,6 +152,24 @@ final class NetworkFilterBridge {
 
     private final Consumer<EventFilter<NetworkEvent>> installer;
 
+    /**
+     * Installs the filter with the SDK. A throw (the SDK not ready that early)
+     * leaves {@code installed} false, so a later {@code setEnabled(true)}
+     * installs it instead of believing it already is, and is rethrown for the
+     * caller to log.
+     */
+    private void install() {
+        if (installed.compareAndSet(false, true)) {
+            try {
+                installer.accept(filter);
+            } catch (final RuntimeException | Error e) {
+                installed.set(false);
+                throw e;
+            }
+        }
+    }
+
+
     /** True from {@link #holdUntilJs} until JS first calls {@link #setEnabled}. For the watchdog only. */
     private final AtomicBoolean held = new AtomicBoolean();
 
@@ -234,10 +252,8 @@ final class NetworkFilterBridge {
      * it again. A second call, or one after {@code setEnabled(true)}, is a no-op.
      */
     void holdUntilJs() {
+        install();
         held.set(true);
-        if (installed.compareAndSet(false, true)) {
-            installer.accept(filter);
-        }
     }
 
     /** Installs the filter, or removes it. A second {@code true} is a no-op. */
@@ -260,9 +276,7 @@ final class NetworkFilterBridge {
                 if (caller != null) {
                     arm(caller);
                 }
-                if (installed.compareAndSet(false, true)) {
-                    installer.accept(filter);
-                }
+                install();
                 return;
             }
             if (installed.compareAndSet(true, false)) {

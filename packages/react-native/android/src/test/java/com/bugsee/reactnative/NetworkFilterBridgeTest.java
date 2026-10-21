@@ -608,4 +608,33 @@ public class NetworkFilterBridgeTest {
     public void aBridgeThatWasNeverHeldReportsNotHeld() {
         assertFalse(installing().isHeld());
     }
+
+    @Test
+    public void aFailedEarlyInstallIsRetriedByTheNextSetEnabled() {
+        final int[] attempts = {0};
+        final java.util.function.Consumer<EventFilter<NetworkEvent>> failingOnce = filter -> {
+            attempts[0]++;
+            if (attempts[0] == 1) {
+                throw new IllegalStateException("SDK not ready");
+            }
+            installs.add(filter);
+        };
+        final NetworkFilterBridge bridge2 = new NetworkFilterBridge(scheduler, () -> false, failingOnce);
+        final RecordingSink sink = new RecordingSink();
+        bridge2.attach(sink);
+
+        try {
+            bridge2.holdUntilJs();
+            org.junit.Assert.fail("the install failure is rethrown for StartupHold to log");
+        } catch (final IllegalStateException expected) {
+            // StartupHold logs it and goes on.
+        }
+        // Not installed, so not reported as held.
+        assertFalse(bridge2.isHeld());
+
+        bridge2.setEnabled(true, sink);
+
+        assertEquals(2, attempts[0]);
+        assertEquals(1, installs.size());
+    }
 }

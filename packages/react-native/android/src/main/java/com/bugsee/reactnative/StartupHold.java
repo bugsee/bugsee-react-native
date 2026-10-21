@@ -205,18 +205,22 @@ final class StartupHold {
             final Set<String> waiting = stillHeld(probe);
             if (!waiting.isEmpty()) {
                 warn.accept("the " + waiting + " filter(s) are still held " + (delayMs / 1000L)
-                        + " s after the JS runtime started: events of that kind are being dropped. Call "
+                        + " s after process start: events of that kind are being dropped. If JS runs, call "
                         + "setNetworkFilter / setLogFilter / setBreadcrumbFilter at startup (null for no filter), "
-                        + "or remove it from holdFilters");
+                        + "or remove it from holdFilters; a process that never starts React Native holds them for its whole life");
             }
         });
         return true;
     }
 
-    /** What a module does once its bridges are attached: start the watchdog if a hold is still on. */
-    static void watchFromModule() {
+    /**
+     * Starts the watchdog from the init provider, so it runs in a process that
+     * never starts React Native too ("still held 30 s after process start").
+     * A no-op when nothing was held.
+     */
+    static void watchFromProvider(@NonNull final Set<String> held) {
         try {
-            if (stillHeld(PROBE).isEmpty()) {
+            if (held.isEmpty()) {
                 return;
             }
             final Handler main = new Handler(Looper.getMainLooper());

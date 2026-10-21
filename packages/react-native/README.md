@@ -276,15 +276,15 @@ meta-data, before any JavaScript exists. Two things follow:
   `null` (no filter: events pass through). Call each setter unconditionally,
   early, on every start of the JS runtime. Only list the filters your app
   installs: an app that lists one and never calls its setter records none of
-  that kind, and the module says so in the log (`BugseeRN`, warning) 30 s after
-  JS starts. It is off by default for that reason, and an app that never uses
+  that kind, and the wrapper says so in the log (`BugseeRN`, warning) 30 s after
+  process start. It is off by default for that reason, and an app that never uses
   filters is unaffected. It writes `com.bugsee.reactnative.hold-filters`
   application meta-data, removed again by a prebuild without the option.
   A JS reload is held only if the previous runtime had a filter function
   installed (it stays dropped until the new runtime calls the setter again). If
   the previous runtime called `setXFilter(null)`, that kind passes through again
   from the reload until the new runtime calls the setter. The 30 s warning is
-  about the first runtime only. The hold is meant for `autoLaunch`; it was not
+  given once per process, at 30 s after process start. The hold is meant for `autoLaunch`; it was not
   verified with a JS `launch()`, where the SDK may replace a filter set before
   launch. In a process that never starts React Native (a service or push
   process), a held kind drops everything native code records, for the life of

@@ -82,7 +82,10 @@ public final class ReactNativeWrapperInitProvider extends BugseeExtensionInitPro
     /** Never throws; see {@link StartupHold#apply}. */
     static void holdFiltersEarly(@Nullable final Object metaData, @NonNull final StartupHold.Targets targets) {
         try {
-            StartupHold.apply(metaData, targets);
+            final java.util.Set<String> held = StartupHold.apply(metaData, targets);
+            if (targets == StartupHold.BRIDGES) {
+                StartupHold.watchFromProvider(held);
+            }
         } catch (Throwable t) {
             Log.e(TAG, "could not hold the filters at process start: " + t.getClass().getName());
         }
