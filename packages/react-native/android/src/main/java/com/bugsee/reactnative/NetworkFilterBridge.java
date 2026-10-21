@@ -160,11 +160,14 @@ final class NetworkFilterBridge {
      */
     private void install() {
         if (installed.compareAndSet(false, true)) {
+            boolean ok = false;
             try {
                 installer.accept(filter);
-            } catch (final RuntimeException | Error e) {
-                installed.set(false);
-                throw e;
+                ok = true;
+            } finally {
+                if (!ok) {
+                    installed.set(false);
+                }
             }
         }
     }

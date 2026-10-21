@@ -284,7 +284,8 @@ meta-data, before any JavaScript exists. Two things follow:
   installed (it stays dropped until the new runtime calls the setter again). If
   the previous runtime called `setXFilter(null)`, that kind passes through again
   from the reload until the new runtime calls the setter. The 30 s warning is
-  given once per process, at 30 s after process start. The hold is meant for `autoLaunch`; it was not
+  given once per process, at 30 s after process start. The hold is meant
+  for `autoLaunch`; it was not
   verified with a JS `launch()`, where the SDK may replace a filter set before
   launch. In a process that never starts React Native (a service or push
   process), a held kind drops everything native code records, for the life of
