@@ -89,6 +89,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       gates: ${{ steps.scope.outputs.gates }}
+      app: ${{ steps.changes.outputs.app }}
+      android: ${{ steps.changes.outputs.android }}
+      ios: ${{ steps.changes.outputs.ios }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -104,6 +107,20 @@ jobs:
             git diff --name-only HEAD^1 HEAD | tee /dev/stderr | node scripts/cli-mutation.ts scope >> "$GITHUB_OUTPUT"
           else
             node scripts/cli-mutation.ts scope --all >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+      # What else this change can reach (scripts/ci-changes.sh). The native
+      # builds and the app jobs `needs` this job and skip when the diff cannot
+      # touch them; a push to main or a manual run sets both, so main always
+      # runs everything. A skipped job reports as skipped, which a required
+      # check treats as passing.
+      - id: changes
+        run: |
+          scripts/ci-changes.sh --self-test
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD | scripts/ci-changes.sh >> "$GITHUB_OUTPUT"
+          else
+            printf 'app=true\nandroid=true\nios=true\n' >> "$GITHUB_OUTPUT"
           fi
           cat "$GITHUB_OUTPUT"
 
@@ -168,6 +185,8 @@ jobs:
 
   expo-prebuild:
     name: expo prebuild (config plugin)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -184,13 +203,16 @@ jobs:
       # no build yet.
       - run: ./scripts/check-expo-prebuild.sh
 
+  # One job, all seven minors at once (scripts/ci-each-version.sh): each
+  # minor is 20 to 40 s of work, which a runner of its own turned into a
+  # check, a queue wait (median 7 min on a busy day) and a yarn-less
+  # start-up apiece.
   compat:
-    name: rn compat (${{ matrix.react-native }})
+    name: rn compat
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        react-native: ['0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87']
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -200,7 +222,7 @@ jobs:
       # the surface that is actually ours. The example app cannot stand in for
       # this: its android/ and ios/ projects come from one version's template,
       # and swapping the npm dependency does not swap the project.
-      - run: ./scripts/check-rn-compat.sh ${{ matrix.react-native }}
+      - run: ./scripts/ci-each-version.sh 4 ./scripts/check-rn-compat.sh -- 0.81 0.82 0.83 0.84 0.85 0.86 0.87
 
   # The packed tarballs installed into a fresh `react-native init` app, as a
   # customer gets them from npm (scripts/check-pack-install.sh). Inside the
@@ -211,33 +233,50 @@ jobs:
   # Typecheck on every supported minor; Gradle configuration on the floor
   # and the latest.
   pack-install:
-    name: pack install (${{ matrix.react-native }}${{ matrix.android && ', android' || '' }})
+    name: pack install (${{ matrix.react-native }}${{ needs.mutation-scope.outputs.android == 'true' && ', android' || '' }})
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        react-native: ['0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87']
-        include:
-          - react-native: '0.81'
-            android: true
-          - react-native: '0.87'
-            android: true
+        react-native: ['0.81', '0.87']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - uses: actions/setup-java@v5
-        if: matrix.android
+        if: needs.mutation-scope.outputs.android == 'true'
         with:
           distribution: temurin
           java-version: 17
-      - run: ./scripts/check-pack-install.sh ${{ matrix.react-native }} --typecheck ${{ matrix.android && '--android' || '' }}
+      # The Gradle configuration is native input: a change that cannot reach a
+      # native build (scripts/ci-changes.sh) keeps the typecheck and skips it.
+      - run: ./scripts/check-pack-install.sh ${{ matrix.react-native }} --typecheck ${{ needs.mutation-scope.outputs.android == 'true' && '--android' || '' }}
+
+  # The minors between the floor and the latest: typecheck only, side by side
+  # in one job (they were five jobs of under a minute each).
+  pack-install-mid:
+    name: pack install (0.82-0.86)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.18'
+      - run: ./scripts/ci-each-version.sh 3 ./scripts/check-pack-install.sh --typecheck -- 0.82 0.83 0.84 0.85 0.86
 
   # The iOS half: `pod install` evaluates both podspecs from the tarballs and
   # vendors the SDK (BLK-17).
   pack-install-ios:
     name: pack install (${{ matrix.react-native }}, ios)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.ios == 'true'
     runs-on: macos-15
     strategy:
       fail-fast: false
@@ -252,6 +291,8 @@ jobs:
 
   android:
     name: android
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.android == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -297,6 +338,8 @@ jobs:
 
   ios-unit:
     name: ios unit (BugseeRNSupport)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.ios == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -324,6 +367,8 @@ jobs:
 
   ios-e2e:
     name: ios e2e (simulator)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -464,6 +509,8 @@ jobs:
 
   ios:
     name: ios (${{ matrix.delivery }})
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.ios == 'true'
     runs-on: macos-15
     strategy:
       fail-fast: false
