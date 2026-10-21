@@ -215,6 +215,10 @@ jobs:
     if: needs.mutation-scope.outputs.app == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # The supported minors. scripts/__tests__/single-source.test.ts reads
+      # this list and compares it to the declared support matrix.
+      RN_COMPAT_MINORS: '0.81 0.82 0.83 0.84 0.85 0.86 0.87'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -224,7 +228,9 @@ jobs:
       # the surface that is actually ours. The example app cannot stand in for
       # this: its android/ and ios/ projects come from one version's template,
       # and swapping the npm dependency does not swap the project.
-      - run: ./scripts/ci-each-version.sh 4 ./scripts/check-rn-compat.sh -- 0.81 0.82 0.83 0.84 0.85 0.86 0.87
+      - run: |
+          # shellcheck disable=SC2086 # the list is meant to word-split
+          ./scripts/ci-each-version.sh 4 ./scripts/check-rn-compat.sh -- $RN_COMPAT_MINORS
 
   # The packed tarballs installed into a fresh `react-native init` app, as a
   # customer gets them from npm (scripts/check-pack-install.sh). Inside the

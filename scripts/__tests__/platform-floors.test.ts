@@ -10,6 +10,7 @@ import {
   parsePodspecFallback,
   parseSwiftPlatform,
   parseGradleBugseeArtifacts,
+  parseCiCompatMatrix,
 } from '../platform-floors';
 
 const pkg = join(__dirname, '..', '..', 'packages', 'react-native');
@@ -230,5 +231,28 @@ describe('parseGradleBugseeArtifacts', () => {
 
   it('returns nothing when no dependency is declared', () => {
     expect(parseGradleBugseeArtifacts('dependencies {\n}')).toEqual([]);
+  });
+});
+
+describe('parseCiCompatMatrix', () => {
+  it('reads the quoted minors of the compat job env, in order', () => {
+    expect(parseCiCompatMatrix([
+      '  compat:',
+      '    env:',
+      "      OTHER: '1.2'",
+      "      RN_COMPAT_MINORS: '0.81 0.82  0.87'",
+      "      ALSO: '9.9'",
+    ].join('\n'))).toEqual(['0.81', '0.82', '0.87']);
+  });
+
+  it('reads an unquoted or double-quoted list too', () => {
+    expect(parseCiCompatMatrix('RN_COMPAT_MINORS: 0.81 0.83')).toEqual(['0.81', '0.83']);
+    expect(parseCiCompatMatrix('  RN_COMPAT_MINORS: "0.85"')).toEqual(['0.85']);
+  });
+
+  it('refuses a workflow with no list, rather than reading another matrix', () => {
+    expect(() => parseCiCompatMatrix("react-native: ['0.81', '0.87']"))
+      .toThrow(/RN_COMPAT_MINORS/);
+    expect(() => parseCiCompatMatrix("RN_COMPAT_MINORS: ''")).toThrow(/RN_COMPAT_MINORS/);
   });
 });
