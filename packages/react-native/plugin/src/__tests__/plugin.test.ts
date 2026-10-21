@@ -25,6 +25,7 @@ import type { GradleProperty } from '../gradle';
 import { insertDsymPostAction, removeDsymPostAction } from '../scheme';
 import {
   DSYM_POST_ACTION_SCRIPT,
+  ENV_FILE_TOKEN,
   RESOLVE_BUGSEE_CLI_PACKAGE,
   dsymPostActionScript,
   resolveNativeCliPackageSource,
@@ -1279,7 +1280,7 @@ describe('baked iOS token in the Archive post-action', () => {
 
   it('puts the baked token first and keeps the env and credentials fallbacks after it', () => {
     const script = dsymPostActionScript('tok-ios');
-    expect(script.split('\n').slice(0, 9)).toEqual([
+    expect(script.split('\n').slice(0, 8 + ENV_FILE_TOKEN.length + 1)).toEqual([
       'CREDS="${PROJECT_DIR}/../credentials.json"',
       "TOKEN='tok-ios'",
       'if [ -z "$TOKEN" ]; then',
@@ -1288,6 +1289,7 @@ describe('baked iOS token in the Archive post-action', () => {
       'if [ -z "$TOKEN" ]; then',
       '  TOKEN="$BUGSEE_TOKEN_IOS"',
       'fi',
+      ...ENV_FILE_TOKEN,
       'if [ -z "$TOKEN" ] && [ -f "$CREDS" ]; then',
     ]);
     expect(script.slice(script.indexOf('if [ -n "$TOKEN" ]; then'))).toBe(

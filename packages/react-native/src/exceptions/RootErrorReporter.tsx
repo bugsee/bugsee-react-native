@@ -40,7 +40,7 @@ export class RootErrorReporter extends React.Component<
   override componentDidCatch(error: unknown, info: { componentStack?: string | null }): void {
     const componentStack = info.componentStack ?? undefined;
 
-    if (isExceptionCaptureEnabled() && markReported(error)) {
+    if (isExceptionCaptureEnabled() && markReported(error, 'unhandled')) {
       void reportUnhandled(error, { componentStack }).finally(() => {
         this.setState({ phase: 'rethrow' });
       });

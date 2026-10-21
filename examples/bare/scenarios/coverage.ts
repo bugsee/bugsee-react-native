@@ -12,6 +12,9 @@
  *   cov-apm         a transaction whose name, description and status are
  *                   changed after it starts, getActiveSpan(), and a child
  *                   span finished with a status (API-18, API-19).
+ *   cov-span-reload a transaction left open, then a JS reload: the first runtime
+ *                   marks the SDK with an attribute and reloads, the second
+ *                   sees the mark and uploads (issue #146). Debug builds only.
  *   cov-jscrash     Bugsee.testJsCrash() thrown outside any try, so the
  *                   global handler reports it as a crash (API-10).
  *   cov-dialog-color  a report background color, then the report dialog,
@@ -23,7 +26,7 @@
  * Every name, message and summary carries the run's nonce. Markers are
  * `BUGSEE_E2E cov <what> ...`.
  */
-import { Platform } from 'react-native';
+import { DevSettings, Platform } from 'react-native';
 import type {
   Status} from '@bugsee/react-native';
 import Bugsee, {
@@ -38,6 +41,7 @@ export const COVERAGE_SCENARIOS = [
   'cov-identity',
   'cov-lifecycle',
   'cov-apm',
+  'cov-span-reload',
   'cov-jscrash',
   'cov-dialog-color',
 ] as const;
@@ -223,6 +227,23 @@ function runApm(nonce: string): void {
   Bugsee.upload(`cov-apm-${nonce}`, '');
 }
 
+async function runSpanReload(nonce: string): Promise<void> {
+  const key = `span_reload_${nonce.replace(/[^a-zA-Z0-9]/g, '')}`;
+  const seen = await Bugsee.getAttribute(key);
+  if (seen === null || seen === undefined) {
+    const transaction = Bugsee.startTransaction(`txn-reload-${nonce}`, 'cov.reload');
+    transaction.startChildSpan('cov.reload.child', `child-reload-${nonce}`);
+    await Bugsee.setAttribute(key, 'reloading');
+    mark(`span-reload opened nonce=${nonce}`);
+    await delay(1_000);
+    DevSettings.reload();
+    return;
+  }
+  mark(`span-reload second nonce=${nonce} active=${Bugsee.getActiveSpan() === null ? 'null' : 'span'}`);
+  Bugsee.upload(`cov-span-reload-${nonce}`, '');
+  mark(`span-reload uploaded nonce=${nonce}`);
+}
+
 function runJsCrash(nonce: string): void {
   mark(`jscrash throwing nonce=${nonce}`);
   // Outside any try and off this turn, so only the global handler sees it.
@@ -317,6 +338,9 @@ export async function runCoverageScenario(scenario: string, nonce: string): Prom
       return;
     case 'cov-apm':
       runApm(nonce);
+      return;
+    case 'cov-span-reload':
+      await runSpanReload(nonce);
       return;
     case 'cov-jscrash':
       runJsCrash(nonce);

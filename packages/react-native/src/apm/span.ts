@@ -93,12 +93,36 @@ function adopt(value: unknown): SpanObject | null {
   return span;
 }
 
-function markReleased(handles: readonly string[]): void {
-  for (const handle of handles) {
-    const span = live.get(handle);
-    if (span !== undefined) {
-      span.markDead();
+interface ReleasedSpan {
+  handle: string;
+  status: number;
+}
+
+/** What `spanFinish` reports: every handle native dropped and the status the SDK holds for it. */
+function parseReleased(result: unknown): ReleasedSpan[] {
+  const list = (result as { released?: unknown } | null | undefined)?.released;
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  const out: ReleasedSpan[] = [];
+  for (const item of list as unknown[]) {
+    const entry = item as { handle?: unknown; status?: unknown } | null;
+    if (entry !== null && typeof entry === 'object' && typeof entry.handle === 'string') {
+      out.push({
+        handle: entry.handle,
+        status: typeof entry.status === 'number' ? entry.status : SpanStatus.Unknown,
+      });
     }
+  }
+  return out;
+}
+
+function markReleased(released: readonly ReleasedSpan[]): void {
+  for (const { handle, status } of released) {
+    // The status is what native read from the SDK span after the finish, so
+    // a child the parent cancelled and a span the SDK finished on its own
+    // both report what the SDK recorded.
+    live.get(handle)?.markDead(status);
     live.delete(handle);
   }
 }
@@ -192,7 +216,15 @@ class SpanObject {
     this.guard();
     const explicit = status !== undefined;
     const wire = explicit ? assertStatus(status) : 0;
-    const released = NativeBugsee.spanFinish(this.wire.handle, wire, explicit);
+    const released = parseReleased(
+      NativeBugsee.spanFinish(this.wire.handle, wire, explicit),
+    );
+    // Native reports the status it holds after the finish (no argument ends
+    // the span as OK and overwrites an earlier setStatus). When it reports
+    // nothing for this handle, only an explicit status is known.
+    if (explicit && !released.some((item) => item.handle === this.wire.handle)) {
+      this.status = wire;
+    }
     markReleased(released);
     // Dead even when native omits this handle. A later call is what throws.
     this.markDead();
@@ -219,7 +251,10 @@ class SpanObject {
     return this.attributes;
   }
 
-  markDead(): void {
+  markDead(status?: number): void {
+    if (status !== undefined) {
+      this.status = status;
+    }
     this.dead = true;
     this.finishedFlag = true;
   }

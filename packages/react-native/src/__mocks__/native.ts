@@ -363,11 +363,11 @@ export const native = {
   spanSetAttribute: jest.fn<boolean, [string, string, string]>(),
   spanSetStatus: jest.fn<boolean, [string, number]>(),
   spanStartChild: jest.fn<Record<string, unknown>, [string, string, string | null]>(),
-  spanFinish: jest.fn<string[], [string, number, boolean]>(),
+  spanFinish: jest.fn<Record<string, unknown>, [string, number, boolean]>(),
 
   setAppearanceColor: jest.fn<boolean, [string, number, number, number, number]>(),
   getAppearanceColor: jest.fn<string, [string]>(),
-  deleteCollectedDataOnDevice: jest.fn<Promise<boolean>, [boolean]>(),
+  deleteCollectedDataOnDevice: jest.fn<Promise<boolean>, [boolean, boolean]>(),
 
   /**
    * Resets every mock on this object, found rather than listed.

@@ -21,13 +21,56 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The breadcrumb provider pools entries and does not recycle them on a
- * filter timeout, so this bridge has no deadline. A reply writes the same
- * crumb. A failed filter passes {@code null} and does not leave the original
- * in place by calling the callback with it. {@code level} is
- * {@link Breadcrumb.Level#getValue()}, not the enum ordinal.
+ * The breadcrumb provider pools entries and has no filter timeout, so this
+ * bridge arms its own fail-closed deadline ({@link
+ * BreadcrumbFilterBridge#DEADLINE_MS}): an unanswered crumb is dropped and a
+ * late reply is a no-op. A reply writes the same crumb. A failed filter
+ * passes {@code null} and does not leave the original in place by calling the
+ * callback with it. {@code level} is {@link Breadcrumb.Level#getValue()}, not
+ * the enum ordinal.
  */
 public class BreadcrumbFilterBridgeTest {
+
+    /** Runs a task only when the test says so. */
+    private static final class ManualScheduler implements BreadcrumbFilterBridge.Scheduler {
+        static final class Task implements BreadcrumbFilterBridge.Cancellable {
+            final Runnable runnable;
+            final long delayMs;
+            boolean cancelled;
+
+            Task(final Runnable runnable, final long delayMs) {
+                this.runnable = runnable;
+                this.delayMs = delayMs;
+            }
+
+            @Override
+            public void cancel() {
+                cancelled = true;
+            }
+        }
+
+        final List<Task> tasks = new ArrayList<>();
+
+        @Override
+        @NonNull
+        public BreadcrumbFilterBridge.Cancellable schedule(
+                @NonNull final Runnable task,
+                final long delayMs
+        ) {
+            final Task scheduled = new Task(task, delayMs);
+            tasks.add(scheduled);
+            return scheduled;
+        }
+
+        /** Fires every task that was not cancelled, the way elapsed time would. */
+        void fire() {
+            for (final Task task : new ArrayList<>(tasks)) {
+                if (!task.cancelled) {
+                    task.runnable.run();
+                }
+            }
+        }
+    }
 
     /** Counts {@code run} and remembers the argument, including {@code null}. */
     private static final class RecordingCallback implements Callback1<Breadcrumb> {
@@ -162,7 +205,10 @@ public class BreadcrumbFilterBridgeTest {
         }
     }
 
-    private final BreadcrumbFilterBridge bridge = new BreadcrumbFilterBridge();
+    private final ManualScheduler scheduler = new ManualScheduler();
+    private long nowNanos = 1_000L;
+    private final BreadcrumbFilterBridge bridge =
+            new BreadcrumbFilterBridge(scheduler, () -> nowNanos);
 
     @Test
     public void snapshotUsesGetValueAndOmitsUnsetKeys() throws Exception {
@@ -415,6 +461,137 @@ public class BreadcrumbFilterBridgeTest {
         assertTrue(sink.ids.isEmpty());
         assertTrue(callback.sawNull);
         assertEquals("secret", crumb.message);
+    }
+
+    @Test
+    public void anUnansweredCrumbIsDroppedAtTheDeadlineAndALateReplyIsANoOp() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.arm();
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        assertEquals(1, scheduler.tasks.size());
+        assertEquals(9_000L, scheduler.tasks.get(0).delayMs);
+        assertEquals(BreadcrumbFilterBridge.DEADLINE_MS, scheduler.tasks.get(0).delayMs);
+        assertEquals(0, callback.runs);
+
+        scheduler.fire();
+
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+        assertNull(callback.last);
+        bridge.reply(sink.ids.get(0), "{\"message\":\"redacted\"}");
+        assertEquals("secret", crumb.message);
+        assertEquals(1, callback.runs);
+    }
+
+    @Test
+    public void aReplyBeforeTheDeadlineCancelsItAndFiringLaterDoesNothing() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.arm();
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        bridge.reply(sink.ids.get(0), "{\"message\":\"redacted\"}");
+
+        assertTrue(scheduler.tasks.get(0).cancelled);
+        scheduler.fire();
+        assertEquals(1, callback.runs);
+        assertSame(crumb, callback.last);
+    }
+
+    @Test
+    public void aFailedEmitCancelsTheDeadline() {
+        final RecordingSink sink = new RecordingSink();
+        sink.throwOnEmit = true;
+        bridge.attach(sink);
+        bridge.arm();
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(new MutableCrumb(), callback);
+
+        assertTrue(scheduler.tasks.get(0).cancelled);
+        scheduler.fire();
+        assertEquals(1, callback.runs);
+    }
+
+    @Test
+    public void detachCancelsTheDeadline() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.arm();
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(new MutableCrumb(), callback);
+
+        bridge.detach(sink);
+
+        assertTrue(scheduler.tasks.get(0).cancelled);
+        scheduler.fire();
+        assertEquals(1, callback.runs);
+    }
+
+    @Test
+    public void eachCrumbHasItsOwnDeadline() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.arm();
+        final RecordingCallback first = new RecordingCallback();
+        final RecordingCallback second = new RecordingCallback();
+        bridge.ask(new MutableCrumb(), first);
+        bridge.ask(new MutableCrumb(), second);
+
+        bridge.reply(sink.ids.get(1), "{}");
+        scheduler.fire();
+
+        assertEquals(1, first.runs);
+        assertTrue(first.sawNull);
+        assertEquals(1, second.runs);
+        assertFalse(second.sawNull);
+    }
+
+    @Test
+    public void aReplyAfterTheDeadlineIsRefusedEvenIfTheTimerHasNotRun() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.arm();
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        // Time passes the deadline, but the scheduler is late: expire() has not run.
+        nowNanos += java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+                BreadcrumbFilterBridge.DEADLINE_MS);
+        bridge.reply(sink.ids.get(0), "{\"message\":\"redacted\"}");
+
+        assertEquals("secret", crumb.message);
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+        scheduler.fire();
+        assertEquals(1, callback.runs);
+    }
+
+    @Test
+    public void aReplyJustInsideTheDeadlineIsAccepted() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        bridge.arm();
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        nowNanos += java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+                BreadcrumbFilterBridge.DEADLINE_MS) - 1;
+        bridge.reply(sink.ids.get(0), "{\"message\":\"redacted\"}");
+
+        assertEquals("redacted", crumb.message);
+        assertSame(crumb, callback.last);
     }
 
     @Test

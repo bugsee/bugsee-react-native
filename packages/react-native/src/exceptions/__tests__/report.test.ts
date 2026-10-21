@@ -56,12 +56,12 @@ function claimHandled(
 }
 
 async function claimUnhandled(
-  markReported: (error: unknown) => boolean,
+  markReported: (error: unknown, kind?: 'handled' | 'unhandled') => boolean,
   reportUnhandled: Report['reportUnhandled'],
   error: unknown,
   extras?: Parameters<Report['reportUnhandled']>[1],
 ): Promise<void> {
-  if (!markReported(error)) {
+  if (!markReported(error, 'unhandled')) {
     return;
   }
   await reportUnhandled(error, extras);
@@ -94,7 +94,7 @@ describe('report', () => {
     );
   });
 
-  it('an object is reported once, whichever route sees it first', async () => {
+  it('an object is reported once per kind: a crash after a handled report still goes out', async () => {
     const {
       reportHandled: handled,
       reportUnhandled: unhandled,
@@ -106,8 +106,26 @@ describe('report', () => {
     expect(native.logException).toHaveBeenCalledTimes(1);
     claimHandled(markReported, handled, error);
     expect(native.logException).toHaveBeenCalledTimes(1);
+    // log-then-rethrow: the crash is not swallowed by the earlier handled report.
     await claimUnhandled(markReported, unhandled, error);
-    expect(native.logUnhandledException).not.toHaveBeenCalled();
+    expect(native.logUnhandledException).toHaveBeenCalledTimes(1);
+    await claimUnhandled(markReported, unhandled, error);
+    expect(native.logUnhandledException).toHaveBeenCalledTimes(1);
+    expect(native.logException).toHaveBeenCalledTimes(1);
+  });
+
+  it('a crash report blocks a later handled report of the same object', async () => {
+    const {
+      reportHandled: handled,
+      reportUnhandled: unhandled,
+      markReported,
+      native,
+    } = load();
+    const error = new Error('crash first');
+    await claimUnhandled(markReported, unhandled, error);
+    claimHandled(markReported, handled, error);
+    expect(native.logUnhandledException).toHaveBeenCalledTimes(1);
+    expect(native.logException).not.toHaveBeenCalled();
   });
 
   it('a primitive is reported every time', () => {

@@ -54,10 +54,12 @@ export interface BreadcrumbSnapshot {
  * One crumb in, the crumb to keep out.
  *
  * Returning the crumb, or another object, keeps it. `null` and `undefined`
- * drop it. A promise is waited on. This function does not add a timeout of
- * its own: an unanswered filter is not recorded, and a timeout here that then
- * passed the original crumb would leak exactly what the filter exists to
- * remove.
+ * drop it. A promise is waited on, for 9 s: the native bridge drops the crumb
+ * if the filter has not settled by then, on both platforms, and ignores a
+ * later answer. Neither SDK has a deadline for this filter, so the bridge
+ * supplies it. This function does not add a timeout of its own: a timeout
+ * here that then passed the original crumb would leak exactly what the
+ * filter exists to remove.
  */
 export type BreadcrumbFilter = (
   crumb: BreadcrumbSnapshot,

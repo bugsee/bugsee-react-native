@@ -239,4 +239,90 @@ fs.writeFileSync(${JSON.stringify(captured)}, JSON.stringify({ p, text: fs.readF
     const { seen, mapPath } = upload([`${ROOT}/a.ts`], undefined);
     expect(seen.p).toBe(mapPath);
   });
+
+  describe('stripping sourcesContent', () => {
+    function uploadWithContent(stripSources) {
+      const mapPath = path.join(dir, 'main.jsbundle.composed.map');
+      const original = JSON.stringify({
+        version: 3,
+        sources: ['rel.ts'],
+        sourcesContent: ['const secret = 1;'],
+        names: [],
+        mappings: 'AAAA',
+        debug_id: 'd',
+        debugId: 'd',
+      });
+      fs.writeFileSync(mapPath, original);
+      const result = uploadComposedSourceMap({
+        composedMapPath: mapPath,
+        token: TOKEN,
+        appVersion: '1',
+        appBuild: '1',
+        cliPath: cli,
+        projectRoot: ROOT,
+        stripSources,
+      });
+      return { result, original, mapPath, seen: JSON.parse(fs.readFileSync(captured, 'utf8')) };
+    }
+
+    it('uploads a copy without sourcesContent and leaves the map on disk alone', () => {
+      const { result, original, mapPath, seen } = uploadWithContent(true);
+      const uploaded = JSON.parse(seen.text);
+      expect(result.status).toBe('uploaded');
+      expect(uploaded).not.toHaveProperty('sourcesContent');
+      expect(uploaded.mappings).toBe('AAAA');
+      expect(uploaded.debug_id).toBe('d');
+      expect(seen.p).not.toBe(mapPath);
+      expect(fs.readFileSync(mapPath, 'utf8')).toBe(original);
+    });
+
+    it('keeps sourcesContent by default', () => {
+      const { seen, mapPath } = uploadWithContent(false);
+      expect(seen.p).toBe(mapPath);
+      expect(JSON.parse(seen.text).sourcesContent).toEqual(['const secret = 1;']);
+    });
+
+    it('strips the sections of an indexed map too', () => {
+      const { stripSourcesContent } = require('../hermes-sourcemaps');
+      const indexed = JSON.stringify({
+        version: 3,
+        sections: [{ offset: { line: 0, column: 0 }, map: { version: 3, sources: ['a.ts'], sourcesContent: ['x'], mappings: 'AAAA' } }],
+      });
+      const out = JSON.parse(stripSourcesContent(indexed));
+      expect(out.sections[0].map).not.toHaveProperty('sourcesContent');
+      expect(out.sections[0].map.mappings).toBe('AAAA');
+      // Unchanged text comes back byte for byte, not re-serialised.
+      const plain = '{ "version": 3, "sections": [ null, {}, { "map": "x" }, { "map": { "version": 3 } } ] }';
+      expect(stripSourcesContent(plain)).toBe(plain);
+      expect(stripSourcesContent('{ "version": 3 }')).toBe('{ "version": 3 }');
+      expect(stripSourcesContent('{ "version": 3, "sourcesContent": [] }')).toBe('{"version":3}');
+    });
+
+    it('skips the upload, saying why, when the stripped copy cannot be made', () => {
+      const mapPath = path.join(dir, 'main.jsbundle.composed.map');
+      fs.writeFileSync(mapPath, 'not json');
+      const result = uploadComposedSourceMap({
+        composedMapPath: mapPath,
+        token: TOKEN,
+        appVersion: '1',
+        appBuild: '1',
+        cliPath: cli,
+        stripSources: true,
+      });
+      expect(result).toEqual({ status: 'skipped', reason: 'strip-failed' });
+      expect(stderr.mock.calls.join('')).toContain('bugsee: source map upload skipped: could not remove sourcesContent from the map (');
+      expect(fs.existsSync(captured)).toBe(false);
+    });
+
+    it('is requested through BUGSEE_STRIP_SOURCES_CONTENT', () => {
+      const { stripSourcesContentRequested } = require('../hermes-sourcemaps');
+      expect(stripSourcesContentRequested({ BUGSEE_STRIP_SOURCES_CONTENT: 'true' })).toBe(true);
+      expect(stripSourcesContentRequested({ BUGSEE_STRIP_SOURCES_CONTENT: ' 1 ' })).toBe(true);
+      for (const on of ['yes', 'ON', 'True', '1']) {
+        expect(stripSourcesContentRequested({ BUGSEE_STRIP_SOURCES_CONTENT: on })).toBe(true);
+      }
+      expect(stripSourcesContentRequested({ BUGSEE_STRIP_SOURCES_CONTENT: 'false' })).toBe(false);
+      expect(stripSourcesContentRequested({})).toBe(false);
+    });
+  });
 });

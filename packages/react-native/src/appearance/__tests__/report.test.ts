@@ -164,48 +164,56 @@ describe('report appearance mapping', () => {
 });
 
 describe('deleteCollectedDataOnDevice', () => {
-  it('passes includingIntermediate true through', async () => {
+  it('passes includingIntermediate true through, keeping finished reports by default', async () => {
     native.deleteCollectedDataOnDevice.mockResolvedValue(true);
     await expect(Bugsee.deleteCollectedDataOnDevice(true)).resolves.toBe(true);
-    expect(native.deleteCollectedDataOnDevice).toHaveBeenCalledWith(true);
+    expect(native.deleteCollectedDataOnDevice).toHaveBeenCalledWith(true, false);
   });
 
   it('passes includingIntermediate false through', async () => {
     native.deleteCollectedDataOnDevice.mockResolvedValue(false);
     await expect(Bugsee.deleteCollectedDataOnDevice(false)).resolves.toBe(false);
-    expect(native.deleteCollectedDataOnDevice).toHaveBeenCalledWith(false);
+    expect(native.deleteCollectedDataOnDevice).toHaveBeenCalledWith(false, false);
   });
 
-  it('refuses immediately while launched and settles the Stopped path', () => {
+  it('passes includingFinishedReports through so finished reports can be deleted', async () => {
+    native.deleteCollectedDataOnDevice.mockResolvedValue(true);
+    await expect(Bugsee.deleteCollectedDataOnDevice(false, true)).resolves.toBe(true);
+    expect(native.deleteCollectedDataOnDevice).toHaveBeenCalledWith(false, true);
+  });
+
+  describe('iOS bridge', () => {
     const source = readFileSync(join(__dirname, '../../../ios/BugseeModule.mm'), 'utf8');
     const start = source.indexOf('- (void)deleteCollectedDataOnDevice:');
     const end = source.indexOf('- (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:', start);
     const method = source.slice(start, end);
-    const hop = method.indexOf('BGSRNRunOnMain(');
-    const status = method.indexOf('instance.status');
-    const nilStopped = method.indexOf('BugseeStatusStopped');
-    const launched = method.indexOf('status != BugseeStatusStopped');
-    const call = method.indexOf('[Bugsee deleteCollectedDataOnDevice:includingIntermediate');
-    const earlyResolve = method.indexOf('resolve(@NO)');
-    const launchedReturn = method.indexOf('\n      return;', earlyResolve);
-    const settle = method.indexOf('BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs');
-    const stoppedCall = method.indexOf(
-      '[Bugsee deleteCollectedDataOnDevice:includingIntermediate',
-      settle,
+
+    // The settle-once/backstop behaviour is tested for real in
+    // ios/Support/Tests/.../BGSRNDeleteCollectedDataTests.m; this only pins the
+    // wiring to the SDK forms.
+    it('delegates settling to BGSRNDeleteCollectedData, with no resolve-false timeout', () => {
+      expect(start).toBeGreaterThan(-1);
+      expect(method).toContain('BGSRNDeleteCollectedData(');
+      expect(method).toContain('BGSRNDeleteCollectedDataBackstopMs');
+      expect(method).toContain('resolve(@(success))');
+      expect(method).not.toContain('BGSRNSettleOnce');
+      expect(method).not.toContain('resolve(@NO)');
+    });
+
+    it('calls the delete-everything form only when finished reports are included', () => {
+      expect(method).toMatch(/if \(includingFinishedReports\) \{\s*\[Bugsee deleteCollectedDataOnDevice:completion\];/);
+      expect(method).toMatch(/\} else \{\s*\[Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:completion\];/);
+    });
+  });
+
+  it('Android bridge forwards includingFinishedReports to the 3-argument SDK method', () => {
+    const java = readFileSync(
+      join(__dirname, '../../../android/src/main/java/com/bugsee/reactnative/BugseeModule.java'),
+      'utf8',
     );
-    expect(hop).toBeGreaterThan(-1);
-    expect(method).not.toContain('BGSRNRunOnMainSync');
-    expect(status).toBeGreaterThan(hop);
-    expect(nilStopped).toBeGreaterThan(status);
-    expect(launched).toBeGreaterThan(nilStopped);
-    expect(call).toBeGreaterThan(launched);
-    expect(earlyResolve).toBeGreaterThan(call);
-    expect(launchedReturn).toBeGreaterThan(earlyResolve);
-    expect(settle).toBeGreaterThan(launchedReturn);
-    expect(method.slice(0, settle)).not.toContain('BGSRNSettleOnce');
-    expect(method.slice(0, settle)).not.toContain('BGSRNUnhandledCompletionDeadlineMs');
-    expect(stoppedCall).toBeGreaterThan(settle);
-    expect(method.slice(settle)).toContain('@(success)');
-    expect(method).toContain('includingIntermediate');
+    const at = java.indexOf('public void deleteCollectedDataOnDevice(');
+    const body = java.slice(at, java.indexOf('}\n', java.indexOf('promise.resolve', at)));
+    expect(body).toContain('final boolean includingFinishedReports');
+    expect(body).toMatch(/Bugsee\.deleteCollectedDataOnDevice\(\s*includingIntermediate,\s*includingFinishedReports,/);
   });
 });
