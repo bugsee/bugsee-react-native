@@ -27,9 +27,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn lint
@@ -168,9 +171,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       - run: yarn install --immutable
       # Spec §13: the plugin's edits survive `expo prebuild --clean`, and a
@@ -263,9 +269,11 @@ jobs:
             echo "::error title=Local SNAPSHOT pin::native-versions.json pins Android ${sdk}, built from a private clone; CI cannot resolve it. Expected red until the pin flips to the released version."
             exit 1
           fi
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -319,9 +327,12 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       - run: yarn install --immutable
 
@@ -464,9 +475,12 @@ jobs:
         delivery: [cocoapods, spm]
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn workspace bugsee-example-bare credentials
