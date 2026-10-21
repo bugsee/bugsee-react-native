@@ -319,6 +319,60 @@ so when the root file already has one the pin goes into it (its braces must
 stand alone on their lines, or the prebuild refuses); a new block is written
 only when there is none.
 
+## Network privacy
+
+`Bugsee.setNetworkFilter` sees network events, and only network events.
+Write it as if it were your only redaction.
+
+- **Built-in redaction differs by platform.** On Android this package runs the
+  built-in sanitizer on each event before your filter (when
+  `com.bugsee.option.capture.network.default-sanitizer` is on). On iOS your
+  filter replaces the built-in sanitizer, so raw events reach it and anything
+  it does not remove is recorded. The built-in rules differ too. iOS matches a
+  fixed set of header names plus fixed query and body keys, and does not strip
+  credentials from URLs. Android also matches substrings such as `password`,
+  `secret`, `token`, `session` and `apikey` in header, query and body keys,
+  strips `user:password` from URLs and redacts error messages.
+- **The filter does not reach every place a URL is recorded:**
+  - **HTTP breadcrumbs** (only when `captureBreadcrumbs` is enabled). Android
+    records the URL unredacted, without even the built-in query redaction.
+    iOS applies the built-in query redaction when `default-sanitizer` is on.
+    Use `setBreadcrumbFilter` to clean them. Return the whole crumb, because a
+    reply that leaves out a key the crumb had drops it. The URL is in `data`
+    on `http` crumbs:
+
+    ```ts
+    // Drops user:password@, the query and the fragment.
+    const stripUrl = (url: string) =>
+      url.replace(/\/\/[^/?#@]*@/, '//').split(/[?#]/)[0];
+
+    Bugsee.setBreadcrumbFilter(crumb => {
+      const data = crumb.data as { url?: unknown } | null | undefined;
+      if (crumb.type !== 'http' || typeof data?.url !== 'string') {
+        return crumb;
+      }
+      return { ...crumb, data: { ...data, url: stripUrl(data.url) } };
+    });
+    ```
+  - **`http.client` performance spans** (performance monitoring,
+    `com.bugsee.option.performance.enabled`, is on by default). Android always
+    applies its built-in sanitizer to span URLs, even with `default-sanitizer`
+    off. iOS applies no sanitization to span URLs. To turn them off:
+
+    ```ts
+    const options = createDefaultLaunchOptions();
+    options.setCustomOption('com.bugsee.option.performance.enabled', false);
+    ```
+
+  - **`detect.http-errors` reports** (off by default) carry the request URL in
+    `http_url` without its query or fragment. Path segments are not passed
+    through your filter.
+
+Routing these URLs through the network filter, and running the built-in
+sanitizer ahead of the filter on iOS, needs changes in the native SDKs and
+is tracked in
+[#137](https://github.com/bugsee/bugsee-react-native/issues/137).
+
 ## Release symbolication
 
 A Release build has to send Bugsee what turns its crash frames back into
