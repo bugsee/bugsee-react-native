@@ -37,6 +37,7 @@
 #import <BugseeRNSupport/BGSRNReactWindow.h>
 #import <BugseeRNSupport/BGSRNExceptions.h>
 #import <BugseeRNSupport/BGSRNSettleOnce.h>
+#import <BugseeRNSupport/BGSRNBlackout.h>
 #import <BugseeRNSupport/BGSRNReportArgs.h>
 #import <BugseeRNSupport/BGSRNCreatedReports.h>
 #import <BugseeRNSupport/BGSRNCreatedReportOps.h>
@@ -65,6 +66,7 @@
 #import "BGSRNReactWindow.h"
 #import "BGSRNExceptions.h"
 #import "BGSRNSettleOnce.h"
+#import "BGSRNBlackout.h"
 #import "BGSRNReportArgs.h"
 #import "BGSRNCreatedReports.h"
 #import "BGSRNCreatedReportOps.h"
@@ -1270,6 +1272,9 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   });
 }
 
+// Deliberately NOT given the stop() treatment (#143): relaunch is one call that
+// restarts the SDK, not a session the app ended, and whether the iOS SDK keeps
+// a blackout across it is unverified; the app can call endBlackout().
 - (void)relaunch:(NSDictionary *)options
          resolve:(RCTPromiseResolveBlock)resolve
           reject:(RCTPromiseRejectBlock)reject {
@@ -1297,6 +1302,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (void)stop:(RCTPromiseResolveBlock)resolve
       reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
+    // TODO(#143): temporary; the iOS SDK should end the blackout on stop
+    // itself (see BGSRNBlackout.h). End it first, while still launched, so
+    // BlackoutEnded is delivered. Skipped for a never-launched SDK so a
+    // pre-launch startBlackout() survives.
+    BGSRNEndBlackoutForStop();
     [Bugsee stop:^{
       resolve(@YES);
     }];
