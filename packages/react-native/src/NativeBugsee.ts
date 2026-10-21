@@ -587,10 +587,12 @@ export interface Spec extends TurboModule {
    * Finishes the span and releases every retained span that is now
    * finished, including children a parent finish cancelled. `statusSet`
    * false is the no-arg `finish` (status OK). The returned handles are
-   * the ones dropped. Empty means the handle was already gone. The name
-   * is `statusSet` because `explicit` is a keyword in the ObjC++ spec.
+   * the ones dropped, each with the status the SDK holds after the finish
+   * (`{ released: [{ handle, status }] }`). Empty means the handle was
+   * already gone. The name is `statusSet` because `explicit` is a keyword in
+   * the ObjC++ spec.
    */
-  spanFinish(handle: string, status: number, statusSet: boolean): string[];
+  spanFinish(handle: string, status: number, statusSet: boolean): CodegenTypes.UnsafeObject;
 
   /**
    * One report color. `name` is already the platform's native key

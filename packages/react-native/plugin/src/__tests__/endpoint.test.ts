@@ -8,10 +8,13 @@ import { rewriteBundlePhase } from '../bundle-phase';
 import { dsymPostActionScript } from '../dsym-script';
 import { ENDPOINT_HAS_VERSION, ENDPOINT_NOT_VALID, iosRuntimeEndpoint, pluginEndpoint } from '../endpoint';
 import {
+  APP_TOKEN_MARKER,
+  APP_TOKEN_META_DATA,
   RN_ENDPOINT_META_DATA,
   SDK_ENDPOINT_KEPT,
   SDK_ENDPOINT_MARKER,
   SDK_ENDPOINT_META_DATA,
+  appTokenMetaData,
   endpointMetaData,
 } from '../manifest';
 import { bugseePropertiesText } from '../properties';
@@ -255,5 +258,34 @@ describe('endpointMetaData', () => {
 
   it('names the key it leaves', () => {
     expect(SDK_ENDPOINT_KEPT).toContain(SDK_ENDPOINT_META_DATA);
+  });
+});
+
+describe('appTokenMetaData', () => {
+  const none = (): undefined => undefined;
+  const from = (items: Record<string, string>) => (name: string) => items[name];
+
+  it('writes the token with its marker', () => {
+    expect(appTokenMetaData({ token: 'tok', existing: none })).toEqual({
+      remove: [],
+      set: { [APP_TOKEN_META_DATA]: 'tok', [APP_TOKEN_MARKER]: 'tok' },
+    });
+  });
+
+  it('removes what it wrote earlier when there is no token now', () => {
+    const existing = from({ [APP_TOKEN_META_DATA]: 'old', [APP_TOKEN_MARKER]: 'old' });
+    expect(appTokenMetaData({ token: null, existing })).toEqual({
+      remove: [APP_TOKEN_MARKER, APP_TOKEN_META_DATA],
+      set: {},
+    });
+  });
+
+  it('leaves an entry the marker does not vouch for', () => {
+    expect(appTokenMetaData({ token: null, existing: from({ [APP_TOKEN_META_DATA]: 'mine' }) })).toEqual({
+      remove: [],
+      set: {},
+    });
+    const edited = from({ [APP_TOKEN_META_DATA]: 'mine', [APP_TOKEN_MARKER]: 'old' });
+    expect(appTokenMetaData({ token: null, existing: edited })).toEqual({ remove: [APP_TOKEN_MARKER], set: {} });
   });
 });
