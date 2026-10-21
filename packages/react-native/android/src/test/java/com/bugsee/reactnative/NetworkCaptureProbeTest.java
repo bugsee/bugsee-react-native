@@ -15,8 +15,11 @@ import org.junit.Test;
 
 public class NetworkCaptureProbeTest {
 
-    // INTERCEPTOR_CLASS matching the class the Gradle plugin injects is only
-    // verified by the device run (plugin on: no warning; off: one warning).
+    // INTERCEPTOR_CLASS is pinned to the SDK's real class by
+    // clientWithTheInjectedInterceptorIsInstrumented (addIfAbsent adds that
+    // class, and the probe matches it by name). That the Gradle plugin injects
+    // this same class into RN's client is only verified by the device run
+    // (plugin on: no warning; plugin off: one warning).
 
     @Before
     public void reset() {
