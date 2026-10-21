@@ -41,9 +41,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * JS has not answered by {@link #DEADLINE_MS} and passes {@code null} to the
  * SDK, which discards the crumb, failing closed. (The log and network bridges
  * use the same 9 s, but only stop waiting then, without calling the callback:
- * their SDK providers drop at 10 s themselves.) A timer that passed the original crumb would leak
- * exactly what the filter exists to redact. A reply after the deadline finds
- * nothing pending and is a no-op.
+ * their SDK providers drop at 10 s themselves.) A timer that passed the
+ * original crumb would leak exactly what the filter exists to redact. A
+ * reply after the deadline finds nothing pending and is a no-op.
  *
  * <p>A missing sink, a snapshot that cannot be serialised, a failed emit,
  * a {@code null} reply, or a reply that does not stick passes {@code null}

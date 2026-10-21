@@ -475,15 +475,19 @@ static id BGSRNNetworkFilterLock(void) {
 /// Called outside the lock: the SDK's decision block must not re-enter it.
 static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
   NSMutableArray<BugseeNetworkFilterDecisionBlock> *decisions = [NSMutableArray array];
+  NSMutableArray<NSString *> *owned = [NSMutableArray array];
   @synchronized (BGSRNNetworkFilterLock()) {
     for (NSString *key in BGSRNNetworkFilterPendingTable.allKeys) {
-      BGSRNNetworkFilterPending *item = BGSRNNetworkFilterPendingTable[key];
-      if (item.owner == module) {
-        [BGSRNNetworkFilterPendingTable removeObjectForKey:key];
-        if (item.decision != nil) {
-          [decisions addObject:item.decision];
-        }
+      if (BGSRNNetworkFilterPendingTable[key].owner == module) {
+        [owned addObject:key];
       }
+    }
+  }
+  // Through the shared take, so each request's deadline is cancelled too.
+  for (NSString *key in owned) {
+    BGSRNNetworkFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNNetworkFilterPendingTable, BGSRNNetworkFilterLock(), key);
+    if (item.decision != nil) {
+      [decisions addObject:item.decision];
     }
   }
   for (BugseeNetworkFilterDecisionBlock decision in decisions) {
@@ -523,15 +527,19 @@ static id BGSRNLogFilterLock(void) {
 /// Called outside the lock: the SDK's decision block must not re-enter it.
 static void BGSRNDropLogFiltersOwnedBy(BugseeModule *module) {
   NSMutableArray<BugseeLogFilterDecisionBlock> *decisions = [NSMutableArray array];
+  NSMutableArray<NSString *> *owned = [NSMutableArray array];
   @synchronized (BGSRNLogFilterLock()) {
     for (NSString *key in BGSRNLogFilterPendingTable.allKeys) {
-      BGSRNLogFilterPending *item = BGSRNLogFilterPendingTable[key];
-      if (item.owner == module) {
-        [BGSRNLogFilterPendingTable removeObjectForKey:key];
-        if (item.decision != nil) {
-          [decisions addObject:item.decision];
-        }
+      if (BGSRNLogFilterPendingTable[key].owner == module) {
+        [owned addObject:key];
       }
+    }
+  }
+  // Through the shared take, so each request's deadline is cancelled too.
+  for (NSString *key in owned) {
+    BGSRNLogFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNLogFilterPendingTable, BGSRNLogFilterLock(), key);
+    if (item.decision != nil) {
+      [decisions addObject:item.decision];
     }
   }
   for (BugseeLogFilterDecisionBlock decision in decisions) {
@@ -665,15 +673,19 @@ static id BGSRNBreadcrumbFilterLock(void) {
 /// This is teardown, not a timeout.
 static void BGSRNDropBreadcrumbFiltersOwnedBy(BugseeModule *module) {
   NSMutableArray<BugseeBreadcrumbFilterDecisionBlock> *decisions = [NSMutableArray array];
+  NSMutableArray<NSString *> *owned = [NSMutableArray array];
   @synchronized (BGSRNBreadcrumbFilterLock()) {
     for (NSString *key in BGSRNBreadcrumbFilterPendingTable.allKeys) {
-      BGSRNBreadcrumbFilterPending *item = BGSRNBreadcrumbFilterPendingTable[key];
-      if (item.owner == module) {
-        [BGSRNBreadcrumbFilterPendingTable removeObjectForKey:key];
-        if (item.decision != nil) {
-          [decisions addObject:item.decision];
-        }
+      if (BGSRNBreadcrumbFilterPendingTable[key].owner == module) {
+        [owned addObject:key];
       }
+    }
+  }
+  // Through the shared take, so each request's deadline is cancelled too.
+  for (NSString *key in owned) {
+    BGSRNBreadcrumbFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable, BGSRNBreadcrumbFilterLock(), key);
+    if (item.decision != nil) {
+      [decisions addObject:item.decision];
     }
   }
   for (BugseeBreadcrumbFilterDecisionBlock decision in decisions) {

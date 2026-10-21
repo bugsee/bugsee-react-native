@@ -520,10 +520,9 @@ class Bugsee {
    * callback that throws, rejects, or does not settle within 9 s drops the
    * crumb, and a late answer is ignored. On both platforms the bridge
    * supplies that deadline: neither SDK has one. The original is not passed
-   * through. A crumb
-   * already passed to `addBreadcrumb` is still offered to the callback that
-   * was installed for it when this is cleared, or replaced with another
-   * function, on that same turn.
+   * through. A crumb already passed to `addBreadcrumb` is still offered to
+   * the callback that was installed for it when this is cleared, or replaced
+   * with another function, on that same turn.
    *
    * Capture stays off until launch options set `captureBreadcrumbs: true`,
    * on Android and on iOS. While it is off, `addBreadcrumb` records nothing

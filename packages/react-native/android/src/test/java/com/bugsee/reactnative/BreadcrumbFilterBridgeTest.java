@@ -24,9 +24,10 @@ import java.util.Map;
  * The breadcrumb provider pools entries and has no filter timeout, so this
  * bridge arms its own fail-closed deadline ({@link
  * BreadcrumbFilterBridge#DEADLINE_MS}): an unanswered crumb is dropped and a
- * late reply is a no-op. A reply writes the same crumb. A failed filter passes {@code null} and does not leave the original
- * in place by calling the callback with it. {@code level} is
- * {@link Breadcrumb.Level#getValue()}, not the enum ordinal.
+ * late reply is a no-op. A reply writes the same crumb. A failed filter
+ * passes {@code null} and does not leave the original in place by calling the
+ * callback with it. {@code level} is {@link Breadcrumb.Level#getValue()}, not
+ * the enum ordinal.
  */
 public class BreadcrumbFilterBridgeTest {
 

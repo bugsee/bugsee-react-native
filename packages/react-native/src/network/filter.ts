@@ -8,9 +8,9 @@ import NativeBugsee from '../NativeBugsee';
  * that object — not a string. `null` and `undefined` drop it. A promise is
  * waited on, for at most 9 s: an answer after that is ignored. On iOS the
  * bridge drops the event at 9 s (the SDK has no deadline). On Android the
- * bridge stops waiting at 9 s and the SDK drops the event at 10 s. This function does not add a timeout of its own: a timeout here
- * that then passed the original event would leak exactly what the filter
- * exists to remove.
+ * bridge stops waiting at 9 s and the SDK drops the event at 10 s. This
+ * function does not add a timeout of its own: a timeout here that then passed
+ * the original event would leak exactly what the filter exists to remove.
  */
 export interface NetworkFilterEvent {
   id: string | null;
