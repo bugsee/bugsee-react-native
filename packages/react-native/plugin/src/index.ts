@@ -28,7 +28,7 @@ import {
   ensureMavenCentral,
   ensureSymbolUploads,
 } from './gradle';
-import { endpointMetaData, manifestAutoLaunchToken } from './manifest';
+import { appTokenMetaData, endpointMetaData, manifestAutoLaunchToken } from './manifest';
 import { loadNativeVersions } from './native-versions';
 import { insertSymbolicatePrebuilt, removeSymbolicatePrebuilt } from './podfile';
 import { bugseePropertiesText } from './properties';
@@ -260,24 +260,20 @@ const withBugsee: ConfigPlugin<BugseePluginProps> = (config, props) => {
       autoLaunchToken: token,
       existing: (name) => AndroidConfig.Manifest.getMainApplicationMetaDataValue(cfg.modResults, name) ?? undefined,
     });
+    const tokenEdit = appTokenMetaData({
+      token,
+      existing: (name) => AndroidConfig.Manifest.getMainApplicationMetaDataValue(cfg.modResults, name) ?? undefined,
+    });
     const mainApplication = AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults);
-    for (const name of edit.remove) {
+    for (const name of [...tokenEdit.remove, ...edit.remove]) {
       AndroidConfig.Manifest.removeMetaDataItemFromMainApplication(mainApplication, name);
     }
-    for (const [name, value] of Object.entries(edit.set)) {
+    for (const [name, value] of Object.entries({ ...edit.set, ...tokenEdit.set })) {
       AndroidConfig.Manifest.addMetaDataItemToMainApplication(mainApplication, name, value);
     }
     if (edit.warning) {
       console.warn(edit.warning);
     }
-    if (!token) {
-      return cfg;
-    }
-    AndroidConfig.Manifest.addMetaDataItemToMainApplication(
-      mainApplication,
-      'com.bugsee.app-token',
-      token,
-    );
     return cfg;
   });
 

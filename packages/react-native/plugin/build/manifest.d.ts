@@ -10,6 +10,26 @@ export interface AutoLaunchInput {
  */
 export declare function manifestAutoLaunchToken(input: AutoLaunchInput): string | null;
 /**
+ * The Android SDK's auto-launch token. The customer may have written it, so a
+ * later prebuild removes it only when `APP_TOKEN_MARKER` says this plugin
+ * wrote that exact value.
+ */
+export declare const APP_TOKEN_META_DATA = "com.bugsee.app-token";
+export declare const APP_TOKEN_MARKER = "com.bugsee.reactnative.app-token";
+export interface AppTokenMetaDataInput {
+    /** What `manifestAutoLaunchToken` returned. */
+    readonly token: string | null;
+    /** The value of a meta-data item already in the manifest, by name. */
+    readonly existing: (name: string) => string | undefined;
+}
+/**
+ * The meta-data edits for auto-launch. An entry this plugin wrote earlier is
+ * removed first, so a later prebuild with `autoLaunch` off (or no usable
+ * token) leaves none behind. Entries from plugin versions that wrote no
+ * marker are not recognised and stay until a clean prebuild.
+ */
+export declare function appTokenMetaData(input: AppTokenMetaDataInput): Omit<EndpointMetaDataEdit, 'warning'>;
+/**
  * The wrapper's own meta-data: the `endpoint` option, which the native module
  * applies when `launch()` or `relaunch()` is given no endpoint
  * (BugseeModule.java, `PluginEndpoint`). The name is the wrapper's, so a
