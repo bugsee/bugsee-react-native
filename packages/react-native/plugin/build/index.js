@@ -117,20 +117,20 @@ const withBugsee = (config, props) => {
             autoLaunchToken: token,
             existing: (name) => config_plugins_1.AndroidConfig.Manifest.getMainApplicationMetaDataValue(cfg.modResults, name) ?? undefined,
         });
+        const tokenEdit = (0, manifest_1.appTokenMetaData)({
+            token,
+            existing: (name) => config_plugins_1.AndroidConfig.Manifest.getMainApplicationMetaDataValue(cfg.modResults, name) ?? undefined,
+        });
         const mainApplication = config_plugins_1.AndroidConfig.Manifest.getMainApplicationOrThrow(cfg.modResults);
-        for (const name of edit.remove) {
+        for (const name of [...tokenEdit.remove, ...edit.remove]) {
             config_plugins_1.AndroidConfig.Manifest.removeMetaDataItemFromMainApplication(mainApplication, name);
         }
-        for (const [name, value] of Object.entries(edit.set)) {
+        for (const [name, value] of Object.entries({ ...edit.set, ...tokenEdit.set })) {
             config_plugins_1.AndroidConfig.Manifest.addMetaDataItemToMainApplication(mainApplication, name, value);
         }
         if (edit.warning) {
             console.warn(edit.warning);
         }
-        if (!token) {
-            return cfg;
-        }
-        config_plugins_1.AndroidConfig.Manifest.addMetaDataItemToMainApplication(mainApplication, 'com.bugsee.app-token', token);
         return cfg;
     });
     config = (0, config_plugins_1.withXcodeProject)(config, (cfg) => {
