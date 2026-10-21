@@ -17,24 +17,34 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongSupplier;
 
 /**
  * The app's breadcrumb filter, as a round trip into JS.
  *
  * <p>Registered with {@link Bugsee#setBreadcrumbFilter}. {@link #filter}
  * returns without waiting. The crumb the SDK lends is a pooled entry
- * ({@code BugseeCaptureDataProviderBreadcrumb} borrows from a pool of 40),
- * but unlike {@code BugseeCaptureDataProviderLog} that pool is not recycled
- * on a 10 second filter timeout. An unanswered filter is not recorded, and
- * the entry stays the one this bridge was given, so a late reply still
- * writes it. There is no deadline here: a timer that then passed the
- * original crumb, or that called the callback with {@code null} while the
- * SDK was still waiting, would either leak the crumb or drop one the SDK
- * is prepared to record. 7.3.0's breadcrumb provider class has no
- * {@code 10000} timeout constant.
+ * ({@code BugseeCaptureDataProviderBreadcrumb} borrows from a pool of 40).
+ * Unlike {@code BugseeCaptureDataProviderLog} and the network provider, the
+ * SDK has no filter timeout and never recycles that entry: an unanswered
+ * crumb is not recorded and its entry is held for the session, and so is a
+ * crumb that is answered {@code null} (SDK 7.4.2 {@code doLogBreadcrumb}
+ * returns without recycling). That is SDK-side and not something this
+ * bridge can undo.
+ *
+ * <p>What this bridge owns is its own pending request. It forgets one that
+ * JS has not answered by {@link #DEADLINE_MS} and passes {@code null} to the
+ * SDK, which discards the crumb, failing closed. (The log and network bridges
+ * use the same 9 s, but only stop waiting then, without calling the callback:
+ * their SDK providers drop at 10 s themselves.) A timer that passed the
+ * original crumb would leak exactly what the filter exists to redact. A
+ * reply after the deadline finds nothing pending and is a no-op.
  *
  * <p>A missing sink, a snapshot that cannot be serialised, a failed emit,
  * a {@code null} reply, or a reply that does not stick passes {@code null}
@@ -56,18 +66,41 @@ final class BreadcrumbFilterBridge {
         );
     }
 
+    /** Cancels a pending request's deadline. */
+    interface Cancellable {
+        void cancel();
+    }
+
+    /** Arms a request's deadline. Injectable so tests control time. */
+    interface Scheduler {
+        @NonNull
+        Cancellable schedule(@NonNull Runnable task, long delayMs);
+    }
+
+    /**
+     * How long JS gets to answer one crumb before it is dropped. The SDK has
+     * no deadline of its own for this filter; this is the same number the
+     * log and network bridges forget at.
+     */
+    static final long DEADLINE_MS = 9_000L;
+
     private static final class Pending {
         @NonNull final String id;
         @NonNull final Breadcrumb crumb;
         @NonNull final Callback1<Breadcrumb> callback;
         @NonNull final Sink owner;
+        /** {@code System.nanoTime()}-style instant after which a reply is refused. */
+        final long expiresAtNanos;
+        @Nullable volatile Cancellable deadline;
 
         Pending(
                 @NonNull final String id,
                 @NonNull final Breadcrumb crumb,
                 @NonNull final Callback1<Breadcrumb> callback,
-                @NonNull final Sink owner
+                @NonNull final Sink owner,
+                final long expiresAtNanos
         ) {
+            this.expiresAtNanos = expiresAtNanos;
             this.id = id;
             this.crumb = crumb;
             this.callback = callback;
@@ -75,7 +108,7 @@ final class BreadcrumbFilterBridge {
         }
     }
 
-    private static final BreadcrumbFilterBridge SHARED = new BreadcrumbFilterBridge();
+    private static final BreadcrumbFilterBridge SHARED = new BreadcrumbFilterBridge(new DaemonScheduler());
 
     @NonNull
     static BreadcrumbFilterBridge shared() {
@@ -94,8 +127,18 @@ final class BreadcrumbFilterBridge {
      */
     private final ThreadLocal<String> manualAddId = new ThreadLocal<>();
 
-    /** Tests construct their own. Production uses {@link #shared()}. */
-    BreadcrumbFilterBridge() {
+    private final Scheduler scheduler;
+    private final LongSupplier nanoClock;
+
+    /** Tests pass a scheduler they fire themselves. Production uses {@link #shared()}. */
+    BreadcrumbFilterBridge(@NonNull final Scheduler scheduler) {
+        this(scheduler, System::nanoTime);
+    }
+
+    /** Tests also pass a clock, to pass the deadline without the timer having run. */
+    BreadcrumbFilterBridge(@NonNull final Scheduler scheduler, @NonNull final LongSupplier nanoClock) {
+        this.scheduler = scheduler;
+        this.nanoClock = nanoClock;
     }
 
     private final EventFilter<Breadcrumb> filter = new EventFilter<Breadcrumb>() {
@@ -132,6 +175,7 @@ final class BreadcrumbFilterBridge {
             }
         }
         for (final Pending item : owned) {
+            cancel(item.deadline);
             drop(item.callback);
         }
     }
@@ -175,6 +219,13 @@ final class BreadcrumbFilterBridge {
     void reply(@NonNull final String requestId, @Nullable final String crumbJson) {
         final Pending item = pending.remove(requestId);
         if (item == null) {
+            return;
+        }
+        cancel(item.deadline);
+        // The timer can run late: past the deadline the answer is refused even
+        // if it got here first.
+        if (nanoClock.getAsLong() - item.expiresAtNanos >= 0) {
+            drop(item.callback);
             return;
         }
         try {
@@ -226,18 +277,45 @@ final class BreadcrumbFilterBridge {
             return;
         }
         final String id = Long.toString(ids.incrementAndGet());
-        final Pending item = new Pending(id, event, callback, current);
+        final Pending item = new Pending(
+                id, event, callback, current,
+                nanoClock.getAsLong() + TimeUnit.MILLISECONDS.toNanos(DEADLINE_MS));
         pending.put(id, item);
         final String addId = manualAddId.get();
         try {
+            item.deadline = scheduler.schedule(() -> expire(id), DEADLINE_MS);
             current.onBreadcrumbFilterRequest(id, json, addId);
             if (addId != null) {
                 manualAddId.remove();
             }
         } catch (final Throwable e) {
             if (pending.remove(id, item)) {
+                cancel(item.deadline);
                 drop(callback);
             }
+        }
+    }
+
+    /**
+     * JS did not answer in time. Forget the request and drop the crumb. The
+     * SDK never recycles this entry, so a late reply has nothing to write
+     * onto: it finds no pending request and returns.
+     */
+    private void expire(@NonNull final String id) {
+        final Pending item = pending.remove(id);
+        if (item != null) {
+            drop(item.callback);
+        }
+    }
+
+    private static void cancel(@Nullable final Cancellable deadline) {
+        if (deadline == null) {
+            return;
+        }
+        try {
+            deadline.cancel();
+        } catch (final Throwable ignored) {
+            // A timer that cannot be cancelled only finds nothing pending.
         }
     }
 
@@ -438,6 +516,27 @@ final class BreadcrumbFilterBridge {
             callback.run(null);
         } catch (final Throwable ignored) {
             // The SDK already treats a throw from the callback as a drop.
+        }
+    }
+
+    /** One daemon thread, started on first use, for every request's deadline. */
+    private static final class DaemonScheduler implements Scheduler {
+        private final ScheduledThreadPoolExecutor executor;
+
+        DaemonScheduler() {
+            executor = new ScheduledThreadPoolExecutor(1, runnable -> {
+                final Thread thread = new Thread(runnable, "BugseeRN-BreadcrumbFilterDeadline");
+                thread.setDaemon(true);
+                return thread;
+            });
+            executor.setRemoveOnCancelPolicy(true);
+        }
+
+        @Override
+        @NonNull
+        public Cancellable schedule(@NonNull final Runnable task, final long delayMs) {
+            final ScheduledFuture<?> future = executor.schedule(task, delayMs, TimeUnit.MILLISECONDS);
+            return () -> future.cancel(false);
         }
     }
 }

@@ -455,7 +455,7 @@ class Bugsee {
    * stays omitted: setting that key to `null` leaves it out of the reply.
    * `null` and `undefined` drop the event. The native SDK invokes the
    * filter; JS answers on a later turn, and a callback that throws,
-   * rejects, or never settles drops the event.
+   * rejects, or does not settle within 9 s drops the event.
    *
    * On Android this package runs the built-in sanitizer on each event
    * before the callback, when
@@ -502,8 +502,9 @@ class Bugsee {
    * replacement string. `null` or `undefined` drops the line. The native SDK
    * is what invokes the filter; the callback runs on a later turn, and this
    * method does not wait for it. A callback that throws, rejects, or does
-   * not settle before the SDK's own timeout drops the line. It is not passed
-   * through.
+   * not settle within 9 s drops the line, and a late answer is ignored (iOS:
+   * the bridge drops at 9 s; Android: the bridge stops waiting at 9 s and the
+   * SDK drops at 10 s). It is not passed through.
    */
   setLogFilter(callback?: LogFilter | null): void {
     installLogFilter(callback);
@@ -534,12 +535,13 @@ class Bugsee {
    * `undefined`, drops the crumb. A key the snapshot omitted stays omitted.
    * `data: null` clears data. `timestamp` is read-only and is not sent back.
    *
-   * The callback runs on a later turn. This method does not wait for it, and
-   * it does not add a timeout. A callback that throws, rejects, or never
-   * settles drops the crumb. The original is not passed through. A crumb
-   * already passed to `addBreadcrumb` is still offered to the callback that
-   * was installed for it when this is cleared, or replaced with another
-   * function, on that same turn.
+   * The callback runs on a later turn. This method does not wait for it. A
+   * callback that throws, rejects, or does not settle within 9 s drops the
+   * crumb, and a late answer is ignored. On both platforms the bridge
+   * supplies that deadline: neither SDK has one. The original is not passed
+   * through. A crumb already passed to `addBreadcrumb` is still offered to
+   * the callback that was installed for it when this is cleared, or replaced
+   * with another function, on that same turn.
    *
    * Capture stays off until launch options set `captureBreadcrumbs: true`,
    * on Android and on iOS. While it is off, `addBreadcrumb` records nothing
