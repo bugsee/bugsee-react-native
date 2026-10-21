@@ -77,6 +77,7 @@ const withBugsee = (config, props) => {
     const editGradleFiles = options.editGradleFiles !== false;
     const symbolicateReactNative = options.symbolicateReactNativeFrameworks === true;
     const endpoint = (0, endpoint_1.pluginEndpoint)(options.endpoint);
+    const holdFilters = (0, manifest_1.holdFiltersValue)(options.holdFilters);
     const versions = (0, native_versions_1.loadNativeVersions)(__dirname);
     const edits = {
         gradlePluginVersion: options.gradlePluginVersion ?? versions.gradlePlugin,
@@ -137,6 +138,10 @@ const withBugsee = (config, props) => {
         }
         if (edit.warning) {
             console.warn(edit.warning);
+        }
+        config_plugins_1.AndroidConfig.Manifest.removeMetaDataItemFromMainApplication(mainApplication, manifest_1.RN_HOLD_FILTERS_META_DATA);
+        if (holdFilters !== null) {
+            config_plugins_1.AndroidConfig.Manifest.addMetaDataItemToMainApplication(mainApplication, manifest_1.RN_HOLD_FILTERS_META_DATA, holdFilters);
         }
         return cfg;
     });

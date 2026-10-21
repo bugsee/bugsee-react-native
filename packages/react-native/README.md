@@ -285,6 +285,55 @@ on Bugsee's production API. Set, it reaches every upload and the runtime:
 Each of these is the plugin's own, so a later prebuild with a new value
 replaces it, and one without `endpoint` removes it again.
 
+### Auto-launch: what is recorded before JavaScript runs (Android)
+
+With `autoLaunch` the Android SDK starts at process start, from manifest
+meta-data, before any JavaScript exists. Two things follow:
+
+- **Reports say which wrapper they came from, with context.** The native side
+  registers only the wrapper type and version at process start; `Bugsee.attach()`
+  registers the rest (React Native version, JS engine, build configuration), as
+  `launch()` and `relaunch()` do. Call `attach()` once at startup.
+- **Filters are not installed yet.** The JS log, network and breadcrumb filters
+  are installed natively only when `setLogFilter`, `setNetworkFilter` and
+  `setBreadcrumbFilter` run, so what the SDK captures before then is recorded
+  unfiltered. To close that window, opt in per filter:
+
+  ```json
+  ["@bugsee/react-native", { "autoLaunch": true, "appToken": "<token>", "holdFilters": ["network", "log", "breadcrumb"] }]
+  ```
+
+  `true` holds all three. A held filter is installed natively at process start
+  and drops every event of its kind (log lines, network events, breadcrumbs)
+  until JS calls its setter, with a function (your filter applies) or with
+  `null` (no filter: events pass through). Call each setter unconditionally,
+  early, on every start of the JS runtime. Only list the filters your app
+  installs: an app that lists one and never calls its setter records none of
+  that kind, and the wrapper says so in the log (`BugseeRN`, warning) 30 s after
+  process start. It is off by default for that reason, and an app that never uses
+  filters is unaffected. It writes `com.bugsee.reactnative.hold-filters`
+  application meta-data, removed again by a prebuild without the option.
+  A JS reload is held only if the previous runtime had a filter function
+  installed (it stays dropped until the new runtime calls the setter again). If
+  the previous runtime called `setXFilter(null)`, that kind passes through again
+  from the reload until the new runtime calls the setter. The 30 s warning is
+  given once per process, at 30 s after process start. The hold is meant
+  for `autoLaunch`; it was not
+  verified with a JS `launch()`, where the SDK may replace a filter set before
+  launch. In a process that never starts React Native (a service or push
+  process), a held kind drops everything native code records, for the life of
+  that process.
+  Two interactions to know about: a filter you declare in the manifest
+  (`com.bugsee.filter.log-event`, `network-event` or `breadcrumb`) is not
+  applied for a kind that is held, because the SDK lets a filter set from code
+  take its place, so do not list a kind you filter from the manifest; and
+  `setXFilter(null)` then leaves that kind with no filter at all.
+- **Masking is not held.** Nothing from `<BugseeSecure>` or `setSecureRectangles`
+  is masked until those mount, and the wrapper cannot hold the SDK's capture
+  from JS-side state. If the first frames must not show a sensitive screen, do
+  not auto-launch: call `Bugsee.launch()` from JavaScript (or keep `autoLaunch`
+  off), after your first secure view is in place.
+
 The plugin's Gradle edits never remove or change a line of your own code, on a
 clean or a `--no-clean` prebuild, however often it runs: it adds its own
 marked lines, replaces only those, and rewrites exactly one of yours,

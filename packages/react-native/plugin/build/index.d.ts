@@ -1,4 +1,5 @@
 import type { ConfigPlugin } from '@expo/config-plugins';
+import type { HoldableFilter } from './manifest';
 export type AppTokenOption = string | {
     ios?: string;
     android?: string;
@@ -83,6 +84,20 @@ export interface BugseePluginProps {
      * one of these again.
      */
     endpoint?: string;
+    /**
+     * Android only; defaults off. Keeps the JS log, network and breadcrumb
+     * filters fail closed from process start. With `autoLaunch` the SDK records
+     * before JavaScript has run, so until `setLogFilter` / `setNetworkFilter` /
+     * `setBreadcrumbFilter` installs the app's filter, everything is recorded
+     * unfiltered. `true` holds all three; a list holds those named. A held
+     * filter drops its events (log lines, network events, breadcrumbs) until JS
+     * calls that `setXFilter`, with a function (filtering) or `null` (no filter,
+     * pass-through). An app that never calls one therefore records none of that
+     * kind, so only list the filters the app installs. Meant for `autoLaunch`:
+     * not verified with a JS `launch()`.
+     * A later prebuild without it removes the meta-data again.
+     */
+    holdFilters?: boolean | readonly HoldableFilter[];
 }
 /** The Info.plist key the iOS native module reads `endpoint` from. */
 export declare const IOS_ENDPOINT_PLIST_KEY = "BugseeReactNativeEndpoint";

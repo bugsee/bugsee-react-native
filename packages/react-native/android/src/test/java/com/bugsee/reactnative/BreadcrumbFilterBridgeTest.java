@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 
 import com.bugsee.library.contracts.common.Callback1;
 import com.bugsee.library.contracts.exchange.Breadcrumb;
+import com.bugsee.library.contracts.exchange.EventFilter;
 
 import org.json.JSONObject;
 import org.junit.Test;
@@ -648,5 +649,118 @@ public class BreadcrumbFilterBridgeTest {
         bridge.ask(ev, asked);
         assertEquals(1, next.json.size());
         assertEquals(0, asked.runs);
+    }
+
+    // The startup hold (#134): the SDK's filter is installed before JS exists.
+    private final List<EventFilter<Breadcrumb>> installs = new ArrayList<>();
+
+    private BreadcrumbFilterBridge installing() {
+        return new BreadcrumbFilterBridge(scheduler, System::nanoTime, installs::add);
+    }
+
+    @Test
+    public void holdUntilJsInstallsTheFilterOnceAndDropsBeforeAnyModule() {
+        final BreadcrumbFilterBridge held = installing();
+
+        held.holdUntilJs();
+        held.holdUntilJs();
+
+        assertEquals(1, installs.size());
+        assertTrue(held.isHeld());
+        final RecordingCallback callback = new RecordingCallback();
+        installs.get(0).filter(new MutableCrumb(), callback);
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aHeldBridgeDropsAtOnceWhileAModuleIsAttachedButNotArmed() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+        final RecordingCallback callback = new RecordingCallback();
+
+        held.ask(new MutableCrumb(), callback);
+
+        // Nothing is left pending for a reply that cannot come.
+        assertTrue(sink.ids.isEmpty());
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void setBreadcrumbFilterWithNullRemovesTheHeldFilter() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(false, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(2, installs.size());
+        assertNull(installs.get(1));
+    }
+
+    @Test
+    public void setBreadcrumbFilterWithAFunctionKeepsTheInstalledFilterAndArmsIt() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink sink = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(sink);
+
+        held.setEnabled(true, sink);
+
+        assertFalse(held.isHeld());
+        assertEquals(1, installs.size());
+        held.ask(new MutableCrumb(), new RecordingCallback());
+        assertEquals(1, sink.ids.size());
+    }
+
+    @Test
+    public void aSupersededModuleCannotReleaseTheBreadcrumbHold() {
+        final BreadcrumbFilterBridge held = installing();
+        final RecordingSink old = new RecordingSink();
+        held.holdUntilJs();
+        held.attach(old);
+        held.attach(new RecordingSink());
+
+        held.setEnabled(false, old);
+
+        assertTrue(held.isHeld());
+    }
+
+    @Test
+    public void aBridgeThatWasNeverHeldReportsNotHeld() {
+        assertFalse(installing().isHeld());
+    }
+
+    @Test
+    public void aFailedEarlyInstallIsRetriedByTheNextSetEnabled() {
+        final int[] attempts = {0};
+        final java.util.function.Consumer<EventFilter<Breadcrumb>> failingOnce = filter -> {
+            attempts[0]++;
+            if (attempts[0] == 1) {
+                throw new IllegalStateException("SDK not ready");
+            }
+            installs.add(filter);
+        };
+        final BreadcrumbFilterBridge bridge2 = new BreadcrumbFilterBridge(scheduler, System::nanoTime, failingOnce);
+        final RecordingSink sink = new RecordingSink();
+        bridge2.attach(sink);
+
+        try {
+            bridge2.holdUntilJs();
+            org.junit.Assert.fail("the install failure is rethrown for StartupHold to log");
+        } catch (final IllegalStateException expected) {
+            // StartupHold logs it and goes on.
+        }
+        // Not installed, so not reported as held.
+        assertFalse(bridge2.isHeld());
+
+        bridge2.setEnabled(true, sink);
+
+        assertEquals(2, attempts[0]);
+        assertEquals(1, installs.size());
     }
 }

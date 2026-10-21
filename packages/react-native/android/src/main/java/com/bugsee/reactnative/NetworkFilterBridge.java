@@ -126,7 +126,7 @@ final class NetworkFilterBridge {
 
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private NetworkFilterBridge() {
-        this(new DaemonScheduler(), NetworkFilterBridge::readDefaultSanitizerOption);
+        this(new DaemonScheduler(), NetworkFilterBridge::readDefaultSanitizerOption, Bugsee::setNetworkEventFilter);
     }
 
     /**
@@ -136,8 +136,64 @@ final class NetworkFilterBridge {
      * {@link Bugsee#getLaunchOptions()} needs an Android looper.
      */
     NetworkFilterBridge(@NonNull final Scheduler scheduler, @NonNull final BooleanSupplier defaultSanitizer) {
+        this(scheduler, defaultSanitizer, installed -> { });
+    }
+
+    /** As above, and the call that installs (or, with null, removes) the SDK's filter. */
+    NetworkFilterBridge(
+            @NonNull final Scheduler scheduler,
+            @NonNull final BooleanSupplier defaultSanitizer,
+            @NonNull final Consumer<EventFilter<NetworkEvent>> installer
+    ) {
         this.scheduler = scheduler;
         this.defaultSanitizer = defaultSanitizer;
+        this.installer = installer;
+    }
+
+    private final Consumer<EventFilter<NetworkEvent>> installer;
+
+    /** True from {@link #holdUntilJs} until JS first calls {@link #setEnabled}. For the watchdog only. */
+    private final AtomicBoolean held = new AtomicBoolean();
+
+    /** Whether the startup hold is still waiting for JS to call {@code setNetworkFilter}. */
+    boolean isHeld() {
+        return held.get();
+    }
+
+    /**
+     * Installs the filter with the SDK. A throw (the SDK not ready that early)
+     * leaves {@code installed} false, so a later {@code setEnabled(true)}
+     * installs it instead of believing it already is, and is rethrown for the
+     * caller to log.
+     */
+    private void install() {
+        if (installed.compareAndSet(false, true)) {
+            boolean ok = false;
+            try {
+                installer.accept(filter);
+                ok = true;
+            } finally {
+                if (!ok) {
+                    installed.set(false);
+                }
+            }
+        }
+    }
+
+    /**
+     * Installs the filter before JS has asked for it, so a manifest
+     * auto-launch does not record network events unfiltered until
+     * {@code setNetworkFilter} runs (see {@link StartupHold}). With no module
+     * attached yet the filter drops everything, and so does one whose JS has
+     * not armed it (the armed gate), so nothing waits on a reply that cannot
+     * come. {@code setEnabled(false)}, which {@code setNetworkFilter(null)} sends, removes
+     * it again. A second call, or one after {@code setEnabled(true)}, is a no-op.
+     */
+    void holdUntilJs() {
+        synchronized (stateLock) {
+            install();
+            held.set(true);
+        }
     }
 
     private final EventFilter<NetworkEvent> filter = new EventFilter<NetworkEvent>() {
@@ -221,17 +277,16 @@ final class NetworkFilterBridge {
                 // A superseded module must neither arm nor disable the process-wide filter.
                 return;
             }
+            held.set(false);
             if (enabled) {
                 if (caller != null) {
                     arm(caller);
                 }
-                if (installed.compareAndSet(false, true)) {
-                    Bugsee.setNetworkEventFilter(filter);
-                }
+                install();
                 return;
             }
             if (installed.compareAndSet(true, false)) {
-                Bugsee.setNetworkEventFilter(null);
+                installer.accept(null);
             }
         }
     }

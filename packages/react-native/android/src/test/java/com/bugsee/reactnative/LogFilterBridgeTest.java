@@ -1,6 +1,7 @@
 package com.bugsee.reactnative;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -271,6 +272,137 @@ public class LogFilterBridgeTest {
         assertNull(liveCallback.last);
         assertEquals(0, recycledCallback.runs);
         assertEquals(0, recycled.setMessageCalls);
+    }
+
+    // A manifest auto-launch records before JS runs. A held bridge must not
+    // pass a line through unfiltered in that window, with or without a module.
+    @Test
+    public void aHeldBridgeDropsLinesBeforeAnyModuleIsAttached() {
+        bridge.holdUntilJs();
+        final RecordingCallback callback = new RecordingCallback();
+
+        bridge.route(new MutableLog("secret"), callback);
+
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aHeldBridgeDropsAtOnceOnceAModuleIsAttachedButNotArmed() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.holdUntilJs();
+        bridge.attachModule(sink);
+        final RecordingCallback callback = new RecordingCallback();
+
+        bridge.route(new MutableLog("secret"), callback);
+
+        assertTrue(sink.ids.isEmpty());
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void callingSetLogFilterWithNullReleasesTheHoldToPassThrough() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.holdUntilJs();
+        bridge.attachModule(sink);
+        assertTrue(bridge.isHeld());
+
+        bridge.setEnabled(false, sink);
+
+        assertFalse(bridge.isHeld());
+        final MutableLog line = new MutableLog("public");
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(line, callback);
+        assertEquals(1, callback.runs);
+        assertSame(line, callback.last);
+    }
+
+    @Test
+    public void callingSetLogFilterWithAFunctionArmsItAndAsksJs() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.holdUntilJs();
+        bridge.attachModule(sink);
+
+        bridge.setEnabled(true, sink);
+
+        assertFalse(bridge.isHeld());
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), callback);
+        assertEquals(1, sink.ids.size());
+        assertEquals(0, callback.runs);
+    }
+
+    @Test
+    public void aSupersededModuleCannotReleaseTheHold() {
+        final RecordingSink old = new RecordingSink();
+        final RecordingSink next = new RecordingSink();
+        bridge.holdUntilJs();
+        bridge.attachModule(old);
+        bridge.attachModule(next);
+
+        bridge.setEnabled(false, old);
+
+        assertTrue(bridge.isHeld());
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), callback);
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aReloadBeforeJsRunsStaysHeld() {
+        bridge.holdUntilJs();
+        bridge.attachModule(new RecordingSink());
+        bridge.attachModule(new RecordingSink());
+
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.route(new MutableLog("secret"), callback);
+
+        assertTrue(bridge.isHeld());
+        assertTrue(callback.sawNull);
+    }
+
+    @Test
+    public void aFailedEarlyInstallIsNotReportedAsHeldAndIsRolledBack() {
+        final int[] attempts = {0};
+        final LogFilterBridge failing = new LogFilterBridge(scheduler, System::currentTimeMillis, filter -> {
+            attempts[0]++;
+            if (attempts[0] == 1) {
+                throw new IllegalStateException("SDK not ready");
+            }
+        });
+
+        try {
+            failing.holdUntilJs();
+            org.junit.Assert.fail("the install failure is rethrown for StartupHold to log");
+        } catch (final IllegalStateException expected) {
+            // StartupHold logs it and goes on.
+        }
+
+        assertFalse(failing.isHeld());
+        // Rolled back: not a silent drop-everything without a filter behind it.
+        final MutableLog line = new MutableLog("public");
+        final RecordingCallback callback = new RecordingCallback();
+        failing.route(line, callback);
+        assertSame(line, callback.last);
+
+        // A retry installs and holds.
+        failing.holdUntilJs();
+        assertTrue(failing.isHeld());
+        assertEquals(2, attempts[0]);
+    }
+
+    @Test
+    public void aBridgeThatWasNeverHeldIsThePassThrough() {
+        bridge.attachModule(new RecordingSink());
+        assertFalse(bridge.isHeld());
+        final MutableLog line = new MutableLog("public");
+        final RecordingCallback callback = new RecordingCallback();
+
+        bridge.route(line, callback);
+
+        assertSame(line, callback.last);
+        assertEquals(1, callback.runs);
     }
 
     /**

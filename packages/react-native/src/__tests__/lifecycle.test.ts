@@ -265,6 +265,25 @@ describe('attach', () => {
     expect(setCrashDetectionOptedOut).toHaveBeenLastCalledWith(true);
   });
 
+  // An auto-launched session registered only type and version natively, at
+  // process start; the context is knowable in JS alone.
+  it('registers the full wrapper identity, as launch does', async () => {
+    await Bugsee.attach();
+    expect(native.setWrapperInfo).toHaveBeenCalledTimes(1);
+    const identity = native.setWrapperInfo.mock.calls[0]?.[0];
+    expect(identity).toEqual(
+      expect.objectContaining({ type: expect.any(String), version: expect.any(String), context: expect.any(Object) }),
+    );
+    await Bugsee.launch('tok');
+    expect(native.setWrapperInfo.mock.calls[1]?.[0]).toEqual(identity);
+  });
+
+  it('registers the wrapper before it reads the launch options, so a failed read still attributes', async () => {
+    native.getLaunchOptions.mockRejectedValue(new Error('options unavailable'));
+    await expect(Bugsee.attach()).rejects.toThrow(/options unavailable/);
+    expect(native.setWrapperInfo).toHaveBeenCalledTimes(1);
+  });
+
   it('installs console capture from the launch options it just read', async () => {
     const opts = { 'com.bugsee.option.capture.logs': false };
     native.getLaunchOptions.mockResolvedValue(opts);
