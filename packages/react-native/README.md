@@ -51,9 +51,15 @@ Manager. Earlier versions use CocoaPods, where the podspec vendors the same
 XCFramework — run `pod install` as usual. Nothing is published to CocoaPods
 trunk, so no `pod repo update` is needed.
 
-**Android.** Autolinking picks the module up, and the app builds and
-launches with no Gradle changes. Release symbolication needs the Bugsee Gradle
-plugin and the source-map hooks: see [Release symbolication](#release-symbolication).
+**Android.** Requires the Bugsee Gradle plugin for network capture and Release
+symbolication. Autolinking picks the module up, and the app builds and
+launches with no Gradle changes, but without the Bugsee Gradle plugin it records
+**no network events** from JS `fetch`/XHR (the plugin injects Bugsee's OkHttp
+interceptor into React Native's networking), and Release symbolication needs
+that plugin and the source-map hooks too. A bare app that skips the plugin logs
+one warning at launch, tagged `BugseeRN`. See
+[Android: Bugsee Gradle plugin](#android-bugsee-gradle-plugin) and
+[Release symbolication](#release-symbolication).
 
 **pnpm 10 and later** run no dependency's install script unless the project
 decides, and pnpm 11 fails the install until it does
@@ -120,11 +126,34 @@ What it does and does not do:
 - The error is reported as a **handled** exception, with the React component stack attached as an extra
   (not as the error's `cause`).
 - An error object the SDK has already reported is not reported again, so a boundary and
-  `Bugsee.logException` (or the global handler) do not file the same error twice.
+  `Bugsee.logException` (or the global handler) do not file the same error twice, unless it later ends the app as a crash. Deduplication applies to
+  error objects only: a thrown string or number is never deduplicated.
+- When `com.bugsee.option.detect.crash` is `false` the boundary reports nothing, as the global handlers
+  do; it still shows the fallback and calls `onError`. (`Bugsee.logException` is an explicit call and
+  always reports.)
 - `children` is a plain React node. The function-as-children form from 6.x is not supported.
 - Like any React error boundary it only catches errors thrown while **rendering**. Errors in event
   handlers, timers and promises are not caught by it; the global handlers `launch` installs report the
   uncaught ones.
+
+### Exception capture: what to know
+
+- **Render errors need `Bugsee.wrap`.** On React Native 0.81+ an uncaught render error never reaches
+  `ErrorUtils`, so it is reported as a crash only when the app root is wrapped:
+  `AppRegistry.registerComponent(name, () => Bugsee.wrap(App))`. An error boundary above the app
+  that swallows the error hides it from Bugsee; put an `<ErrorBoundary>` below it, or call
+  `Bugsee.logException` from your own boundary.
+- **Log, then rethrow.** Deduplication is per error object and per kind. `Bugsee.logException(e)`
+  followed by a rethrow that ends the app is still reported as a crash, and
+  `Bugsee.logUnhandledException(e)` after `logException(e)` is reported. Once an error has been
+  reported as a crash, no later report of it is sent. A report dropped because the SDK had not
+  launched yet still counts as sent.
+- **Unhandled promise rejections** are reported as handled errors, not crashes. Hermes has no getter
+  for the active rejection tracker, so if another library installs one after `launch()`, the last
+  one installed wins and Bugsee stops seeing rejections. Likewise Bugsee replaces any tracker installed
+  before `launch()`, and chains only React Native's own dev-mode options.
+- **iOS Simulator.** The Simulator slice of the iOS SDK has no crash reporter, and
+  `logUnhandledException` does nothing there. Exercise crash capture on a device.
 
 ### Hiding a view from recordings
 
@@ -216,6 +245,10 @@ Known limits:
 hooks and the iOS dSYM Archive action. Release builds then upload their source
 maps, and Archives upload their dSYMs, whenever a real token is set.
 `uploadSourcemaps: false` and `uploadSymbols: false` turn those uploads off.
+`editGradleFiles: false` stops the plugin editing the three Android Gradle
+files, for a project whose files are Kotlin DSL (see "refuses" below). Edits
+an earlier prebuild made stay, and later changes to `uploadSymbols`,
+`nativeCrashReporting` or `gradlePluginVersion` no longer reach those files.
 A committed `ios/` (`project.pbxproj` and the shared scheme) or
 `android/bugsee.properties` carries the token.
 
@@ -319,7 +352,9 @@ with certainty it refuses the prebuild with one error that names the file,
 the reason and the fix, and writes nothing. It refuses:
 
 - a Kotlin DSL `settings.gradle.kts`, `build.gradle.kts` or app
-  `build.gradle.kts`;
+  `build.gradle.kts` (make the edits by hand, then set
+  `"editGradleFiles": false` in the plugin options and prebuild again: the
+  plugin then leaves all three Gradle files alone);
 - a Gradle file it cannot read for sure: a string that does not close on its
   line, a comment or string still open at the end of the file, braces that do
   not balance, or a `/` that could start a slashy string as well as divide;
@@ -338,6 +373,60 @@ wrapper's on each prebuild. Gradle allows one `plugins {}` block per script,
 so when the root file already has one the pin goes into it (its braces must
 stand alone on their lines, or the prebuild refuses); a new block is written
 only when there is none.
+
+## Network privacy
+
+`Bugsee.setNetworkFilter` sees network events, and only network events.
+Write it as if it were your only redaction.
+
+- **Built-in redaction differs by platform.** On Android this package runs the
+  built-in sanitizer on each event before your filter (when
+  `com.bugsee.option.capture.network.default-sanitizer` is on). On iOS your
+  filter replaces the built-in sanitizer, so raw events reach it and anything
+  it does not remove is recorded. The built-in rules differ too. iOS matches a
+  fixed set of header names plus fixed query and body keys, and does not strip
+  credentials from URLs. Android also matches substrings such as `password`,
+  `secret`, `token`, `session` and `apikey` in header, query and body keys,
+  strips `user:password` from URLs and redacts error messages.
+- **The filter does not reach every place a URL is recorded:**
+  - **HTTP breadcrumbs** (only when `captureBreadcrumbs` is enabled). Android
+    records the URL unredacted, without even the built-in query redaction.
+    iOS applies the built-in query redaction when `default-sanitizer` is on.
+    Use `setBreadcrumbFilter` to clean them. Return the whole crumb, because a
+    reply that leaves out a key the crumb had drops it. The URL is in `data`
+    on `http` crumbs:
+
+    ```ts
+    // Drops user:password@, the query and the fragment.
+    const stripUrl = (url: string) =>
+      url.replace(/\/\/[^/?#@]*@/, '//').split(/[?#]/)[0];
+
+    Bugsee.setBreadcrumbFilter(crumb => {
+      const data = crumb.data as { url?: unknown } | null | undefined;
+      if (crumb.type !== 'http' || typeof data?.url !== 'string') {
+        return crumb;
+      }
+      return { ...crumb, data: { ...data, url: stripUrl(data.url) } };
+    });
+    ```
+  - **`http.client` performance spans** (performance monitoring,
+    `com.bugsee.option.performance.enabled`, is on by default). Android always
+    applies its built-in sanitizer to span URLs, even with `default-sanitizer`
+    off. iOS applies no sanitization to span URLs. To turn them off:
+
+    ```ts
+    const options = createDefaultLaunchOptions();
+    options.setCustomOption('com.bugsee.option.performance.enabled', false);
+    ```
+
+  - **`detect.http-errors` reports** (off by default) carry the request URL in
+    `http_url` without its query or fragment. Path segments are not passed
+    through your filter.
+
+Routing these URLs through the network filter, and running the built-in
+sanitizer ahead of the filter on iOS, needs changes in the native SDKs and
+is tracked in
+[#137](https://github.com/bugsee/bugsee-react-native/issues/137).
 
 ## Release symbolication
 
@@ -371,6 +460,25 @@ react {
 
 // At the end of the file. Applying it twice is harmless.
 apply from: new File(new File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle")
+```
+
+In a Kotlin DSL `android/app/build.gradle.kts` the same two edits read as
+follows (not run by the test suite; check them against your Gradle version):
+
+```kotlin
+val bugseeDir = File(
+    ProcessBuilder("node", "--print", "require.resolve('@bugsee/react-native/package.json')")
+        .directory(rootDir).start().inputStream.bufferedReader().readText().trim()
+).parentFile
+
+react {
+    hermesCommand.set(
+        File(File(bugseeDir, "scripts"), if (System.getProperty("os.name").startsWith("Windows")) "hermesc-preserve-js.cmd" else "hermesc-preserve-js.sh").absolutePath
+    )
+}
+
+// At the end of the file.
+apply(from = File(File(bugseeDir, "scripts"), "bugsee-sourcemaps.gradle"))
 ```
 
 The OS is checked when Gradle configures the build, so one `build.gradle`
@@ -414,9 +522,16 @@ bundle and Metro's map get the id instead.
 
 ## Android: Bugsee Gradle plugin
 
-Uploads the R8/ProGuard mapping, the native (NDK) symbols and the build info
-of each Release build. It is a Gradle plugin, so autolinking cannot add it;
-the config plugin writes these same edits for an Expo app.
+Required on Android for **network capture**: it injects Bugsee's OkHttp
+interceptor into every `OkHttpClient.Builder.build()` call outside
+`com.bugsee.*`, `okhttp3.*` and your own excludes, which includes React Native's
+`fetch`/XHR. Without it the app runs but records no JS network events; the
+wrapper logs a `BugseeRN` warning at launch when the interceptor is missing,
+which also happens if the plugin's OkHttp instrumentation is disabled or
+excluded.
+It also uploads the R8/ProGuard mapping, the native (NDK) symbols and the build
+info of each Release build. It is a Gradle plugin, so autolinking cannot add
+it; the config plugin writes these same edits for an Expo app.
 
 `android/settings.gradle` — the plugin is published to Maven Central, which
 Gradle does not search for plugins unless told to:
@@ -529,6 +644,15 @@ in the build environment (for example `export BUGSEE_APP_TOKEN=…` in
 `ios/.xcode.env.local`). Without one the phase bundles as usual and says it
 skipped the upload; `BUGSEE_UPLOAD_SOURCEMAPS=false` turns the upload off,
 and a failed upload warns without failing the build. Debug builds skip it.
+
+`.xcode.env` and `.xcode.env.local` are read for the token by the Archive
+dSYM post-action as well, so a token exported there also reaches Xcode GUI
+Archives.
+
+Source maps are uploaded with `sourcesContent`, the source code of your app,
+so the dashboard can show it. `BUGSEE_STRIP_SOURCES_CONTENT=true` in the
+build environment (iOS and Android) removes it from the uploaded copy; the
+map on disk is not touched, and symbolication still works.
 
 Native iOS frames come from the dSYMs. The config plugin adds an Archive
 post-action that uploads them with `bugsee-cli xcode post-action`; a bare app

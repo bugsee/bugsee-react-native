@@ -38,6 +38,9 @@
 #import <BugseeRNSupport/BGSRNReactWindow.h>
 #import <BugseeRNSupport/BGSRNExceptions.h>
 #import <BugseeRNSupport/BGSRNSettleOnce.h>
+#import <BugseeRNSupport/BGSRNFilterDeadline.h>
+#import <BugseeRNSupport/BGSRNDeleteCollectedData.h>
+#import <BugseeRNSupport/BGSRNBlackout.h>
 #import <BugseeRNSupport/BGSRNReportArgs.h>
 #import <BugseeRNSupport/BGSRNCreatedReports.h>
 #import <BugseeRNSupport/BGSRNCreatedReportOps.h>
@@ -67,6 +70,9 @@
 #import "BGSRNReactWindow.h"
 #import "BGSRNExceptions.h"
 #import "BGSRNSettleOnce.h"
+#import "BGSRNFilterDeadline.h"
+#import "BGSRNDeleteCollectedData.h"
+#import "BGSRNBlackout.h"
 #import "BGSRNReportArgs.h"
 #import "BGSRNCreatedReports.h"
 #import "BGSRNCreatedReportOps.h"
@@ -444,10 +450,13 @@ static void BGSRNSetAttribute(NSString *name,
 /// One in-flight network-filter request. The decision block is copied: the
 /// SDK's block argument is not guaranteed to outlive the filter call, and the
 /// reply comes back later, from JS. iOS's decision block is once-only and the
-/// provider does not recycle the event, so a late reply still records. There
-/// is no timer here: one that called `decision(nil)` would drop an event the
-/// SDK is still willing to keep.
+/// SDK has no timeout, so the wrapper arms its own (`BGSRNFilterDeadlineMs`,
+/// fail closed): past it the event is dropped and a late reply is a no-op.
 @interface BGSRNNetworkFilterPending : NSObject
+/// The wrapper's 9 s deadline; cancelled when the request is taken.
+@property (nonatomic, copy, nullable) dispatch_block_t deadline;
+/// Monotonic instant (ns) after which a reply is refused.
+@property (nonatomic, strong, nullable) NSNumber *expiresAt;
 @property (nonatomic, strong) BugseeNetworkEvent *event;
 @property (nonatomic, copy) BugseeNetworkFilterDecisionBlock decision;
 @property (nonatomic, weak) BugseeModule *owner;
@@ -459,6 +468,18 @@ static __weak BugseeModule *BGSRNNetworkFilterModule = nil;
 static BOOL BGSRNNetworkFilterInstalled = NO;
 // Which module's JS installed the filter. A reload leaves the filter block in
 // place and attaches a new module that has not; see BGSRNFilterArming.
+/// Orders a module's claim of the three filter pointers against a setter's
+/// ownership check and arm, so a superseded module cannot pass the check,
+/// pause, and arm or disable after the replacement attached. Lock order is
+/// this lock, then a filter's own lock. The setters hold it across the SDK
+/// uninstall on the disable paths (those calls only take locks); the filter
+/// blocks the SDK calls never take it.
+static id BGSRNFilterOwnerLock(void) {
+  static id lock;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ lock = [NSObject new]; });
+  return lock;
+}
 static BGSRNFilterArming *BGSRNNetworkFilterArming(void) {
   static BGSRNFilterArming *arming;
   static dispatch_once_t once;
@@ -482,15 +503,19 @@ static id BGSRNNetworkFilterLock(void) {
 /// Called outside the lock: the SDK's decision block must not re-enter it.
 static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
   NSMutableArray<BugseeNetworkFilterDecisionBlock> *decisions = [NSMutableArray array];
+  NSMutableArray<NSString *> *owned = [NSMutableArray array];
   @synchronized (BGSRNNetworkFilterLock()) {
     for (NSString *key in BGSRNNetworkFilterPendingTable.allKeys) {
-      BGSRNNetworkFilterPending *item = BGSRNNetworkFilterPendingTable[key];
-      if (item.owner == module) {
-        [BGSRNNetworkFilterPendingTable removeObjectForKey:key];
-        if (item.decision != nil) {
-          [decisions addObject:item.decision];
-        }
+      if (BGSRNNetworkFilterPendingTable[key].owner == module) {
+        [owned addObject:key];
       }
+    }
+  }
+  // Through the shared take, so each request's deadline is cancelled too.
+  for (NSString *key in owned) {
+    BGSRNNetworkFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNNetworkFilterPendingTable, BGSRNNetworkFilterLock(), key);
+    if (item.decision != nil) {
+      [decisions addObject:item.decision];
     }
   }
   for (BugseeNetworkFilterDecisionBlock decision in decisions) {
@@ -500,6 +525,10 @@ static void BGSRNDropNetworkFiltersOwnedBy(BugseeModule *module) {
 
 
 @interface BGSRNLogFilterPending : NSObject
+/// The wrapper's 9 s deadline; cancelled when the request is taken.
+@property (nonatomic, copy, nullable) dispatch_block_t deadline;
+/// Monotonic instant (ns) after which a reply is refused.
+@property (nonatomic, strong, nullable) NSNumber *expiresAt;
 @property (nonatomic, strong) BugseeLogEvent *event;
 @property (nonatomic, copy) BugseeLogFilterDecisionBlock decision;
 @property (nonatomic, weak) BugseeModule *owner;
@@ -534,15 +563,19 @@ static id BGSRNLogFilterLock(void) {
 /// Called outside the lock: the SDK's decision block must not re-enter it.
 static void BGSRNDropLogFiltersOwnedBy(BugseeModule *module) {
   NSMutableArray<BugseeLogFilterDecisionBlock> *decisions = [NSMutableArray array];
+  NSMutableArray<NSString *> *owned = [NSMutableArray array];
   @synchronized (BGSRNLogFilterLock()) {
     for (NSString *key in BGSRNLogFilterPendingTable.allKeys) {
-      BGSRNLogFilterPending *item = BGSRNLogFilterPendingTable[key];
-      if (item.owner == module) {
-        [BGSRNLogFilterPendingTable removeObjectForKey:key];
-        if (item.decision != nil) {
-          [decisions addObject:item.decision];
-        }
+      if (BGSRNLogFilterPendingTable[key].owner == module) {
+        [owned addObject:key];
       }
+    }
+  }
+  // Through the shared take, so each request's deadline is cancelled too.
+  for (NSString *key in owned) {
+    BGSRNLogFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNLogFilterPendingTable, BGSRNLogFilterLock(), key);
+    if (item.decision != nil) {
+      [decisions addObject:item.decision];
     }
   }
   for (BugseeLogFilterDecisionBlock decision in decisions) {
@@ -624,26 +657,28 @@ static void BGSRNInstallLogEventFilter(void) {
         requestId = [NSString stringWithFormat:@"%lld", BGSRNLogFilterNextId];
         BGSRNLogFilterPendingTable[requestId] = item;
       }
+      BGSRNArmPendingFilterDeadline(
+          (NSMutableDictionary *)BGSRNLogFilterPendingTable,
+          BGSRNLogFilterLock(),
+          requestId);
       const BOOL delivered = [module emitLogFilterRequest:requestId line:line];
       if (!delivered) {
-        BugseeLogFilterDecisionBlock drop = nil;
-        @synchronized (BGSRNLogFilterLock()) {
-          BGSRNLogFilterPending *removed = BGSRNLogFilterPendingTable[requestId];
-          [BGSRNLogFilterPendingTable removeObjectForKey:requestId];
-          drop = removed.decision;
-        }
-        if (drop != nil) {
-          drop(nil);
-        }
+        BGSRNDropPendingFilter((NSMutableDictionary *)BGSRNLogFilterPendingTable,
+                                  BGSRNLogFilterLock(), requestId);
       }
     }];
 }
 
 /// One in-flight breadcrumb-filter request. The decision block is copied: the
 /// SDK's block argument is not guaranteed to outlive the filter call, and the
-/// reply comes back later, from JS. There is no timer. The SDK does not time
-/// the filter out, and a late decision still records.
+/// reply comes back later, from JS. The SDK does not time the filter out, so
+/// the wrapper arms `BGSRNFilterDeadlineMs`, fail closed: past it the crumb
+/// is dropped and a late reply is a no-op.
 @interface BGSRNBreadcrumbFilterPending : NSObject
+/// The wrapper's 9 s deadline; cancelled when the request is taken.
+@property (nonatomic, copy, nullable) dispatch_block_t deadline;
+/// Monotonic instant (ns) after which a reply is refused.
+@property (nonatomic, strong, nullable) NSNumber *expiresAt;
 @property (nonatomic, strong) id<BGSBreadcrumb> breadcrumb;
 @property (nonatomic, copy) BugseeBreadcrumbFilterDecisionBlock decision;
 @property (nonatomic, weak) BugseeModule *owner;
@@ -685,15 +720,19 @@ static id BGSRNBreadcrumbFilterLock(void) {
 /// This is teardown, not a timeout.
 static void BGSRNDropBreadcrumbFiltersOwnedBy(BugseeModule *module) {
   NSMutableArray<BugseeBreadcrumbFilterDecisionBlock> *decisions = [NSMutableArray array];
+  NSMutableArray<NSString *> *owned = [NSMutableArray array];
   @synchronized (BGSRNBreadcrumbFilterLock()) {
     for (NSString *key in BGSRNBreadcrumbFilterPendingTable.allKeys) {
-      BGSRNBreadcrumbFilterPending *item = BGSRNBreadcrumbFilterPendingTable[key];
-      if (item.owner == module) {
-        [BGSRNBreadcrumbFilterPendingTable removeObjectForKey:key];
-        if (item.decision != nil) {
-          [decisions addObject:item.decision];
-        }
+      if (BGSRNBreadcrumbFilterPendingTable[key].owner == module) {
+        [owned addObject:key];
       }
+    }
+  }
+  // Through the shared take, so each request's deadline is cancelled too.
+  for (NSString *key in owned) {
+    BGSRNBreadcrumbFilterPending *item = BGSRNTakePendingFilter((NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable, BGSRNBreadcrumbFilterLock(), key);
+    if (item.decision != nil) {
+      [decisions addObject:item.decision];
     }
   }
   for (BugseeBreadcrumbFilterDecisionBlock decision in decisions) {
@@ -882,6 +921,10 @@ static BOOL BGSRNApplyBreadcrumbKeep(id<BGSBreadcrumb> breadcrumb, NSDictionary 
   return _span.isFinished;
 }
 
+- (NSInteger)bgsrnStatus {
+  return (NSInteger)_span.status;
+}
+
 @end
 
 /// One JSON value, or nil when it is missing, null, an object or an array.
@@ -1048,14 +1091,16 @@ RCT_EXPORT_MODULE(Bugsee)
   // After the emitter exists. A network filter installed earlier reads this
   // pointer when an event arrives; it is nil until then, and a nil module
   // drops the event.
-  BGSRNNetworkFilterModule = self;
-  // After the emitter exists. The native log filter is already installed.
-  // While a user callback is on, a nil module drops the line. With no user
-  // callback the same filter returns the line.
-  BGSRNLogFilterModule = self;
-  // Same lifetime as the log filter: nil until the emitter exists, and a nil
-  // module drops the crumb.
-  BGSRNBreadcrumbFilterModule = self;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    BGSRNNetworkFilterModule = self;
+    // After the emitter exists. The native log filter is already installed.
+    // While a user callback is on, a nil module drops the line. With no user
+    // callback the same filter returns the line.
+    BGSRNLogFilterModule = self;
+    // Same lifetime as the log filter: nil until the emitter exists, and a nil
+    // module drops the crumb.
+    BGSRNBreadcrumbFilterModule = self;
+  }
 }
 
 /// Identity-checked inside the bus: a reload can construct and attach the NEW
@@ -1081,23 +1126,30 @@ RCT_EXPORT_MODULE(Bugsee)
   // Drop this module's unanswered network events. A reload may already have
   // attached the new module; only clear the pointer when it is still us.
   BGSRNDropNetworkFiltersOwnedBy(self);
-  if (BGSRNNetworkFilterModule == self) {
-    BGSRNNetworkFilterModule = nil;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    if (BGSRNNetworkFilterModule == self) {
+      BGSRNNetworkFilterModule = nil;
+    }
   }
   // Drop this module's unanswered log lines. A reload may already have
   // attached the new module; only clear the pointer when it is still us.
   BGSRNDropLogFiltersOwnedBy(self);
-  if (BGSRNLogFilterModule == self) {
-    BGSRNLogFilterModule = nil;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    if (BGSRNLogFilterModule == self) {
+      BGSRNLogFilterModule = nil;
+    }
   }
   // Drop this module's unanswered crumbs. A reload may already have attached
   // the new module; only clear the pointer when it is still us.
   BGSRNDropBreadcrumbFiltersOwnedBy(self);
-  if (BGSRNBreadcrumbFilterModule == self) {
-    BGSRNBreadcrumbFilterModule = nil;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    if (BGSRNBreadcrumbFilterModule == self) {
+      BGSRNBreadcrumbFilterModule = nil;
+    }
   }
-  // The next runtime cannot know these handles. Drop them without finishing:
-  // a reload must not close a transaction the SDK still has. The getter
+  // The next runtime cannot know these handles, so nothing would ever finish
+  // them and the SDK would keep the transactions open. Cancel what is still
+  // open, then drop the handles. The getter
   // must not allocate a fresh registry after this: a span call still in
   // flight would adopt into an object invalidate already abandoned.
   os_unfair_lock_lock(&_spanRegistryLock);
@@ -1105,7 +1157,12 @@ RCT_EXPORT_MODULE(Bugsee)
   BGSRNSpanHandles *previous = _spanHandles;
   _spanHandles = [BGSRNSpanHandles closedRegistry];
   os_unfair_lock_unlock(&_spanRegistryLock);
-  [previous releaseAll];
+  // Span calls run on the main thread; so does this finish. Async: invalidate
+  // can run while the main thread waits on the runtime, and a sync hop would
+  // deadlock. The registry is already swapped out, so nothing races it.
+  BGSRNRunOnMain(^{
+    [previous cancelOpenAndReleaseAll];
+  });
 }
 
 /// The SDK touches UIKit during start-up, so it must not be constructed on a
@@ -1295,6 +1352,9 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   });
 }
 
+// Deliberately NOT given the stop() treatment (#143): relaunch is one call that
+// restarts the SDK, not a session the app ended, and whether the iOS SDK keeps
+// a blackout across it is unverified; the app can call endBlackout().
 - (void)relaunch:(NSDictionary *)options
          resolve:(RCTPromiseResolveBlock)resolve
           reject:(RCTPromiseRejectBlock)reject {
@@ -1322,6 +1382,11 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (void)stop:(RCTPromiseResolveBlock)resolve
       reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
+    // TODO(#143): temporary; the iOS SDK should end the blackout on stop
+    // itself (see BGSRNBlackout.h). End it first, while still launched, so
+    // BlackoutEnded is delivered. Skipped for a never-launched SDK so a
+    // pre-launch startBlackout() survives.
+    BGSRNEndBlackoutForStop();
     [Bugsee stop:^{
       resolve(@YES);
     }];
@@ -1622,8 +1687,8 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// with. `enabled` registers the bridge; `NO` passes nil, which removes it.
 /// The write is synchronized and does not need the main queue, so it happens
 /// before this method returns: a later Bugsee call on the same turn already
-/// sees the filter. The block returns without waiting on JS. There is no
-/// deadline here.
+/// sees the filter. The block returns without waiting on JS. A request JS
+/// does not answer within `BGSRNFilterDeadlineMs` is dropped.
 ///
 /// Returns `@YES`. The return is what keeps the call on the JS thread:
 /// codegen queues a `void` TurboModule method onto the module queue, so a
@@ -1633,11 +1698,17 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (NSNumber *)setNetworkFilterEnabled:(BOOL)enabled {
   // A reload can attach the new module before this one is invalidated. A
   // superseded module must neither arm nor disable the process-wide filter.
-  if (BGSRNNetworkFilterModule != self) {
+  BOOL owner = NO;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    owner = BGSRNNetworkFilterModule == self;
+    if (owner && enabled) {
+      [BGSRNNetworkFilterArming() armFor:self];
+    }
+  }
+  if (!owner) {
     return @YES;
   }
   if (enabled) {
-    [BGSRNNetworkFilterArming() armFor:self];
     @synchronized (BGSRNNetworkFilterLock()) {
       if (BGSRNNetworkFilterInstalled) {
         return @YES;
@@ -1654,7 +1725,8 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
         }
         BugseeModule *module = BGSRNNetworkFilterModule;
         // After a reload the new module's JS has not installed its filter:
-        // drop now rather than leave the event pending forever.
+        // drop now rather than wait out the deadline for a runtime that is
+        // not listening.
         if (module == nil || ![BGSRNNetworkFilterArming() isArmedFor:module]) {
           decision(nil);
           return;
@@ -1674,25 +1746,30 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           requestId = [NSString stringWithFormat:@"%lld", BGSRNNetworkFilterNextId];
           BGSRNNetworkFilterPendingTable[requestId] = item;
         }
+        BGSRNArmPendingFilterDeadline(
+            (NSMutableDictionary *)BGSRNNetworkFilterPendingTable,
+            BGSRNNetworkFilterLock(),
+            requestId);
         const BOOL delivered = [module emitNetworkFilterRequest:requestId eventJson:eventJson];
         if (!delivered) {
-          BugseeNetworkFilterDecisionBlock drop = nil;
-          @synchronized (BGSRNNetworkFilterLock()) {
-            BGSRNNetworkFilterPending *removed = BGSRNNetworkFilterPendingTable[requestId];
-            [BGSRNNetworkFilterPendingTable removeObjectForKey:requestId];
-            drop = removed.decision;
-          }
-          if (drop != nil) {
-            drop(nil);
-          }
+          BGSRNDropPendingFilter((NSMutableDictionary *)BGSRNNetworkFilterPendingTable,
+                                    BGSRNNetworkFilterLock(), requestId);
         }
   }];
   return @YES;
   }
-  @synchronized (BGSRNNetworkFilterLock()) {
-    BGSRNNetworkFilterInstalled = NO;
+  // Ownership is checked again under the owner lock and held through the
+  // uninstall: a stale module that passed the check above must not remove a
+  // filter the replacement has since relied on. The SDK setter only takes
+  // locks.
+  @synchronized (BGSRNFilterOwnerLock()) {
+    if (BGSRNNetworkFilterModule == self) {
+      @synchronized (BGSRNNetworkFilterLock()) {
+        BGSRNNetworkFilterInstalled = NO;
+      }
+      [Bugsee setNetworkEventFilter:nil];
+    }
   }
-  [Bugsee setNetworkEventFilter:nil];
   return @YES;
 }
 
@@ -1704,19 +1781,17 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 }
 
 /// `eventJson` nil drops. A JSON object is written onto the same event, so
-/// the timestamp stays. A second reply is a no-op. A late reply still
-/// records: this method does not expire the decision.
+/// the timestamp stays. A second reply is a no-op, and so is a reply after
+/// `BGSRNFilterDeadlineMs`: the deadline already dropped the event.
 - (void)replyNetworkFilter:(NSString *)requestId eventJson:(NSString * _Nullable)eventJson {
   if (requestId == nil) {
     return;
   }
-  BGSRNNetworkFilterPending *item = nil;
-  @synchronized (BGSRNNetworkFilterLock()) {
-    item = BGSRNNetworkFilterPendingTable[requestId];
-    if (item != nil) {
-      [BGSRNNetworkFilterPendingTable removeObjectForKey:requestId];
-    }
-  }
+  BGSRNNetworkFilterPending *item =
+      BGSRNTakePendingFilter(
+          (NSMutableDictionary *)BGSRNNetworkFilterPendingTable,
+          BGSRNNetworkFilterLock(),
+          requestId);
   if (item.decision == nil) {
     return;
   }
@@ -1735,8 +1810,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// epoch milliseconds and builds a `BugseeNetworkEvent`. Beta3's exchange
 /// factory `createNetworkEvent` always returns nil, so this does not call it.
 /// The event is submitted with filtering required. The one-argument
-/// `addNetworkEvent:` passes NO and is not used. There is no timer that
-/// would pass the original through.
+/// `addNetworkEvent:` passes NO and is not used.
 - (void)addNetworkEvent:(NSString *)eventJson {
   NSError *error = nil;
   NSDictionary *object = BGSRNJSONObject(eventJson, &error);
@@ -1764,14 +1838,20 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (NSNumber *)setLogFilterEnabled:(BOOL)enabled {
   // A reload can attach the new module before this one is invalidated. A
   // superseded module must neither arm nor disable the process-wide filter.
-  if (BGSRNLogFilterModule != self) {
+  BOOL owner = NO;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    owner = BGSRNLogFilterModule == self;
+    if (owner) {
+      if (enabled) {
+        [BGSRNLogFilterArming() armFor:self];
+      }
+      @synchronized (BGSRNLogFilterLock()) {
+        BGSRNLogFilterUserEnabled = enabled;
+      }
+    }
+  }
+  if (!owner) {
     return @YES;
-  }
-  if (enabled) {
-    [BGSRNLogFilterArming() armFor:self];
-  }
-  @synchronized (BGSRNLogFilterLock()) {
-    BGSRNLogFilterUserEnabled = enabled;
   }
   BGSRNInstallLogEventFilter();
   return @YES;
@@ -1786,18 +1866,17 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 
 /// `line` nil drops. A string is written onto the same event, so the level
 /// and the timestamp stay. If the write does not stick, the line is dropped
-/// rather than kept unredacted. A second reply is a no-op.
+/// rather than kept unredacted. A second reply is a no-op, and so is a reply
+/// after `BGSRNFilterDeadlineMs`: the deadline already dropped the line.
 - (void)replyLogFilter:(NSString *)requestId line:(NSString * _Nullable)line {
   if (requestId == nil) {
     return;
   }
-  BGSRNLogFilterPending *item = nil;
-  @synchronized (BGSRNLogFilterLock()) {
-    item = BGSRNLogFilterPendingTable[requestId];
-    if (item != nil) {
-      [BGSRNLogFilterPendingTable removeObjectForKey:requestId];
-    }
-  }
+  BGSRNLogFilterPending *item =
+      BGSRNTakePendingFilter(
+          (NSMutableDictionary *)BGSRNLogFilterPendingTable,
+          BGSRNLogFilterLock(),
+          requestId);
   if (item.decision == nil) {
     return;
   }
@@ -1829,16 +1908,21 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// the nil cannot overtake the crumb. The generation this disable captured
 /// has to still be current or the nil does not run: a clear and then a new
 /// callback, before main runs, must not have the queued nil remove the newer
-/// filter. There is no timer that calls `decision(nil)`. A late decision
-/// still records.
+/// filter.
 - (NSNumber *)setBreadcrumbFilterEnabled:(BOOL)enabled {
   // A reload can attach the new module before this one is invalidated. A
   // superseded module must neither arm nor disable the process-wide filter.
-  if (BGSRNBreadcrumbFilterModule != self) {
+  BOOL owner = NO;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    owner = BGSRNBreadcrumbFilterModule == self;
+    if (owner && enabled) {
+      [BGSRNBreadcrumbFilterArming() armFor:self];
+    }
+  }
+  if (!owner) {
     return @YES;
   }
   if (enabled) {
-    [BGSRNBreadcrumbFilterArming() armFor:self];
     @synchronized (BGSRNBreadcrumbFilterLock()) {
       BGSRNBreadcrumbFilterGeneration += 1;
       if (BGSRNBreadcrumbFilterInstalled) {
@@ -1875,6 +1959,10 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           requestId = [NSString stringWithFormat:@"%lld", BGSRNBreadcrumbFilterNextId];
           BGSRNBreadcrumbFilterPendingTable[requestId] = item;
         }
+        BGSRNArmPendingFilterDeadline(
+            (NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable,
+            BGSRNBreadcrumbFilterLock(),
+            requestId);
         NSString *manualAddId = nil;
         @synchronized (BGSRNBreadcrumbFilterLock()) {
           manualAddId = BGSRNBreadcrumbManualAddId;
@@ -1890,15 +1978,8 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
           }
         }
         if (!delivered) {
-          BugseeBreadcrumbFilterDecisionBlock drop = nil;
-          @synchronized (BGSRNBreadcrumbFilterLock()) {
-            BGSRNBreadcrumbFilterPending *removed = BGSRNBreadcrumbFilterPendingTable[requestId];
-            [BGSRNBreadcrumbFilterPendingTable removeObjectForKey:requestId];
-            drop = removed.decision;
-          }
-          if (drop != nil) {
-            drop(nil);
-          }
+          BGSRNDropPendingFilter((NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable,
+                                    BGSRNBreadcrumbFilterLock(), requestId);
         }
       }];
     return @YES;
@@ -1909,12 +1990,20 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     generation = BGSRNBreadcrumbFilterGeneration;
   }
   BGSRNRunOnMain(^{
-    @synchronized (BGSRNBreadcrumbFilterLock()) {
-      if (BGSRNBreadcrumbFilterGeneration != generation) {
+    // The generation does not catch a stale disable that captured it after
+    // the replacement's enable, so ownership is checked here too, under the
+    // owner lock held through the uninstall.
+    @synchronized (BGSRNFilterOwnerLock()) {
+      if (BGSRNBreadcrumbFilterModule != self) {
         return;
       }
-      BGSRNBreadcrumbFilterInstalled = NO;
-      [Bugsee setBreadcrumbFilter:nil];
+      @synchronized (BGSRNBreadcrumbFilterLock()) {
+        if (BGSRNBreadcrumbFilterGeneration != generation) {
+          return;
+        }
+        BGSRNBreadcrumbFilterInstalled = NO;
+        [Bugsee setBreadcrumbFilter:nil];
+      }
     }
   });
   return @YES;
@@ -1934,7 +2023,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// The main-queue record dropped this id (no factory, no crumb, or the filter
 /// never asked). JS drops the owed callback. `crumbJson` is empty, so the
 /// callback does not run. The request id is not in the pending table, so the
-/// reply is a no-op. There is no timer.
+/// reply is a no-op.
 - (void)releaseBreadcrumbManualAdd:(NSString *)addId {
   if (addId.length == 0) {
     return;
@@ -1946,18 +2035,16 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 /// `timestamp` is not written: `BGSEvent.timestamp` is read-only, and the SDK
 /// pins the time it observed before the filter ran. If a write does not
 /// stick, the crumb is dropped rather than kept unredacted. A second reply
-/// is a no-op. There is no timer.
+/// is a no-op, and so is a reply after `BGSRNFilterDeadlineMs`.
 - (void)replyBreadcrumbFilter:(NSString *)requestId crumbJson:(NSString * _Nullable)crumbJson {
   if (requestId == nil) {
     return;
   }
-  BGSRNBreadcrumbFilterPending *item = nil;
-  @synchronized (BGSRNBreadcrumbFilterLock()) {
-    item = BGSRNBreadcrumbFilterPendingTable[requestId];
-    if (item != nil) {
-      [BGSRNBreadcrumbFilterPendingTable removeObjectForKey:requestId];
-    }
-  }
+  BGSRNBreadcrumbFilterPending *item =
+      BGSRNTakePendingFilter(
+          (NSMutableDictionary *)BGSRNBreadcrumbFilterPendingTable,
+          BGSRNBreadcrumbFilterLock(),
+          requestId);
   if (item.decision == nil) {
     return;
   }
@@ -2459,11 +2546,16 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 }
 
 - (NSDictionary *)adoptSpan:(id<BGSSpan>)span {
+  return [self adoptSpan:span owned:YES];
+}
+
+/// `owned` NO is a span JS only found (the active span), not one it started.
+- (NSDictionary *)adoptSpan:(id<BGSSpan>)span owned:(BOOL)owned {
   if (span == nil) {
     return BGSRNNoSpan();
   }
   BGSRNLiveSpan *adapter = [[BGSRNLiveSpan alloc] initWithSpan:span];
-  NSString *handle = [self.spanHandles retainSpan:span adapter:adapter];
+  NSString *handle = [self.spanHandles retainSpan:span adapter:adapter owned:owned];
   return BGSRNSpanSnapshot(handle, span);
 }
 
@@ -2535,7 +2627,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (NSDictionary *)getActiveSpan {
   __block NSDictionary *snapshot = nil;
   BGSRNRunOnMainSync(^{
-    snapshot = [self adoptSpan:[Bugsee getActiveSpan]];
+    snapshot = [self adoptSpan:[Bugsee getActiveSpan] owned:NO];
   });
   return snapshot;
 }
@@ -2624,10 +2716,10 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   return snapshot;
 }
 
-- (NSArray<NSString *> *)spanFinish:(NSString *)handle
+- (NSDictionary *)spanFinish:(NSString *)handle
                              status:(double)status
                         statusSet:(BOOL)statusSet {
-  __block NSArray<NSString *> *released = @[];
+  __block NSArray<NSDictionary *> *released = @[];
   BGSRNRunOnMainSync(^{
     NSNumber *wire = nil;
     if (statusSet) {
@@ -2640,7 +2732,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     }
     released = [self.spanHandles finishHandle:handle status:wire];
   });
-  return released;
+  return @{@"released": released};
 }
 
 /// Writable report colors on BugseeTheme (7.0.0-beta4; unchanged from beta3). Feedback properties
@@ -2723,47 +2815,38 @@ static NSString *BGSRNHexFromColor(UIColor *color) {
   return hex;
 }
 
-/// iOS 7.0.0-beta3 and beta4 return without invoking `completion` when the SDK is
-/// not stopped, so a launched call resolves `false` immediately. That is the
-/// missing completion, not a wait. Stopped, including a nil instance, still
-/// calls the SDK method and settles through `BGSRNSettleOnce`: the
-/// completion's success, or `false` if the deadline fires first. Status and
-/// both SDK calls run on the main queue. A completion that arrives off main
-/// hops back before it writes the result the settler resolves.
+/// Resolves with the SDK's own outcome. iOS 7.0.0-beta7 always invokes the
+/// completion (on the main thread): `NO` when the SDK is not stopped, otherwise
+/// once the deletion has finished. The only timer is the long backstop in
+/// `BGSRNDeleteCollectedData`, which REJECTS with `E_DELETE_TIMEOUT` (outcome
+/// unknown, the deletion may still finish) rather than resolving `false`.
+/// `includingFinishedReports` selects the SDK form that also deletes the report
+/// bundles waiting for upload, the crashes not reported yet and the anomaly
+/// baselines; that form has no `includingIntermediate` flag because it deletes
+/// the snapshots too.
 - (void)deleteCollectedDataOnDevice:(BOOL)includingIntermediate
-                            resolve:(RCTPromiseResolveBlock)resolve
-                             reject:(RCTPromiseRejectBlock)reject {
+            includingFinishedReports:(BOOL)includingFinishedReports
+                             resolve:(RCTPromiseResolveBlock)resolve
+                              reject:(RCTPromiseRejectBlock)reject {
   BGSRNRunOnMain(^{
-    Bugsee *instance = [Bugsee sharedInstance];
-    BugseeStatus status = instance != nil ? instance.status : BugseeStatusStopped;
-    if (status != BugseeStatusStopped) {
-      __block BOOL settled = NO;
-      [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
-        BGSRNRunOnMain(^{
-          if (settled) {
-            return;
+    BGSRNDeleteCollectedData(
+        ^(void (^completion)(BOOL)) {
+          if (includingFinishedReports) {
+            [Bugsee deleteCollectedDataOnDevice:completion];
+          } else {
+            [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:completion];
           }
-          settled = YES;
+        },
+        BGSRNDeleteCollectedDataBackstopMs, dispatch_get_main_queue(),
+        ^(BOOL success) {
           resolve(@(success));
+        },
+        ^(NSString *code) {
+          reject(code,
+                 @"Bugsee did not report the outcome of deleteCollectedDataOnDevice in time; "
+                 @"the deletion may still finish.",
+                 nil);
         });
-      }];
-      if (!settled) {
-        settled = YES;
-        resolve(@NO);
-      }
-      return;
-    }
-    __block NSNumber *result = @NO;
-    dispatch_block_t done =
-        BGSRNSettleOnce(BGSRNUnhandledCompletionDeadlineMs, dispatch_get_main_queue(), ^{
-          resolve(result);
-        });
-    [Bugsee deleteCollectedDataOnDevice:includingIntermediate completion:^(BOOL success) {
-      BGSRNRunOnMain(^{
-        result = @(success);
-        done();
-      });
-    }];
   });
 }
 

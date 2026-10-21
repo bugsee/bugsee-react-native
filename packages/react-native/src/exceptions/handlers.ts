@@ -176,7 +176,7 @@ function installErrorUtils(env: HandlerEnv): void {
     };
 
     try {
-      if (captureEnabled && markReported(error)) {
+      if (captureEnabled && markReported(error, isFatal === true ? 'unhandled' : 'handled')) {
         if (isFatal === true) {
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
           const timeout = new Promise<void>((resolve) => {
@@ -228,6 +228,22 @@ export function installExceptionHandlers(env: HandlerEnv = defaultEnv()): void {
 /** R7: false only when the launch options set com.bugsee.option.detect.crash to false. */
 export function setExceptionCaptureEnabled(enabled: boolean): void {
   captureEnabled = enabled;
+}
+
+/**
+ * The user's own `detect.crash: false`, kept apart from the transient hold
+ * `Bugsee.attach()` puts on {@link setExceptionCaptureEnabled} while it reads
+ * the options (which stays on if that read rejects). `ErrorBoundary` reads
+ * this one, so a failed read never silences it.
+ */
+let crashDetectionOptedOut = false;
+
+export function setCrashDetectionOptedOut(optedOut: boolean): void {
+  crashDetectionOptedOut = optedOut;
+}
+
+export function isCrashDetectionOptedOut(): boolean {
+  return crashDetectionOptedOut;
 }
 
 /** Current R7 capture flag; `RootErrorReporter` reads this rather than copying it. */

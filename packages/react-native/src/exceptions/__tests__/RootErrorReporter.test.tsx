@@ -139,7 +139,7 @@ describe('RootErrorReporter', () => {
       caught = e;
     }
 
-    expect(markReported).toHaveBeenCalledWith(error);
+    expect(markReported).toHaveBeenCalledWith(error, 'unhandled');
     expect(reportUnhandled).toHaveBeenCalledTimes(1);
     expect(reportUnhandled).toHaveBeenCalledWith(
       error,
@@ -261,7 +261,7 @@ describe('RootErrorReporter', () => {
       caught = e;
     }
 
-    expect(markReported).toHaveBeenCalledWith(error);
+    expect(markReported).toHaveBeenCalledWith(error, 'unhandled');
     expect(reportUnhandled).not.toHaveBeenCalled();
     expect(caught).toBe(error);
   });

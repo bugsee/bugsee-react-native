@@ -152,6 +152,14 @@ final class NetworkFilterBridge {
 
     private final Consumer<EventFilter<NetworkEvent>> installer;
 
+    /** True from {@link #holdUntilJs} until JS first calls {@link #setEnabled}. For the watchdog only. */
+    private final AtomicBoolean held = new AtomicBoolean();
+
+    /** Whether the startup hold is still waiting for JS to call {@code setNetworkFilter}. */
+    boolean isHeld() {
+        return held.get();
+    }
+
     /**
      * Installs the filter with the SDK. A throw (the SDK not ready that early)
      * leaves {@code installed} false, so a later {@code setEnabled(true)}
@@ -172,13 +180,20 @@ final class NetworkFilterBridge {
         }
     }
 
-
-    /** True from {@link #holdUntilJs} until JS first calls {@link #setEnabled}. For the watchdog only. */
-    private final AtomicBoolean held = new AtomicBoolean();
-
-    /** Whether the startup hold is still waiting for JS to call {@code setNetworkFilter}. */
-    boolean isHeld() {
-        return held.get();
+    /**
+     * Installs the filter before JS has asked for it, so a manifest
+     * auto-launch does not record network events unfiltered until
+     * {@code setNetworkFilter} runs (see {@link StartupHold}). With no module
+     * attached yet the filter drops everything, and so does one whose JS has
+     * not armed it (the armed gate), so nothing waits on a reply that cannot
+     * come. {@code setEnabled(false)}, which {@code setNetworkFilter(null)} sends, removes
+     * it again. A second call, or one after {@code setEnabled(true)}, is a no-op.
+     */
+    void holdUntilJs() {
+        synchronized (stateLock) {
+            install();
+            held.set(true);
+        }
     }
 
     private final EventFilter<NetworkEvent> filter = new EventFilter<NetworkEvent>() {
@@ -245,20 +260,6 @@ final class NetworkFilterBridge {
                 drop(item.callback);
             }
         }
-    }
-
-    /**
-     * Installs the filter before JS has asked for it, so a manifest
-     * auto-launch does not record network events unfiltered until
-     * {@code setNetworkFilter} runs (see {@link StartupHold}). With no module
-     * attached yet the filter drops every event, and so does one whose JS has
-     * not armed it (the armed gate), so nothing waits on a reply that cannot
-     * come. {@code setEnabled(false)}, which {@code setNetworkFilter(null)} sends, removes
-     * it again. A second call, or one after {@code setEnabled(true)}, is a no-op.
-     */
-    void holdUntilJs() {
-        install();
-        held.set(true);
     }
 
     /** Installs the filter, or removes it. A second {@code true} is a no-op. */

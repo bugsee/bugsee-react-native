@@ -676,7 +676,7 @@ public class LogFilterBridgeTest {
 
         assertEquals(0, next.ids.size());
         assertEquals(1, callback.runs);
-        assertFalse(callback.sawNull);
+        assertTrue(!callback.sawNull);
     }
 
     /** A late enable from the module a reload replaced must not arm the new, unsubscribed runtime. */

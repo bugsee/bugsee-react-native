@@ -29,6 +29,7 @@ jest.mock('../report', () => {
   };
 });
 
+import { setCrashDetectionOptedOut, setExceptionCaptureEnabled } from '../handlers';
 import {
   ErrorBoundary,
   type ErrorBoundaryFallbackProps,
@@ -42,6 +43,8 @@ let consoleError: jest.SpyInstance;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  setExceptionCaptureEnabled(true);
+  setCrashDetectionOptedOut(false);
   markReported.mockImplementation(() => true);
   consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 });
@@ -262,6 +265,33 @@ describe('ErrorBoundary', () => {
       }),
     );
     warn.mockRestore();
+  });
+
+  it('detect.crash false: the boundary shows the fallback and calls onError but reports nothing', () => {
+    setCrashDetectionOptedOut(true);
+    const error = new Error('quiet');
+    const onError = jest.fn();
+    const renderer = render(
+      <ErrorBoundary onError={onError} fallback={createElement('fallback-el')}>
+        <ThrowOnce error={error} armed={{ value: true }} />
+      </ErrorBoundary>,
+    );
+
+    expect(reportHandled).not.toHaveBeenCalled();
+    expect(markReported).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(error, expect.any(String));
+    expect(renderer.root.findByType('fallback-el' as never)).toBeTruthy();
+  });
+
+  it('the attach() hold (capture disabled, no opt-out) does not silence the boundary', () => {
+    setExceptionCaptureEnabled(false);
+    const error = new Error('held');
+    render(
+      <ErrorBoundary fallback={createElement('fallback-el')}>
+        <ThrowOnce error={error} armed={{ value: true }} />
+      </ErrorBoundary>,
+    );
+    expect(reportHandled).toHaveBeenCalledTimes(1);
   });
 
   it('an error reported once is not reported again by the boundary', () => {

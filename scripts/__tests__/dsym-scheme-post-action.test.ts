@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { CLI_OUTPUT_FILTER, TOKEN_GUARD } from '../../packages/react-native/plugin/src/dsym-script';
+import { CLI_OUTPUT_FILTER, ENV_FILE_TOKEN, TOKEN_GUARD } from '../../packages/react-native/plugin/src/dsym-script';
 
 // The shared scheme is what `xcodebuild -scheme BareExample` archives.
 // A user-specific scheme under xcuserdata would not.
@@ -222,6 +222,85 @@ describe('BareExample archive post-action refuses a missing or placeholder token
     const result = runScheme({ BUGSEE_APP_TOKEN: token, BUGSEE_ENDPOINT: 'https://127.0.0.1:9' });
     expect(result.status).toBe(0);
     expect(result.invoked).toBe(`argv=xcode post-action\ntoken=${token}\nendpoint=https://127.0.0.1:9\n`);
+  });
+
+  // The README sends a bare app's token to ios/.xcode.env.local; a GUI Archive
+  // has no shell environment, so the post-action reads the files itself.
+  it("carries the plugin's .xcode.env token lookup, once, ahead of the guard", () => {
+    const lookup = ENV_FILE_TOKEN.join('\n');
+    const at = script.indexOf(lookup);
+    expect(at).toBeGreaterThan(-1);
+    expect(script.indexOf(lookup, at + 1)).toBe(-1);
+    expect(at).toBeLessThan(script.indexOf(TOKEN_GUARD.join('\n')));
+  });
+
+  describe('a token in .xcode.env.local', () => {
+    const token = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+    function withEnvFile(text: string, env: Record<string, string> = {}) {
+      // PROJECT_DIR is <dir>/ios; the files sit in it. runScheme makes the dir
+      // itself, so the file is written through a shell prefix instead.
+      const dir = mkdtempSync(join(tmpdir(), 'bugsee-envfile-'));
+      try {
+        const ios = join(dir, 'ios');
+        mkdirSync(ios);
+        writeFileSync(join(ios, '.xcode.env.local'), text);
+        const seen = join(dir, 'seen');
+        const cli = join(dir, 'node_modules/@bugsee/cli-darwin-arm64/bin/bugsee-cli');
+        mkdirSync(dirname(cli), { recursive: true });
+        writeFileSync(cli, `#!/bin/sh\nprintf 'token=%s\\n' "$BUGSEE_APP_TOKEN" > '${seen}'\n`);
+        chmodSync(cli, 0o755);
+        const x64 = join(dir, 'node_modules/@bugsee/cli-darwin-x64/bin/bugsee-cli');
+        mkdirSync(dirname(x64), { recursive: true });
+        writeFileSync(x64, readFileSync(cli));
+        chmodSync(x64, 0o755);
+        const result = spawnSync('/bin/sh', ['-c', script], {
+          encoding: 'utf8',
+          env: { PATH: '/usr/bin:/bin', PROJECT_DIR: ios, NODE_BINARY: process.execPath, BUGSEE_ENDPOINT: 'https://127.0.0.1:9', ...env },
+        });
+        return { ...result, invoked: existsSync(seen) ? readFileSync(seen, 'utf8') : null };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    it('is used when the environment has none', () => {
+      const result = withEnvFile(`export BUGSEE_APP_TOKEN=${token}\n`);
+      expect(result.stdout).toBe('');
+      expect(result.invoked).toBe(`token=${token}\n`);
+    });
+
+    it('accepts BUGSEE_TOKEN_IOS too', () => {
+      expect(withEnvFile(`export BUGSEE_TOKEN_IOS=${token}\n`).invoked).toBe(`token=${token}\n`);
+    });
+
+    it('does not override a token the environment already has', () => {
+      const real = '11111111-2222-4333-8444-555555555555';
+      expect(withEnvFile(`export BUGSEE_APP_TOKEN=${token}\n`, { BUGSEE_APP_TOKEN: real }).invoked).toBe(`token=${real}\n`);
+    });
+
+    it('still skips for the placeholder', () => {
+      const result = withEnvFile(`export BUGSEE_APP_TOKEN=${PLACEHOLDER}\n`);
+      expect(result.invoked).toBeNull();
+      expect(result.stdout).toBe(SKIP_PLACEHOLDER);
+    });
+
+    it('survives a file with a syntax error or an exit, and one that sets a bad NODE_BINARY or endpoint', () => {
+      // The file's own failure only costs the token: the script still reaches the guard.
+      for (const bad of ['if [[ -n x ]]; then\n', 'exit 5\n']) {
+        const result = withEnvFile(`${bad}export BUGSEE_APP_TOKEN=${token}\n`);
+        expect(result.status).toBe(0);
+        expect(result.invoked).toBeNull();
+        expect(result.stdout).toBe(SKIP_NONE);
+      }
+      const result = withEnvFile('export BUGSEE_ENDPOINT=https://elsewhere.invalid\nexport BUGSEE_APP_TOKEN=' + token + '\n');
+      expect(result.invoked).toBe(`token=${token}\n`);
+    });
+
+    it("keeps Xcode's executable NODE_BINARY over the file's", () => {
+      const result = withEnvFile(`export BUGSEE_APP_TOKEN=${token}\nexport NODE_BINARY=/nonexistent/node\n`);
+      expect(result.invoked).toBe(`token=${token}\n`);
+    });
   });
 
   it('a token one digit off the placeholder is not taken for it', () => {

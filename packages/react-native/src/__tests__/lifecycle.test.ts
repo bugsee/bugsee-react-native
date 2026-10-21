@@ -5,6 +5,7 @@ jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 jest.mock('../exceptions/handlers', () => ({
   installExceptionHandlers: jest.fn(),
   setExceptionCaptureEnabled: jest.fn(),
+  setCrashDetectionOptedOut: jest.fn(),
 }));
 jest.mock('../console/capture', () => ({
   installConsoleCapture: jest.fn(),
@@ -14,6 +15,7 @@ import Bugsee, { Status } from '../index';
 import { native } from '../__mocks__/native';
 import {
   installExceptionHandlers,
+  setCrashDetectionOptedOut,
   setExceptionCaptureEnabled,
 } from '../exceptions/handlers';
 import { installConsoleCapture } from '../console/capture';
@@ -25,6 +27,7 @@ beforeEach(() => {
   native.reset();
   jest.mocked(installExceptionHandlers).mockClear();
   jest.mocked(setExceptionCaptureEnabled).mockClear();
+  jest.mocked(setCrashDetectionOptedOut).mockClear();
   jest.mocked(installConsoleCapture).mockClear();
 });
 
@@ -252,6 +255,14 @@ describe('attach', () => {
     expect(setExceptionCaptureEnabled).toHaveBeenCalledTimes(1);
     expect(setExceptionCaptureEnabled).toHaveBeenCalledWith(false);
     expect(installConsoleCapture).not.toHaveBeenCalled();
+    // The hold is not the user's opt-out: ErrorBoundary must keep reporting.
+    expect(setCrashDetectionOptedOut).not.toHaveBeenCalled();
+  });
+
+  it('records the detect.crash opt-out separately from the capture hold', async () => {
+    native.getLaunchOptions.mockResolvedValue({ 'com.bugsee.option.detect.crash': false });
+    await Bugsee.attach();
+    expect(setCrashDetectionOptedOut).toHaveBeenLastCalledWith(true);
   });
 
   // An auto-launched session registered only type and version natively, at

@@ -19,6 +19,7 @@
  *   api-report-members  a handler calling every BugseeReport member the
  *                    report-handler scenarios do not.
  *   api-delete-false upload, stop(), deleteCollectedDataOnDevice(false).
+ *   api-delete-reports upload, stop(), deleteCollectedDataOnDevice(false, true).
  *
  * `api-boundary` and `api-secure-off` render (scenarios/api.tsx).
  */
@@ -47,6 +48,7 @@ export const ARGS_SCENARIOS = [
   'api-handler-null',
   'api-report-members',
   'api-delete-false',
+  'api-delete-reports',
 ] as const;
 
 export async function preLaunchArgs(scenario: string, nonce: string): Promise<void> {
@@ -94,6 +96,8 @@ export async function runArgsScenario(scenario: string, nonce: string): Promise<
       return;
     case 'api-delete-false':
       return deleteFalse(nonce);
+    case 'api-delete-reports':
+      return deleteReports(nonce);
   }
 }
 
@@ -296,4 +300,15 @@ async function deleteFalse(nonce: string): Promise<void> {
   const stopped = await settle(() => Bugsee.stop());
   const deleted = await settle(() => Bugsee.deleteCollectedDataOnDevice(false));
   mark(`delete done nonce=${nonce} stopped=${stopped} deleted=${deleted}`);
+}
+
+async function deleteReports(nonce: string): Promise<void> {
+  Bugsee.upload(`api-delete-reports-${nonce}`, '');
+  await delay(10_000);
+  mark(`delete-reports uploaded nonce=${nonce}`);
+  // The e2e lists the bundle waiting for upload (dead endpoint) in this window.
+  await delay(10_000);
+  const stopped = await settle(() => Bugsee.stop());
+  const deleted = await settle(() => Bugsee.deleteCollectedDataOnDevice(false, true));
+  mark(`delete-reports done nonce=${nonce} stopped=${stopped} deleted=${deleted}`);
 }

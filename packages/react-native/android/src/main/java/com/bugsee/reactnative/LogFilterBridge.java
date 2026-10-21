@@ -222,14 +222,18 @@ final class LogFilterBridge {
         // (the throw goes on to StartupHold, which logs it) and the hold is
         // not reported, as in the other two bridges; attachModule installs
         // again when the module is built.
-        userFilter.set(true);
+        synchronized (stateLock) {
+            userFilter.set(true);
+        }
         boolean ok = false;
         try {
             ensureInstalled();
             ok = true;
         } finally {
             if (!ok) {
-                userFilter.set(false);
+                synchronized (stateLock) {
+                    userFilter.set(false);
+                }
             }
         }
         held.set(true);

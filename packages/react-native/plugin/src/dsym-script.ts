@@ -5,8 +5,8 @@
 // dependency from the CLI directory. Otherwise the JS entry comes from the
 // CLI package bin field. Without a real token (none, or the placeholder) the
 // script stops, exit 0, before any of that (TOKEN_GUARD). A token or endpoint
-// the Expo plugin baked in comes first; the environment and credentials.json
-// follow it.
+// the Expo plugin baked in comes first; the environment, .xcode.env(.local) and
+// credentials.json follow it.
 
 const locateBugseeCliPackage = [
   "const path = require('path');",
@@ -62,6 +62,29 @@ export const TOKEN_GUARD: readonly string[] = [
 ];
 
 /**
+ * Looks for the token in ios/.xcode.env and ios/.xcode.env.local, the files
+ * the README sends a bare app's `export BUGSEE_APP_TOKEN=...` to for the
+ * bundle phase. A GUI Archive does not inherit a shell, so the post-action
+ * reads them itself, and only when no earlier source gave a token. Each file
+ * is sourced in a subshell that prints the token: a file written for bash, a
+ * syntax error or an `exit` in it cannot stop this script or change its
+ * NODE_BINARY or BUGSEE_ENDPOINT, and the later file (.local) wins. Shared
+ * with the bare example's scheme (scripts/__tests__/dsym-scheme-post-action.test.ts).
+ */
+export const ENV_FILE_TOKEN: readonly string[] = [
+  'if [ -z "$TOKEN" ]; then',
+  '  for ENV_FILE in "${PROJECT_DIR}/.xcode.env" "${PROJECT_DIR}/.xcode.env.local"; do',
+  '    if [ -f "$ENV_FILE" ]; then',
+  '      ENV_TOKEN=$( ( . "$ENV_FILE" >/dev/null 2>&1; if [ -n "$BUGSEE_APP_TOKEN" ]; then printf \'%s\' "$BUGSEE_APP_TOKEN"; else printf \'%s\' "$BUGSEE_TOKEN_IOS"; fi ) 2>/dev/null || true )',
+  '      if [ -n "$ENV_TOKEN" ]; then',
+  '        TOKEN="$ENV_TOKEN"',
+  '      fi',
+  '    fi',
+  '  done',
+  'fi',
+];
+
+/**
  * Relays bugsee-cli output with Xcode's `error:` diagnostics turned into
  * `warning: bugsee: ...`, and returns the CLI's exit status. A failed upload
  * must never read as a build error. Post-action output is not parsed for
@@ -96,6 +119,7 @@ export function dsymPostActionScript(bakedToken?: string, bakedEndpoint?: string
     'if [ -z "$TOKEN" ]; then',
     '  TOKEN="$BUGSEE_TOKEN_IOS"',
     'fi',
+    ...ENV_FILE_TOKEN,
     'if [ -z "$TOKEN" ] && [ -f "$CREDS" ]; then',
     '  TOKEN=$(/usr/bin/plutil -extract ios raw -o - "$CREDS" 2>/dev/null || true)',
     'fi',

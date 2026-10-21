@@ -318,6 +318,31 @@ describe('withBugsee through the Expo mod compiler', () => {
     });
   });
 
+  it('removes the manifest token a later prebuild no longer writes', async () => {
+    await prebuild({ appToken: ANDROID_TOKEN, autoLaunch: true });
+    expect(read('manifest')).toContain('android:name="com.bugsee.app-token"');
+    await prebuild({ appToken: ANDROID_TOKEN });
+    expect(read('manifest')).not.toContain('com.bugsee.app-token');
+    expect(read('manifest')).not.toContain('com.bugsee.reactnative.app-token');
+  });
+
+  it('writes the manifest token once however often autoLaunch runs, and drops it for a placeholder', async () => {
+    await prebuild({ appToken: ANDROID_TOKEN, autoLaunch: true }, ['android']);
+    await prebuild({ appToken: ANDROID_TOKEN, autoLaunch: true }, ['android']);
+    expect(read('manifest').split('android:name="com.bugsee.app-token"')).toHaveLength(2);
+    expect(read('manifest').split('android:name="com.bugsee.reactnative.app-token"')).toHaveLength(2);
+    await prebuild({ appToken: PLACEHOLDER, autoLaunch: true }, ['android']);
+    expect(read('manifest')).not.toContain('com.bugsee.app-token');
+  });
+
+  it('never removes a manifest token the app wrote itself', async () => {
+    const path = join(projectRoot, FILES.manifest);
+    const own = '<meta-data android:name="com.bugsee.app-token" android:value="own-token"/>';
+    writeFileSync(path, readFileSync(path, 'utf8').replace(/(<application\b[^>]*>)/, (open: string) => `${open}\n    ${own}`));
+    await prebuild({ appToken: ANDROID_TOKEN }, ['android']);
+    expect(read('manifest')).toContain('android:value="own-token"');
+  });
+
   it('honours a gradlePluginVersion override and rewrites it on the next run', async () => {
     await prebuild({ gradlePluginVersion: '9.9.9' });
     expect(read('root')).toContain("id 'com.bugsee.android.gradle' version '9.9.9' apply false");
@@ -348,6 +373,25 @@ describe('withBugsee through the Expo mod compiler', () => {
     await expect(prebuild({}, ['android'])).rejects.toThrow(APP_GRADLE_NOT_GROOVY);
     expect(APP_GRADLE_NOT_GROOVY).toContain('bugsee-sourcemaps.gradle');
     expect(APP_GRADLE_NOT_GROOVY.startsWith(`${CANNOT_EDIT} android/app/build.gradle:`)).toBe(true);
+  });
+
+  it('names editGradleFiles in the Kotlin refusals, and that option lets a Kotlin project prebuild', async () => {
+    for (const message of [APP_GRADLE_NOT_GROOVY, gradleNotGroovy('android/build.gradle')]) {
+      expect(message).toContain('set "editGradleFiles": false in the @bugsee/react-native plugin options and run expo prebuild again');
+    }
+    const android = join(projectRoot, 'android');
+    for (const [dir, name] of [
+      [android, 'settings.gradle'],
+      [android, 'build.gradle'],
+      [join(android, 'app'), 'build.gradle'],
+    ] as const) {
+      renameSync(join(dir, name), join(dir, `${name}.kts`));
+    }
+    await prebuild({ appToken: ANDROID_TOKEN, editGradleFiles: false }, ['android']);
+    expect(readFileSync(join(android, 'bugsee.properties'), 'utf8')).toContain(`app_token=${ANDROID_TOKEN}`);
+    for (const file of ['settings.gradle.kts', 'build.gradle.kts', 'app/build.gradle.kts']) {
+      expect(readFileSync(join(android, file), 'utf8')).not.toContain('bugsee');
+    }
   });
 
   it('refuses a Kotlin settings or root file at prebuild', async () => {
@@ -450,11 +494,12 @@ describe('withBugsee through the Expo mod compiler', () => {
       expect(read('manifest')).toContain(`<meta-data ${SDK_META} android:value="${OTHER_ENDPOINT}"/>`);
       expect(read('manifest').split(SDK_META)).toHaveLength(2);
       await prebuild({ appToken: ANDROID_TOKEN, endpoint: ENDPOINT });
-      // The token meta-data autoLaunch wrote stays, as it always has; every endpoint item is back as before.
+      // Every item autoLaunch wrote, the token included, is back as before.
       const back = snapshot(projectRoot);
       expect(back[FILES.manifest]).not.toContain(SDK_META);
       expect(back[FILES.manifest]).not.toContain(MARKER_META);
-      expect({ ...back, [FILES.manifest]: '' }).toEqual({ ...noAuto, [FILES.manifest]: '' });
+      expect(back[FILES.manifest]).not.toContain('com.bugsee.app-token');
+      expect(back).toEqual(noAuto);
     });
 
     it('never touches an SDK endpoint the app wrote itself', async () => {

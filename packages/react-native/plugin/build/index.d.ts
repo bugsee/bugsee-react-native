@@ -52,6 +52,18 @@ export interface BugseePluginProps {
      * versions wrote. JS source-map hooks stay either way.
      */
     nativeCrashReporting?: boolean;
+    /**
+     * Defaults on. `false` stops the plugin editing android/settings.gradle,
+     * android/build.gradle and android/app/build.gradle at all, so a project
+     * whose Gradle files are Kotlin DSL (`.gradle.kts`), which the plugin
+     * refuses, can still prebuild. You then make those edits by hand (package
+     * README, "Android source maps"). Edits an earlier prebuild already made
+     * stay as they are, and later option changes (`uploadSymbols`,
+     * `nativeCrashReporting`, `gradlePluginVersion`) no longer reach these
+     * files; change them by hand too. Everything else the plugin does
+     * (bugsee.properties, gradle.properties, the manifest, iOS) is unchanged.
+     */
+    editGradleFiles?: boolean;
     /** Defaults to native-versions.json `android.gradlePlugin`. */
     gradlePluginVersion?: string;
     /** Defaults off. Writes `com.bugsee.app-token` manifest meta-data. */
