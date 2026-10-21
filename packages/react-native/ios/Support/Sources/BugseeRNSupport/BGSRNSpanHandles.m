@@ -5,6 +5,7 @@
 @interface BGSRNSpanEntry : NSObject
 @property (nonatomic, strong) id identity;
 @property (nonatomic, strong) id<BGSRNRetainedSpan> adapter;
+@property (nonatomic) BOOL owned;
 @end
 
 @implementation BGSRNSpanEntry
@@ -41,6 +42,10 @@
 }
 
 - (NSString *)retainSpan:(id)span adapter:(id<BGSRNRetainedSpan>)adapter {
+  return [self retainSpan:span adapter:adapter owned:YES];
+}
+
+- (NSString *)retainSpan:(id)span adapter:(id<BGSRNRetainedSpan>)adapter owned:(BOOL)owned {
   os_unfair_lock_lock(&_lock);
   NSString *handle = @"";
   if (!_closed && span != nil && adapter != nil) {
@@ -53,6 +58,7 @@
       BGSRNSpanEntry *entry = [BGSRNSpanEntry new];
       entry.identity = span;
       entry.adapter = adapter;
+      entry.owned = owned;
       _byHandle[handle] = entry;
       [_byIdentity setObject:handle forKey:span];
     }
@@ -61,7 +67,7 @@
   return handle;
 }
 
-- (NSArray<NSString *> *)finishHandle:(NSString *)handle status:(NSNumber *)status {
+- (NSArray<NSDictionary *> *)finishHandle:(NSString *)handle status:(NSNumber *)status {
   // The adapter's finish is outside the lock: os_unfair_lock does not
   // re-enter, and a parent finish runs the child's finish on this thread.
   os_unfair_lock_lock(&_lock);
@@ -73,7 +79,7 @@
   }
   [adapter bgsrnFinishWithStatus:status];
   os_unfair_lock_lock(&_lock);
-  NSArray<NSString *> *released = _closed ? @[] : [self dropCalled:handle];
+  NSArray<NSDictionary *> *released = _closed ? @[] : [self dropCalled:handle];
   os_unfair_lock_unlock(&_lock);
   return released;
 }
@@ -84,6 +90,34 @@
   [_byHandle removeAllObjects];
   [_byIdentity removeAllObjects];
   os_unfair_lock_unlock(&_lock);
+}
+
+- (void)cancelOpenAndReleaseAll {
+  os_unfair_lock_lock(&_lock);
+  NSArray<NSString *> *handles = [_byHandle.allKeys sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+    NSComparisonResult byLength = [@(a.length) compare:@(b.length)];
+    return byLength != NSOrderedSame ? byLength : [a compare:b];
+  }];
+  NSMutableArray<id<BGSRNRetainedSpan>> *owned = [NSMutableArray array];
+  for (NSString *handle in handles) {
+    BGSRNSpanEntry *entry = _byHandle[handle];
+    if (entry.owned) {
+      [owned addObject:entry.adapter];
+    }
+  }
+  _closed = YES;
+  [_byHandle removeAllObjects];
+  [_byIdentity removeAllObjects];
+  os_unfair_lock_unlock(&_lock);
+  for (id<BGSRNRetainedSpan> adapter in owned) {
+    @try {
+      if (![adapter bgsrnIsFinished]) {
+        [adapter bgsrnFinishWithStatus:@(3)];
+      }
+    } @catch (NSException *exception) {
+      // One span the SDK refuses must not strand the others.
+    }
+  }
 }
 
 - (BOOL)containsHandle:(NSString *)handle {
@@ -109,13 +143,13 @@
 }
 
 /// Caller holds the lock. `called` is removed whether or not it reports finished.
-- (NSArray<NSString *> *)dropCalled:(NSString *)called {
-  NSMutableArray<NSString *> *released = [NSMutableArray array];
+- (NSArray<NSDictionary *> *)dropCalled:(NSString *)called {
+  NSMutableArray<NSDictionary *> *released = [NSMutableArray array];
   BGSRNSpanEntry *calledEntry = called == nil ? nil : _byHandle[called];
   if (calledEntry != nil) {
     [_byIdentity removeObjectForKey:calledEntry.identity];
     [_byHandle removeObjectForKey:called];
-    [released addObject:called];
+    [released addObject:@{@"handle": called, @"status": @([calledEntry.adapter bgsrnStatus])}];
   }
   NSMutableArray<NSString *> *finished = [NSMutableArray array];
   for (NSString *handle in _byHandle) {
@@ -128,7 +162,7 @@
     BGSRNSpanEntry *entry = _byHandle[handle];
     [_byIdentity removeObjectForKey:entry.identity];
     [_byHandle removeObjectForKey:handle];
-    [released addObject:handle];
+    [released addObject:@{@"handle": handle, @"status": @([entry.adapter bgsrnStatus])}];
   }
   return released;
 }

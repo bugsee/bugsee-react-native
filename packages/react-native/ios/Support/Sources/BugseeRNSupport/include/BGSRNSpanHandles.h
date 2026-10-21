@@ -11,6 +11,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// `status` nil is the no-arg finish.
 - (void)bgsrnFinishWithStatus:(NSNumber *_Nullable)status;
 - (BOOL)bgsrnIsFinished;
+/// The SDK status (`BGSSpanStatus` integer), read now.
+- (NSInteger)bgsrnStatus;
 @end
 
 /**
@@ -28,14 +30,26 @@ NS_ASSUME_NONNULL_BEGIN
 /// issued and does not store `adapter` again.
 - (NSString *)retainSpan:(id)span adapter:(id<BGSRNRetainedSpan>)adapter;
 
+/// `owned` is YES for a span JS started, NO for one it only adopted (the
+/// active span). Only owned spans are cancelled by `cancelOpenAndReleaseAll`.
+- (NSString *)retainSpan:(id)span adapter:(id<BGSRNRetainedSpan>)adapter owned:(BOOL)owned;
+
 /// Finishes `handle`, then drops that handle even when it still reports
 /// unfinished. Other retained spans are dropped only when they now report
-/// finished. Empty when `handle` is not held.
-- (NSArray<NSString *> *)finishHandle:(NSString *)handle
+/// finished. Each item is `@{@"handle": NSString, @"status": NSNumber}` with
+/// the status the span holds after the finish. Empty when `handle` is not held.
+- (NSArray<NSDictionary *> *)finishHandle:(NSString *)handle
                                status:(NSNumber *_Nullable)status;
 
 /// Drops every handle and refuses later retains. Does not finish the spans.
 - (void)releaseAll;
+
+/// Finishes every owned span that is still open with Cancelled (status 3),
+/// then does what `releaseAll` does; adopted spans are only dropped. Parents
+/// are visited before their children, so a child a parent finish already
+/// cancelled is skipped. A span that throws is skipped. The adapter calls
+/// run outside the registry lock; the caller picks the thread.
+- (void)cancelOpenAndReleaseAll;
 
 /// The registry `invalidate` hands out. It retains nothing.
 + (BGSRNSpanHandles *)closedRegistry;

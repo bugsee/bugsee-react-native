@@ -859,6 +859,10 @@ static BOOL BGSRNApplyBreadcrumbKeep(id<BGSBreadcrumb> breadcrumb, NSDictionary 
   return _span.isFinished;
 }
 
+- (NSInteger)bgsrnStatus {
+  return (NSInteger)_span.status;
+}
+
 @end
 
 /// One JSON value, or nil when it is missing, null, an object or an array.
@@ -1073,8 +1077,9 @@ RCT_EXPORT_MODULE(Bugsee)
   if (BGSRNBreadcrumbFilterModule == self) {
     BGSRNBreadcrumbFilterModule = nil;
   }
-  // The next runtime cannot know these handles. Drop them without finishing:
-  // a reload must not close a transaction the SDK still has. The getter
+  // The next runtime cannot know these handles, so nothing would ever finish
+  // them and the SDK would keep the transactions open. Cancel what is still
+  // open, then drop the handles. The getter
   // must not allocate a fresh registry after this: a span call still in
   // flight would adopt into an object invalidate already abandoned.
   os_unfair_lock_lock(&_spanRegistryLock);
@@ -1082,7 +1087,12 @@ RCT_EXPORT_MODULE(Bugsee)
   BGSRNSpanHandles *previous = _spanHandles;
   _spanHandles = [BGSRNSpanHandles closedRegistry];
   os_unfair_lock_unlock(&_spanRegistryLock);
-  [previous releaseAll];
+  // Span calls run on the main thread; so does this finish. Async: invalidate
+  // can run while the main thread waits on the runtime, and a sync hop would
+  // deadlock. The registry is already swapped out, so nothing races it.
+  BGSRNRunOnMain(^{
+    [previous cancelOpenAndReleaseAll];
+  });
 }
 
 /// The SDK touches UIKit during start-up, so it must not be constructed on a
@@ -2421,11 +2431,16 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 }
 
 - (NSDictionary *)adoptSpan:(id<BGSSpan>)span {
+  return [self adoptSpan:span owned:YES];
+}
+
+/// `owned` NO is a span JS only found (the active span), not one it started.
+- (NSDictionary *)adoptSpan:(id<BGSSpan>)span owned:(BOOL)owned {
   if (span == nil) {
     return BGSRNNoSpan();
   }
   BGSRNLiveSpan *adapter = [[BGSRNLiveSpan alloc] initWithSpan:span];
-  NSString *handle = [self.spanHandles retainSpan:span adapter:adapter];
+  NSString *handle = [self.spanHandles retainSpan:span adapter:adapter owned:owned];
   return BGSRNSpanSnapshot(handle, span);
 }
 
@@ -2497,7 +2512,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (NSDictionary *)getActiveSpan {
   __block NSDictionary *snapshot = nil;
   BGSRNRunOnMainSync(^{
-    snapshot = [self adoptSpan:[Bugsee getActiveSpan]];
+    snapshot = [self adoptSpan:[Bugsee getActiveSpan] owned:NO];
   });
   return snapshot;
 }
@@ -2586,10 +2601,10 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   return snapshot;
 }
 
-- (NSArray<NSString *> *)spanFinish:(NSString *)handle
+- (NSDictionary *)spanFinish:(NSString *)handle
                              status:(double)status
                         statusSet:(BOOL)statusSet {
-  __block NSArray<NSString *> *released = @[];
+  __block NSArray<NSDictionary *> *released = @[];
   BGSRNRunOnMainSync(^{
     NSNumber *wire = nil;
     if (statusSet) {
@@ -2602,7 +2617,7 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
     }
     released = [self.spanHandles finishHandle:handle status:wire];
   });
-  return released;
+  return @{@"released": released};
 }
 
 /// Writable report colors on BugseeTheme (7.0.0-beta4; unchanged from beta3). Feedback properties
