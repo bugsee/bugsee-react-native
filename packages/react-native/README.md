@@ -308,7 +308,19 @@ Write it as if it were your only redaction.
   - **HTTP breadcrumbs** (only when `captureBreadcrumbs` is enabled). Android
     records the URL unredacted, without even the built-in query redaction.
     iOS applies the built-in query redaction when `default-sanitizer` is on.
-    Use `setBreadcrumbFilter` to clean them.
+    Use `setBreadcrumbFilter` to clean them. Return the whole crumb, because a
+    reply that leaves out a key the crumb had drops it. The URL is in `data`
+    on `http` crumbs:
+
+    ```ts
+    Bugsee.setBreadcrumbFilter(crumb => {
+      const data = crumb.data as { url?: unknown } | null | undefined;
+      if (crumb.type !== 'http' || typeof data?.url !== 'string') {
+        return crumb;
+      }
+      return { ...crumb, data: { ...data, url: data.url.split(/[?#]/)[0] } };
+    });
+    ```
   - **`http.client` performance spans** (performance monitoring,
     `com.bugsee.option.performance.enabled`, is on by default). Android always
     applies its built-in sanitizer to span URLs, even with `default-sanitizer`
