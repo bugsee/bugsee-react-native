@@ -182,9 +182,10 @@ public class BugseeModule extends NativeBugseeSpec
         // unanswered one is not recorded; a reply into this module after it
         // is gone has nowhere to land.
         BreadcrumbFilterBridge.shared().detach(this);
-        // The next runtime cannot know these handles. Drop them without
-        // finishing: a reload must not close a transaction the SDK still has.
-        spanHandles.releaseAll();
+        // The next runtime cannot know these handles, so nothing would ever
+        // finish them and the SDK would keep the transactions open. Cancel
+        // what is still open, then drop the handles.
+        spanHandles.cancelOpenAndReleaseAll();
         SecureRectanglePulls.shared().clearRefresher(pullRefresher);
         originTracker.dispose();
         // This runtime's Modal surfaces cannot be cleared by its JS any more.
@@ -1620,7 +1621,7 @@ public class BugseeModule extends NativeBugseeSpec
         if (span == null) {
             return noSpan();
         }
-        return snapshot(spanHandles.retain(span, new LiveSpan(span)), span);
+        return snapshot(spanHandles.retain(span, new LiveSpan(span), false), span);
     }
 
     @Override
@@ -1692,17 +1693,24 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     @Override
-    public WritableArray spanFinish(final String handle, final double status, final boolean statusSet) {
+    public WritableMap spanFinish(final String handle, final double status, final boolean statusSet) {
+        final WritableMap result = Arguments.createMap();
         final WritableArray released = Arguments.createArray();
         final SpanStatus parsed = statusSet ? SpanHandles.status((int) status) : null;
         if (statusSet && parsed == null) {
             Log.w(TAG, "span finish status is outside 0..5");
-            return released;
+            result.putArray("released", released);
+            return result;
         }
-        for (final String id : spanHandles.finish(handle, parsed)) {
-            released.pushString(id);
+        for (final SpanHandles.Released item : spanHandles.finish(handle, parsed)) {
+            final WritableMap entry = Arguments.createMap();
+            entry.putString("handle", item.handle);
+            entry.putInt("status", item.status);
+            released.pushMap(entry);
         }
-        return released;
+        // Last: putArray hands the array over, and a later push would be refused.
+        result.putArray("released", released);
+        return result;
     }
 
     @Nullable
@@ -1867,6 +1875,13 @@ public class BugseeModule extends NativeBugseeSpec
         @Override
         public boolean isFinished() {
             return span.isFinished();
+        }
+
+        @Override
+        public int statusOrdinal() {
+            final SpanStatus status = span.getStatus();
+            // The SDK holding nothing is not OK: report Unknown, like a no-op span.
+            return (status == null ? SpanStatus.UNKNOWN : status).ordinal();
         }
     }
 }

@@ -26,6 +26,15 @@ function wire(overrides: Record<string, unknown> = {}): Record<string, unknown> 
   };
 }
 
+/** The `spanFinish` result: each handle with the status the SDK holds. */
+function released(...items: Array<string | [string, number]>): Record<string, unknown> {
+  return {
+    released: items.map((item) =>
+      typeof item === 'string' ? { handle: item, status: SpanStatus.OK } : { handle: item[0], status: item[1] },
+    ),
+  };
+}
+
 let handleSeq = 0;
 
 function freshHandle(): string {
@@ -86,7 +95,7 @@ describe('spans', () => {
 
   it('finish releases the handle and a second finish does not cross', () => {
     native.startSpan.mockReturnValue(wire());
-    native.spanFinish.mockReturnValue(['sp-1']);
+    native.spanFinish.mockReturnValue(released('sp-1'));
     const span = Bugsee.startSpan('db.query');
     span.finish();
     expect(native.spanFinish).toHaveBeenCalledTimes(1);
@@ -102,7 +111,7 @@ describe('spans', () => {
 
   it('finish(status) crosses the status by value', () => {
     native.startSpan.mockReturnValue(wire());
-    native.spanFinish.mockReturnValue(['sp-1']);
+    native.spanFinish.mockReturnValue(released('sp-1'));
     Bugsee.startSpan('db.query').finish(SpanStatus.Error);
     expect(native.spanFinish).toHaveBeenCalledWith('sp-1', SpanStatus.Error, true);
   });
@@ -129,7 +138,7 @@ describe('spans', () => {
     native.spanStartChild.mockReturnValue(
       wire({ handle: 'sp-child', spanId: 'child', operation: 'db.query', description: 'users' }),
     );
-    native.spanFinish.mockReturnValue(['sp-parent', 'sp-child']);
+    native.spanFinish.mockReturnValue(released('sp-parent', 'sp-child'));
     const txn = Bugsee.startTransaction('checkout', 'user.flow');
     const child = txn.startChildSpan('db.query', 'users');
     expect(native.spanStartChild).toHaveBeenCalledWith('sp-parent', 'db.query', 'users');
@@ -141,10 +150,57 @@ describe('spans', () => {
     expect(native.spanSetAttribute).not.toHaveBeenCalled();
   });
 
+  it('finish() with no argument takes the status native reports (OK overwrote setStatus)', () => {
+    const handle = freshHandle();
+    native.startSpan.mockReturnValue(wire({ handle }));
+    native.spanFinish.mockReturnValue(released([handle, SpanStatus.OK]));
+    const span = Bugsee.startSpan('db.query');
+    span.setStatus(SpanStatus.Error);
+    expect(span.status).toBe(SpanStatus.Error);
+    span.finish();
+    expect(span.status).toBe(SpanStatus.OK);
+  });
+
+  it('a finish native ignored keeps the status native reports, not an inferred OK', () => {
+    const handle = freshHandle();
+    native.startSpan.mockReturnValue(wire({ handle }));
+    native.spanFinish.mockReturnValue(released([handle, SpanStatus.Unknown]));
+    const span = Bugsee.startSpan('db.query');
+    span.finish();
+    expect(span.status).toBe(SpanStatus.Unknown);
+  });
+
+  it('finish(status) falls back to that status when native reports nothing', () => {
+    native.startSpan.mockReturnValue(wire({ handle: freshHandle() }));
+    native.spanFinish.mockReturnValue(released());
+    const span = Bugsee.startSpan('db.query');
+    span.finish(SpanStatus.Timeout);
+    expect(span.status).toBe(SpanStatus.Timeout);
+  });
+
+  it('every released span takes the status native read for it', () => {
+    native.startTransaction.mockReturnValue(
+      wire({ handle: 'sp-p', name: 'checkout', sampled: true }),
+    );
+    native.spanStartChild
+      .mockReturnValueOnce(wire({ handle: 'sp-open', spanId: 'open' }))
+      .mockReturnValueOnce(wire({ handle: 'sp-done', spanId: 'done', finished: true }));
+    native.spanFinish.mockReturnValue(
+      released(['sp-p', SpanStatus.OK], ['sp-open', SpanStatus.Cancelled], ['sp-done', SpanStatus.Error]),
+    );
+    const txn = Bugsee.startTransaction('checkout', 'user.flow');
+    const open = txn.startChildSpan('a');
+    const done = txn.startChildSpan('b');
+    txn.finish();
+    expect(open.status).toBe(SpanStatus.Cancelled);
+    expect(open.finished).toBe(true);
+    expect(done.status).toBe(SpanStatus.Error);
+  });
+
   it('the first finish returns even when native omits the handle', () => {
     const handle = freshHandle();
     native.startSpan.mockReturnValue(wire({ handle, spanId: 'first' }));
-    native.spanFinish.mockReturnValue([]);
+    native.spanFinish.mockReturnValue(released());
     const span = Bugsee.startSpan('db.query');
     expect(() => span.finish()).not.toThrow();
     expect(span.finished).toBe(true);
@@ -426,7 +482,7 @@ describe('spans', () => {
     expect(span.status).toBe(SpanStatus.OK);
     span.setStatus(SpanStatus.OK);
     expect(native.spanSetStatus).toHaveBeenCalledWith(handle, 0);
-    native.spanFinish.mockReturnValue([handle]);
+    native.spanFinish.mockReturnValue(released(handle));
     span.finish(SpanStatus.OK);
     expect(native.spanFinish).toHaveBeenCalledWith(handle, 0, true);
     expect(span.finished).toBe(true);
@@ -456,7 +512,7 @@ describe('spans', () => {
   it('every later call on a finished span throws without crossing', () => {
     const handle = freshHandle();
     native.startSpan.mockReturnValue(wire({ handle }));
-    native.spanFinish.mockReturnValue([handle]);
+    native.spanFinish.mockReturnValue(released(handle));
     const span = Bugsee.startSpan('db.query');
     span.finish();
     native.spanSetName.mockClear();
@@ -486,7 +542,7 @@ describe('spans', () => {
     const liveSpan = Bugsee.startSpan('db.query');
     native.startSpan.mockReturnValue(wire({ handle: done, spanId: 'done' }));
     const finished = Bugsee.startSpan('db.query');
-    native.spanFinish.mockReturnValue([done, 'sp-missing']);
+    native.spanFinish.mockReturnValue(released(done, 'sp-missing'));
     expect(() => finished.finish()).not.toThrow();
     expect(finished.finished).toBe(true);
     expect(liveSpan.finished).toBe(false);
@@ -508,7 +564,7 @@ describe('spans', () => {
     );
     const txn = Bugsee.startTransaction('checkout', 'user.flow');
     const child = txn.startChildSpan('db.query', 'users');
-    native.spanFinish.mockReturnValue([parent, childHandle]);
+    native.spanFinish.mockReturnValue(released(parent, childHandle));
     txn.finish();
     native.startSpan.mockReturnValue(wire({ handle: childHandle, spanId: 'reborn' }));
     const reborn = Bugsee.startSpan('db.query');

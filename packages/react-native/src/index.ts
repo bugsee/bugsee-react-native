@@ -292,7 +292,13 @@ class Bugsee {
     });
   }
 
-  /** Stops the current session. */
+  /**
+   * Stops the current session. A blackout in force ends with it, on both
+   * platforms: it lasts until {@link endBlackout} or `stop()`. A
+   * {@link startBlackout} made before `launch()` is held until launch, and
+   * `stop()` on an SDK that was never launched does not cancel it. What
+   * `relaunch()` does to a blackout is platform-defined and unspecified.
+   */
   async stop(): Promise<boolean> {
     return NativeBugsee.stop();
   }
