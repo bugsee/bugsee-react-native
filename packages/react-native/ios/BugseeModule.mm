@@ -468,6 +468,16 @@ static __weak BugseeModule *BGSRNNetworkFilterModule = nil;
 static BOOL BGSRNNetworkFilterInstalled = NO;
 // Which module's JS installed the filter. A reload leaves the filter block in
 // place and attaches a new module that has not; see BGSRNFilterArming.
+/// Orders a module's claim of the three filter pointers against a setter's
+/// ownership check and arm, so a superseded module cannot pass the check,
+/// pause, and arm or disable after the replacement attached. Held only for
+/// the check and the arm or flag write, never across an SDK call.
+static id BGSRNFilterOwnerLock(void) {
+  static id lock;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ lock = [NSObject new]; });
+  return lock;
+}
 static BGSRNFilterArming *BGSRNNetworkFilterArming(void) {
   static BGSRNFilterArming *arming;
   static dispatch_once_t once;
@@ -1079,14 +1089,16 @@ RCT_EXPORT_MODULE(Bugsee)
   // After the emitter exists. A network filter installed earlier reads this
   // pointer when an event arrives; it is nil until then, and a nil module
   // drops the event.
-  BGSRNNetworkFilterModule = self;
-  // After the emitter exists. The native log filter is already installed.
-  // While a user callback is on, a nil module drops the line. With no user
-  // callback the same filter returns the line.
-  BGSRNLogFilterModule = self;
-  // Same lifetime as the log filter: nil until the emitter exists, and a nil
-  // module drops the crumb.
-  BGSRNBreadcrumbFilterModule = self;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    BGSRNNetworkFilterModule = self;
+    // After the emitter exists. The native log filter is already installed.
+    // While a user callback is on, a nil module drops the line. With no user
+    // callback the same filter returns the line.
+    BGSRNLogFilterModule = self;
+    // Same lifetime as the log filter: nil until the emitter exists, and a nil
+    // module drops the crumb.
+    BGSRNBreadcrumbFilterModule = self;
+  }
 }
 
 /// Identity-checked inside the bus: a reload can construct and attach the NEW
@@ -1112,20 +1124,26 @@ RCT_EXPORT_MODULE(Bugsee)
   // Drop this module's unanswered network events. A reload may already have
   // attached the new module; only clear the pointer when it is still us.
   BGSRNDropNetworkFiltersOwnedBy(self);
-  if (BGSRNNetworkFilterModule == self) {
-    BGSRNNetworkFilterModule = nil;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    if (BGSRNNetworkFilterModule == self) {
+      BGSRNNetworkFilterModule = nil;
+    }
   }
   // Drop this module's unanswered log lines. A reload may already have
   // attached the new module; only clear the pointer when it is still us.
   BGSRNDropLogFiltersOwnedBy(self);
-  if (BGSRNLogFilterModule == self) {
-    BGSRNLogFilterModule = nil;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    if (BGSRNLogFilterModule == self) {
+      BGSRNLogFilterModule = nil;
+    }
   }
   // Drop this module's unanswered crumbs. A reload may already have attached
   // the new module; only clear the pointer when it is still us.
   BGSRNDropBreadcrumbFiltersOwnedBy(self);
-  if (BGSRNBreadcrumbFilterModule == self) {
-    BGSRNBreadcrumbFilterModule = nil;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    if (BGSRNBreadcrumbFilterModule == self) {
+      BGSRNBreadcrumbFilterModule = nil;
+    }
   }
   // The next runtime cannot know these handles, so nothing would ever finish
   // them and the SDK would keep the transactions open. Cancel what is still
@@ -1678,11 +1696,17 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (NSNumber *)setNetworkFilterEnabled:(BOOL)enabled {
   // A reload can attach the new module before this one is invalidated. A
   // superseded module must neither arm nor disable the process-wide filter.
-  if (BGSRNNetworkFilterModule != self) {
+  BOOL owner = NO;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    owner = BGSRNNetworkFilterModule == self;
+    if (owner && enabled) {
+      [BGSRNNetworkFilterArming() armFor:self];
+    }
+  }
+  if (!owner) {
     return @YES;
   }
   if (enabled) {
-    [BGSRNNetworkFilterArming() armFor:self];
     @synchronized (BGSRNNetworkFilterLock()) {
       if (BGSRNNetworkFilterInstalled) {
         return @YES;
@@ -1804,14 +1828,20 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (NSNumber *)setLogFilterEnabled:(BOOL)enabled {
   // A reload can attach the new module before this one is invalidated. A
   // superseded module must neither arm nor disable the process-wide filter.
-  if (BGSRNLogFilterModule != self) {
+  BOOL owner = NO;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    owner = BGSRNLogFilterModule == self;
+    if (owner) {
+      if (enabled) {
+        [BGSRNLogFilterArming() armFor:self];
+      }
+      @synchronized (BGSRNLogFilterLock()) {
+        BGSRNLogFilterUserEnabled = enabled;
+      }
+    }
+  }
+  if (!owner) {
     return @YES;
-  }
-  if (enabled) {
-    [BGSRNLogFilterArming() armFor:self];
-  }
-  @synchronized (BGSRNLogFilterLock()) {
-    BGSRNLogFilterUserEnabled = enabled;
   }
   BGSRNInstallLogEventFilter();
   return @YES;
@@ -1872,11 +1902,17 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
 - (NSNumber *)setBreadcrumbFilterEnabled:(BOOL)enabled {
   // A reload can attach the new module before this one is invalidated. A
   // superseded module must neither arm nor disable the process-wide filter.
-  if (BGSRNBreadcrumbFilterModule != self) {
+  BOOL owner = NO;
+  @synchronized (BGSRNFilterOwnerLock()) {
+    owner = BGSRNBreadcrumbFilterModule == self;
+    if (owner && enabled) {
+      [BGSRNBreadcrumbFilterArming() armFor:self];
+    }
+  }
+  if (!owner) {
     return @YES;
   }
   if (enabled) {
-    [BGSRNBreadcrumbFilterArming() armFor:self];
     @synchronized (BGSRNBreadcrumbFilterLock()) {
       BGSRNBreadcrumbFilterGeneration += 1;
       if (BGSRNBreadcrumbFilterInstalled) {
