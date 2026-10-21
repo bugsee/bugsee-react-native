@@ -119,6 +119,16 @@ final class BreadcrumbFilterBridge {
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong();
     private final AtomicBoolean installed = new AtomicBoolean();
+
+    /**
+     * The module whose JS has installed its filter with
+     * {@code setEnabled(true)}, or null. Compared to the attached sink by
+     * identity, so a stale module cannot arm the new one. A reload attaches a new module whose JS has
+     * not subscribed yet, while this bridge (and the SDK's filter) outlive
+     * the old runtime. Until JS arms it again, a request would be emitted to
+     * nobody, so it is dropped at once instead: fail closed, no wait.
+     */
+    private final AtomicReference<Sink> armedFor = new AtomicReference<>();
     private final Object sdkLock = new Object();
     /**
      * The id of the manual {@code addBreadcrumb} on this thread. Set only
@@ -157,7 +167,31 @@ final class BreadcrumbFilterBridge {
     };
 
     void attach(@NonNull final Sink next) {
-        sink.set(next);
+        // Disarm before the sink is visible: a request in the gap must not
+        // reach a runtime that has not subscribed yet. See armedFor.
+        withSdkLock(() -> {
+            armedFor.set(null);
+            sink.set(next);
+        });
+    }
+
+    /**
+     * The module {@code caller}'s JS now answers requests. Ignored unless
+     * {@code caller} is still the attached module: a stale module's late
+     * enable must not arm the new runtime, which has not subscribed.
+     */
+    void arm(@NonNull final Sink caller) {
+        if (sink.get() == caller) {
+            armedFor.set(caller);
+        }
+    }
+
+    /** Arms for whichever module is attached. For tests, which have no module identity of their own. */
+    void arm() {
+        final Sink current = sink.get();
+        if (current != null) {
+            armedFor.set(current);
+        }
     }
 
     /**
@@ -167,7 +201,10 @@ final class BreadcrumbFilterBridge {
      * callback is run with {@code null}, which discards the crumb.
      */
     void detach(@NonNull final Sink current) {
-        sink.compareAndSet(current, null);
+        withSdkLock(() -> {
+            sink.compareAndSet(current, null);
+            armedFor.compareAndSet(current, null);
+        });
         final List<Pending> owned = new ArrayList<>();
         for (final Pending item : pending.values()) {
             if (item.owner == current && pending.remove(item.id, item)) {
@@ -196,8 +233,20 @@ final class BreadcrumbFilterBridge {
 
     /** Installs the filter, or removes it. A second {@code true} is a no-op. */
     void setEnabled(final boolean enabled) {
+        setEnabled(enabled, sink.get());
+    }
+
+    /** As above, on behalf of module {@code caller}; only the attached module can arm. */
+    void setEnabled(final boolean enabled, final Sink caller) {
         withSdkLock(() -> {
+            if (sink.get() != caller) {
+                // A superseded module must neither arm nor disable the process-wide filter.
+                return;
+            }
             if (enabled) {
+                if (caller != null) {
+                    arm(caller);
+                }
                 if (installed.compareAndSet(false, true)) {
                     Bugsee.setBreadcrumbFilter(filter);
                 }
@@ -265,7 +314,7 @@ final class BreadcrumbFilterBridge {
             @NonNull final Callback1<Breadcrumb> callback
     ) {
         final Sink current = sink.get();
-        if (current == null) {
+        if (current == null || armedFor.get() != current) {
             drop(callback);
             return;
         }

@@ -233,6 +233,7 @@ public class NetworkFilterBridgeTest {
     public void aReplyAfterTheUrlChangedDoesNotTouchTheEntry() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://secret.example/token");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -252,6 +253,7 @@ public class NetworkFilterBridgeTest {
     public void aDeadlineForgetsThePendingWithoutCallingTheCallback() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://secret.example/token");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -268,6 +270,7 @@ public class NetworkFilterBridgeTest {
     public void aReplyWhileTheEntryIsStillTheOriginalWritesItBack() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://secret.example/token");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -285,6 +288,7 @@ public class NetworkFilterBridgeTest {
     public void aNullReplyDropsALiveBorrow() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://secret.example/token");
         final RecordingCallback callback = new RecordingCallback();
         bridge.ask(event, callback);
@@ -301,6 +305,7 @@ public class NetworkFilterBridgeTest {
     public void detachDropsALiveBorrowAndSkipsARecycledOne() {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork live = new MutableNetwork("https://live.example");
         final RecordingCallback liveCallback = new RecordingCallback();
         bridge.ask(live, liveCallback);
@@ -328,6 +333,7 @@ public class NetworkFilterBridgeTest {
         final NetworkFilterBridge sanitizing = new NetworkFilterBridge(localScheduler, () -> true);
         final RecordingSink sink = new RecordingSink();
         sanitizing.attach(sink);
+        sanitizing.arm();
         final MutableNetwork event = new MutableNetwork(
                 "https://api.example/v1/items?token=bugsee-secret-token-value&ok=1"
         );
@@ -361,6 +367,7 @@ public class NetworkFilterBridgeTest {
     public void snapshotCarriesTheOverrideFlagAndAReplyCannotChangeIt() throws Exception {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork start = new MutableNetwork("https://api.example/v1/items");
         final MutableNetwork supplement = new MutableNetwork("https://api.example/v1/items");
         supplement.override = true;
@@ -388,6 +395,7 @@ public class NetworkFilterBridgeTest {
     public void jsonNullClearsErrorFieldsAndStatusText() throws Exception {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final MutableNetwork event = new MutableNetwork("https://api.example/v1/items");
         event.errorDescription = "gateway";
         event.errorShortMessage = "late";
@@ -416,6 +424,7 @@ public class NetworkFilterBridgeTest {
     public void aDisabledDefaultSanitizerLeavesTheTokenQuery() throws Exception {
         final RecordingSink sink = new RecordingSink();
         bridge.attach(sink);
+        bridge.arm();
         final String url = "https://api.example/v1/items?token=bugsee-secret-token-value&ok=1";
         final MutableNetwork event = new MutableNetwork(url);
         bridge.ask(event, new RecordingCallback());
@@ -453,5 +462,62 @@ public class NetworkFilterBridgeTest {
                     return null;
                 }
         );
+    }
+
+    /**
+     * A reload attaches a new module whose JS has not installed its filter.
+     * The request is dropped at once: not emitted to nobody, not left to the
+     * 9s forget and the SDK's 10s timeout.
+     */
+    @Test
+    public void aNewModuleThatHasNotArmedDropsAtOnceAndNothingIsPending() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        bridge.arm();
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(new MutableNetwork("https://secret.example/token"), callback);
+
+        assertEquals(0, next.ids.size());
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+        assertEquals(0, scheduler.tasks.size());
+    }
+
+    @Test
+    public void armingAgainAsksTheNewModule() {
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.arm();
+
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(new MutableNetwork("https://secret.example/token"), callback);
+
+        assertEquals(1, next.ids.size());
+        assertEquals(0, callback.runs);
+    }
+
+    /** A late enable from the module a reload replaced must not arm the new, unsubscribed runtime. */
+    @Test
+    public void aStaleModulesEnableDoesNotArmTheNewModule() {
+        final RecordingSink old = new RecordingSink();
+        bridge.attach(old);
+        final RecordingSink next = new RecordingSink();
+        bridge.attach(next);
+        bridge.arm(old);
+
+        final MutableNetwork ev = new MutableNetwork("https://secret.example/token");
+        final RecordingCallback dropped = new RecordingCallback();
+        bridge.ask(ev, dropped);
+        assertEquals(0, next.ids.size());
+        assertEquals(1, dropped.runs);
+
+        bridge.arm(next);
+        final RecordingCallback asked = new RecordingCallback();
+        bridge.ask(ev, asked);
+        assertEquals(1, next.ids.size());
+        assertEquals(0, asked.runs);
     }
 }

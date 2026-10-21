@@ -119,6 +119,18 @@ final class LogFilterBridge {
     private final AtomicLong ids = new AtomicLong();
     /** True only while the app has a log callback. False is the native pass-through. */
     private final AtomicBoolean userFilter = new AtomicBoolean();
+    /** Orders attach against setEnabled; see {@link #setEnabled(boolean, Sink)}. */
+    private final Object stateLock = new Object();
+
+    /**
+     * The module whose JS has installed its filter with
+     * {@code setEnabled(true)}, or null. Compared to the attached sink by
+     * identity, so a stale module cannot arm the new one. A reload attaches a new module whose JS has
+     * not subscribed yet, while this bridge (and the SDK's filter) outlive
+     * the old runtime. Until JS arms it again, a request would be emitted to
+     * nobody, so it is dropped at once instead: fail closed, no wait.
+     */
+    private final AtomicReference<Sink> armedFor = new AtomicReference<>();
 
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private LogFilterBridge() {
@@ -162,7 +174,46 @@ final class LogFilterBridge {
     };
 
     void attach(@NonNull final Sink next) {
-        sink.set(next);
+        // Disarm before the sink is visible: a request in the gap must not
+        // reach a runtime that has not subscribed yet. See armedFor. userFilter
+        // is deliberately kept: a redaction the app relied on must not silently
+        // stop applying across a reload.
+        synchronized (stateLock) {
+            armedFor.set(null);
+            sink.set(next);
+        }
+    }
+
+    /**
+     * What a new module does at construction: attach, then put the echo drop
+     * in place even when the app never calls setLogFilter. Not
+     * {@code setEnabled(false)}: after a reload that would turn a redaction the
+     * app relied on into a silent pass-through. The attach disarms the bridge,
+     * so with a user filter still on, lines are dropped until the new runtime
+     * calls setLogFilter (re-arm) or clears it (pass-through).
+     */
+    void attachModule(@NonNull final Sink next) {
+        attach(next);
+        ensureInstalled();
+    }
+
+    /**
+     * The module {@code caller}'s JS now answers requests. Ignored unless
+     * {@code caller} is still the attached module: a stale module's late
+     * enable must not arm the new runtime, which has not subscribed.
+     */
+    void arm(@NonNull final Sink caller) {
+        if (sink.get() == caller) {
+            armedFor.set(caller);
+        }
+    }
+
+    /** Arms for whichever module is attached. For tests, which have no module identity of their own. */
+    void arm() {
+        final Sink current = sink.get();
+        if (current != null) {
+            armedFor.set(current);
+        }
     }
 
     /**
@@ -174,7 +225,10 @@ final class LogFilterBridge {
      * forgotten and the callback is not touched.
      */
     void detach(@NonNull final Sink current) {
-        sink.compareAndSet(current, null);
+        synchronized (stateLock) {
+            sink.compareAndSet(current, null);
+            armedFor.compareAndSet(current, null);
+        }
         final List<Pending> owned = new ArrayList<>();
         for (final Pending item : pending.values()) {
             if (item.owner == current && pending.remove(item.id, item)) {
@@ -196,7 +250,24 @@ final class LogFilterBridge {
      * {@link Bugsee#setLogEventFilter}.
      */
     void setEnabled(final boolean enabled) {
-        userFilter.set(enabled);
+        setEnabled(enabled, sink.get());
+    }
+
+    /** As above, on behalf of module {@code caller}; only the attached module can arm. */
+    void setEnabled(final boolean enabled, final Sink caller) {
+        // One lock for the identity check and the write, so a stale module
+        // cannot pass the check, pause, and switch off a filter the new
+        // module has since turned on.
+        synchronized (stateLock) {
+            if (sink.get() != caller) {
+                // A superseded module must neither arm nor disable the process-wide filter.
+                return;
+            }
+            if (enabled && caller != null) {
+                arm(caller);
+            }
+            userFilter.set(enabled);
+        }
         ensureInstalled();
     }
 
@@ -285,7 +356,7 @@ final class LogFilterBridge {
     ) {
         final String line = event.getMessage();
         final Sink current = sink.get();
-        if (line == null || current == null) {
+        if (line == null || current == null || armedFor.get() != current) {
             drop(callback);
             return;
         }

@@ -111,6 +111,18 @@ final class NetworkFilterBridge {
     private final ConcurrentHashMap<String, Pending> pending = new ConcurrentHashMap<>();
     private final AtomicLong ids = new AtomicLong();
     private final AtomicBoolean installed = new AtomicBoolean();
+    /** Orders attach against setEnabled; see {@link #setEnabled(boolean, Sink)}. */
+    private final Object stateLock = new Object();
+
+    /**
+     * The module whose JS has installed its filter with
+     * {@code setEnabled(true)}, or null. Compared to the attached sink by
+     * identity, so a stale module cannot arm the new one. A reload attaches a new module whose JS has
+     * not subscribed yet, while this bridge (and the SDK's filter) outlive
+     * the old runtime. Until JS arms it again, a request would be emitted to
+     * nobody, so it is dropped at once instead: fail closed, no wait.
+     */
+    private final AtomicReference<Sink> armedFor = new AtomicReference<>();
 
     /** Production: one daemon thread forgets pending requests at {@link #BORROW_MS}. */
     private NetworkFilterBridge() {
@@ -143,7 +155,31 @@ final class NetworkFilterBridge {
     };
 
     void attach(@NonNull final Sink next) {
-        sink.set(next);
+        // Disarm before the sink is visible: a request in the gap must not
+        // reach a runtime that has not subscribed yet. See armedFor.
+        synchronized (stateLock) {
+            armedFor.set(null);
+            sink.set(next);
+        }
+    }
+
+    /**
+     * The module {@code caller}'s JS now answers requests. Ignored unless
+     * {@code caller} is still the attached module: a stale module's late
+     * enable must not arm the new runtime, which has not subscribed.
+     */
+    void arm(@NonNull final Sink caller) {
+        if (sink.get() == caller) {
+            armedFor.set(caller);
+        }
+    }
+
+    /** Arms for whichever module is attached. For tests, which have no module identity of their own. */
+    void arm() {
+        final Sink current = sink.get();
+        if (current != null) {
+            armedFor.set(current);
+        }
     }
 
     /**
@@ -152,7 +188,10 @@ final class NetworkFilterBridge {
      * forgotten and the callback is not touched.
      */
     void detach(@NonNull final Sink current) {
-        sink.compareAndSet(current, null);
+        synchronized (stateLock) {
+            sink.compareAndSet(current, null);
+            armedFor.compareAndSet(current, null);
+        }
         final List<Pending> owned = new ArrayList<>();
         for (final Pending item : pending.values()) {
             if (item.owner == current && pending.remove(item.id, item)) {
@@ -169,14 +208,31 @@ final class NetworkFilterBridge {
 
     /** Installs the filter, or removes it. A second {@code true} is a no-op. */
     void setEnabled(final boolean enabled) {
-        if (enabled) {
-            if (installed.compareAndSet(false, true)) {
-                Bugsee.setNetworkEventFilter(filter);
+        setEnabled(enabled, sink.get());
+    }
+
+    /** As above, on behalf of module {@code caller}; only the attached module can arm. */
+    void setEnabled(final boolean enabled, final Sink caller) {
+        // One lock for the identity check and the install, so a stale module
+        // cannot pass the check, pause, and remove a filter the new module
+        // has since relied on.
+        synchronized (stateLock) {
+            if (sink.get() != caller) {
+                // A superseded module must neither arm nor disable the process-wide filter.
+                return;
             }
-            return;
-        }
-        if (installed.compareAndSet(true, false)) {
-            Bugsee.setNetworkEventFilter(null);
+            if (enabled) {
+                if (caller != null) {
+                    arm(caller);
+                }
+                if (installed.compareAndSet(false, true)) {
+                    Bugsee.setNetworkEventFilter(filter);
+                }
+                return;
+            }
+            if (installed.compareAndSet(true, false)) {
+                Bugsee.setNetworkEventFilter(null);
+            }
         }
     }
 
@@ -221,6 +277,11 @@ final class NetworkFilterBridge {
             @NonNull final NetworkEvent event,
             @NonNull final Callback1<NetworkEvent> callback
     ) {
+        final Sink asked = sink.get();
+        if (asked == null || armedFor.get() != asked) {
+            drop(callback);
+            return;
+        }
         // setNetworkEventFilter skips DefaultNetworkDataSanitizer. The
         // capture provider runs it only when no filter is installed, and
         // only when CaptureNetworkUseDefaultSanitizer is on (default true).
@@ -243,10 +304,9 @@ final class NetworkFilterBridge {
             drop(callback);
             return;
         }
-        final Sink current = sink.get();
         // A null URL cannot tell a recycled entry (reset nulls the URL) from
         // the one we were asked about, so it is dropped rather than lent.
-        if (url == null || current == null) {
+        if (url == null) {
             drop(callback);
             return;
         }
@@ -258,11 +318,11 @@ final class NetworkFilterBridge {
             return;
         }
         final String requestId = Long.toString(ids.incrementAndGet());
-        final Pending item = new Pending(requestId, event, id, url, callback, current);
+        final Pending item = new Pending(requestId, event, id, url, callback, asked);
         pending.put(requestId, item);
         try {
             item.deadline = scheduler.schedule(() -> forget(requestId), BORROW_MS);
-            current.onNetworkFilterRequest(requestId, eventJson);
+            asked.onNetworkFilterRequest(requestId, eventJson);
         } catch (final Throwable e) {
             if (pending.remove(requestId, item)) {
                 cancel(item.deadline);
