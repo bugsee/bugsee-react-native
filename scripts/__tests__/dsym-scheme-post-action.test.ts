@@ -286,10 +286,12 @@ describe('BareExample archive post-action refuses a missing or placeholder token
     });
 
     it('survives a file with a syntax error or an exit, and one that sets a bad NODE_BINARY or endpoint', () => {
-      for (const bad of ['if [[ -n x ]]; then\n', 'exit 5\n', 'export BUGSEE_ENDPOINT=https://elsewhere.invalid\n']) {
+      // The file's own failure only costs the token: the script still reaches the guard.
+      for (const bad of ['if [[ -n x ]]; then\n', 'exit 5\n']) {
         const result = withEnvFile(`${bad}export BUGSEE_APP_TOKEN=${token}\n`);
-        // Statements after a bad one may not run; the script must still finish.
-        expect([0]).toContain(result.status);
+        expect(result.status).toBe(0);
+        expect(result.invoked).toBeNull();
+        expect(result.stdout).toBe(SKIP_NONE);
       }
       const result = withEnvFile('export BUGSEE_ENDPOINT=https://elsewhere.invalid\nexport BUGSEE_APP_TOKEN=' + token + '\n');
       expect(result.invoked).toBe(`token=${token}\n`);
