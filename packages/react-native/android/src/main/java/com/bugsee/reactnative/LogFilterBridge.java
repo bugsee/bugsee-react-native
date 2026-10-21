@@ -155,7 +155,8 @@ final class LogFilterBridge {
         this(scheduler, clock, filter -> { });
     }
 
-    private LogFilterBridge(
+    /** Tests pass the call that installs the SDK's filter. */
+    LogFilterBridge(
             @NonNull final Scheduler scheduler,
             @NonNull final ConsoleEchoDedup.Clock clock,
             @NonNull final Installer installer
@@ -216,9 +217,22 @@ final class LogFilterBridge {
      * sends) releases it to the pass-through.
      */
     void holdUntilJs() {
-        held.set(true);
+        // userFilter first: once the filter is installed no line may pass
+        // through before it is on. If the install throws it is rolled back
+        // (the throw goes on to StartupHold, which logs it) and the hold is
+        // not reported, as in the other two bridges; attachModule installs
+        // again when the module is built.
         userFilter.set(true);
-        ensureInstalled();
+        boolean ok = false;
+        try {
+            ensureInstalled();
+            ok = true;
+        } finally {
+            if (!ok) {
+                userFilter.set(false);
+            }
+        }
+        held.set(true);
     }
 
     /**

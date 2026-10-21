@@ -363,6 +363,36 @@ public class LogFilterBridgeTest {
     }
 
     @Test
+    public void aFailedEarlyInstallIsNotReportedAsHeldAndIsRolledBack() {
+        final int[] attempts = {0};
+        final LogFilterBridge failing = new LogFilterBridge(scheduler, System::currentTimeMillis, filter -> {
+            attempts[0]++;
+            if (attempts[0] == 1) {
+                throw new IllegalStateException("SDK not ready");
+            }
+        });
+
+        try {
+            failing.holdUntilJs();
+            org.junit.Assert.fail("the install failure is rethrown for StartupHold to log");
+        } catch (final IllegalStateException expected) {
+            // StartupHold logs it and goes on.
+        }
+
+        assertFalse(failing.isHeld());
+        // Rolled back: not a silent drop-everything without a filter behind it.
+        final MutableLog line = new MutableLog("public");
+        final RecordingCallback callback = new RecordingCallback();
+        failing.route(line, callback);
+        assertSame(line, callback.last);
+
+        // A retry installs and holds.
+        failing.holdUntilJs();
+        assertTrue(failing.isHeld());
+        assertEquals(2, attempts[0]);
+    }
+
+    @Test
     public void aBridgeThatWasNeverHeldIsThePassThrough() {
         bridge.attachModule(new RecordingSink());
         assertFalse(bridge.isHeld());
