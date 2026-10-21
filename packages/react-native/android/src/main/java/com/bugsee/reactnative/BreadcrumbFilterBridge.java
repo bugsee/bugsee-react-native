@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongSupplier;
 
 /**
  * The app's breadcrumb filter, as a round trip into JS.
@@ -88,14 +89,18 @@ final class BreadcrumbFilterBridge {
         @NonNull final Breadcrumb crumb;
         @NonNull final Callback1<Breadcrumb> callback;
         @NonNull final Sink owner;
+        /** {@code System.nanoTime()}-style instant after which a reply is refused. */
+        final long expiresAtNanos;
         @Nullable volatile Cancellable deadline;
 
         Pending(
                 @NonNull final String id,
                 @NonNull final Breadcrumb crumb,
                 @NonNull final Callback1<Breadcrumb> callback,
-                @NonNull final Sink owner
+                @NonNull final Sink owner,
+                final long expiresAtNanos
         ) {
+            this.expiresAtNanos = expiresAtNanos;
             this.id = id;
             this.crumb = crumb;
             this.callback = callback;
@@ -123,10 +128,17 @@ final class BreadcrumbFilterBridge {
     private final ThreadLocal<String> manualAddId = new ThreadLocal<>();
 
     private final Scheduler scheduler;
+    private final LongSupplier nanoClock;
 
     /** Tests pass a scheduler they fire themselves. Production uses {@link #shared()}. */
     BreadcrumbFilterBridge(@NonNull final Scheduler scheduler) {
+        this(scheduler, System::nanoTime);
+    }
+
+    /** Tests also pass a clock, to pass the deadline without the timer having run. */
+    BreadcrumbFilterBridge(@NonNull final Scheduler scheduler, @NonNull final LongSupplier nanoClock) {
         this.scheduler = scheduler;
+        this.nanoClock = nanoClock;
     }
 
     private final EventFilter<Breadcrumb> filter = new EventFilter<Breadcrumb>() {
@@ -210,6 +222,12 @@ final class BreadcrumbFilterBridge {
             return;
         }
         cancel(item.deadline);
+        // The timer can run late: past the deadline the answer is refused even
+        // if it got here first.
+        if (nanoClock.getAsLong() - item.expiresAtNanos >= 0) {
+            drop(item.callback);
+            return;
+        }
         try {
             if (crumbJson == null || !apply(item.crumb, crumbJson)) {
                 drop(item.callback);
@@ -259,7 +277,9 @@ final class BreadcrumbFilterBridge {
             return;
         }
         final String id = Long.toString(ids.incrementAndGet());
-        final Pending item = new Pending(id, event, callback, current);
+        final Pending item = new Pending(
+                id, event, callback, current,
+                nanoClock.getAsLong() + TimeUnit.MILLISECONDS.toNanos(DEADLINE_MS));
         pending.put(id, item);
         final String addId = manualAddId.get();
         try {

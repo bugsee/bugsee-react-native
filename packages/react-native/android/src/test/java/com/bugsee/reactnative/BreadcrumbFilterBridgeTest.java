@@ -206,7 +206,9 @@ public class BreadcrumbFilterBridgeTest {
     }
 
     private final ManualScheduler scheduler = new ManualScheduler();
-    private final BreadcrumbFilterBridge bridge = new BreadcrumbFilterBridge(scheduler);
+    private long nowNanos = 1_000L;
+    private final BreadcrumbFilterBridge bridge =
+            new BreadcrumbFilterBridge(scheduler, () -> nowNanos);
 
     @Test
     public void snapshotUsesGetValueAndOmitsUnsetKeys() throws Exception {
@@ -533,5 +535,43 @@ public class BreadcrumbFilterBridgeTest {
         assertTrue(first.sawNull);
         assertEquals(1, second.runs);
         assertFalse(second.sawNull);
+    }
+
+    @Test
+    public void aReplyAfterTheDeadlineIsRefusedEvenIfTheTimerHasNotRun() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        // Time passes the deadline, but the scheduler is late: expire() has not run.
+        nowNanos += java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+                BreadcrumbFilterBridge.DEADLINE_MS);
+        bridge.reply(sink.ids.get(0), "{\"message\":\"redacted\"}");
+
+        assertEquals("secret", crumb.message);
+        assertEquals(1, callback.runs);
+        assertTrue(callback.sawNull);
+        scheduler.fire();
+        assertEquals(1, callback.runs);
+    }
+
+    @Test
+    public void aReplyJustInsideTheDeadlineIsAccepted() {
+        final RecordingSink sink = new RecordingSink();
+        bridge.attach(sink);
+        final MutableCrumb crumb = new MutableCrumb();
+        crumb.message = "secret";
+        final RecordingCallback callback = new RecordingCallback();
+        bridge.ask(crumb, callback);
+
+        nowNanos += java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+                BreadcrumbFilterBridge.DEADLINE_MS) - 1;
+        bridge.reply(sink.ids.get(0), "{\"message\":\"redacted\"}");
+
+        assertEquals("redacted", crumb.message);
+        assertSame(crumb, callback.last);
     }
 }
