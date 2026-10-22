@@ -14,6 +14,13 @@
  *   api-launch-after-stop  stop(), launch() again, upload (N-03, FLOW-41).
  *   api-second-launch   launch() again while Launched with duration 30: the
  *                       status, events and options must not move (N-03).
+ *   api-blackout-stop   startBlackout(), stop(), launch() again, read the
+ *                       blackout back (#143; e2e/blackout-stop.test.ts).
+ *   api-blackout-stop-idle  stop() and launch() with no blackout in force: no
+ *                       BlackoutEnded (#143).
+ *   api-blackout-prelaunch-stop  startBlackout() and stop() both before the
+ *                       first launch(): the blackout is held until launch
+ *                       (#143).
  *   api-crash           a native SIGSEGV once Launched (N-09).
  *   api-after-crash     subscribes before launch(), logs what it saw (N-09).
  *   api-dialog-events   subscribes before launch(), opens the report dialog
@@ -31,6 +38,9 @@ export const LIFECYCLE_SCENARIOS = [
   'api-relaunch',
   'api-launch-after-stop',
   'api-second-launch',
+  'api-blackout-stop',
+  'api-blackout-stop-idle',
+  'api-blackout-prelaunch-stop',
   'api-crash',
   'api-after-crash',
   'api-dialog-events',
@@ -57,7 +67,16 @@ export async function preLaunchLifecycle(scenario: string, nonce: string): Promi
     case 'api-upload-events':
     case 'api-second-launch':
     case 'api-launch-after-stop':
+    case 'api-blackout-stop':
+    case 'api-blackout-stop-idle':
       events = recordEvents(nonce, scenario.slice(4));
+      return false;
+    case 'api-blackout-prelaunch-stop':
+      events = recordEvents(nonce, scenario.slice(4));
+      Bugsee.startBlackout();
+      mark(`bps called nonce=${nonce}`);
+      // The SDK was never launched: this stop() must not cancel the blackout.
+      mark(`bps stopped nonce=${nonce} result=${await settle(() => Bugsee.stop())}`);
       return false;
     default:
       return false;
@@ -103,6 +122,12 @@ export async function runLifecycleScenario(scenario: string, nonce: string, cont
       return launchAfterStop(nonce, context);
     case 'api-second-launch':
       return secondLaunch(nonce, context);
+    case 'api-blackout-stop':
+      return blackoutStop(nonce, context, true);
+    case 'api-blackout-stop-idle':
+      return blackoutStop(nonce, context, false);
+    case 'api-blackout-prelaunch-stop':
+      return blackoutPrelaunchStop(nonce);
     case 'api-crash':
       // A native signal, not testNativeCrash(): a Debug build's red box
       // catches the Java exception before it can kill the process.
@@ -178,4 +203,46 @@ async function secondLaunch(nonce: string, context: ApiContext): Promise<void> {
   );
   Bugsee.upload(`api-second-${nonce}`, '');
   mark(`second uploaded nonce=${nonce}`);
+}
+
+/** launch() with the app's options, waited for Launched (up to 15 s). */
+async function launchAndWait(context: ApiContext): Promise<{ result: string; status: Status }> {
+  const result = await settle(() => Bugsee.launch(context.token, context.options()));
+  const deadline = Date.now() + 15_000;
+  let status = await Bugsee.getStatus();
+  while (status !== Status.Launched && Date.now() < deadline) {
+    await delay(200);
+    status = await Bugsee.getStatus();
+  }
+  return { result, status };
+}
+
+/**
+ * #143. Launched -> [startBlackout()] -> stop() -> launch() -> read back.
+ * `bs <step>` markers bracket the calls so the test can place each lifecycle
+ * event (`blackout-stop event ...`, recordEvents) before or after them.
+ */
+async function blackoutStop(nonce: string, context: ApiContext, withBlackout: boolean): Promise<void> {
+  if (withBlackout) {
+    Bugsee.startBlackout();
+  }
+  mark(`bs started nonce=${nonce} withBlackout=${String(withBlackout)} isBlackout=${String(await Bugsee.isBlackout())}`);
+  const stopped = await settle(() => Bugsee.stop());
+  mark(`bs stopped nonce=${nonce} result=${stopped} status=${await Bugsee.getStatus()}`);
+  // Events are delivered asynchronously: let BlackoutEnded land before the
+  // next marker, so its position says which call caused it.
+  await delay(2_000);
+  mark(`bs after-stop nonce=${nonce}`);
+  const { result, status } = await launchAndWait(context);
+  mark(`bs relaunched nonce=${nonce} result=${result} status=${status} isBlackout=${String(await Bugsee.isBlackout())}`);
+  await delay(2_000);
+  mark(`bs summary nonce=${nonce}`);
+}
+
+/** #143. startBlackout() and stop() ran before launch() (preLaunchLifecycle). */
+async function blackoutPrelaunchStop(nonce: string): Promise<void> {
+  mark(`bps launched nonce=${nonce} isBlackout=${String(await Bugsee.isBlackout())}`);
+  Bugsee.endBlackout();
+  await delay(2_000);
+  mark(`bps cleared nonce=${nonce} isBlackout=${String(await Bugsee.isBlackout())}`);
 }
