@@ -25,7 +25,7 @@ shard), scripts 11 (one shard), plugin 75. Infinite loops are caught by Stryker'
 
 | # | Candidate | Verdict | Evidence | Expected saving | Risk |
 |---|---|---|---|---|---|
-| 4 | Rebalance by estimated cost per file (`GATE_COSTS`) | **Adopted** (src, scripts) | Fit of shard time to per-directory costs: 7.5% rms error on src's 6 shards vs 2.5x spread unweighted. Local `plan` shows cost-equal shards. Partition tests: every mutant in exactly one shard for any costs | scripts critical shard 18 -> ~7 min; src slowest 20 -> ~13 min (model; confirmed or corrected by the PR's CI run) | Stale costs only unbalance shards, never lose a mutant; merge still checks the mutant count against the plan |
+| 4 | Rebalance by estimated cost (`GATE_COSTS`) | **Adopted for scripts; src dropped** | Run 1 (39645042331): scripts shards 1.1 / 1.2 / 17.9 min. Run 2 (first run with the planner, 39763386386, costs: raw-messages.ts x16 and src by directory): scripts 10.6 / 1.1 / 1.3 min, so the cost is not in all of raw-messages.ts but in lines 160-384 (mostly static/load-time mutants, 90 timeouts). Costs now use a line range (`raw-messages.ts:160-384` x14). src: a directory fit predicted run 1 within 8% and run 2 not at all (shards of `secure/` alone: 456 s vs 1204 s; one 1953-mutant shard took 26.6 min), because static mutants (drivers.ts 107, stack.ts 103) rerun the whole suite and runner speed varied ~2x between jobs. No honest per-file fit exists from two noisy runs, so src keeps the plain mutant-count plan | scripts critical shard 18 -> 10.6 min measured, ~5 expected with the line-range fix; src unchanged | Stale costs only unbalance shards; the partition and the merge count check are unchanged |
 | 5a | `--concurrency` 4 vs 3 vs 6 on a 4 vCPU runner | Rejected (4 is right) | CI A/B, same 333 mutants, identical results (same fingerprint): c3 438 s, c4 284 and 371 s (two controls), c6 522 s | none | - |
 | 5b | `inPlace` for src/scripts | Rejected | A/B: 289 s vs 284/371 s control, no gain (copying 584 files is cheap). inPlace also rewrites file modes (it flipped the exec bit of 5 tracked scripts locally, hence `mutate:plugin`'s chmod) | none | exec-bit side effects |
 | 3 | Lower `timeoutMS` (src 30000) | Rejected | src has 4 wall-clock timeouts in the whole gate, in one non-critical shard: <= 40 s of runner time. Hit-limit timeouts do not wait `timeoutMS`. Scripts: 11, ~100 s on the shard being split anyway. Only plugin has enough (75) and its break is 97 | <= 1 min | A lower value can only turn slow kills into timeouts, but a loaded runner could mis-time-out a legit test |
@@ -62,11 +62,18 @@ report to its shard's own keys before the count check. Not implemented: it break
 
 ## 4. Adopted change
 
-`planShards(files, n, costs)` cuts and sizes oversized groups by cost; `GATE_COSTS` holds the per-gate
-path-prefix costs (src: `secure/` 2.75, `viewtree/` 2.25, `exceptions/` 1.5; scripts: `raw-messages.ts` 16;
-plugin: none). A plan with every cost 1 is the old plan (tested). `plan`/`shard` print each shard's cost.
-Recalibrate when a gate's shards drift apart: compare each shard's "Done in" with its planned mutants.
+`planShards(files, n, costs)` cuts and sizes oversized groups by cost; `GATE_COSTS` holds per-gate costs by
+path prefix or by `path:from-to` line range (the narrowest range wins, then the longest prefix, then 1).
+scripts: `raw-messages.ts:160-384` x14; src and plugin: none. A plan with every cost 1 is the old plan
+(tested). `plan`/`shard` print each shard's cost. Recalibrate when a gate's shards drift apart: compare each
+shard's "Done in" with its planned mutants.
+
+Measured on PR #166 (see its description for the final numbers), run 39763386386 against 39645042331:
+scripts slowest shard 17.9 -> 10.6 min (before the line-range fix). src slowest 19.9 -> 26.6 min with the
+directory costs, which is why they were removed (src reverts to the plan #163 shipped).
 
 Not done: plugin costs. Its CI plan differs from main's current one and one shard's per-file times are
-not separable (shard 1: bundle-phase, dsym-script, endpoint at ~3.4 s wall per mutant vs ~0.5 for the
-hermes scripts); a table fitted from one run would be guesswork. Follow-up once a post-merge run exists.
+not separable; a table fitted from one run would be guesswork. A second observation worth a follow-up: a
+quarter of src's mutants are static (they rerun the whole suite), so src's run time is as much about
+which shard draws `drivers.ts`/`stack.ts` as about directories; costing static mutants would need the
+dry-run's static coverage, which the planner does not have.

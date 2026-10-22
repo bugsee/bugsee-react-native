@@ -65,6 +65,9 @@ export interface MutantGroup {
 /**
  * What a mutant costs, relative to a typical one, by path prefix: the longest
  * prefix a file's name starts with decides. A file no prefix matches costs 1.
+ * A key of the form `path:a-b` is a line range of one file instead: it costs
+ * that for the mutant groups that start on those lines, whatever the file's
+ * prefix says (when ranges overlap, the narrowest wins).
  */
 export type FileCosts = Readonly<Record<string, number>>;
 
@@ -104,11 +107,25 @@ export function mutantGroups(spans: readonly MutantSpan[]): MutantGroup[] {
   return groups;
 }
 
-/** What one mutant of `fileName` costs under `costs`: the longest matching prefix, else 1. */
-export function fileCost(fileName: string, costs: FileCosts): number {
-  const matching = Object.entries(costs).filter(([prefix]) => fileName.startsWith(prefix));
+const RANGE_KEY = /^(.*):(\d+)-(\d+)$/;
+
+/**
+ * What one mutant of `fileName` costs under `costs`, for a group starting on
+ * `line` (when given): the narrowest line range holding it, else the longest
+ * matching prefix, else 1.
+ */
+export function fileCost(fileName: string, costs: FileCosts, line = Number.NaN): number {
+  const entries = Object.entries(costs);
+  const ranges = entries
+    .map(([key, cost]) => ({ match: RANGE_KEY.exec(key), cost }))
+    .filter((r) => r.match?.[1] === fileName && Number(r.match[2]) <= line && line <= Number(r.match[3]));
+  const narrowest = ranges.sort((a, b) => rangeLength(a.match!) - rangeLength(b.match!))[0];
+  if (narrowest !== undefined) return narrowest.cost;
+  const matching = entries.filter(([prefix]) => !RANGE_KEY.test(prefix) && fileName.startsWith(prefix));
   return matching.sort(([a], [b]) => b.length - a.length)[0]?.[1] ?? 1;
 }
+
+const rangeLength = (range: RegExpExecArray) => Number(range[3]) - Number(range[2]);
 
 interface Unit extends MutantGroup {
   file: FileMutants;
@@ -140,13 +157,20 @@ export function planShards(files: readonly FileMutants[], n: number, costs: File
   if (!Number.isInteger(n) || n < 1) throw new Error(`shard count must be a positive integer, got ${n}`);
   for (const [prefix, cost] of Object.entries(costs)) {
     if (!Number.isFinite(cost) || cost <= 0) throw new Error(`cost of ${prefix} must be a positive number, got ${cost}`);
+    const range = RANGE_KEY.exec(prefix);
+    if (range !== null && Number(range[2]) > Number(range[3])) throw new Error(`cost range ${prefix} ends before it starts`);
   }
   const units: Unit[] = [];
   for (const file of [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
     const groups = mutantGroups(file.spans);
-    const each = fileCost(file.name, costs);
     groups.forEach((group, index) =>
-      units.push({ ...group, file, cost: group.mutants * each, index, of: groups.length }),
+      units.push({
+        ...group,
+        file,
+        cost: group.mutants * fileCost(file.name, costs, group.startLine),
+        index,
+        of: groups.length,
+      }),
     );
   }
   const total = units.reduce((sum, unit) => sum + unit.cost, 0);
@@ -260,27 +284,26 @@ function toMutateEntries(run: readonly Unit[]): string[] {
 }
 
 /**
- * What a mutant costs by file, per gate, fitted to the shard run times of the
- * `ci` run 39645042331 (docs/ci/2026-10-stryker-speedup.md): in a gate's 3-6
- * equal-count shards, run times went 64 s / 73 s / 18 min (scripts) and 8 to
- * 20 min (src), because a mutant costs what the tests that cover it cost.
- * 1 is a typical mutant. The fit is only as good as that run: a file that
- * got slow or fast since just makes the shards a little uneven, never a
- * mutant go missing. Recalibrate from a merged run's shard times.
+ * What a mutant costs, per gate, fitted to shard run times of `ci` runs
+ * 39645042331 and 39763386386 (docs/ci/2026-10-stryker-speedup.md). 1 is a
+ * typical mutant. The fit is only as good as those runs: a file that got slow
+ * or fast since just makes the shards a little uneven, never a mutant go
+ * missing. Recalibrate from a merged run's shard times.
  *
- * scripts: raw-messages.ts is 1485 of the gate's 4800 mutants and 84% of its
- * run time (every mutant of the parser runs raw-messages.test.ts's corpus).
- * src: the <BugseeSecure> tests render, so secure/ and viewtree/ cost two to
- * three times a mutant of a plain module; exceptions/ a half more. plugin has
- * none: its one costly file, the Gradle lexer, is handled by OVERSIZED_COST.
+ * scripts: in raw-messages.ts the mutants of lines 160-384 (the mask/scan
+ * loops, nearly all static or covered at load, 90 of them timing out) took
+ * ~500 s of the gate's ~780 s of shard time; the other 3500 lines' worth of
+ * the gate, and the rest of that file, ~0.07 s a mutant.
+ * src has none: a first fit by directory (secure/ 2.75 ...) predicted its
+ * first run's shards within 8% and its second run's not at all (a secure/
+ * shard took 456 s in one place and 1204 s in another), because a static
+ * mutant (drivers.ts 107, stack.ts 103) reruns the whole suite and runner
+ * speed varied 2x between jobs. plugin has none either: its costly file, the
+ * Gradle lexer, is handled by OVERSIZED_COST.
  */
 export const GATE_COSTS: Readonly<Record<string, FileCosts>> = {
-  scripts: { 'scripts/raw-messages.ts': 16 },
-  src: {
-    'packages/react-native/src/secure/': 2.75,
-    'packages/react-native/src/viewtree/': 2.25,
-    'packages/react-native/src/exceptions/': 1.5,
-  },
+  scripts: { 'scripts/raw-messages.ts:160-384': 14 },
+  src: {},
   plugin: {},
 };
 

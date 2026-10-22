@@ -276,6 +276,48 @@ describe('fileCost', () => {
   });
 });
 
+describe('fileCost by line range', () => {
+  const costs = { 'a.ts': 2, 'a.ts:10-20': 9, 'a.ts:15-16': 30 };
+
+  it('costs a group starting inside a range what the range says', () => {
+    expect(fileCost('a.ts', costs, 10)).toBe(9);
+    expect(fileCost('a.ts', costs, 20)).toBe(9);
+  });
+
+  it('falls back to the file prefix outside the range, and with no line', () => {
+    expect(fileCost('a.ts', costs, 9)).toBe(2);
+    expect(fileCost('a.ts', costs, 21)).toBe(2);
+    expect(fileCost('a.ts', costs)).toBe(2);
+  });
+
+  it('takes the narrowest of overlapping ranges, whatever order they are listed in', () => {
+    expect(fileCost('a.ts', costs, 15)).toBe(30);
+    expect(fileCost('a.ts', { 'a.ts:15-16': 30, 'a.ts:10-20': 9 }, 15)).toBe(30);
+  });
+
+  it('keeps a range to its own file, and never reads it as a prefix', () => {
+    expect(fileCost('b.ts', costs, 12)).toBe(1);
+    expect(fileCost('a.ts:10-20', { 'a.ts:10-20': 9 })).toBe(1);
+    expect(fileCost('a.ts.bak', { 'a.ts:1-5': 9 }, 3)).toBe(1);
+  });
+
+  it('refuses a range that ends before it starts', () => {
+    expect(() => planShards([], 1, { 'a.ts:20-10': 3 })).toThrow('cost range a.ts:20-10 ends before it starts');
+  });
+
+  it('puts the costly lines of a file in shards of their own', () => {
+    const file: FileMutants = {
+      name: 'a.ts',
+      lineCount: 61,
+      spans: Array.from({ length: 60 }, (_, i) => span(i + 1)),
+    };
+    const shards = planShards([file], 3, { 'a.ts:21-40': 9 });
+    // 40 mutants at 1 and 20 at 9: 220 in all, 73.3 a shard.
+    expect(shards.map((s) => s.mutate)).toEqual([['a.ts:1-26'], ['a.ts:27-34'], ['a.ts:35-61']]);
+    expect(shards.map((s) => s.cost)).toEqual([74, 72, 74]);
+  });
+});
+
 describe('planShards by cost', () => {
   const lines = (name: string, count: number): FileMutants => ({
     name,
@@ -376,16 +418,16 @@ describe('planShards by cost', () => {
 });
 
 describe('GATE_COSTS', () => {
-  it('pins what each gate has costly, with a plain plugin', () => {
+  it('pins what each gate has costly', () => {
     expect(GATE_COSTS).toEqual({
-      scripts: { 'scripts/raw-messages.ts': 16 },
-      src: {
-        'packages/react-native/src/secure/': 2.75,
-        'packages/react-native/src/viewtree/': 2.25,
-        'packages/react-native/src/exceptions/': 1.5,
-      },
+      scripts: { 'scripts/raw-messages.ts:160-384': 14 },
+      src: {},
       plugin: {},
     });
+  });
+
+  it.each(Object.keys(GATE_COSTS))('is a valid set of costs for %s', (gate) => {
+    expect(() => planShards([{ name: 'a.ts', lineCount: 2, spans: [span(1)] }], 1, GATE_COSTS[gate])).not.toThrow();
   });
 });
 
