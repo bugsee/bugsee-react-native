@@ -110,7 +110,7 @@ jobs:
       - id: scope
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            git diff --name-only HEAD^1 HEAD | tee /dev/stderr | node scripts/cli-mutation.ts scope >> "$GITHUB_OUTPUT"
+            git diff --no-renames --name-only HEAD^1 HEAD | tee /dev/stderr | node scripts/cli-mutation.ts scope >> "$GITHUB_OUTPUT"
           else
             node scripts/cli-mutation.ts scope --all >> "$GITHUB_OUTPUT"
           fi
@@ -124,7 +124,7 @@ jobs:
         run: |
           scripts/ci-changes.sh --self-test
           if [ "${{ github.event_name }}" = pull_request ]; then
-            git diff --name-only HEAD^1 HEAD | scripts/ci-changes.sh >> "$GITHUB_OUTPUT"
+            git diff --no-renames --name-only HEAD^1 HEAD | scripts/ci-changes.sh >> "$GITHUB_OUTPUT"
           else
             printf 'app=true\nandroid=true\nios=true\n' >> "$GITHUB_OUTPUT"
           fi

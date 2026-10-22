@@ -46,9 +46,19 @@ fi
 
 echo "--- packing (npm pack, prepack/postpack as on publish)"
 mkdir -p "$WORK/tarballs"
+# prepack/postpack stage and unstage native-versions.json inside the package
+# directory, which parallel runs of this script (scripts/ci-each-version.sh)
+# share: one run's postpack would delete the file under another's pack. A
+# mkdir lock (flock is not on macOS) serializes just this step.
+PACK_LOCK="${TMPDIR:-/tmp}/bugsee-pack-install.lock.d"
+for _ in $(seq 1 300); do mkdir "$PACK_LOCK" 2>/dev/null && break; sleep 1; done
+[[ -d "$PACK_LOCK" ]] || { echo "FAIL: could not take $PACK_LOCK (stale lock? remove it)" >&2; exit 1; }
+PACK_RC=0
 for pkg in react-native react-native-feedback; do
-  (cd "$REPO/packages/$pkg" && npm pack --silent --pack-destination "$WORK/tarballs" >/dev/null)
+  (cd "$REPO/packages/$pkg" && npm pack --silent --pack-destination "$WORK/tarballs" >/dev/null) || { PACK_RC=1; break; }
 done
+rmdir "$PACK_LOCK"
+[[ "$PACK_RC" -eq 0 ]] || { echo "FAIL: npm pack" >&2; exit 1; }
 CORE_TGZ="$(ls "$WORK"/tarballs/bugsee-react-native-[0-9]*.tgz)"
 FEEDBACK_TGZ="$(ls "$WORK"/tarballs/bugsee-react-native-feedback-[0-9]*.tgz)"
 echo "    $(basename "$CORE_TGZ") $(basename "$FEEDBACK_TGZ")"

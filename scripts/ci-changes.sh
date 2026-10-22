@@ -39,7 +39,7 @@ classify() {
       packages/*/ios/* | packages/*/*.podspec | examples/bare/ios/*)
         app=true; ios=true ;;
       # JS-only: library modules, tests, package READMEs, mutation configs.
-      packages/*/src/* | packages/*/README.md | */__tests__/* | \
+      packages/*/src/* | packages/*/README.md | scripts/__tests__/* | \
       stryker.*.json | tsconfig.mutation.json)
         app=true ;;
       *)
@@ -76,6 +76,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   check "true true true" scripts/check-pack-install.sh
   check "true true true" native-versions.json
   check "true true true" packages/react-native/plugin/index.js
+  check "true true true" packages/react-native/scripts/__tests__/sourcemaps-gradle.test.js
+  check "true false false" scripts/__tests__/a.test.ts
   check "true true true" docs/a.md brand-new-top-level-file
   got="$(: | classify | tr '\n' ' ')"
   [[ "$got" == "app=true android=true ios=true " ]] || { echo "FAIL: empty list -> $got"; fail=1; }

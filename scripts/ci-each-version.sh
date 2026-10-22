@@ -5,7 +5,9 @@
 # 20 to 60 s of work behind 10 to 20 s of runner start-up and, on a busy day,
 # minutes in the queue, so seven jobs cost more wall-clock than one job that
 # runs them side by side. Each run keeps its own mktemp dir (the checks do),
-# so the runs share nothing but the npm cache.
+# so the runs share the npm cache, and nothing else but what the script itself
+# serializes (check-pack-install.sh locks its `npm pack`, which stages a file
+# inside the package directory).
 #
 # Usage: ci-each-version.sh <parallelism> <script> [script args...] -- <minor>...
 #   -> <script> <minor> [script args...], for each minor
