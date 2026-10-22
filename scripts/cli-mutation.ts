@@ -27,6 +27,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import {
+  GATE_COSTS,
   countMutants,
   mutantKey,
   gatesForChanges,
@@ -162,8 +163,10 @@ async function gateMutants(
   return { files: perFile, keys };
 }
 
+const costsOf = (gate: string) => (Object.hasOwn(GATE_COSTS, gate) ? GATE_COSTS[gate] : undefined);
+
 async function plan(gate: string, shards: number): Promise<Shard[]> {
-  return planShards((await gateMutants(readConfig(gate))).files, shards);
+  return planShards((await gateMutants(readConfig(gate))).files, shards, costsOf(gate));
 }
 
 function scope(all: boolean): void {
@@ -201,7 +204,7 @@ async function shard(gate: string, index: number, shards: number): Promise<void>
   }
   const out = join(dir, `shard-${index}.stryker.json`);
   writeFileSync(out, `${JSON.stringify(shardConfig, null, 2)}\n`);
-  console.log(`shard ${index} of ${shards}: ${slice.mutants} mutant(s) in`);
+  console.log(`shard ${index} of ${shards}: ${slice.mutants} mutant(s), cost ${slice.cost.toFixed(0)}, in`);
   for (const entry of slice.mutate) console.log(`    ${entry}`);
   if (slice.excludedMutations !== undefined) {
     console.log(`    leaving to other shards: ${slice.excludedMutations.join(', ')}`);
@@ -219,7 +222,7 @@ async function merge(gate: string, shards: number): Promise<void> {
     }
   });
   const { files, keys } = await gateMutants(config);
-  const planned = planShards(files, shards);
+  const planned = planShards(files, shards, costsOf(gate));
   // A split group's shard: only the gate's own mutants, of the mutators it kept.
   const merged = mergeReports(
     reports,
@@ -259,7 +262,7 @@ switch (command) {
   case 'plan':
     for (const [i, s] of (await plan(args[0]!, positiveInt(args[1], 'shards'))).entries()) {
       const without = s.excludedMutations ? ` without ${s.excludedMutations.join(',')}` : '';
-      console.log(`shard ${i + 1}: ${s.mutants} mutant(s): ${s.mutate.join(' ')}${without}`);
+      console.log(`shard ${i + 1}: ${s.mutants} mutant(s), cost ${s.cost.toFixed(0)}: ${s.mutate.join(' ')}${without}`);
     }
     break;
   case 'shard':

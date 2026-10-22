@@ -1,8 +1,10 @@
 import {
   ALL_GATES_TRIGGERS,
+  GATE_COSTS,
   GATE_INPUTS,
   OVERSIZED_COST,
   countMutants,
+  fileCost,
   mutantKey,
   gatesForChanges,
   globPrefix,
@@ -10,7 +12,7 @@ import {
   mutantGroups,
   planShards,
 } from '../mutation-shards';
-import type { FileMutants, GateScope, MutationReport } from '../mutation-shards';
+import type { FileCosts, FileMutants, GateScope, MutationReport } from '../mutation-shards';
 
 const span = (startLine: number, endLine = startLine, mutator = 'M') => ({ startLine, endLine, mutator });
 const group = (startLine: number, endLine: number, mutants: number) => ({
@@ -88,15 +90,15 @@ describe('planShards', () => {
   const empty: FileMutants = { name: 'src/types.ts', lineCount: 40, spans: [] };
 
   it('is the whole gate, file by file, for a single shard', () => {
-    expect(planShards([big, small, empty], 1)).toEqual([{ mutate: ['src/a.ts', 'src/big.ts'], mutants: 11 }]);
+    expect(planShards([big, small, empty], 1)).toEqual([{ mutate: ['src/a.ts', 'src/big.ts'], mutants: 11, cost: 11 }]);
   });
 
   it('splits a big file on safe lines, with ranges that meet end to end', () => {
     const shards = planShards([big], 3);
     expect(shards).toEqual([
-      { mutate: ['src/big.ts:1-30'], mutants: 4 },
-      { mutate: ['src/big.ts:31-60'], mutants: 3 },
-      { mutate: ['src/big.ts:61-100'], mutants: 2 },
+      { mutate: ['src/big.ts:1-30'], mutants: 4, cost: 4 },
+      { mutate: ['src/big.ts:31-60'], mutants: 3, cost: 3 },
+      { mutate: ['src/big.ts:61-100'], mutants: 2, cost: 2 },
     ]);
   });
 
@@ -120,8 +122,8 @@ describe('planShards', () => {
       { name: 'c.ts', lineCount: 5, spans: [span(1), span(2), span(3), span(4)] },
     ];
     expect(planShards(files, 2)).toEqual([
-      { mutate: ['a.ts:1-18'], mutants: 18 },
-      { mutate: ['a.ts:19-50', 'b.ts', 'c.ts'], mutants: 18 },
+      { mutate: ['a.ts:1-18'], mutants: 18, cost: 18 },
+      { mutate: ['a.ts:19-50', 'b.ts', 'c.ts'], mutants: 18, cost: 18 },
     ]);
   });
 
@@ -133,9 +135,9 @@ describe('planShards', () => {
   it('fills every shard even when the cap would let the first take more', () => {
     const file: FileMutants = { name: 'x.ts', lineCount: 4, spans: [span(1), span(2), span(3, 4), span(3, 3)] };
     expect(planShards([file], 3)).toEqual([
-      { mutate: ['x.ts:1-1'], mutants: 1 },
-      { mutate: ['x.ts:2-2'], mutants: 1 },
-      { mutate: ['x.ts:3-4'], mutants: 2 },
+      { mutate: ['x.ts:1-1'], mutants: 1, cost: 1 },
+      { mutate: ['x.ts:2-2'], mutants: 1, cost: 1 },
+      { mutate: ['x.ts:3-4'], mutants: 2, cost: 2 },
     ]);
   });
 
@@ -143,7 +145,7 @@ describe('planShards', () => {
     const a = { name: 'a.ts', lineCount: 1, spans: [span(1)] };
     const b = { name: 'b.ts', lineCount: 1, spans: [span(1)] };
     expect(planShards([b, a], 2)).toEqual(planShards([a, b], 2));
-    expect(planShards([b, a], 2)[0]).toEqual({ mutate: ['a.ts'], mutants: 1 });
+    expect(planShards([b, a], 2)[0]).toEqual({ mutate: ['a.ts'], mutants: 1, cost: 1 });
   });
 
   it('refuses more shards than there are places to cut', () => {
@@ -168,10 +170,10 @@ describe('planShards', () => {
   it('splits a group bigger than an even share by mutator, into shards of its own', () => {
     // 18 mutants, 3 shards: a share is 6, the function holds 14.
     expect(planShards([fn, small4], 3)).toEqual([
-      { mutate: ['a.ts'], mutants: 4 },
+      { mutate: ['a.ts'], mutants: 4, cost: 4 },
       // StringLiteral 6 + BlockStatement 1; ConditionalExpression 4 + EqualityOperator 3.
-      { mutate: ['fn.ts'], mutants: 7, excludedMutations: ['ConditionalExpression', 'EqualityOperator'] },
-      { mutate: ['fn.ts'], mutants: 7, excludedMutations: ['BlockStatement', 'StringLiteral'] },
+      { mutate: ['fn.ts'], mutants: 7, cost: 7, excludedMutations: ['ConditionalExpression', 'EqualityOperator'] },
+      { mutate: ['fn.ts'], mutants: 7, cost: 7, excludedMutations: ['BlockStatement', 'StringLiteral'] },
     ]);
   });
 
@@ -207,9 +209,9 @@ describe('planShards', () => {
     };
     const shards = planShards([middle], 3);
     expect(shards).toEqual([
-      { mutate: ['mid.ts:1-3', 'mid.ts:51-80'], mutants: 4 },
-      { mutate: ['mid.ts:4-50'], mutants: 7, excludedMutations: ['ConditionalExpression', 'EqualityOperator'] },
-      { mutate: ['mid.ts:4-50'], mutants: 7, excludedMutations: ['BlockStatement', 'StringLiteral'] },
+      { mutate: ['mid.ts:1-3', 'mid.ts:51-80'], mutants: 4, cost: 4 },
+      { mutate: ['mid.ts:4-50'], mutants: 7, cost: 7, excludedMutations: ['ConditionalExpression', 'EqualityOperator'] },
+      { mutate: ['mid.ts:4-50'], mutants: 7, cost: 7, excludedMutations: ['BlockStatement', 'StringLiteral'] },
     ]);
   });
 
@@ -217,28 +219,215 @@ describe('planShards', () => {
     const one: FileMutants = { name: 'one.ts', lineCount: 9, spans: [span(1, 9, 'BlockStatement'), span(2, 2, 'BlockStatement'), span(3, 3, 'BlockStatement')] };
     expect(() => planShards([one], 2)).toThrow('cannot cut 1 indivisible mutant group(s) into 2 shards');
     expect(planShards([one, small4], 2)).toEqual([
-      { mutate: ['a.ts'], mutants: 4 },
-      { mutate: ['one.ts'], mutants: 3 },
+      { mutate: ['a.ts'], mutants: 4, cost: 4 },
+      { mutate: ['one.ts'], mutants: 3, cost: 3 },
     ]);
   });
 
   it('keeps one shard for the rest, splitting the biggest group less', () => {
     // A share is 9; the function would take two shards and leave none.
     expect(planShards([fn, small4], 2)).toEqual([
-      { mutate: ['a.ts'], mutants: 4 },
-      { mutate: ['fn.ts'], mutants: 14 },
+      { mutate: ['a.ts'], mutants: 4, cost: 4 },
+      { mutate: ['fn.ts'], mutants: 14, cost: 14 },
     ]);
   });
 
   it('splits a group that is a whole file, mutating the whole file in each of its shards', () => {
     expect(planShards([fn], 2)).toEqual([
-      { mutate: ['fn.ts'], mutants: 7, excludedMutations: ['ConditionalExpression', 'EqualityOperator'] },
-      { mutate: ['fn.ts'], mutants: 7, excludedMutations: ['BlockStatement', 'StringLiteral'] },
+      { mutate: ['fn.ts'], mutants: 7, cost: 7, excludedMutations: ['ConditionalExpression', 'EqualityOperator'] },
+      { mutate: ['fn.ts'], mutants: 7, cost: 7, excludedMutations: ['BlockStatement', 'StringLiteral'] },
     ]);
   });
 
   it.each([0, -1, 1.5, Number.NaN])('refuses a shard count of %p', (n) => {
     expect(() => planShards([small], n)).toThrow(`shard count must be a positive integer, got ${n}`);
+  });
+});
+
+describe('fileCost', () => {
+  it('is 1 for a file no prefix matches, and for no prefixes at all', () => {
+    expect(fileCost('src/a.ts', {})).toBe(1);
+    expect(fileCost('src/a.ts', { 'lib/': 5 })).toBe(1);
+  });
+
+  it('takes the cost of the prefix the name starts with', () => {
+    expect(fileCost('src/secure/hold.ts', { 'src/secure/': 3 })).toBe(3);
+  });
+
+  it('takes the longest prefix, whatever order they are listed in', () => {
+    const costs = { 'src/': 2, 'src/secure/': 3, 'src/secure/hold.ts': 7 };
+    expect(fileCost('src/secure/hold.ts', costs)).toBe(7);
+    expect(fileCost('src/secure/unit.ts', costs)).toBe(3);
+    expect(fileCost('src/other.ts', costs)).toBe(2);
+    expect(fileCost('src/secure/hold.ts', { 'src/secure/hold.ts': 7, 'src/': 2, 'src/secure/': 3 })).toBe(7);
+  });
+
+  it('does not take a name for a prefix it only contains', () => {
+    expect(fileCost('lib/src/secure/a.ts', { 'src/secure/': 3 })).toBe(1);
+  });
+
+  it('takes an empty prefix for every file, which any other prefix beats', () => {
+    expect(fileCost('a.ts', { '': 4 })).toBe(4);
+    expect(fileCost('src/a.ts', { '': 4, 'src/': 2 })).toBe(2);
+  });
+
+  it('can be below 1: a prefix of cheap files', () => {
+    expect(fileCost('src/types/a.ts', { 'src/types/': 0.5 })).toBe(0.5);
+  });
+});
+
+describe('fileCost by line range', () => {
+  const costs = { 'a.ts': 2, 'a.ts:10-20': 9, 'a.ts:15-16': 30 };
+
+  it('costs a group starting inside a range what the range says', () => {
+    expect(fileCost('a.ts', costs, 10)).toBe(9);
+    expect(fileCost('a.ts', costs, 20)).toBe(9);
+  });
+
+  it('falls back to the file prefix outside the range, and with no line', () => {
+    expect(fileCost('a.ts', costs, 9)).toBe(2);
+    expect(fileCost('a.ts', costs, 21)).toBe(2);
+    expect(fileCost('a.ts', costs)).toBe(2);
+  });
+
+  it('takes the narrowest of overlapping ranges, whatever order they are listed in', () => {
+    expect(fileCost('a.ts', costs, 15)).toBe(30);
+    expect(fileCost('a.ts', { 'a.ts:15-16': 30, 'a.ts:10-20': 9 }, 15)).toBe(30);
+  });
+
+  it('keeps a range to its own file, and never reads it as a prefix', () => {
+    expect(fileCost('b.ts', costs, 12)).toBe(1);
+    expect(fileCost('a.ts:10-20', { 'a.ts:10-20': 9 })).toBe(1);
+    expect(fileCost('a.ts.bak', { 'a.ts:1-5': 9 }, 3)).toBe(1);
+  });
+
+  it('refuses a range that ends before it starts', () => {
+    expect(() => planShards([], 1, { 'a.ts:20-10': 3 })).toThrow('cost range a.ts:20-10 ends before it starts');
+  });
+
+  it('puts the costly lines of a file in shards of their own', () => {
+    const file: FileMutants = {
+      name: 'a.ts',
+      lineCount: 61,
+      spans: Array.from({ length: 60 }, (_, i) => span(i + 1)),
+    };
+    const shards = planShards([file], 3, { 'a.ts:21-40': 9 });
+    // 40 mutants at 1 and 20 at 9: 220 in all, 73.3 a shard.
+    expect(shards.map((s) => s.mutate)).toEqual([['a.ts:1-26'], ['a.ts:27-34'], ['a.ts:35-61']]);
+    expect(shards.map((s) => s.cost)).toEqual([74, 72, 74]);
+  });
+});
+
+describe('planShards by cost', () => {
+  const lines = (name: string, count: number): FileMutants => ({
+    name,
+    lineCount: count + 1,
+    spans: Array.from({ length: count }, (_, i) => span(i + 1)),
+  });
+  const cheap = lines('cheap/a.ts', 40);
+  const dear = lines('dear/b.ts', 10);
+
+  it('costs a shard what its mutants cost, which is their count when every file costs 1', () => {
+    expect(planShards([cheap, dear], 2).map((s) => [s.mutants, s.cost])).toEqual([
+      [25, 25],
+      [25, 25],
+    ]);
+  });
+
+  it('gives a costly file shards of its own rather than an even count', () => {
+    // 40 mutants at 1 and 10 at 9: 130 in all, 65 a shard.
+    const shards = planShards([cheap, dear], 2, { 'dear/': 9 });
+    expect(shards).toEqual([
+      { mutate: ['cheap/a.ts', 'dear/b.ts:1-3'], mutants: 43, cost: 67 },
+      { mutate: ['dear/b.ts:4-11'], mutants: 7, cost: 63 },
+    ]);
+  });
+
+  it('spreads a file that is most of the gate over every shard', () => {
+    const shards = planShards([lines('plain.ts', 6), lines('parser.ts', 30)], 3, { 'parser.ts': 10 });
+    // 6 mutants at 1 and 30 at 10: 306 in all, 102 a shard.
+    expect(shards.map((s) => s.cost)).toEqual([100, 100, 106]);
+    expect(shards.map((s) => s.mutate)).toEqual([
+      ['parser.ts:1-10'],
+      ['parser.ts:11-20'],
+      ['parser.ts:21-31', 'plain.ts'],
+    ]);
+  });
+
+  it('does not change a plan whose costs are all 1', () => {
+    const files = [cheap, dear, lines('z.ts', 7)];
+    for (let n = 1; n <= 5; n += 1) {
+      expect(planShards(files, n, { 'cheap/': 1, 'dear/': 1 })).toEqual(planShards(files, n));
+    }
+  });
+
+  it('never drops or duplicates a mutant, whatever the costs and the shard count', () => {
+    const files = [cheap, dear, lines('z.ts', 7), { name: 'dear/one.ts', lineCount: 9, spans: [span(1, 9), span(2)] }];
+    const total = files.reduce((sum, f) => sum + f.spans.length, 0);
+    for (const costs of [{}, { 'dear/': 9 }, { 'cheap/': 0.1, 'z.ts': 40 }] as FileCosts[]) {
+      for (let n = 1; n <= 8; n += 1) {
+        const shards = planShards(files, n, costs);
+        expect(shards).toHaveLength(n);
+        expect(shards.reduce((sum, s) => sum + s.mutants, 0)).toBe(total);
+        const placed = shards.reduce((sum, s) => sum + files.reduce((acc, f) => acc + placedBy(s.mutate, f), 0), 0);
+        expect(placed).toBe(total);
+      }
+    }
+  });
+
+  it('prices a split group by its mutators, at its file cost per mutant', () => {
+    const fn: FileMutants = {
+      name: 'dear/fn.ts',
+      lineCount: 60,
+      spans: [
+        span(10, 50, 'BlockStatement'),
+        ...Array.from({ length: 6 }, (_, i) => span(11 + i, 11 + i, 'StringLiteral')),
+        ...Array.from({ length: 4 }, (_, i) => span(20 + i, 20 + i, 'ConditionalExpression')),
+        ...Array.from({ length: 3 }, (_, i) => span(30 + i, 30 + i, 'EqualityOperator')),
+      ],
+    };
+    const shards = planShards([fn, lines('a.ts', 4)], 3, { 'dear/': 2 });
+    expect(shards.map((s) => [s.mutants, s.cost])).toEqual([
+      [4, 4],
+      [7, 14],
+      [7, 14],
+    ]);
+  });
+
+  it('counts a group against a share by its cost, so a costly one is split sooner', () => {
+    // 3 shards: the parser's group is 8 of the gate's 32 mutants, under an
+    // even share of 10.7; at 10 apiece it is 80 of 104, over a share of 34.7.
+    const parser: FileMutants = {
+      name: 'parser.ts',
+      lineCount: 30,
+      spans: [
+        span(1, 20, 'BlockStatement'),
+        ...Array.from({ length: 4 }, (_, i) => span(2 + i, 2 + i, 'StringLiteral')),
+        ...Array.from({ length: 3 }, (_, i) => span(10 + i, 10 + i, 'EqualityOperator')),
+      ],
+    };
+    const rest = lines('rest.ts', 24);
+    expect(planShards([parser, rest], 3).filter((s) => s.excludedMutations !== undefined)).toHaveLength(0);
+    const weighted = planShards([parser, rest], 3, { 'parser.ts': 10 });
+    expect(weighted.filter((s) => s.excludedMutations !== undefined).length).toBeGreaterThan(1);
+  });
+
+  it.each([0, -2, Number.NaN, Number.POSITIVE_INFINITY])('refuses a cost of %p', (cost) => {
+    expect(() => planShards([cheap], 1, { 'cheap/': cost })).toThrow(`cost of cheap/ must be a positive number, got ${cost}`);
+  });
+});
+
+describe('GATE_COSTS', () => {
+  it('pins what each gate has costly', () => {
+    expect(GATE_COSTS).toEqual({
+      scripts: { 'scripts/raw-messages.ts:160-384': 14 },
+      src: {},
+      plugin: {},
+    });
+  });
+
+  it.each(Object.keys(GATE_COSTS))('is a valid set of costs for %s', (gate) => {
+    expect(() => planShards([{ name: 'a.ts', lineCount: 2, spans: [span(1)] }], 1, GATE_COSTS[gate])).not.toThrow();
   });
 });
 

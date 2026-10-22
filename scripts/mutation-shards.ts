@@ -22,6 +22,13 @@
  * of the mutators the shard kept, so each mutant comes from the one shard
  * that ran it.
  *
+ * Shards are balanced by cost, not by mutant count: a mutant runs the tests
+ * that cover it, so what one costs depends on the file it is in (a mutant in
+ * a parser the whole corpus runs through costs 15 times one in a small helper).
+ * `GATE_COSTS` says how much more than a typical mutant a file's cost, by path
+ * prefix. The costs only decide where the cuts fall; whatever they are, every
+ * mutant lands in exactly one shard.
+ *
  * Everything here is pure; scripts/cli-mutation.ts does the I/O and asks
  * Stryker's own instrumenter where the mutants are.
  */
@@ -55,10 +62,21 @@ export interface MutantGroup {
   byMutator: Map<string, number>;
 }
 
+/**
+ * What a mutant costs, relative to a typical one, by path prefix: the longest
+ * prefix a file's name starts with decides. A file no prefix matches costs 1.
+ * A key of the form `path:a-b` is a line range of one file instead: it costs
+ * that for the mutant groups that start on those lines, whatever the file's
+ * prefix says (when ranges overlap, the narrowest wins).
+ */
+export type FileCosts = Readonly<Record<string, number>>;
+
 export interface Shard {
   /** `mutate` entries: a bare path for a whole file, `path:a-b` for a slice. */
   mutate: string[];
   mutants: number;
+  /** What the shard's mutants cost in all, in the units of {@link FileCosts}. */
+  cost: number;
   /** Mutators this shard leaves to others: set only on a split group's shards. */
   excludedMutations?: string[];
 }
@@ -89,8 +107,30 @@ export function mutantGroups(spans: readonly MutantSpan[]): MutantGroup[] {
   return groups;
 }
 
+const RANGE_KEY = /^(.*):(\d+)-(\d+)$/;
+
+/**
+ * What one mutant of `fileName` costs under `costs`, for a group starting on
+ * `line` (when given): the narrowest line range holding it, else the longest
+ * matching prefix, else 1.
+ */
+export function fileCost(fileName: string, costs: FileCosts, line = Number.NaN): number {
+  const entries = Object.entries(costs);
+  const ranges = entries
+    .map(([key, cost]) => ({ match: RANGE_KEY.exec(key), cost }))
+    .filter((r) => r.match?.[1] === fileName && Number(r.match[2]) <= line && line <= Number(r.match[3]));
+  const narrowest = ranges.sort((a, b) => rangeLength(a.match!) - rangeLength(b.match!))[0];
+  if (narrowest !== undefined) return narrowest.cost;
+  const matching = entries.filter(([prefix]) => !RANGE_KEY.test(prefix) && fileName.startsWith(prefix));
+  return matching.sort(([a], [b]) => b.length - a.length)[0]?.[1] ?? 1;
+}
+
+const rangeLength = (range: RegExpExecArray) => Number(range[3]) - Number(range[2]);
+
 interface Unit extends MutantGroup {
   file: FileMutants;
+  /** What all of the group's mutants cost: their count times the file's cost per mutant. */
+  cost: number;
   /** Index of this group within its file, and how many groups the file has. */
   index: number;
   of: number;
@@ -106,21 +146,34 @@ interface Unit extends MutantGroup {
 export const OVERSIZED_COST = 3;
 
 /**
- * Cuts the gate's mutants into `n` shards of as even a mutant count as the
- * safe cut points allow. Files keep their order, so a shard is a contiguous
+ * Cuts the gate's mutants into `n` shards of as even a cost (mutant count,
+ * when `costs` says every file costs the same) as the safe cut points allow. Files keep their order, so a shard is a contiguous
  * stretch of the sorted file list, whole files in the middle and at most a
  * slice at either end. A group bigger than an even share gets shards of its
  * own, split by mutator (see the top of this file). Files without a single
  * mutant are left out: they add nothing to any score.
  */
-export function planShards(files: readonly FileMutants[], n: number): Shard[] {
+export function planShards(files: readonly FileMutants[], n: number, costs: FileCosts = {}): Shard[] {
   if (!Number.isInteger(n) || n < 1) throw new Error(`shard count must be a positive integer, got ${n}`);
+  for (const [prefix, cost] of Object.entries(costs)) {
+    if (!Number.isFinite(cost) || cost <= 0) throw new Error(`cost of ${prefix} must be a positive number, got ${cost}`);
+    const range = RANGE_KEY.exec(prefix);
+    if (range !== null && Number(range[2]) > Number(range[3])) throw new Error(`cost range ${prefix} ends before it starts`);
+  }
   const units: Unit[] = [];
   for (const file of [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
     const groups = mutantGroups(file.spans);
-    groups.forEach((group, index) => units.push({ ...group, file, index, of: groups.length }));
+    groups.forEach((group, index) =>
+      units.push({
+        ...group,
+        file,
+        cost: group.mutants * fileCost(file.name, costs, group.startLine),
+        index,
+        of: groups.length,
+      }),
+    );
   }
-  const total = units.reduce((sum, unit) => sum + unit.mutants, 0);
+  const total = units.reduce((sum, unit) => sum + unit.cost, 0);
   const share = total / n;
 
   // How many shards each oversized group takes: enough for a third of an even
@@ -128,8 +181,8 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
   // leaving at least one shard for everything else.
   const heavy = new Map<Unit, number>();
   for (const unit of units) {
-    if (n > 1 && unit.mutants > share) {
-      heavy.set(unit, Math.min(Math.ceil((unit.mutants * OVERSIZED_COST) / share), unit.byMutator.size));
+    if (n > 1 && unit.cost > share) {
+      heavy.set(unit, Math.min(Math.ceil((unit.cost * OVERSIZED_COST) / share), unit.byMutator.size));
     }
   }
   const light = units.filter((unit) => !heavy.has(unit));
@@ -150,6 +203,7 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
   const shards: Shard[] = cutInOrder(rest, restShards).map((run) => ({
     mutate: toMutateEntries(run),
     mutants: run.reduce((sum, unit) => sum + unit.mutants, 0),
+    cost: run.reduce((sum, unit) => sum + unit.cost, 0),
   }));
   for (const [unit, k] of heavy) shards.push(...splitByMutator(unit, k));
   return shards;
@@ -163,20 +217,20 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
 function cutInOrder(units: readonly Unit[], n: number): Unit[][] {
   if (n === 0) return [];
   const runs: Unit[][] = [[]];
-  let rest = units.reduce((sum, unit) => sum + unit.mutants, 0);
+  let rest = units.reduce((sum, unit) => sum + unit.cost, 0);
   let load = 0;
   units.forEach((unit, i) => {
     const current = runs[runs.length - 1]!;
     const shardsLeft = n - runs.length;
     const aim = rest / (shardsLeft + 1);
-    const overshoots = load + unit.mutants / 2 > aim;
+    const overshoots = load + unit.cost / 2 > aim;
     if (current.length > 0 && shardsLeft > 0 && (overshoots || units.length - i === shardsLeft)) {
       rest -= load;
       runs.push([unit]);
-      load = unit.mutants;
+      load = unit.cost;
     } else {
       current.push(unit);
-      load += unit.mutants;
+      load += unit.cost;
     }
   });
   return runs;
@@ -185,6 +239,7 @@ function cutInOrder(units: readonly Unit[], n: number): Unit[][] {
 /** Deals a group's mutators, biggest first, onto the least loaded of `k` shards. */
 function splitByMutator(unit: Unit, k: number): Shard[] {
   const bins = Array.from({ length: k }, () => ({ mutators: [] as string[], mutants: 0 }));
+  const each = unit.cost / unit.mutants;
   const byCount = [...unit.byMutator].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
   for (const [mutator, count] of byCount) {
     const bin = bins.reduce((min, b) => (b.mutants < min.mutants ? b : min));
@@ -196,6 +251,7 @@ function splitByMutator(unit: Unit, k: number): Shard[] {
   return bins.map((bin) => ({
     mutate,
     mutants: bin.mutants,
+    cost: bin.mutants * each,
     excludedMutations: all.filter((mutator) => !bin.mutators.includes(mutator)),
   }));
 }
@@ -226,6 +282,30 @@ function toMutateEntries(run: readonly Unit[]): string[] {
   }
   return entries;
 }
+
+/**
+ * What a mutant costs, per gate, fitted to shard run times of `ci` runs
+ * 39645042331 and 39763386386 (docs/ci/2026-10-stryker-speedup.md). 1 is a
+ * typical mutant. The fit is only as good as those runs: a file that got slow
+ * or fast since just makes the shards a little uneven, never a mutant go
+ * missing. Recalibrate from a merged run's shard times.
+ *
+ * scripts: in raw-messages.ts the mutants of lines 160-384 (the mask/scan
+ * loops, nearly all static or covered at load, 90 of them timing out) took
+ * ~500 s of the gate's ~780 s of shard time; the other 3500 lines' worth of
+ * the gate, and the rest of that file, ~0.07 s a mutant.
+ * src has none: a first fit by directory (secure/ 2.75 ...) predicted its
+ * first run's shards within 8% and its second run's not at all (a secure/
+ * shard took 456 s in one place and 1204 s in another), because a static
+ * mutant (drivers.ts 107, stack.ts 103) reruns the whole suite and runner
+ * speed varied 2x between jobs. plugin has none either: its costly file, the
+ * Gradle lexer, is handled by OVERSIZED_COST.
+ */
+export const GATE_COSTS: Readonly<Record<string, FileCosts>> = {
+  scripts: { 'scripts/raw-messages.ts:160-384': 14 },
+  src: {},
+  plugin: {},
+};
 
 // ---------------------------------------------------------------------------
 // Reports

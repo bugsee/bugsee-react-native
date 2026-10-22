@@ -51,7 +51,7 @@ jobs:
   # shard count. That workflow cuts the gate into N jobs (scripts/
   # cli-mutation.ts): Stryker places a mutant only when a `mutate` range holds
   # all of it, so the cuts fall only between lines no mutant spans, and shards
-  # are balanced by mutant count. Each shard runs with `break` lifted and
+  # are balanced by estimated cost (GATE_COSTS). Each shard runs with `break` lifted and
   # uploads its JSON report; the gate's `score` job merges them, checks the
   # merged mutant count against the plan, and enforces `break` on the whole
   # through mutation-testing-metrics, the calculation Stryker itself uses. The
@@ -79,8 +79,9 @@ jobs:
   # killed, and without them it scores 92. The configs cap concurrency at 3
   # for laptops; a runner has 4 vCPUs. Before: src 36-49 min, scripts 13-22
   # min, one job each; plugin did not finish. At 3/2/10 shards: src 6-18,
-  # scripts 3-17, plugin 4-17 min a shard. Shards balance by mutant count,
-  # not cost (raw-messages.ts and index.ts mutants are dearer), hence 4/3.
+  # scripts 3-17, plugin 4-17 min a shard. Shards used to balance by mutant
+  # count, not cost (raw-messages.ts and secure/ mutants are dearer); they now
+  # balance by GATE_COSTS in scripts/mutation-shards.ts (docs/ci/2026-10-stryker-speedup.md).
   # src is now 6: its slowest of 4 shards took 22-36 min on every PR touching
   # src, which made it the critical path of the whole run.
   #
