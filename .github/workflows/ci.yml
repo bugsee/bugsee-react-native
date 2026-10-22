@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege: no job here writes to the repo, issues or PRs.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -27,9 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn lint
@@ -74,6 +81,8 @@ jobs:
   # min, one job each; plugin did not finish. At 3/2/10 shards: src 6-18,
   # scripts 3-17, plugin 4-17 min a shard. Shards balance by mutant count,
   # not cost (raw-messages.ts and index.ts mutants are dearer), hence 4/3.
+  # src is now 6: its slowest of 4 shards took 22-36 min on every PR touching
+  # src, which made it the critical path of the whole run.
   #
   # Tests that read files at runtime (the corpus a parser is scored against)
   # list those paths in GATE_INPUTS in scripts/mutation-shards.ts.
@@ -86,6 +95,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       gates: ${{ steps.scope.outputs.gates }}
+      app: ${{ steps.changes.outputs.app }}
+      android: ${{ steps.changes.outputs.android }}
+      ios: ${{ steps.changes.outputs.ios }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -98,9 +110,23 @@ jobs:
       - id: scope
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then
-            git diff --name-only HEAD^1 HEAD | tee /dev/stderr | node scripts/cli-mutation.ts scope >> "$GITHUB_OUTPUT"
+            git diff --no-renames --name-only HEAD^1 HEAD | tee /dev/stderr | node scripts/cli-mutation.ts scope >> "$GITHUB_OUTPUT"
           else
             node scripts/cli-mutation.ts scope --all >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+      # What else this change can reach (scripts/ci-changes.sh). The native
+      # builds and the app jobs `needs` this job and skip when the diff cannot
+      # touch them; a push to main or a manual run sets both, so main always
+      # runs everything. A skipped job reports as skipped, which a required
+      # check treats as passing.
+      - id: changes
+        run: |
+          scripts/ci-changes.sh --self-test
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            git diff --no-renames --name-only HEAD^1 HEAD | scripts/ci-changes.sh >> "$GITHUB_OUTPUT"
+          else
+            printf 'app=true\nandroid=true\nios=true\n' >> "$GITHUB_OUTPUT"
           fi
           cat "$GITHUB_OUTPUT"
 
@@ -111,7 +137,7 @@ jobs:
     uses: ./.github/workflows/mutation-gate.yml
     with:
       gate: src
-      shards: 4
+      shards: 6
 
   mutation-scripts:
     name: mutation (scripts)
@@ -165,12 +191,17 @@ jobs:
 
   expo-prebuild:
     name: expo prebuild (config plugin)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       - run: yarn install --immutable
       # Spec §13: the plugin's edits survive `expo prebuild --clean`, and a
@@ -178,13 +209,20 @@ jobs:
       # no build yet.
       - run: ./scripts/check-expo-prebuild.sh
 
+  # One job, all seven minors at once (scripts/ci-each-version.sh): each
+  # minor is 20 to 40 s of work, which a runner of its own turned into a
+  # check, a queue wait (median 7 min on a busy day) and a yarn-less
+  # start-up apiece.
   compat:
-    name: rn compat (${{ matrix.react-native }})
+    name: rn compat
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        react-native: ['0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87']
+    timeout-minutes: 20
+    env:
+      # The supported minors. scripts/__tests__/single-source.test.ts reads
+      # this list and compares it to the declared support matrix.
+      RN_COMPAT_MINORS: '0.81 0.82 0.83 0.84 0.85 0.86 0.87'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -194,7 +232,9 @@ jobs:
       # the surface that is actually ours. The example app cannot stand in for
       # this: its android/ and ios/ projects come from one version's template,
       # and swapping the npm dependency does not swap the project.
-      - run: ./scripts/check-rn-compat.sh ${{ matrix.react-native }}
+      - run: |
+          # shellcheck disable=SC2086 # the list is meant to word-split
+          ./scripts/ci-each-version.sh 4 ./scripts/check-rn-compat.sh -- $RN_COMPAT_MINORS
 
   # The packed tarballs installed into a fresh `react-native init` app, as a
   # customer gets them from npm (scripts/check-pack-install.sh). Inside the
@@ -205,33 +245,50 @@ jobs:
   # Typecheck on every supported minor; Gradle configuration on the floor
   # and the latest.
   pack-install:
-    name: pack install (${{ matrix.react-native }}${{ matrix.android && ', android' || '' }})
+    name: pack install (${{ matrix.react-native }}${{ needs.mutation-scope.outputs.android == 'true' && ', android' || '' }})
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        react-native: ['0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87']
-        include:
-          - react-native: '0.81'
-            android: true
-          - react-native: '0.87'
-            android: true
+        react-native: ['0.81', '0.87']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
       - uses: actions/setup-java@v5
-        if: matrix.android
+        if: needs.mutation-scope.outputs.android == 'true'
         with:
           distribution: temurin
           java-version: 17
-      - run: ./scripts/check-pack-install.sh ${{ matrix.react-native }} --typecheck ${{ matrix.android && '--android' || '' }}
+      # The Gradle configuration is native input: a change that cannot reach a
+      # native build (scripts/ci-changes.sh) keeps the typecheck and skips it.
+      - run: ./scripts/check-pack-install.sh ${{ matrix.react-native }} --typecheck ${{ needs.mutation-scope.outputs.android == 'true' && '--android' || '' }}
+
+  # The minors between the floor and the latest: typecheck only, side by side
+  # in one job (they were five jobs of under a minute each).
+  pack-install-mid:
+    name: pack install (0.82-0.86)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.18'
+      - run: ./scripts/ci-each-version.sh 3 ./scripts/check-pack-install.sh --typecheck -- 0.82 0.83 0.84 0.85 0.86
 
   # The iOS half: `pod install` evaluates both podspecs from the tarballs and
   # vendors the SDK (BLK-17).
   pack-install-ios:
     name: pack install (${{ matrix.react-native }}, ios)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.ios == 'true'
     runs-on: macos-15
     strategy:
       fail-fast: false
@@ -246,6 +303,8 @@ jobs:
 
   android:
     name: android
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.android == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -263,13 +322,18 @@ jobs:
             echo "::error title=Local SNAPSHOT pin::native-versions.json pins Android ${sdk}, built from a private clone; CI cannot resolve it. Expected red until the pin flips to the released version."
             exit 1
           fi
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
+      # Gradle's dependency and wrapper caches (~/.gradle). Runs on main write
+      # it; pull requests only read, so a PR cannot poison it.
+      - uses: gradle/actions/setup-gradle@v6
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn workspace bugsee-example-bare credentials
@@ -289,6 +353,8 @@ jobs:
 
   ios-unit:
     name: ios unit (BugseeRNSupport)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.ios == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -316,12 +382,17 @@ jobs:
 
   ios-e2e:
     name: ios e2e (simulator)
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.app == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       - run: yarn install --immutable
 
@@ -355,6 +426,14 @@ jobs:
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      # CocoaPods' download cache (RN's prebuilt tarballs, Hermes, the SDK
+      # pods): content-addressed, so a stale entry cannot change what installs.
+      - uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: cocoapods-${{ runner.os }}-${{ hashFiles('examples/bare/ios/Podfile.lock') }}
+          restore-keys: cocoapods-${{ runner.os }}-
 
       - name: Install pods
         working-directory: examples/bare/ios
@@ -453,6 +532,8 @@ jobs:
 
   ios:
     name: ios (${{ matrix.delivery }})
+    needs: mutation-scope
+    if: needs.mutation-scope.outputs.ios == 'true'
     runs-on: macos-15
     strategy:
       fail-fast: false
@@ -464,12 +545,24 @@ jobs:
         delivery: [cocoapods, spm]
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn workspace bugsee-example-bare credentials
+
+      # CocoaPods' download cache (RN's prebuilt tarballs, Hermes, the SDK
+      # pods): content-addressed, so a stale entry cannot change what installs.
+      - uses: actions/cache@v6
+        if: matrix.delivery == 'cocoapods'
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: cocoapods-${{ runner.os }}-${{ hashFiles('examples/bare/ios/Podfile.lock') }}
+          restore-keys: cocoapods-${{ runner.os }}-
 
       - name: Install pods
         if: matrix.delivery == 'cocoapods'
