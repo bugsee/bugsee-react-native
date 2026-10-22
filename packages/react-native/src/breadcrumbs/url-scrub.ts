@@ -7,9 +7,9 @@ import type { BreadcrumbSnapshot } from './types';
  */
 export type BreadcrumbUrlScrubber = (url: string) => string;
 
-/** `user:pass` before a `?` or `#`: a colon that is not a host's port. */
+/** A colon before a `?` or `#`: a port or a password, which cannot be told apart. */
 function looksLikeCredentials(beforeStop: string): boolean {
-  return beforeStop.includes(':') && !beforeStop.startsWith('[') && !/^[^:]*:\d*$/.test(beforeStop);
+  return beforeStop.includes(':') && !beforeStop.startsWith('[');
 }
 
 /**
@@ -20,32 +20,36 @@ function looksLikeCredentials(beforeStop: string): boolean {
  *
  * Plain string work, not `URL`: Hermes' `URL` is incomplete, and a value the
  * native SDK recorded may not parse (a relative or malformed URL still has to
- * lose its query). Leading and trailing whitespace is trimmed. A `?` or `#`
- * inside the password is treated as part of the credentials when a `:` comes
- * before it, so the whole `user:password@` goes. A `/` in the password ends
- * the authority, as in a URL parser, and is not handled.
+ * lose its query). Leading and trailing whitespace is trimmed. When an `@`
+ * follows a `?` or `#` and a `:` comes before it (`u:pa?ss@host`, or a port
+ * with an `@` in its query), the text cannot be told apart, so the whole
+ * authority is replaced by `[redacted]`. A username with no `:` in that shape
+ * is read as the host. A `/` in the password ends the authority, as in a URL
+ * parser, and is not handled.
  */
 export const defaultBreadcrumbUrlScrubber: BreadcrumbUrlScrubber = (url) => {
   const trimmed = url.trim();
-  const prefix = /^(?:[A-Za-z][A-Za-z0-9+.-]*:)?\/\//.exec(trimmed)?.[0] ?? '';
-  let rest = trimmed.slice(prefix.length);
-  if (prefix !== '') {
-    const slash = rest.indexOf('/');
-    const authority = slash < 0 ? rest : rest.slice(0, slash);
-    const stop = authority.search(/[?#]/);
-    const head = stop < 0 ? authority : authority.slice(0, stop);
-    let at = head.lastIndexOf('@');
-    if (at < 0 && looksLikeCredentials(head)) {
-      // The `@` after a `?` or `#` that sits inside the password.
-      at = authority.lastIndexOf('@');
-    }
-    if (at >= 0) {
-      rest = rest.slice(at + 1);
-    }
+  const parts = /^((?:[A-Za-z][A-Za-z0-9+.-]*:)?\/\/)([^/]*)/.exec(trimmed);
+  if (parts === null) {
+    return cutTail(trimmed);
   }
-  const end = rest.search(/[?#]/);
-  return prefix + (end < 0 ? rest : rest.slice(0, end));
+  const prefix = parts[1] as string;
+  const authority = parts[2] as string;
+  const path = trimmed.slice(parts[0].length);
+  const head = cutTail(authority);
+  const host = head.includes('@')
+    ? authority.slice(head.lastIndexOf('@') + 1)
+    : looksLikeCredentials(head) && authority.includes('@')
+      ? '[redacted]'
+      : authority;
+  return prefix + cutTail(host + path);
 };
+
+/** `text` up to the first `?` or `#`. */
+function cutTail(text: string): string {
+  const end = text.search(/[?#]/);
+  return end < 0 ? text : text.slice(0, end);
+}
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
