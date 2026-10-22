@@ -8,7 +8,7 @@ const actual = jest.requireActual('@bugsee/react-native') as Record<string, unkn
 const METHODS = [
   'launch', 'relaunch', 'stop', 'setSecureRectangles', 'startBlackout', 'endBlackout', 'isBlackout', 'captureViewHierarchy',
   'onLifecycleEvent', 'onStatusChange', 'setReportHandler', 'upload', 'showReportDialog', 'createReport', 'log', 'setNetworkFilter',
-  'addNetworkEvent', 'setLogFilter', 'addBreadcrumb', 'setBreadcrumbFilter', 'event', 'trace', 'setAttribute', 'getAttribute',
+  'addNetworkEvent', 'setLogFilter', 'addBreadcrumb', 'setBreadcrumbFilter', 'setBreadcrumbUrlScrubber', 'event', 'trace', 'setAttribute', 'getAttribute',
   'getAllAttributes', 'clearAttribute', 'clearAllAttributes', 'setUserIdentifier', 'getUserIdentifier', 'clearUserIdentifier',
   'attach', 'getStatus', 'getLaunchOptions', 'testNativeCrash', 'testJsCrash', 'logException', 'logUnhandledException', 'notify',
   'startTransaction', 'startSpan', 'getActiveSpan', 'deleteCollectedDataOnDevice',
