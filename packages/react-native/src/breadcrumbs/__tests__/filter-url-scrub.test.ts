@@ -97,6 +97,18 @@ describe('setBreadcrumbUrlScrubber', () => {
     expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', cleanKept);
   });
 
+  it.each([
+    ['an array', ['a', 1]],
+    ['a string', 'text'],
+    ['a huge number', { n: 1e30 }],
+  ])('keeps a crumb whose data is %s when only the scrubber is installed', async (_n, data) => {
+    Bugsee.setBreadcrumbUrlScrubber(true);
+    emit('1', { category: 'x', level: 'info', type: 'custom', data });
+    await flush();
+    const replied = JSON.parse(native.replyBreadcrumbFilter.mock.calls[0]?.[1] as string);
+    expect(replied.data).toEqual(data);
+  });
+
   it('keeps a crumb that is not http unchanged', async () => {
     Bugsee.setBreadcrumbUrlScrubber(true);
     const crumb = {

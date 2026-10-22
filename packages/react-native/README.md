@@ -426,7 +426,10 @@ Write it as if it were your only redaction.
     filter, nothing is asked and nothing is paid. It is a per-runtime setting
     like `setBreadcrumbFilter`: call it on every launch of the JS runtime,
     because after a reload native drops crumbs until it is called again. A
-    `setBreadcrumbFilter(null)` does not turn it off.
+    `setBreadcrumbFilter(null)` does not turn it off. Crumbs the SDK records
+    before JS runs the setter (an Android auto-launch) are not scrubbed; the
+    `holdFilters` option below closes that window. Only `data.url` is
+    cleaned: the SDKs' own `http` crumbs carry the URL nowhere else.
   - **`http.client` performance spans** (performance monitoring,
     `com.bugsee.option.performance.enabled`, is on by default). Android always
     applies its built-in sanitizer to span URLs, even with `default-sanitizer`

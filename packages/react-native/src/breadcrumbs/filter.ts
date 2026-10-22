@@ -194,10 +194,10 @@ function onBreadcrumbFilterRequest(event: {
       // The callback gets a copy: deleting a key from it must not change
       // which keys the reply has to carry. Those come from the original.
       const shown = { ...seen };
-      return Promise.all([seen, callback === undefined ? seen : callback(shown)]);
+      return Promise.all([seen, callback === undefined ? undefined : callback(shown)]);
     })
     .then(([seen, result]) => {
-      reply(requestId, keptJson(seen, result));
+      reply(requestId, callback === undefined ? echoJson(seen) : keptJson(seen, result));
     })
     .catch(() => {
       reply(requestId, null);
@@ -239,6 +239,21 @@ function snapshotFromJson(json: string): BreadcrumbSnapshot | null {
     snapshot.timestamp = source.timestamp;
   }
   return snapshot;
+}
+
+/**
+ * The JSON that keeps `snapshot` as it is, for the scrubber with no callback.
+ * `data` is not re-validated: the app wrote none of it, so a crumb native
+ * recorded with unusual data is not dropped for that.
+ */
+function echoJson(snapshot: BreadcrumbSnapshot): string {
+  const out: Record<string, unknown> = Object.create(null);
+  for (const key of [...WRITABLE_STRINGS, 'level', 'data'] as const) {
+    if (Object.hasOwn(snapshot, key)) {
+      out[key] = snapshot[key];
+    }
+  }
+  return encodeBridgeObject(out);
 }
 
 /**
