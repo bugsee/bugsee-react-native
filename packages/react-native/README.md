@@ -328,6 +328,11 @@ meta-data, before any JavaScript exists. Two things follow:
   applied for a kind that is held, because the SDK lets a filter set from code
   take its place, so do not list a kind you filter from the manifest; and
   `setXFilter(null)` then leaves that kind with no filter at all.
+  For `breadcrumb`, `setBreadcrumbUrlScrubber` arms the hold like
+  `setBreadcrumbFilter` does: `true` or a function counts as installing the
+  filter. Turning the scrubber off while it was never on does nothing, but
+  turning it off while it was on, with no breadcrumb filter set, releases the
+  hold, so crumbs pass through unfiltered until a setter runs again.
 - **Masking is not held.** Nothing from `<BugseeSecure>` or `setSecureRectangles`
   is masked until those mount, and the wrapper cannot hold the SDK's capture
   from JS-side state. If the first frames must not show a sensitive screen, do
@@ -389,26 +394,43 @@ Write it as if it were your only redaction.
   `secret`, `token`, `session` and `apikey` in header, query and body keys,
   strips `user:password` from URLs and redacts error messages.
 - **The filter does not reach every place a URL is recorded:**
-  - **HTTP breadcrumbs** (only when `captureBreadcrumbs` is enabled). Android
-    records the URL unredacted, without even the built-in query redaction.
-    iOS applies the built-in query redaction when `default-sanitizer` is on.
-    Use `setBreadcrumbFilter` to clean them. Return the whole crumb, because a
-    reply that leaves out a key the crumb had drops it. The URL is in `data`
-    on `http` crumbs:
+  - **HTTP breadcrumbs** (only when `captureBreadcrumbs` is enabled; type
+    `http`, the URL is `data.url`). Native records the URL before any JS
+    filter runs: Android records it unredacted, without even the built-in
+    query redaction, and iOS applies the built-in query redaction when
+    `default-sanitizer` is on. `setNetworkFilter` never sees them. This
+    package can clean them, **off by default**:
 
     ```ts
-    // Drops user:password@, the query and the fragment.
-    const stripUrl = (url: string) =>
-      url.replace(/\/\/[^/?#@]*@/, '//').split(/[?#]/)[0];
-
-    Bugsee.setBreadcrumbFilter(crumb => {
-      const data = crumb.data as { url?: unknown } | null | undefined;
-      if (crumb.type !== 'http' || typeof data?.url !== 'string') {
-        return crumb;
-      }
-      return { ...crumb, data: { ...data, url: stripUrl(data.url) } };
-    });
+    Bugsee.setBreadcrumbUrlScrubber(true);
+    // or your own: (url: string) => string
+    Bugsee.setBreadcrumbUrlScrubber(url => url.replace(/\/users\/\d+/, '/users/:id'));
+    // off again
+    Bugsee.setBreadcrumbUrlScrubber(false);
     ```
+
+    `true` drops `user:password@`, the query string and the fragment, and
+    keeps the scheme, host, port and path. An `@` after a `?` with a `:` before it (`u:pa?ss@host`) cannot be told
+    from a port with an `@` in its query, so everything after `https://` becomes `[redacted]`. Path segments can still carry an
+    identifier or a token, and a `;jsessionid=...` path parameter stays: use a
+    custom scrubber for those. The scrubber
+    runs before the callback of `setBreadcrumbFilter`, which then sees the
+    cleaned URL. It applies to every crumb of type `http` with a string
+    `data.url`, including one you pass to `addBreadcrumb`. A scrubber that
+    throws or returns a non-string drops the crumb, never records the
+    original.
+
+    It is opt-in because of what it costs. Native asks JS about every
+    breadcrumb, not only `http` ones, while a breadcrumb filter or the
+    scrubber is installed, so turning it on adds that round trip (and the 9 s
+    deadline, fail-closed) to each crumb. With it off, and no breadcrumb
+    filter, nothing is asked and nothing is paid. It is a per-runtime setting
+    like `setBreadcrumbFilter`: call it on every launch of the JS runtime,
+    because after a reload native drops crumbs until it is called again. A
+    `setBreadcrumbFilter(null)` does not turn it off. Crumbs the SDK records
+    before JS runs the setter (an Android auto-launch) are not scrubbed; the
+    `holdFilters` option below closes that window. Only `data.url` is
+    cleaned: the SDKs' own `http` crumbs carry the URL nowhere else.
   - **`http.client` performance spans** (performance monitoring,
     `com.bugsee.option.performance.enabled`, is on by default). Android always
     applies its built-in sanitizer to span URLs, even with `default-sanitizer`
@@ -423,9 +445,9 @@ Write it as if it were your only redaction.
     `http_url` without its query or fragment. Path segments are not passed
     through your filter.
 
-Routing these URLs through the network filter, and running the built-in
-sanitizer ahead of the filter on iOS, needs changes in the native SDKs and
-is tracked in
+Routing span URLs through the network filter, and running the built-in
+sanitizer ahead of the filter on iOS, needs changes in the native SDKs, which
+are tracked there. This package's side is tracked in
 [#137](https://github.com/bugsee/bugsee-react-native/issues/137).
 
 ## Release symbolication
