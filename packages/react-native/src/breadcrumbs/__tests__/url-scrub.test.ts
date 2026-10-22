@@ -18,6 +18,8 @@ describe('defaultBreadcrumbUrlScrubber', () => {
     ['wss://u:p@host/socket?t=1', 'wss://host/socket'],
     ['/relative/path?token=1', '/relative/path'],
     ['', ''],
+    ['?token=1', ''],
+    ['#frag', ''],
   ])('%s -> %s', (input, expected) => {
     expect(defaultBreadcrumbUrlScrubber(input)).toBe(expected);
   });
