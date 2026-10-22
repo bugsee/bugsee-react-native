@@ -202,11 +202,16 @@ export function parseSwiftProduct(manifest: string): string {
   return captured;
 }
 
-/** The react-native versions a CI workflow's compat matrix actually builds. */
+/**
+ * The react-native versions a CI workflow's compat job actually checks: the
+ * `RN_COMPAT_MINORS` env the job passes to scripts/ci-each-version.sh, a
+ * space-separated list. (It was a job matrix; the sweep now runs inside one
+ * job, and this is the one place the list is written.)
+ */
 export function parseCiCompatMatrix(workflow: string): string[] {
-  const line = /react-native:\s*\[([^\]]+)\]/.exec(workflow)?.[1];
-  if (!line) throw new Error('no react-native matrix found in the workflow');
-  return [...line.matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1] as string);
+  const list = /^\s*RN_COMPAT_MINORS:\s*(['"]?)([0-9. ]+)\1\s*$/m.exec(workflow)?.[2];
+  if (!list) throw new Error('no RN_COMPAT_MINORS list found in the workflow');
+  return list.trim().split(/\s+/);
 }
 
 /**

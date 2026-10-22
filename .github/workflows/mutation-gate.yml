@@ -15,6 +15,9 @@ on:
         type: number
         default: 1
 
+permissions:
+  contents: read
+
 jobs:
   shard:
     name: shard ${{ matrix.shard }} of ${{ inputs.shards }}
@@ -28,9 +31,12 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       - run: yarn install --immutable
       # Writes reports/mutation/<gate>/shard-<i>.stryker.json: the gate's
@@ -52,9 +58,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # corepack before setup-node: its yarn cache needs the pinned Yarn.
+      - run: corepack enable
       - uses: actions/setup-node@v7
         with:
           node-version: '22.18'
+          cache: yarn
       - run: corepack enable
       # For Stryker's instrumenter (to re-derive the plan and check that no
       # mutant went missing) and mutation-testing-metrics (to score).
