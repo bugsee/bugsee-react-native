@@ -116,8 +116,9 @@ describeDevice(`blackout and stop() on ${TARGET_NAME}`, () => {
           expect(blackoutEnded).toHaveLength(1);
           expect(blackoutStarted[0]!.index).toBeLessThan(stopped.index);
           // Caused by the stop() call, not by the next launch(): delivered
-          // before the 2 s settle that follows stop() (both platforms end it
-          // before stop() resolves), and nothing after the relaunch marker.
+          // before `bs after-stop`, which the scenario emits as soon as
+          // BlackoutEnded is recorded (or after a 10 s bounded wait, in which
+          // case this fails), and nothing after the relaunch marker.
           expect(blackoutEnded[0]!.index).toBeGreaterThan(started.index);
           expect(blackoutEnded[0]!.index).toBeLessThan(afterStop.index);
           expect(events(tag, nonce, 'BlackoutEnded', relaunched.index)).toHaveLength(0);
