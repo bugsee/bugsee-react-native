@@ -22,6 +22,13 @@
  * of the mutators the shard kept, so each mutant comes from the one shard
  * that ran it.
  *
+ * Shards are balanced by cost, not by mutant count: a mutant runs the tests
+ * that cover it, so what one costs depends on the file it is in (a mutant in
+ * a parser the whole corpus runs through costs 15 times one in a small helper).
+ * `GATE_COSTS` says how much more than a typical mutant a file's cost, by path
+ * prefix. The costs only decide where the cuts fall; whatever they are, every
+ * mutant lands in exactly one shard.
+ *
  * Everything here is pure; scripts/cli-mutation.ts does the I/O and asks
  * Stryker's own instrumenter where the mutants are.
  */
@@ -55,10 +62,18 @@ export interface MutantGroup {
   byMutator: Map<string, number>;
 }
 
+/**
+ * What a mutant costs, relative to a typical one, by path prefix: the longest
+ * prefix a file's name starts with decides. A file no prefix matches costs 1.
+ */
+export type FileCosts = Readonly<Record<string, number>>;
+
 export interface Shard {
   /** `mutate` entries: a bare path for a whole file, `path:a-b` for a slice. */
   mutate: string[];
   mutants: number;
+  /** What the shard's mutants cost in all, in the units of {@link FileCosts}. */
+  cost: number;
   /** Mutators this shard leaves to others: set only on a split group's shards. */
   excludedMutations?: string[];
 }
@@ -89,8 +104,16 @@ export function mutantGroups(spans: readonly MutantSpan[]): MutantGroup[] {
   return groups;
 }
 
+/** What one mutant of `fileName` costs under `costs`: the longest matching prefix, else 1. */
+export function fileCost(fileName: string, costs: FileCosts): number {
+  const matching = Object.entries(costs).filter(([prefix]) => fileName.startsWith(prefix));
+  return matching.sort(([a], [b]) => b.length - a.length)[0]?.[1] ?? 1;
+}
+
 interface Unit extends MutantGroup {
   file: FileMutants;
+  /** What all of the group's mutants cost: their count times the file's cost per mutant. */
+  cost: number;
   /** Index of this group within its file, and how many groups the file has. */
   index: number;
   of: number;
@@ -106,21 +129,27 @@ interface Unit extends MutantGroup {
 export const OVERSIZED_COST = 3;
 
 /**
- * Cuts the gate's mutants into `n` shards of as even a mutant count as the
- * safe cut points allow. Files keep their order, so a shard is a contiguous
+ * Cuts the gate's mutants into `n` shards of as even a cost (mutant count,
+ * when `costs` says every file costs the same) as the safe cut points allow. Files keep their order, so a shard is a contiguous
  * stretch of the sorted file list, whole files in the middle and at most a
  * slice at either end. A group bigger than an even share gets shards of its
  * own, split by mutator (see the top of this file). Files without a single
  * mutant are left out: they add nothing to any score.
  */
-export function planShards(files: readonly FileMutants[], n: number): Shard[] {
+export function planShards(files: readonly FileMutants[], n: number, costs: FileCosts = {}): Shard[] {
   if (!Number.isInteger(n) || n < 1) throw new Error(`shard count must be a positive integer, got ${n}`);
+  for (const [prefix, cost] of Object.entries(costs)) {
+    if (!Number.isFinite(cost) || cost <= 0) throw new Error(`cost of ${prefix} must be a positive number, got ${cost}`);
+  }
   const units: Unit[] = [];
   for (const file of [...files].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
     const groups = mutantGroups(file.spans);
-    groups.forEach((group, index) => units.push({ ...group, file, index, of: groups.length }));
+    const each = fileCost(file.name, costs);
+    groups.forEach((group, index) =>
+      units.push({ ...group, file, cost: group.mutants * each, index, of: groups.length }),
+    );
   }
-  const total = units.reduce((sum, unit) => sum + unit.mutants, 0);
+  const total = units.reduce((sum, unit) => sum + unit.cost, 0);
   const share = total / n;
 
   // How many shards each oversized group takes: enough for a third of an even
@@ -128,8 +157,8 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
   // leaving at least one shard for everything else.
   const heavy = new Map<Unit, number>();
   for (const unit of units) {
-    if (n > 1 && unit.mutants > share) {
-      heavy.set(unit, Math.min(Math.ceil((unit.mutants * OVERSIZED_COST) / share), unit.byMutator.size));
+    if (n > 1 && unit.cost > share) {
+      heavy.set(unit, Math.min(Math.ceil((unit.cost * OVERSIZED_COST) / share), unit.byMutator.size));
     }
   }
   const light = units.filter((unit) => !heavy.has(unit));
@@ -150,6 +179,7 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
   const shards: Shard[] = cutInOrder(rest, restShards).map((run) => ({
     mutate: toMutateEntries(run),
     mutants: run.reduce((sum, unit) => sum + unit.mutants, 0),
+    cost: run.reduce((sum, unit) => sum + unit.cost, 0),
   }));
   for (const [unit, k] of heavy) shards.push(...splitByMutator(unit, k));
   return shards;
@@ -163,20 +193,20 @@ export function planShards(files: readonly FileMutants[], n: number): Shard[] {
 function cutInOrder(units: readonly Unit[], n: number): Unit[][] {
   if (n === 0) return [];
   const runs: Unit[][] = [[]];
-  let rest = units.reduce((sum, unit) => sum + unit.mutants, 0);
+  let rest = units.reduce((sum, unit) => sum + unit.cost, 0);
   let load = 0;
   units.forEach((unit, i) => {
     const current = runs[runs.length - 1]!;
     const shardsLeft = n - runs.length;
     const aim = rest / (shardsLeft + 1);
-    const overshoots = load + unit.mutants / 2 > aim;
+    const overshoots = load + unit.cost / 2 > aim;
     if (current.length > 0 && shardsLeft > 0 && (overshoots || units.length - i === shardsLeft)) {
       rest -= load;
       runs.push([unit]);
-      load = unit.mutants;
+      load = unit.cost;
     } else {
       current.push(unit);
-      load += unit.mutants;
+      load += unit.cost;
     }
   });
   return runs;
@@ -185,6 +215,7 @@ function cutInOrder(units: readonly Unit[], n: number): Unit[][] {
 /** Deals a group's mutators, biggest first, onto the least loaded of `k` shards. */
 function splitByMutator(unit: Unit, k: number): Shard[] {
   const bins = Array.from({ length: k }, () => ({ mutators: [] as string[], mutants: 0 }));
+  const each = unit.cost / unit.mutants;
   const byCount = [...unit.byMutator].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
   for (const [mutator, count] of byCount) {
     const bin = bins.reduce((min, b) => (b.mutants < min.mutants ? b : min));
@@ -196,6 +227,7 @@ function splitByMutator(unit: Unit, k: number): Shard[] {
   return bins.map((bin) => ({
     mutate,
     mutants: bin.mutants,
+    cost: bin.mutants * each,
     excludedMutations: all.filter((mutator) => !bin.mutators.includes(mutator)),
   }));
 }
@@ -226,6 +258,31 @@ function toMutateEntries(run: readonly Unit[]): string[] {
   }
   return entries;
 }
+
+/**
+ * What a mutant costs by file, per gate, fitted to the shard run times of the
+ * `ci` run 39645042331 (docs/ci/2026-10-stryker-speedup.md): in a gate's 3-6
+ * equal-count shards, run times went 64 s / 73 s / 18 min (scripts) and 8 to
+ * 20 min (src), because a mutant costs what the tests that cover it cost.
+ * 1 is a typical mutant. The fit is only as good as that run: a file that
+ * got slow or fast since just makes the shards a little uneven, never a
+ * mutant go missing. Recalibrate from a merged run's shard times.
+ *
+ * scripts: raw-messages.ts is 1485 of the gate's 4800 mutants and 84% of its
+ * run time (every mutant of the parser runs raw-messages.test.ts's corpus).
+ * src: the <BugseeSecure> tests render, so secure/ and viewtree/ cost two to
+ * three times a mutant of a plain module; exceptions/ a half more. plugin has
+ * none: its one costly file, the Gradle lexer, is handled by OVERSIZED_COST.
+ */
+export const GATE_COSTS: Readonly<Record<string, FileCosts>> = {
+  scripts: { 'scripts/raw-messages.ts': 16 },
+  src: {
+    'packages/react-native/src/secure/': 2.75,
+    'packages/react-native/src/viewtree/': 2.25,
+    'packages/react-native/src/exceptions/': 1.5,
+  },
+  plugin: {},
+};
 
 // ---------------------------------------------------------------------------
 // Reports
