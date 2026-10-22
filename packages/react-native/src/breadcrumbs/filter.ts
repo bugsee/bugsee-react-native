@@ -116,12 +116,18 @@ export function setBreadcrumbUrlScrubber(
       `Bugsee.setBreadcrumbUrlScrubber requires a boolean or a function, got ${typeof scrubber}`,
     );
   }
+  const wasWanted = current !== undefined || currentScrubber !== undefined;
   if (scrubber === true) {
     currentScrubber = defaultBreadcrumbUrlScrubber;
   } else if (typeof scrubber === 'function') {
     currentScrubber = scrubber;
   } else {
     currentScrubber = undefined;
+  }
+  if (!wasWanted && currentScrubber === undefined) {
+    // Off to off: nothing to tell native, and a disable would release a hold
+    // that only the app's own setter should release.
+    return;
   }
   syncNativeFilter();
 }
@@ -185,7 +191,10 @@ function onBreadcrumbFilterRequest(event: {
       // The scrubber runs first, so the app's callback only ever sees the
       // cleaned URL. A throw here drops the crumb like a throw in the callback.
       const seen = scrubber === undefined ? snapshot : scrubSnapshotUrl(snapshot, scrubber);
-      return Promise.all([seen, callback === undefined ? seen : callback(seen)]);
+      // The callback gets a copy: deleting a key from it must not change
+      // which keys the reply has to carry. Those come from the original.
+      const shown = { ...seen };
+      return Promise.all([seen, callback === undefined ? seen : callback(shown)]);
     })
     .then(([seen, result]) => {
       reply(requestId, keptJson(seen, result));

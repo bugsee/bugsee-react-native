@@ -328,6 +328,11 @@ meta-data, before any JavaScript exists. Two things follow:
   applied for a kind that is held, because the SDK lets a filter set from code
   take its place, so do not list a kind you filter from the manifest; and
   `setXFilter(null)` then leaves that kind with no filter at all.
+  For `breadcrumb`, `setBreadcrumbUrlScrubber` arms the hold like
+  `setBreadcrumbFilter` does: `true` or a function counts as installing the
+  filter. Turning the scrubber off while it was never on does nothing, but
+  turning it off while it was on, with no breadcrumb filter set, releases the
+  hold, so crumbs pass through unfiltered until a setter runs again.
 - **Masking is not held.** Nothing from `<BugseeSecure>` or `setSecureRectangles`
   is masked until those mount, and the wrapper cannot hold the SDK's capture
   from JS-side state. If the first frames must not show a sensitive screen, do
@@ -406,7 +411,8 @@ Write it as if it were your only redaction.
 
     `true` drops `user:password@`, the query string and the fragment, and
     keeps the scheme, host, port and path. Path segments can still carry an
-    identifier or a token: use a custom scrubber for those. The scrubber
+    identifier or a token, and a `;jsessionid=...` path parameter stays: use a
+    custom scrubber for those. The scrubber
     runs before the callback of `setBreadcrumbFilter`, which then sees the
     cleaned URL. It applies to every crumb of type `http` with a string
     `data.url`, including one you pass to `addBreadcrumb`. A scrubber that
@@ -436,10 +442,9 @@ Write it as if it were your only redaction.
     through your filter.
 
 Routing span URLs through the network filter, and running the built-in
-sanitizer ahead of the filter on iOS, needs changes in the native SDKs. They
-are tracked in
-[#137](https://github.com/bugsee/bugsee-react-native/issues/137), with the
-native side in bugsee-android#311 and bugsee-ios#289.
+sanitizer ahead of the filter on iOS, needs changes in the native SDKs, which
+are tracked there. This package's side is tracked in
+[#137](https://github.com/bugsee/bugsee-react-native/issues/137).
 
 ## Release symbolication
 

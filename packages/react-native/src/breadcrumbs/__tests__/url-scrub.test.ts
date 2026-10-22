@@ -19,6 +19,18 @@ describe('defaultBreadcrumbUrlScrubber', () => {
     ['/relative/path?token=1', '/relative/path'],
     ['', ''],
     ['?token=1', ''],
+    ['https://u:pa?ss@host/p', 'https://host/p'],
+    ['https://u:pa#ss@host/p?x', 'https://host/p'],
+    ['  https://u:p@h/x?y  ', 'https://h/x'],
+    ['HTTPS://u:p@H/x', 'HTTPS://H/x'],
+    ['https://h/a//b@c/d', 'https://h/a//b@c/d'],
+    ['https://host?a=b@c', 'https://host'],
+    ['https://host:80?a=b@c', 'https://host:80'],
+    ['https://[::1]:80?a=b@c', 'https://[::1]:80'],
+    ['https://u:p@[::1]:8080/p', 'https://[::1]:8080/p'],
+    ['https://h/p;jsessionid=abc?x', 'https://h/p;jsessionid=abc'],
+    ['data:text/plain,a@b?c', 'data:text/plain,a@b'],
+    ['file:///tmp/a%3Fb', 'file:///tmp/a%3Fb'],
     ['#frag', ''],
   ])('%s -> %s', (input, expected) => {
     expect(defaultBreadcrumbUrlScrubber(input)).toBe(expected);
@@ -62,6 +74,6 @@ describe('scrubSnapshotUrl', () => {
   it('throws on a non-string result so the caller drops the crumb', () => {
     expect(() =>
       scrubSnapshotUrl({ type: 'http', data: { url: 'a' } }, (() => undefined) as never),
-    ).toThrow(TypeError);
+    ).toThrow('breadcrumb URL scrubber must return a string');
   });
 });

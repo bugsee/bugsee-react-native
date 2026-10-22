@@ -135,6 +135,44 @@ describe('setBreadcrumbUrlScrubber', () => {
     expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', cleanKept);
   });
 
+  it.each([['data'], ['message'], ['category'], ['type'], ['level']])(
+    'drops the crumb when the callback deletes %s from it',
+    async (key) => {
+      Bugsee.setBreadcrumbUrlScrubber(true);
+      Bugsee.setBreadcrumbFilter((crumb) => {
+        delete crumb[key];
+        return crumb;
+      });
+      emit('1', { ...httpCrumb, message: 'm' });
+      await flush();
+      expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', null);
+    },
+  );
+
+  it('does not let a callback that mutates its crumb change the original keys', async () => {
+    Bugsee.setBreadcrumbFilter((crumb) => {
+      delete crumb.data;
+      return crumb;
+    });
+    emit('1', httpCrumb);
+    await flush();
+    expect(native.replyBreadcrumbFilter).toHaveBeenCalledWith('1', null);
+  });
+
+  it('does not tell native when the scrubber goes off while it was never on', () => {
+    Bugsee.setBreadcrumbUrlScrubber(false);
+    Bugsee.setBreadcrumbUrlScrubber(null);
+    expect(native.setBreadcrumbFilterEnabled).not.toHaveBeenCalled();
+  });
+
+  it('re-asserts the native filter when the scrubber goes off under a callback', () => {
+    Bugsee.setBreadcrumbFilter((crumb) => crumb);
+    native.setBreadcrumbFilterEnabled.mockClear();
+    Bugsee.setBreadcrumbUrlScrubber(false);
+    expect(native.setBreadcrumbFilterEnabled).toHaveBeenCalledTimes(1);
+    expect(native.setBreadcrumbFilterEnabled).toHaveBeenCalledWith(true);
+  });
+
   it('lets the callback drop the crumb after the scrub', async () => {
     Bugsee.setBreadcrumbUrlScrubber(true);
     Bugsee.setBreadcrumbFilter(() => null);
