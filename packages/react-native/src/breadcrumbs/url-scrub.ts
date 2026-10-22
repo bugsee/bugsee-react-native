@@ -22,8 +22,8 @@ function looksLikeCredentials(beforeStop: string): boolean {
  * native SDK recorded may not parse (a relative or malformed URL still has to
  * lose its query). Leading and trailing whitespace is trimmed. When an `@`
  * follows a `?` or `#` and a `:` comes before it (`u:pa?ss@host`, or a port
- * with an `@` in its query), the text cannot be told apart, so the whole
- * authority is replaced by `[redacted]`. A username with no `:` in that shape
+ * with an `@` in its query), the text cannot be told apart, so everything after
+ * the scheme is replaced by `[redacted]`. A username with no `:` in that shape
  * is read as the host. A `/` in the password ends the authority, as in a URL
  * parser, and is not handled.
  */
@@ -35,14 +35,13 @@ export const defaultBreadcrumbUrlScrubber: BreadcrumbUrlScrubber = (url) => {
   }
   const prefix = parts[1] as string;
   const authority = parts[2] as string;
-  const path = trimmed.slice(parts[0].length);
   const head = cutTail(authority);
-  const host = head.includes('@')
-    ? authority.slice(head.lastIndexOf('@') + 1)
-    : looksLikeCredentials(head) && authority.includes('@')
-      ? '[redacted]'
-      : authority;
-  return prefix + cutTail(host + path);
+  if (!head.includes('@') && looksLikeCredentials(head) && authority.includes('@')) {
+    // Whatever follows is the password's tail or the query: keep none of it.
+    return prefix + '[redacted]';
+  }
+  const host = authority.slice(head.lastIndexOf('@') + 1);
+  return prefix + cutTail(host + trimmed.slice(parts[0].length));
 };
 
 /** `text` up to the first `?` or `#`. */
