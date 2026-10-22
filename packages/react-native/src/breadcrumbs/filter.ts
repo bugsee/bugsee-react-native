@@ -3,10 +3,13 @@ import { encodeBridgeObject } from '../bridge/json';
 import { copyBreadcrumbData } from './data';
 import { isBreadcrumbLevel } from './types';
 import type { BreadcrumbFilter, BreadcrumbSnapshot } from './types';
+import { defaultBreadcrumbUrlScrubber, scrubSnapshotUrl } from './url-scrub';
+import type { BreadcrumbUrlScrubber } from './url-scrub';
 
 const WRITABLE_STRINGS = ['category', 'message', 'type'] as const;
 
 let current: BreadcrumbFilter | undefined;
+let currentScrubber: BreadcrumbUrlScrubber | undefined;
 let subscribed = false;
 
 /**
@@ -18,20 +21,24 @@ let subscribed = false;
  * An add native did not ask about is removed, so it cannot be claimed later.
  */
 let nextAddId = 0;
-const owed: Array<{ id: string; callback: BreadcrumbFilter }> = [];
+const owed: Array<{
+  id: string;
+  callback: BreadcrumbFilter | undefined;
+  scrubber: BreadcrumbUrlScrubber | undefined;
+}> = [];
 
 /**
  * Called from `addBreadcrumb` after validation, before the native call.
  * Returns the id native echoes on that add's filter request, or `null` when
- * nothing is installed and there is nothing to retain.
+ * no filter and no URL scrubber is installed and there is nothing to retain.
  */
 export function retainBreadcrumbFilterForAdd(): string | null {
-  if (current === undefined) {
+  if (current === undefined && currentScrubber === undefined) {
     return null;
   }
   nextAddId += 1;
   const id = String(nextAddId);
-  owed.push({ id, callback: current });
+  owed.push({ id, callback: current, scrubber: currentScrubber });
   return id;
 }
 
@@ -43,7 +50,9 @@ export function releaseBreadcrumbFilterForAdd(id: string): void {
   }
 }
 
-function claimBreadcrumbFilter(id: string | undefined): BreadcrumbFilter | undefined {
+function claimBreadcrumbFilter(
+  id: string | undefined,
+): { callback: BreadcrumbFilter | undefined; scrubber: BreadcrumbUrlScrubber | undefined } | undefined {
   if (id === undefined || id.length === 0) {
     return undefined;
   }
@@ -52,7 +61,7 @@ function claimBreadcrumbFilter(id: string | undefined): BreadcrumbFilter | undef
     return undefined;
   }
   const [item] = owed.splice(index, 1);
-  return item?.callback;
+  return item;
 }
 
 /**
@@ -82,11 +91,49 @@ export function setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
     );
   }
   current = callback ?? undefined;
-  if (current !== undefined && !subscribed) {
+  syncNativeFilter();
+}
+
+/**
+ * Cleans `data.url` of `http` breadcrumbs before the callback of
+ * {@link setBreadcrumbFilter} sees them. `true` installs
+ * {@link defaultBreadcrumbUrlScrubber}, a function is a custom scrubber, and
+ * `false`, `null` or `undefined` turns it off (the default).
+ *
+ * Off costs nothing. On, native asks JS about every breadcrumb, not only
+ * `http` ones, exactly as it does for an installed breadcrumb filter, and the
+ * same 9 s deadline and fail-closed rules apply. It is independent of
+ * `setBreadcrumbFilter`: either one, or both, keeps the native filter
+ * installed. Like that filter it is a per-runtime setting: call it on every
+ * launch of the JS runtime, or after a reload native drops crumbs until it
+ * is called again.
+ */
+export function setBreadcrumbUrlScrubber(
+  scrubber?: boolean | BreadcrumbUrlScrubber | null,
+): void {
+  if (scrubber != null && typeof scrubber !== 'boolean' && typeof scrubber !== 'function') {
+    throw new TypeError(
+      `Bugsee.setBreadcrumbUrlScrubber requires a boolean or a function, got ${typeof scrubber}`,
+    );
+  }
+  if (scrubber === true) {
+    currentScrubber = defaultBreadcrumbUrlScrubber;
+  } else if (typeof scrubber === 'function') {
+    currentScrubber = scrubber;
+  } else {
+    currentScrubber = undefined;
+  }
+  syncNativeFilter();
+}
+
+/** The native filter stays installed while a callback or a scrubber needs it. */
+function syncNativeFilter(): void {
+  const wanted = current !== undefined || currentScrubber !== undefined;
+  if (wanted && !subscribed) {
     subscribed = true;
     NativeBugsee.onBreadcrumbFilterRequest(onBreadcrumbFilterRequest);
   }
-  NativeBugsee.setBreadcrumbFilterEnabled(current !== undefined);
+  NativeBugsee.setBreadcrumbFilterEnabled(wanted);
 }
 
 /**
@@ -106,6 +153,10 @@ export function setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
  * settles does not reply at all. Neither path replies with the original crumb.
  * `timestamp` is not a writable key, and a key the snapshot omitted stays
  * omitted. `data: null` when the snapshot sent `data` clears it.
+ *
+ * With a URL scrubber installed (see {@link setBreadcrumbUrlScrubber}) the
+ * `data.url` of an `http` crumb is cleaned first. With a scrubber and no
+ * callback the cleaned crumb is what is kept.
  */
 function onBreadcrumbFilterRequest(event: {
   requestId: string;
@@ -122,16 +173,22 @@ function onBreadcrumbFilterRequest(event: {
     reply(requestId, null);
     return;
   }
-  const callback = reserved ?? current;
-  if (callback === undefined) {
+  const callback = reserved === undefined ? current : reserved.callback;
+  const scrubber = reserved === undefined ? currentScrubber : reserved.scrubber;
+  if (callback === undefined && scrubber === undefined) {
     reply(requestId, null);
     return;
   }
 
   Promise.resolve()
-    .then(() => callback(snapshot))
-    .then((result) => {
-      reply(requestId, keptJson(snapshot, result));
+    .then(() => {
+      // The scrubber runs first, so the app's callback only ever sees the
+      // cleaned URL. A throw here drops the crumb like a throw in the callback.
+      const seen = scrubber === undefined ? snapshot : scrubSnapshotUrl(snapshot, scrubber);
+      return Promise.all([seen, callback === undefined ? seen : callback(seen)]);
+    })
+    .then(([seen, result]) => {
+      reply(requestId, keptJson(seen, result));
     })
     .catch(() => {
       reply(requestId, null);

@@ -20,7 +20,11 @@ import { installConsoleCapture } from './console/capture';
 import { setLogFilter as installLogFilter } from './logs/filter';
 import type { LogFilter } from './logs/filter';
 import { addBreadcrumb as recordBreadcrumb } from './breadcrumbs/add';
-import { setBreadcrumbFilter as installBreadcrumbFilter } from './breadcrumbs/filter';
+import {
+  setBreadcrumbFilter as installBreadcrumbFilter,
+  setBreadcrumbUrlScrubber as installBreadcrumbUrlScrubber,
+} from './breadcrumbs/filter';
+import type { BreadcrumbUrlScrubber } from './breadcrumbs/url-scrub';
 import type { Breadcrumb, BreadcrumbFilter } from './breadcrumbs/types';
 import { setNetworkFilter as installNetworkFilter } from './network/filter';
 import type { NetworkFilter } from './network/filter';
@@ -468,8 +472,9 @@ class Bugsee {
    * breadcrumbs (when breadcrumb capture is on) or `http.client` performance
    * spans (on by default), and path segments in the `http_url` attribute of
    * `detect.http-errors` reports (off by default) are not passed through it.
-   * Redact breadcrumbs with {@link setBreadcrumbFilter}, or turn the capture
-   * off. See "Network privacy" in the package README.
+   * Clean breadcrumb URLs with {@link setBreadcrumbUrlScrubber}, redact the
+   * rest of a breadcrumb with {@link setBreadcrumbFilter}, or turn the
+   * capture off. See "Network privacy" in the package README.
    */
   setNetworkFilter(callback?: NetworkFilter | null): void {
     installNetworkFilter(callback);
@@ -549,6 +554,33 @@ class Bugsee {
    */
   setBreadcrumbFilter(callback?: BreadcrumbFilter | null): void {
     installBreadcrumbFilter(callback);
+  }
+
+  /**
+   * Cleans the URL of HTTP breadcrumbs before {@link setBreadcrumbFilter}'s
+   * callback sees the crumb. Off by default.
+   *
+   * `true` drops `user:password@`, the query string and the fragment and
+   * keeps the scheme, host, port and path. A function is a custom scrubber:
+   * it maps the URL to the URL to record, and a throw or a non-string result
+   * drops the crumb. `false`, `null` or `undefined` turns it off.
+   *
+   * It applies to crumbs whose `type` is `http` and whose `data.url` is a
+   * string: the SDK's own HTTP crumbs (when `captureBreadcrumbs` is on) and
+   * an `http` crumb passed to {@link addBreadcrumb}. This is the only way to
+   * clean those URLs in the wrapper: {@link setNetworkFilter} does not see
+   * them. It does not cover `http.client` performance spans or the
+   * `http_url` attribute of `detect.http-errors` reports.
+   *
+   * Cost: with it off, nothing changes. With it on, native asks JS about
+   * every breadcrumb (not only `http`), the same round trip an installed
+   * breadcrumb filter costs, with the same 9 s deadline and fail-closed
+   * rules. Call it on every launch of the JS runtime, as
+   * {@link setBreadcrumbFilter}: after a reload, native drops crumbs until it
+   * is called again. See "Network privacy" in the package README.
+   */
+  setBreadcrumbUrlScrubber(scrubber?: boolean | BreadcrumbUrlScrubber | null): void {
+    installBreadcrumbUrlScrubber(scrubber);
   }
 
   /**
@@ -994,6 +1026,8 @@ export type {
   BreadcrumbLevel,
   BreadcrumbSnapshot,
 } from './breadcrumbs/types';
+export type { BreadcrumbUrlScrubber } from './breadcrumbs/url-scrub';
+export { defaultBreadcrumbUrlScrubber } from './breadcrumbs/url-scrub';
 
 export type { ExceptionOptions } from './exceptions/options';
 export { SpanStatus } from './apm/types';
