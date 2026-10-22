@@ -410,7 +410,8 @@ Write it as if it were your only redaction.
     ```
 
     `true` drops `user:password@`, the query string and the fragment, and
-    keeps the scheme, host, port and path. Path segments can still carry an
+    keeps the scheme, host, port and path. An `@` after a `?` with a `:` before it (`u:pa?ss@host`) cannot be told
+    from a port with an `@` in its query, so that host becomes `[redacted]`. Path segments can still carry an
     identifier or a token, and a `;jsessionid=...` path parameter stays: use a
     custom scrubber for those. The scrubber
     runs before the callback of `setBreadcrumbFilter`, which then sees the
