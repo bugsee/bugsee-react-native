@@ -66,10 +66,10 @@ done
 # Also under the lock: warm npx's shared cache with the CLI the template step
 # runs. Parallel first-time `npx --yes` installs into ~/.npm/_npx corrupt each
 # other (TAR_ENTRY_ERROR ENOENT); once warm, later runs only read it.
-[[ "$PACK_RC" -eq 0 ]] && { npx --yes "@react-native-community/cli@${RN_CLI_VERSION:-20.2.0}" --version >/dev/null 2>&1 || PACK_RC=1; }
+[[ "$PACK_RC" -eq 0 ]] && { npx --yes "@react-native-community/cli@${RN_CLI_VERSION:-20.2.0}" --version >/dev/null || { echo "FAIL: npx warm-up" >&2; PACK_RC=1; }; }
 rmdir "$PACK_LOCK"
 if [[ -n "${PACK_INSTALL_DIR:-}" ]]; then trap - EXIT; else trap 'rm -rf "$WORK"' EXIT; fi
-[[ "$PACK_RC" -eq 0 ]] || { echo "FAIL: npm pack / npx warm-up" >&2; exit 1; }
+[[ "$PACK_RC" -eq 0 ]] || { echo "FAIL: npm pack or npx warm-up (see above)" >&2; exit 1; }
 CORE_TGZ="$(ls "$WORK"/tarballs/bugsee-react-native-[0-9]*.tgz)"
 FEEDBACK_TGZ="$(ls "$WORK"/tarballs/bugsee-react-native-feedback-[0-9]*.tgz)"
 echo "    $(basename "$CORE_TGZ") $(basename "$FEEDBACK_TGZ")"

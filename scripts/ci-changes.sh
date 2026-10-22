@@ -30,6 +30,10 @@ classify() {
       .github/workflows/bugseeai.yml | .github/workflows/playground.yml | \
       .github/workflows/campaign-windows-hermes.yml | examples/playground/*)
         ;;
+      # The Expo config plugin edits both platforms' projects, and its sources
+      # sit under a src/ the JS-only pattern below would otherwise match.
+      packages/*/plugin/*)
+        app=true; android=true; ios=true ;;
       # TurboModule specs feed codegen on both platforms.
       packages/*/src/Native*.ts | packages/*/src/*NativeComponent*)
         app=true; android=true; ios=true ;;
@@ -76,6 +80,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   check "true true true" scripts/check-pack-install.sh
   check "true true true" native-versions.json
   check "true true true" packages/react-native/plugin/index.js
+  check "true true true" packages/react-native/plugin/src/index.ts
   check "true true true" packages/react-native/scripts/__tests__/sourcemaps-gradle.test.js
   check "true false false" scripts/__tests__/a.test.ts
   check "true true true" docs/a.md brand-new-top-level-file

@@ -76,7 +76,7 @@ the only dependency chains are scope -> gate shards -> score -> aggregator.
 |---|---|---|---|---|
 | 1 | Per-platform change gating (`scripts/ci-changes.sh`, fail-safe, self-tested): skip iOS builds on Android/JS-only diffs, Android on iOS/JS-only, everything native+app jobs on docs-only | 0 for cross-platform PRs; for single-platform PRs removes 6 macOS jobs (~22 macOS-min, a dozen-minute queue exposure) or 3 Linux (~15 min) | A change that affects a platform through an unlisted path: unknown paths count as both platforms, spec files (`Native*.ts`), scripts, workflows, yarn.lock, native-versions.json, plugin all run everything. Main and manual runs always run everything | Implemented |
 | 2 | Fold `rn compat` 7->1 and `pack install` typecheck-only 5->1 jobs (same scripts, same versions, 3-4 in parallel inside the job) | -10 checks; ~-10 runner start-ups; removes 12 queue waits from the tail (median 7 min, max 49) | Names change (see section 5). One failure now reports in one job, with each version's log in its own group | Implemented |
-| 3 | Cache `yarn` (setup-node `cache: yarn`), CocoaPods download dir, Gradle home (`setup-gradle`, read-only off main) | est. 15-40 s per yarn job x 15; 1.5-3 min off `ios e2e`; 1-4 min off `android`; playground android likely 2+ min. Cache is only filled by runs on main, so **the draft PR itself will not show the gain**; first measurable after merge | Content-addressed caches, so a stale hit cannot change what is built; PR runs are read-only for Gradle. A cache-service outage degrades to today's speed | Implemented |
+| 3 | Cache `yarn` (setup-node `cache: yarn`), CocoaPods download dir, Gradle home (`setup-gradle`, read-only off main) | est. 15-40 s per yarn job x 15; 1.5-3 min off `ios e2e`; 1-4 min off `android`; playground android likely 2+ min. yarn (setup-node) saves per PR merge ref, so its gain is measurable from the second push to a PR; Gradle (setup-gradle) and CocoaPods warm from main only, so **their gain is measurable after the first run on main** | Content-addressed caches, so a stale hit cannot change what is built; PR runs are read-only for Gradle. A cache-service outage degrades to today's speed | Implemented |
 | 4 | `mutation (src)` 4 -> 6 shards | slowest src shard 22-36 -> est. 15-24 min (critical path -7 to -12) at +2 checks and +2 installs (~+1.5 runner-min each) | None to coverage: same mutants, same break threshold, merge step re-checks the mutant count against the plan | Implemented, measured in the PR run |
 | 5 | Rebalance `mutation (scripts)` (shard 3 is 5-10x shards 1, 2) by cost, not mutant count | critical path -8 to -10 min when only scripts changes (it is 19 min today) | Planner change in scripts/mutation-shards.ts, itself mutation-gated | Deferred (needs per-file cost data) |
 | 6 | Stryker `--incremental` with a cached report from main, mutating only changed files on PRs | Large (src 25 -> a few min on small diffs) | Incremental reuses prior results for unchanged mutants: changes `how` not `what` but needs a safe cache key (tests + source hashes) and full runs on main/nightly. Do NOT lower thresholds | Deferred (design + trial) |
@@ -104,7 +104,7 @@ Job names that stay: lint, typecheck, unit; mutation scope; mutation (src|script
 - Confirm no required-status-check list exists outside the ruleset API view (org-level rulesets, or the repo's classic protection configured with a token this research could not see). If `rn compat (0.8x)` or `pack install (0.8x)` names are required there, update them to `rn compat` and `pack install (0.82-0.86)`, or add them to a required set after merge. Prefer requiring only `mutation`, `lint, typecheck, unit` and an aggregator: skipped (path-gated) jobs report as skipped, which GitHub treats as passing for required checks, but a PR where a required job is skipped by an `if` still merges.
 - Runner capacity (proposal 10): queue is the largest component of wall-clock. Options: larger hosted runners for macOS, a macOS self-hosted pool, or paying for more concurrency.
 - Decide on a nightly/full run on main (proposal 9) and on the Stryker incremental design (6).
-- Gradle/CocoaPods/yarn caches fill on main only; the first main push after merging populates them.
+- Gradle and CocoaPods caches fill on main only (the first main push after merging populates them); the yarn cache also warms per PR ref.
 
 ## 6. Measured result of the draft PR (run 39645042331, head 3a88b25)
 
@@ -113,7 +113,7 @@ This PR edits ci.yml and scripts/, so the classifier selects every job and every
 
 | | Baseline (all 3 gates) | Draft PR (all 3 gates) |
 |---|---|---|
-| ci jobs (checks) | 47 (sampled run 39557738505 listed 45) | 37 (-10: compat -6, pack install -6, src shards +2) |
+| ci jobs (checks) | 45 (sampled run 39557738505) | 37 (-8 against that run; -10 against the old workflow with the same three gates, 47: compat -6, pack install -6, src shards +2) |
 | mutation (src) slowest shard (run time) | 26-36 min (median shard 24.5) | 20.7 min (shards 8.3-20.7) |
 | rn compat | 7 jobs x 0.4 | 1 job, 0.9 min |
 | pack install typecheck-only minors | 5 jobs x 0.8-1.4 | 1 job, 1.7 min |
@@ -122,8 +122,8 @@ This PR edits ci.yml and scripts/, so the classifier selects every job and every
 The wall-clock is NOT comparable and must not be read as a regression: queue per job in the PR run was
 up to 37 min (macOS: ios e2e 22, ios spm 31, pack install ios 33; ubuntu mutation shards 14-38) because
 the pool was shared with other agents' pushes to #161/#162 and this PR's own superseded run. The run-time
-of the longest job fell 26-36 -> 20.7 min, the check count fell by 8, and the extra yarn/pods/gradle caches
-cannot hit before the first main run fills them. The queue-time share of wall-clock in this run was
+of the longest job fell 26-36 -> 20.7 min, the check count fell by 8 (45 -> 37), and the pods/gradle caches
+cannot hit before the first main run fills them (the yarn cache can from the second push to a PR). The queue-time share of wall-clock in this run was
 ~65%, in line with section 1. A fair wall-clock comparison needs a quiet pool, or a re-run after merge.
 
 Review-job queue note: the Claude review workflow used to wait on a self-hosted ARM64 pool; it now runs on
