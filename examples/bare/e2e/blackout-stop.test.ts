@@ -50,8 +50,8 @@
  * a stale Metro is restarted by port. Offline, the placeholder token
  * 00000000-0000-4000-8000-000000000000 against the dead endpoint.
  */
-import { type Run, TARGET_NAME, clearBundles, describeDevice, report, startRun } from './harness';
-import { apiMarker, wordAfter } from './api-markers';
+import { ON_ANDROID, type Run, TARGET_NAME, clearBundles, describeDevice, report, startRun } from './harness';
+import { type Settled, apiMarker, jsonAfter, wordAfter } from './api-markers';
 import { beginRetainingSuite, endRetainingSuite } from './observe';
 import { type DeviceLog, type LogLine } from './scenario';
 
@@ -112,10 +112,11 @@ describeDevice(`blackout and stop() on ${TARGET_NAME}`, () => {
           expect(blackoutStarted).toHaveLength(1);
           expect(blackoutEnded).toHaveLength(1);
           expect(blackoutStarted[0]!.index).toBeLessThan(stopped.index);
-          // Caused by the stop() call (between its marker and the relaunch),
-          // not by the new session: nothing after the relaunch marker.
+          // Caused by the stop() call, not by the next launch(): delivered
+          // before the 2 s settle that follows stop() (both platforms end it
+          // before stop() resolves), and nothing after the relaunch marker.
           expect(blackoutEnded[0]!.index).toBeGreaterThan(started.index);
-          expect(blackoutEnded[0]!.index).toBeLessThan(relaunched.index);
+          expect(blackoutEnded[0]!.index).toBeLessThan(afterStop.index);
           expect(events(tag, nonce, 'BlackoutEnded', relaunched.index)).toHaveLength(0);
         });
       } else {
@@ -123,7 +124,7 @@ describeDevice(`blackout and stop() on ${TARGET_NAME}`, () => {
           const nonce = run.scenario.nonce;
           expect(events(tag, nonce, 'BlackoutStarted', run.start)).toHaveLength(0);
           expect(events(tag, nonce, 'BlackoutEnded', run.start)).toHaveLength(0);
-          expect(summary.index).toBeGreaterThan(relaunched.index);
+          expect(wordAfter(summary.text, 'nonce')).toBe(nonce);
         });
       }
     });
@@ -132,7 +133,11 @@ describeDevice(`blackout and stop() on ${TARGET_NAME}`, () => {
   stopThenRelaunch('api-blackout-stop', true);
   stopThenRelaunch('api-blackout-stop-idle', false);
 
-  describe('api-blackout-prelaunch-stop', () => {
+  // A manifest auto-launch build is already Launched before the app runs, so
+  // nothing can be started "before launch" (attach.test.ts skips the same
+  // way). blackout.test.ts's blackout-prelaunch has the same pre-existing gap.
+  const AUTOLAUNCH = ON_ANDROID && process.env.E2E_ANDROID_AUTOLAUNCH === '1';
+  (AUTOLAUNCH ? describe.skip : describe)('api-blackout-prelaunch-stop', () => {
     let run: Run;
     let called: LogLine;
     let stopped: LogLine;
@@ -155,6 +160,7 @@ describeDevice(`blackout and stop() on ${TARGET_NAME}`, () => {
       const nonce = run.scenario.nonce;
       // Precondition: both calls ran before the SDK was Launched.
       expect(stopped.index).toBeLessThan(run.launched.index);
+      expect(jsonAfter<Settled>(stopped.text, 'result').ok).toBe(true);
       expect(wordAfter(launched.text, 'isBlackout')).toBe('true');
       expect(wordAfter(cleared.text, 'isBlackout')).toBe('false');
       // The stop() of a never-launched SDK ended nothing: BlackoutEnded
@@ -162,6 +168,9 @@ describeDevice(`blackout and stop() on ${TARGET_NAME}`, () => {
       const ended = events('blackout-prelaunch-stop', nonce, 'BlackoutEnded', run.start);
       expect(ended).toHaveLength(1);
       expect(ended[0]!.index).toBeGreaterThan(launched.index);
+      // One BlackoutStarted, from the pre-launch call, heard by the listener
+      // subscribed before it (as blackout-prelaunch).
+      expect(events('blackout-prelaunch-stop', nonce, 'BlackoutStarted', run.start)).toHaveLength(1);
     });
   });
 });
