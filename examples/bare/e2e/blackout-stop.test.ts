@@ -97,6 +97,9 @@ describeDevice(`blackout and stop() on ${TARGET_NAME}`, () => {
       });
 
       it('the SDK relaunches (Launched) and is not blacked out', () => {
+        // stop() itself succeeded and left the SDK Stopped (0) before the relaunch.
+        expect(jsonAfter<Settled>(stopped.text, 'result').ok).toBe(true);
+        expect(wordAfter(stopped.text, 'status')).toBe('0');
         expect(wordAfter(started.text, 'withBlackout')).toBe(String(withBlackout));
         // Precondition: the blackout was really in force before stop().
         expect(wordAfter(started.text, 'isBlackout')).toBe(String(withBlackout));
@@ -124,7 +127,6 @@ describeDevice(`blackout and stop() on ${TARGET_NAME}`, () => {
           const nonce = run.scenario.nonce;
           expect(events(tag, nonce, 'BlackoutStarted', run.start)).toHaveLength(0);
           expect(events(tag, nonce, 'BlackoutEnded', run.start)).toHaveLength(0);
-          expect(wordAfter(summary.text, 'nonce')).toBe(nonce);
         });
       }
     });

@@ -229,9 +229,13 @@ async function blackoutStop(nonce: string, context: ApiContext, withBlackout: bo
   mark(`bs started nonce=${nonce} withBlackout=${String(withBlackout)} isBlackout=${String(await Bugsee.isBlackout())}`);
   const stopped = await settle(() => Bugsee.stop());
   mark(`bs stopped nonce=${nonce} result=${stopped} status=${await Bugsee.getStatus()}`);
-  // Events are delivered asynchronously: let BlackoutEnded land before the
-  // next marker, so its position says which call caused it.
-  await delay(2_000);
+  // Events are delivered asynchronously: wait (bounded) for BlackoutEnded to
+  // land before the next marker, so its position says which call caused it.
+  // The idle case expects no event and just observes for the same interval.
+  const settleBy = Date.now() + (withBlackout ? 10_000 : 2_000);
+  while (Date.now() < settleBy && !(withBlackout && events.some(name => name.startsWith('BlackoutEnded')))) {
+    await delay(100);
+  }
   mark(`bs after-stop nonce=${nonce}`);
   const { result, status } = await launchAndWait(context);
   mark(`bs relaunched nonce=${nonce} result=${result} status=${status} isBlackout=${String(await Bugsee.isBlackout())}`);
