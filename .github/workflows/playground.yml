@@ -150,7 +150,7 @@ jobs:
           fi
           tail -5 "$log"
       - if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: playground-ios-xcodebuild-log
           path: ${{ runner.temp }}/xcodebuild.log
