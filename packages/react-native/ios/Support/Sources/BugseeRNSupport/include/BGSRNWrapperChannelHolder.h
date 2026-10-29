@@ -2,6 +2,11 @@
 // Not `@import Bugsee;`: this header is included from ObjC++, where C++ modules
 // are off on both delivery paths and a module import is a hard error.
 #import <Bugsee/Bugsee.h>
+// 7.0 GA moves the wrapper contract to the Bugsee.SPI submodule (BugseeSPI.h);
+// the 7.0 betas declare it in Bugsee.h.
+#if __has_include(<Bugsee/BugseeSPI.h>)
+#import <Bugsee/BugseeSPI.h>
+#endif
 
 NS_ASSUME_NONNULL_BEGIN
 
