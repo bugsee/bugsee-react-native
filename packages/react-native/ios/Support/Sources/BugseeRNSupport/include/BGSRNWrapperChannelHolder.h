@@ -2,6 +2,8 @@
 // Not `@import Bugsee;`: this header is included from ObjC++, where C++ modules
 // are off on both delivery paths and a module import is a hard error.
 #import <Bugsee/Bugsee.h>
+// The wrapper SPI (report contract, wrapper channel) is not in the umbrella from 7.0.0.
+#import <Bugsee/BugseeSPI.h>
 
 NS_ASSUME_NONNULL_BEGIN
 

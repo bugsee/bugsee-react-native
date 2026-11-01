@@ -7,6 +7,8 @@
 // with "use of '@import' when C++ modules are disabled", and then with a
 // cascade of undeclared identifiers that hides the real cause.
 #import <Bugsee/Bugsee.h>
+// The wrapper SPI (report contract, wrapper channel) is not in the umbrella from 7.0.0.
+#import <Bugsee/BugseeSPI.h>
 #import <UIKit/UIKit.h>
 #import <os/lock.h>
 

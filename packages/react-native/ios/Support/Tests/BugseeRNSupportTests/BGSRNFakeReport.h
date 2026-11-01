@@ -1,5 +1,6 @@
 @import Foundation;
 @import Bugsee;
+@import Bugsee.SPI;
 
 NS_ASSUME_NONNULL_BEGIN
 

@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <Bugsee/Bugsee.h>
+// The wrapper SPI (report contract, wrapper channel) is not in the umbrella from 7.0.0.
+#import <Bugsee/BugseeSPI.h>
 
 NS_ASSUME_NONNULL_BEGIN
 

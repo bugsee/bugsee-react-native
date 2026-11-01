@@ -151,6 +151,25 @@ export abstract class BugseeLaunchOptions {
     this.$set('com.bugsee.option.config.max-data-size', value);
   }
 
+  /** Most reports kept waiting to be sent. Android 7.3.0, iOS 7.0.0. */
+  get maxPendingReports(): number | undefined {
+    return this.$get('com.bugsee.option.config.max-pending-reports');
+  }
+  set maxPendingReports(value: number | undefined) {
+    this.$set('com.bugsee.option.config.max-pending-reports', value);
+  }
+
+  /**
+   * Oldest a report waiting to be sent may get, in days; `0` or less keeps
+   * reports until they are sent or evicted. Android 7.3.0, iOS 7.0.0.
+   */
+  get maxPendingReportAge(): number | undefined {
+    return this.$get('com.bugsee.option.config.max-pending-report-age');
+  }
+  set maxPendingReportAge(value: number | undefined) {
+    this.$set('com.bugsee.option.config.max-pending-report-age', value);
+  }
+
   /**
    * Sets any option by its real `com.bugsee.option.*` key, surfaced or not.
    * `undefined` deletes, exactly as a first-class accessor does.

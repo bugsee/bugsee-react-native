@@ -1,5 +1,6 @@
 @import XCTest;
 @import Bugsee;
+@import Bugsee.SPI;
 @import BugseeRNSupport;
 
 /// Records every call it receives. Implements every optional channel method,

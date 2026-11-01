@@ -28,6 +28,8 @@ export const READBACK_SHARED: Readonly<Record<string, unknown>> = {
   [`${P}capture.network.on-launch`]: true,
   [`${P}capture.screenshot`]: false,
   [`${P}capture.screenshot.scale`]: 0.5,
+  [`${P}config.max-pending-report-age`]: 7,
+  [`${P}config.max-pending-reports`]: 9,
   [`${P}capture.video`]: false,
   [`${P}capture.video.adaptive`]: true,
   [`${P}capture.video.frame-rate`]: 2,
@@ -76,8 +78,6 @@ export const READBACK_ANDROID: Readonly<Record<string, unknown>> = {
   [`${P}capture.video.mode`]: 21,
   [`${P}capture.video.secure-scrolling`]: true,
   [`${P}capture.webview.domain-allowlist`]: 'example.com',
-  [`${P}config.max-pending-report-age`]: 7,
-  [`${P}config.max-pending-reports`]: 9,
   [`${P}config.report-handler-callback-timeout`]: 12,
   // config.report-processing-in-process=false files no report on the
   // WOD_LX1 (option-effects.test.ts OPT-081), which this run needs for the

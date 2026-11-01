@@ -1,5 +1,6 @@
 @import XCTest;
 @import Bugsee;
+@import Bugsee.SPI;
 @import BugseeRNSupport;
 
 #import "BGSRNFakeReport.h"
