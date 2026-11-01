@@ -7,6 +7,11 @@
 // with "use of '@import' when C++ modules are disabled", and then with a
 // cascade of undeclared identifiers that hides the real cause.
 #import <Bugsee/Bugsee.h>
+// 7.0 GA moves the wrapper contract to the Bugsee.SPI submodule (BugseeSPI.h);
+// the 7.0 betas declare it in Bugsee.h.
+#if __has_include(<Bugsee/BugseeSPI.h>)
+#import <Bugsee/BugseeSPI.h>
+#endif
 #import <UIKit/UIKit.h>
 #import <os/lock.h>
 

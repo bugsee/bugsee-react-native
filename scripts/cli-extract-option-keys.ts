@@ -62,7 +62,6 @@ writeFileSync(enumsOut, `${JSON.stringify(enums, null, 2)}\n`);
 // on every member; the parity gate strips the prefix and compares VALUES.
 const iosEnumHeaders = {
   IssueSeverity: ['BugseeConstants.h', 'BugseeSeverityLevel'],
-  IssueType: ['BGSContracts.h', 'BGSIssueType'],
   CrashHandlerType: ['BugseeConstants.h', 'BugseeCrashHandlerType'],
 } as const;
 const iosEnums = Object.fromEntries(
