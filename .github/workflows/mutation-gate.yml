@@ -45,7 +45,7 @@ jobs:
         run: node scripts/cli-mutation.ts shard ${{ inputs.gate }} ${{ matrix.shard }} ${{ inputs.shards }}
       - name: Mutate
         run: yarn stryker run reports/mutation/${{ inputs.gate }}/shard-${{ matrix.shard }}.stryker.json --concurrency 4
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: mutation-${{ inputs.gate }}-shard-${{ matrix.shard }}
           path: reports/mutation/${{ inputs.gate }}/shard-${{ matrix.shard }}.json
@@ -76,7 +76,7 @@ jobs:
       - name: Merge and enforce the break threshold
         run: node scripts/cli-mutation.ts merge ${{ inputs.gate }} ${{ inputs.shards }}
       # Kept under the threshold too: that is when someone needs to look.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: mutation-${{ inputs.gate }}
