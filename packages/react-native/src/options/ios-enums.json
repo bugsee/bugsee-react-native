@@ -6,11 +6,6 @@
     "BugseeSeverityCritical": 4,
     "BugseeSeverityBlocker": 5
   },
-  "IssueType": {
-    "BGSIssueTypeBug": 0,
-    "BGSIssueTypeCrash": 1,
-    "BGSIssueTypeError": 2
-  },
   "CrashHandlerType": {
     "BugseeCrashHandlerTypeBSD": 1,
     "BugseeCrashHandlerTypeMach": 2,

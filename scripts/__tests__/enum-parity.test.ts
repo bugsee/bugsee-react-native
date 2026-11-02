@@ -20,7 +20,7 @@ import iosEnums from '../../packages/react-native/src/options/ios-enums.json';
 
 /** iOS prefixes every member; Android's names are bare. */
 const stripPrefix = (member: string): string =>
-  member.replace(/^(?:BugseeSeverity|BGSIssueType)/, '');
+  member.replace(/^BugseeSeverity/, '');
 
 const byValue = (members: Record<string, number>): Record<number, string> =>
   Object.fromEntries(Object.entries(members).map(([name, value]) => [value, name]));
@@ -72,22 +72,5 @@ describe('IssueSeverity agrees across platforms', () => {
   });
 });
 
-/**
- * iOS declares this enum and uses it nowhere -- the type travels as an
- * NSString on the internal request and never reaches BGSReportContract, so an
- * iOS handler cannot tell a recovered crash from a bug report the user typed.
- * Tracked as bugsee-cocoa#121.
- *
- * Pinned anyway, because the values already agree and that is worth keeping
- * true: whichever representation lands, it will have to match these.
- */
-describe('IssueType agrees across platforms', () => {
-  it('numbers Bug, Crash and Error identically', () => {
-    expect(
-      Object.fromEntries(
-        Object.entries(iosEnums.IssueType as Record<string, number>)
-          .map(([member, value]) => [stripPrefix(member), value]),
-      ),
-    ).toEqual({ Bug: 0, Crash: 1, Error: 2 });
-  });
-});
+// No IssueType check: the iOS SDK has no such enum from 7.0 GA. A report's type reaches
+// BGSReportContract.type as the string "bug", "crash" or "error", as on Android.
