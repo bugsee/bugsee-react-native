@@ -24,6 +24,9 @@ const SHARED: [string, string, unknown][] = [
   // iOS-only until Android 7.3.0 registered the same key, in the same unit
   // (megabytes) -- only the defaults differ (iOS 50, Android 150).
   ['maxDataSize', 'com.bugsee.option.config.max-data-size', 100],
+  // Android 7.3.0, iOS 7.0.0: the same keys and units on both.
+  ['maxPendingReports', 'com.bugsee.option.config.max-pending-reports', 12],
+  ['maxPendingReportAge', 'com.bugsee.option.config.max-pending-report-age', 7],
 ];
 
 const IOS: [string, string, unknown][] = [
@@ -52,8 +55,6 @@ const ANDROID: [string, string, unknown][] = [
     'com.bugsee.option.detect.exit.bg_low_memory_as_error',
     true,
   ],
-  ['maxPendingReports', 'com.bugsee.option.config.max-pending-reports', 12],
-  ['maxPendingReportAge', 'com.bugsee.option.config.max-pending-report-age', 7],
 ];
 
 type Bag = Record<string, unknown>;

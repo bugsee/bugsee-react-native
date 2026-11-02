@@ -334,7 +334,7 @@ const CASES: readonly Case[] = [
   },
   {
     name: 'max-pending-reports',
-    platforms: ['android'],
+    platforms: ['android', 'ios'],
     set: { 'com.bugsee.option.config.max-pending-reports': 1 },
     uploads: 3,
     // Three uploads, offline: only the newest may be kept.
