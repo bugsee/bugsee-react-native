@@ -4332,13 +4332,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@react-native/eslint-config@npm:0.87.1":
-  version: 0.87.1
-  resolution: "@react-native/eslint-config@npm:0.87.1"
+"@react-native/eslint-config@npm:0.88.0":
+  version: 0.88.0
+  resolution: "@react-native/eslint-config@npm:0.88.0"
   dependencies:
     "@babel/core": "npm:^7.25.2"
     "@babel/eslint-parser": "npm:^7.25.1"
-    "@react-native/eslint-plugin": "npm:0.87.1"
+    "@react-native/eslint-plugin": "npm:0.88.0"
     "@typescript-eslint/eslint-plugin": "npm:^8.59.2"
     "@typescript-eslint/parser": "npm:^8.59.2"
     eslint-config-prettier: "npm:^8.5.0"
@@ -4351,14 +4351,14 @@ __metadata:
   peerDependencies:
     eslint: ^8.0.0 || ^9.0.0
     prettier: ">=2"
-  checksum: 10c0/fd8ca6d5253a2e1fe1e6d80a09939c6d579f49dfbbd069d60233524b6465fa8e3de3f88f3d051dd79b8f2d364b13bce9bdc89a52af2d7d0feff47c9494fc2f6d
+  checksum: 10c0/42064962c792b879a85bad8ffeb73cf93841e58cc28e88255b786d119f83667a686ac798a316899cc3a814bf636a482b658f6be1412c377d353302fb18861887
   languageName: node
   linkType: hard
 
-"@react-native/eslint-plugin@npm:0.87.1":
-  version: 0.87.1
-  resolution: "@react-native/eslint-plugin@npm:0.87.1"
-  checksum: 10c0/205eebeabb9bd17db76f141e56fafdd5f6c4b5253cf4e97f5f66f401e642c21501fb8624acba277a050f546f64e5dd4d240febc6ae5e31a6b00b829f30bfe385
+"@react-native/eslint-plugin@npm:0.88.0":
+  version: 0.88.0
+  resolution: "@react-native/eslint-plugin@npm:0.88.0"
+  checksum: 10c0/71a0cd872fab0e9ebeb6c40da30d9758f1098307f38d0c99dbe6c13c19b15b9af36e83bc9f0a3fda7b9ee56b72843525ae16aae1d7e0cd60d38438c6265a6823
   languageName: node
   linkType: hard
 
@@ -5975,7 +5975,7 @@ __metadata:
     "@react-native-community/cli-platform-android": "npm:20.2.0"
     "@react-native-community/cli-platform-ios": "npm:20.2.0"
     "@react-native/babel-preset": "npm:0.87.1"
-    "@react-native/eslint-config": "npm:0.87.1"
+    "@react-native/eslint-config": "npm:0.88.0"
     "@react-native/metro-config": "npm:0.87.1"
     "@react-native/typescript-config": "npm:0.87.1"
     "@types/jest": "npm:^29.5.14"
