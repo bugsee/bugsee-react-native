@@ -47,7 +47,7 @@ function run(setup: Setup = {}) {
   });
   writeFileSync(
     join(root, 'native-versions.json'),
-    JSON.stringify({ android: { sdk: '7.4.2', gradlePlugin: '4.0.8' }, ios: { sdk: '7.0.0' } }),
+    JSON.stringify({ android: { sdk: '7.4.2', gradlePlugin: '4.0.8' }, ios: { sdk: '7.0.1' } }),
   );
   const tarballs = join(dir, 'tarballs');
   mkdirSync(tarballs);
@@ -148,7 +148,7 @@ describe('github-release.mjs', () => {
     expect(notes).toContain('@bugsee/react-native@7.0.0-beta3');
     expect(notes).toContain('@bugsee/react-native-feedback@7.0.0-beta3');
     expect(notes).toContain('`beta`, `latest`');
-    expect(notes).toContain('Android SDK 7.4.2 (Gradle plugin 4.0.8), iOS SDK 7.0.0');
+    expect(notes).toContain('Android SDK 7.4.2 (Gradle plugin 4.0.8), iOS SDK 7.0.1');
   });
 
   it('does not mark a stable version as a prerelease', () => {
