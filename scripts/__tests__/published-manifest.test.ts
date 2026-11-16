@@ -2,11 +2,15 @@ import {
   ENUM_TS_NAMES,
   MANIFEST_BASE,
   checkAccessors,
+  checkBaseline,
   checkPublished,
+  checkRemovals,
   manifestUrl,
+  parseBaseline,
   parseManifest,
   type Accessor,
   type AccessorCheckInput,
+  type AcknowledgedRemoval,
   type CheckInput,
   type PublishedManifest,
   type PublishedOption,
@@ -458,5 +462,168 @@ describe('checkAccessors', () => {
       expect(ENUM_TS_NAMES.BugseeStyle).toBe('ReportingUIStyle');
       expect(ENUM_TS_NAMES.IssueSeverity).toBe('IssueSeverity');
     });
+  });
+});
+
+describe('parseBaseline', () => {
+  const valid = {
+    android: { previous: '7.4.1', current: '7.4.2' },
+    ios: { previous: '7.0.0-beta7', current: '7.0.0' },
+    acknowledgedRemovals: [{ platform: 'ios', key: 'k', reason: 'because' }],
+  };
+  const parse = (value: unknown): ReturnType<typeof parseBaseline> => parseBaseline(JSON.stringify(value), 'the-source');
+
+  it('reads the versions and the acknowledgements', () => {
+    expect(parse(valid)).toEqual(valid);
+  });
+
+  it('treats a missing acknowledgements list as none', () => {
+    expect(parse({ android: valid.android, ios: valid.ios }).acknowledgedRemovals).toEqual([]);
+  });
+
+  it.each([
+    ['not JSON', '{ nope'],
+    ['a list', '[]'],
+    ['null', 'null'],
+  ])('refuses %s, naming the source', (_name, text) => {
+    expect(() => parseBaseline(text, 'the-source')).toThrow(/the-source/);
+  });
+
+  it.each([
+    ['no android', { ...valid, android: undefined }],
+    ['an android without previous', { ...valid, android: { current: '1' } }],
+    ['an android without current', { ...valid, android: { previous: '1' } }],
+    ['an android version that is a number', { ...valid, android: { previous: 1, current: '2' } }],
+    ['no ios', { ...valid, ios: undefined }],
+    ['an ios that is a list', { ...valid, ios: [] }],
+  ])('refuses %s, naming the platform', (_name, value) => {
+    expect(() => parse(value)).toThrow(/the-source: (android|ios) needs a "previous" and a "current" version/);
+  });
+
+  it('refuses acknowledgements that are not a list', () => {
+    expect(() => parse({ ...valid, acknowledgedRemovals: {} })).toThrow(/acknowledgedRemovals must be a list/);
+  });
+
+  it.each([
+    ['not an object', 'x'],
+    ['an unknown platform', { platform: 'web', key: 'k', reason: 'r' }],
+    ['no key', { platform: 'ios', reason: 'r' }],
+    ['an empty key', { platform: 'ios', key: '', reason: 'r' }],
+    ['no reason', { platform: 'ios', key: 'k' }],
+    ['a blank reason', { platform: 'ios', key: 'k', reason: '   ' }],
+  ])('refuses an acknowledgement with %s, naming it', (_name, entry) => {
+    expect(() => parse({ ...valid, acknowledgedRemovals: [valid.acknowledgedRemovals[0], entry] })).toThrow(
+      /acknowledgedRemovals #1 needs a platform, a key and a reason/,
+    );
+  });
+});
+
+describe('checkBaseline', () => {
+  it('is empty when the baseline describes the pin', () => {
+    expect(checkBaseline('android', { previous: '7.4.1', current: '7.4.2' }, '7.4.2')).toEqual([]);
+  });
+
+  it('says what to write when the pin moved and the baseline did not', () => {
+    const [problem] = checkBaseline('android', { previous: '7.4.0', current: '7.4.1' }, '7.4.2');
+    expect(problem).toContain('native-versions.json pins android 7.4.2');
+    expect(problem).toContain('says the current android version is 7.4.1');
+    expect(problem).toContain('Set "previous" to 7.4.1 and "current" to 7.4.2');
+  });
+
+  it('refuses a baseline whose two versions are the same', () => {
+    expect(checkBaseline('ios', { previous: '7.0.0', current: '7.0.0' }, '7.0.0')).toEqual([
+      'scripts/sdk-baseline.json has the same previous and current ios version, 7.0.0',
+    ]);
+  });
+
+  it('reports only the pin mismatch when both are wrong', () => {
+    expect(checkBaseline('ios', { previous: '1', current: '1' }, '2')).toHaveLength(1);
+  });
+});
+
+describe('checkRemovals', () => {
+  const removal = (extra: Partial<Parameters<typeof checkRemovals>[0]> = {}): string[] =>
+    checkRemovals({
+      platform: 'ios',
+      previousVersion: '7.0.0-beta6',
+      currentVersion: '7.0.0',
+      previous: manifest([option('a'), option('b'), option('c')], { sdk: 'ios', sdkVersion: '7.0.0-beta6' }),
+      current: manifest([option('a'), option('b'), option('c')], { sdk: 'ios', sdkVersion: '7.0.0' }),
+      acknowledged: [],
+      accessorsByKey: new Map(),
+      ...extra,
+    });
+  const without = (...keys: string[]): PublishedManifest =>
+    manifest([option('a'), option('b'), option('c')].filter((o) => !keys.includes(o.key)), { sdk: 'ios' });
+  const ack = (key: string, platform: 'android' | 'ios' = 'ios'): AcknowledgedRemoval => ({ platform, key, reason: 'r' });
+
+  it('is empty when nothing was removed', () => {
+    expect(removal()).toEqual([]);
+  });
+
+  it('is empty when the current pin only adds options', () => {
+    expect(removal({ current: manifest([option('a'), option('b'), option('c'), option('d')]) })).toEqual([]);
+  });
+
+  it('names an option the current pin no longer has, with both versions', () => {
+    const problems = removal({ current: without('b') });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('REMOVED OPTION b was in the ios 7.0.0-beta6 manifest and is absent from 7.0.0.');
+    expect(problems[0]).toContain('acknowledge it in scripts/sdk-baseline.json');
+  });
+
+  it('lists every removal, in key order', () => {
+    const problems = removal({ current: without('c', 'a') });
+    expect(problems.map((p) => p.match(/REMOVED OPTION (\w+)/)?.[1])).toEqual(['a', 'c']);
+  });
+
+  it('says which accessor still writes the removed option', () => {
+    const [problem] = removal({ current: without('b'), accessorsByKey: new Map([['b', 'detectAndReportKill']]) });
+    expect(problem).toContain('detectAndReportKill still writes it.');
+  });
+
+  it('says nothing about an accessor when there is none', () => {
+    expect(removal({ current: without('b') })[0]).not.toContain('still writes it');
+  });
+
+  it('marks a removed internal option as such', () => {
+    const previous = manifest([option('a'), option('$$X', { hidden: true })]);
+    const [problem] = removal({ previous, current: manifest([option('a')]) });
+    expect(problem).toContain('REMOVED OPTION $$X (an internal option)');
+  });
+
+  it('does not mention internal for an ordinary option', () => {
+    expect(removal({ current: without('b') })[0]).not.toContain('internal option');
+  });
+
+  it('accepts a removal that was acknowledged', () => {
+    expect(removal({ current: without('b'), acknowledged: [ack('b')] })).toEqual([]);
+  });
+
+  it('only accepts an acknowledgement for the same platform', () => {
+    const problems = removal({ current: without('b'), acknowledged: [ack('b', 'android')] });
+    expect(problems.filter((p) => p.startsWith('REMOVED OPTION b'))).toHaveLength(1);
+  });
+
+  it('accepts some removals acknowledged and reports the rest', () => {
+    const problems = removal({ current: without('a', 'b'), acknowledged: [ack('a')] });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('REMOVED OPTION b');
+  });
+
+  it('reports an acknowledgement for an option that was not removed, so the file cannot lie', () => {
+    const problems = removal({ acknowledged: [ack('a')] });
+    expect(problems).toEqual([
+      'scripts/sdk-baseline.json acknowledges the removal of a on ios, but it was not removed between 7.0.0-beta6 and 7.0.0: delete the entry',
+    ]);
+  });
+
+  it('ignores an acknowledgement meant for the other platform', () => {
+    expect(removal({ acknowledged: [ack('a', 'android')] })).toEqual([]);
+  });
+
+  it('reports a stale acknowledgement next to a real removal', () => {
+    const problems = removal({ current: without('b'), acknowledged: [ack('a')] });
+    expect(problems).toHaveLength(2);
   });
 });

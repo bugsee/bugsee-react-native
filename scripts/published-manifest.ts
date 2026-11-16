@@ -340,3 +340,148 @@ function checkType(
     ? []
     : [`${tsName} has the constants [${have.join(', ')}] but ${name} in the SDK has [${want.join(', ')}] (${option.key})`];
 }
+
+// ---------------------------------------------------------------------------
+// Options an SDK removed between the previous pin and the current one
+// ---------------------------------------------------------------------------
+
+/**
+ * The pin before the current one, per platform, and the removals React Native has dealt with.
+ *
+ * Comparing this package with an SDK's manifest cannot find a REMOVED option: the package may have
+ * options of its own, so "we have it, the SDK does not" proves nothing. The SDK's own manifests can: an
+ * option in the previous pin's manifest and absent from the current one was removed by the SDK, and the
+ * accessor and docs for it are now dead. (iOS 7.0.0-beta7 dropped `detect.kill` and
+ * `capture.mach-exceptions` this way, and the accessors for them lingered until someone noticed.)
+ */
+export interface SdkBaseline {
+  android: { previous: string; current: string };
+  ios: { previous: string; current: string };
+  /** Removals that were dealt with deliberately, each with the reason. */
+  acknowledgedRemovals: AcknowledgedRemoval[];
+}
+
+export interface AcknowledgedRemoval {
+  platform: Platform;
+  key: string;
+  reason: string;
+}
+
+function versionPair(value: unknown, platform: string, source: string): { previous: string; current: string } {
+  if (!isObject(value) || typeof value.previous !== 'string' || typeof value.current !== 'string') {
+    throw new Error(`${source}: ${platform} needs a "previous" and a "current" version`);
+  }
+  return { previous: value.previous, current: value.current };
+}
+
+/** Rejects a baseline that is malformed, rather than comparing against half of one. */
+export function parseBaseline(text: string, source: string): SdkBaseline {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`${source} is not valid JSON`);
+  }
+  if (!isObject(parsed)) {
+    throw new Error(`${source} is not a baseline object`);
+  }
+  const acknowledged = parsed.acknowledgedRemovals ?? [];
+  if (!Array.isArray(acknowledged)) {
+    throw new Error(`${source}: acknowledgedRemovals must be a list`);
+  }
+  const acknowledgedRemovals = acknowledged.map((entry: unknown, index: number): AcknowledgedRemoval => {
+    const valid =
+      isObject(entry) &&
+      (entry.platform === 'android' || entry.platform === 'ios') &&
+      typeof entry.key === 'string' &&
+      entry.key !== '' &&
+      typeof entry.reason === 'string' &&
+      entry.reason.trim() !== '';
+    if (!valid) {
+      throw new Error(`${source}: acknowledgedRemovals #${index} needs a platform, a key and a reason`);
+    }
+    const { platform, key, reason } = entry as unknown as AcknowledgedRemoval;
+    return { platform, key, reason };
+  });
+  return {
+    android: versionPair(parsed.android, 'android', source),
+    ios: versionPair(parsed.ios, 'ios', source),
+    acknowledgedRemovals,
+  };
+}
+
+/**
+ * Problems with the baseline itself: it must describe the pin it sits next to, and its two versions
+ * must differ. Moving the pin without updating it is exactly when the removal check has to run, so this
+ * says what to write.
+ */
+export function checkBaseline(
+  platform: Platform,
+  baseline: { previous: string; current: string },
+  pinnedVersion: string,
+): string[] {
+  if (baseline.current !== pinnedVersion) {
+    return [
+      `native-versions.json pins ${platform} ${pinnedVersion}, but scripts/sdk-baseline.json says the current ` +
+        `${platform} version is ${baseline.current}. Set "previous" to ${baseline.current} and "current" to ` +
+        `${pinnedVersion}; the options removed between them are then checked.`,
+    ];
+  }
+  if (baseline.previous === baseline.current) {
+    return [`scripts/sdk-baseline.json has the same previous and current ${platform} version, ${baseline.current}`];
+  }
+  return [];
+}
+
+export interface RemovalCheckInput {
+  platform: Platform;
+  previousVersion: string;
+  currentVersion: string;
+  previous: PublishedManifest;
+  current: PublishedManifest;
+  acknowledged: readonly AcknowledgedRemoval[];
+  /** Accessors by the key they write, to say what is left behind. */
+  accessorsByKey: ReadonlyMap<string, string>;
+}
+
+/**
+ * Every option the previous pin's manifest has and the current one lacks, unless it was acknowledged,
+ * plus every acknowledgement that no longer matches a removal. Names the option, and the accessor still
+ * writing it.
+ */
+export function checkRemovals(input: RemovalCheckInput): string[] {
+  const { platform, previousVersion, currentVersion, previous, current, acknowledged, accessorsByKey } = input;
+  const here = acknowledged.filter((entry) => entry.platform === platform);
+  const acknowledgedKeys = new Set(here.map((entry) => entry.key));
+  const currentKeys = new Set(current.options.map((option) => option.key));
+  const problems: string[] = [];
+
+  const removed = previous.options
+    .filter((option) => !currentKeys.has(option.key))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const removedKeys = new Set(removed.map((option) => option.key));
+
+  for (const option of removed) {
+    if (acknowledgedKeys.has(option.key)) {
+      continue;
+    }
+    const accessor = accessorsByKey.get(option.key);
+    const left = accessor === undefined ? '' : ` ${accessor} still writes it.`;
+    const internal = option.hidden === true ? ' (an internal option)' : '';
+    problems.push(
+      `REMOVED OPTION ${option.key}${internal} was in the ${platform} ${previousVersion} manifest and is absent ` +
+        `from ${currentVersion}.${left} Remove or deprecate its accessor and re-extract the fixtures, or, if ` +
+        'React Native keeps it as an option of its own, acknowledge it in scripts/sdk-baseline.json with the reason.',
+    );
+  }
+
+  for (const entry of here) {
+    if (!removedKeys.has(entry.key)) {
+      problems.push(
+        `scripts/sdk-baseline.json acknowledges the removal of ${entry.key} on ${platform}, but it was not ` +
+          `removed between ${previousVersion} and ${currentVersion}: delete the entry`,
+      );
+    }
+  }
+  return problems;
+}

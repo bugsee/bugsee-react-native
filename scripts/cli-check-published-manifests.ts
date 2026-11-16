@@ -11,7 +11,11 @@
  *    hold the SDK's, and the package's enums have the SDK's constants. A missing option is reported by
  *    name;
  *  - docs/launch-options.md is what the generator renders from these, so its type and default of every
- *    option are the SDK's.
+ *    option are the SDK's;
+ *  - no option the PREVIOUS pin's manifest has is missing from the current one (scripts/sdk-baseline.json
+ *    names the previous version). That is the one place a removal can be seen: this package may have
+ *    options of its own, so comparing against its set proves nothing. A removal is either dealt with (the
+ *    accessor removed or deprecated) or acknowledged in the baseline with the reason.
  *
  * It is deliberately one-directional. An option this package has and the SDK does not publish is fine:
  * the package can have options of its own, sent to the SDK (which ignores them) and acted on only in
@@ -31,7 +35,9 @@ import { join } from 'node:path';
 import {
   MANIFEST_BASE,
   checkAccessors,
+  checkBaseline,
   checkPublished,
+  checkRemovals,
   manifestUrl,
   parseManifest,
   type Platform,
@@ -47,6 +53,7 @@ import {
   optionsDir,
   pinned,
   readAccessors,
+  readBaseline,
   readEnums,
   readNoAccessor,
 } from './cli-options-sources.ts';
@@ -80,6 +87,14 @@ async function load(platform: Platform, version: string): Promise<string> {
     await new Promise((resolve) => setTimeout(resolve, attempt * 2_000));
   }
   throw new Error(`could not fetch ${url}: ${failure}`);
+}
+
+let baseline: ReturnType<typeof readBaseline>;
+try {
+  baseline = readBaseline();
+} catch (error) {
+  console.error((error as Error).message);
+  process.exit(1);
 }
 
 const accessors = readAccessors();
@@ -132,6 +147,32 @@ for (const platform of ['android', 'ios'] as const) {
     report(label, problems);
     if (problems.length === 0) {
       console.log(`${label}: aligned (${published.options.length} published options)`);
+    }
+
+    // Options the SDK removed since the previous pin: its own manifests are the only honest source, since
+    // this package may have options of its own that the SDK never had.
+    const baselineProblems = checkBaseline(platform, baseline[platform], version);
+    if (baselineProblems.length > 0) {
+      report(`${label} (baseline)`, baselineProblems);
+    } else {
+      const { previous: previousVersion } = baseline[platform];
+      const previous = parseManifest(
+        await load(platform, previousVersion),
+        `${platform} ${previousVersion} manifest`,
+      );
+      const removals = checkRemovals({
+        platform,
+        previousVersion,
+        currentVersion: version,
+        previous,
+        current: published,
+        acknowledged: baseline.acknowledgedRemovals,
+        accessorsByKey: new Map(accessors.map((accessor) => [accessor.key, accessor.name])),
+      });
+      report(`${platform} ${previousVersion} -> ${version}`, removals);
+      if (removals.length === 0) {
+        console.log(`${platform} ${previousVersion} -> ${version}: no option removed without being dealt with`);
+      }
     }
   } catch (error) {
     failed = true;
