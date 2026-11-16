@@ -102,7 +102,11 @@ export function unknownOptionKeys(
 /** One sentence naming the key, what the SDK does with it, and what to use. */
 export function describeUnknownKey(platform: Platform, key: string): string {
   const sdk = platform === 'ios' ? 'iOS' : 'Android';
-  const legacy = LEGACY_OPTION_KEYS[key];
+  // Own keys only: a plain-object lookup also resolves `constructor`, `toString` and the rest of
+  // Object.prototype, which would turn those unknown keys into a nonsense "6.x name" message.
+  const legacy = Object.prototype.hasOwnProperty.call(LEGACY_OPTION_KEYS, key)
+    ? LEGACY_OPTION_KEYS[key]
+    : undefined;
   if (legacy !== undefined) {
     const effect =
       platform === 'android'

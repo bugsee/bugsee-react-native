@@ -119,10 +119,17 @@ const nativeVersions = JSON.parse(
 // the wrapper exposes. The SDK's golden manifest covers every module, so the extension rows
 // are taken from it when the SDK tree has one.
 const goldenPath = join(androidRoot, 'options-manifest/options-manifest.golden.json');
-const extensionOptions: OptionsManifest['options'] = existsSync(goldenPath)
-  ? (JSON.parse(readFileSync(goldenPath, 'utf8')) as { options: OptionsManifest['options'] })
-      .options.filter((option) => option.module !== 'bugsee-android')
-  : [];
+// No golden manifest means the generated manifest would lose the NDK and leak options while the key
+// list (read from their sources above) still includes them, so the two artifacts would disagree.
+if (!existsSync(goldenPath)) {
+  throw new Error(
+    `${goldenPath} is missing. Point the extractor at an Android SDK checkout that has ` +
+      'options-manifest/options-manifest.golden.json (every pinned release does).',
+  );
+}
+const extensionOptions: OptionsManifest['options'] = (
+  JSON.parse(readFileSync(goldenPath, 'utf8')) as { options: OptionsManifest['options'] }
+).options.filter((option) => option.module !== 'bugsee-android');
 const options: OptionsManifest['options'] = [
   ...parseAndroidDescriptors(
     readFileSync(join(

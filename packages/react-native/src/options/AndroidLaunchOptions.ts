@@ -69,12 +69,13 @@ export class AndroidLaunchOptions extends BugseeLaunchOptions {
   }
 
   /**
-   * Screen-capture mode; see {@link VideoMode}.
+   * Screen-capture mode; see {@link VideoMode}. Also accepts a plain `number`, which this accessor
+   * always took, so a value read from config still compiles.
    */
-  get videoMode(): VideoMode | undefined {
+  get videoMode(): VideoMode | number | undefined {
     return this.$get('com.bugsee.option.capture.video.mode');
   }
-  set videoMode(value: VideoMode | undefined) {
+  set videoMode(value: VideoMode | number | undefined) {
     this.$set('com.bugsee.option.capture.video.mode', value);
   }
 
