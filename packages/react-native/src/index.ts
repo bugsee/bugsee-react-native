@@ -828,19 +828,6 @@ class Bugsee {
   }
 
   /**
-   * iOS: shows a debug overlay of what video capture is recording, to check that
-   * secure regions are covered. No-op on Android.
-   */
-  showVideoCapturePreview(): void {
-    NativeBugsee.showVideoCapturePreview();
-  }
-
-  /** iOS: hides the overlay {@link showVideoCapturePreview} showed. No-op on Android. */
-  hideVideoCapturePreview(): void {
-    NativeBugsee.hideVideoCapturePreview();
-  }
-
-  /**
    * The SDK's own test crash: a Java `RuntimeException` on Android, an
    * `NSException` on iOS. For a real native (signal) crash, see the bare
    * example's native helper package.

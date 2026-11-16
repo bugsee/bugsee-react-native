@@ -9,15 +9,13 @@ versions in `native-versions.json`.
 
 ## Platform-specific calls
 
-These exist in only one SDK. They are no-ops on the other platform, like `startBlackout` before launch is a no-op where
-the SDK cannot honour it.
+These exist in only one SDK, and are no-ops on the other platform.
 
 | Method | Android | iOS |
 |---|---|---|
 | `resetVideoCapturePermission()` | forgets the stored fullscreen-capture consent | no-op |
 | `addSecureActivity(className)`, `removeSecureActivity(className)` | hides the activity from capture | no-op |
 | `isSecureActivity(className)` | whether the activity is secure | `false` |
-| `showVideoCapturePreview()`, `hideVideoCapturePreview()` | no-op | debug overlay of what video capture records |
 
 ## Not exposed, and why
 
@@ -29,6 +27,7 @@ the SDK cannot honour it.
 | `getDefaultNetworkSanitizer`, `getExchangeFactory` | used inside the wrapper's own filter and event bridges. |
 | `getVideoFrameConsumer` | SPI for wrappers that feed their own video frames; this one records natively. |
 | `setWrapper`, `onUncaughtException`, `delegate`, `sharedInstance` | the wrapper's own plumbing. |
+| `showVideoCapturePreview`, `hideVideoCapturePreview` (iOS) | an SDK debug overlay for checking video capture; deliberately not exposed. |
 | `getLaunched`, `launched` | `await getStatus()` against `Status.Launched`. |
 | `addSecureViews`, `setLogFilter` (Android) | deprecated in the SDK. |
 

@@ -274,8 +274,6 @@ export const native = {
   addSecureActivity: jest.fn<void, [string]>(),
   removeSecureActivity: jest.fn<void, [string]>(),
   isSecureActivity: jest.fn<Promise<boolean>, [string]>(),
-  showVideoCapturePreview: jest.fn<void, []>(),
-  hideVideoCapturePreview: jest.fn<void, []>(),
   testCrash: jest.fn<void, []>(),
   upload: jest.fn<void, [string, string, number, string[] | null]>(),
   showReportDialog:

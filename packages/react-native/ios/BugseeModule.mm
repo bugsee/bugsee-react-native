@@ -1466,18 +1466,6 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   resolve(@NO);
 }
 
-- (void)showVideoCapturePreview {
-  BGSRNRunOnMain(^{
-    [Bugsee showVideoCapturePreview];
-  });
-}
-
-- (void)hideVideoCapturePreview {
-  BGSRNRunOnMain(^{
-    [Bugsee hideVideoCapturePreview];
-  });
-}
-
 /// A handled JS exception. `payloadJson` is the Task 7.1a payload, forwarded
 /// verbatim as the reason; `optionsJson` is `{domain?}` or null. Unparseable
 /// options are logged and the exception is still sent, without a domain — a

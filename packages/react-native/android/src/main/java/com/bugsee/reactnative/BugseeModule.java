@@ -524,16 +524,6 @@ public class BugseeModule extends NativeBugseeSpec
         promise.resolve(Bugsee.isSecureActivity(className));
     }
 
-    @Override
-    public void showVideoCapturePreview() {
-        // iOS-only debug overlay.
-    }
-
-    @Override
-    public void hideVideoCapturePreview() {
-        // iOS-only debug overlay.
-    }
-
     /**
      * A handled JS exception. Posted onto {@link ExceptionExecutors#HANDLED}:
      * the SDK must not run on the native-modules thread.

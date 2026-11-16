@@ -81,11 +81,4 @@ describe('platform-specific calls forward to native', () => {
     await expect(Bugsee.isSecureActivity('com.example.A')).resolves.toBe(true);
     expect(native.isSecureActivity).toHaveBeenCalledWith('com.example.A');
   });
-
-  it('showVideoCapturePreview and hideVideoCapturePreview', () => {
-    Bugsee.showVideoCapturePreview();
-    Bugsee.hideVideoCapturePreview();
-    expect(native.showVideoCapturePreview).toHaveBeenCalledTimes(1);
-    expect(native.hideVideoCapturePreview).toHaveBeenCalledTimes(1);
-  });
 });

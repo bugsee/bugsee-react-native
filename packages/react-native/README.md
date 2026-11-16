@@ -123,8 +123,8 @@ The full list, with keys, types and platforms, is in
 ### Methods that exist on one platform
 
 `getHostLaunchOptions()` returns only what your app supplied to `launch`. Android-only: `resetVideoCapturePermission()`,
-`addSecureActivity(className)`, `removeSecureActivity(className)`, `isSecureActivity(className)`. iOS-only:
-`showVideoCapturePreview()`, `hideVideoCapturePreview()`. The other platform treats these as no-ops. Which native methods
+`addSecureActivity(className)`, `removeSecureActivity(className)`, `isSecureActivity(className)`. iOS treats
+these as no-ops. Which native methods
 this package does not expose, and why, is in
 [`docs/native-api-parity.md`](https://github.com/bugsee/bugsee-react-native/blob/main/docs/native-api-parity.md).
 

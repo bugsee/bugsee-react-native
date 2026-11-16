@@ -23,6 +23,7 @@ const NOT_READ_BACK = skip('the wrapper owns the rectangles it publishes; the SD
 const EXT = skip('native extension lookup and registration; extension SPIs are not callable from JavaScript');
 const SANITIZER = skip('used inside the wrapper\'s own network-filter bridge, not callable from JavaScript');
 const EXCHANGE = skip('internal: builds the events addNetworkEvent and addBreadcrumb take');
+const DEBUG_OVERLAY = skip('an iOS SDK debug overlay for checking video capture; deliberately not exposed');
 const STATUS = skip('derivable: `await getStatus()` against `Status.Launched`');
 
 export const ANDROID: Readonly<Record<string, Mapping>> = {
@@ -115,7 +116,7 @@ export const IOS: Readonly<Record<string, Mapping>> = {
   getHostLaunchOptions: rn('getHostLaunchOptions'),
   getLaunchOptions: rn('getLaunchOptions'),
   getUserIdentifier: rn('getUserIdentifier'),
-  hideVideoCapturePreview: rn('hideVideoCapturePreview'),
+  hideVideoCapturePreview: DEBUG_OVERLAY,
   isBlackout: rn('isBlackout'),
   launchWithToken: rn('launch'),
   launched: STATUS,
@@ -139,7 +140,7 @@ export const IOS: Readonly<Record<string, Mapping>> = {
   sharedInstance: skip('singleton accessor; the wrapper calls the class methods directly'),
   showReportDialog: rn('showReportDialog'),
   showReportDialogWithSummary: rn('showReportDialog'),
-  showVideoCapturePreview: rn('showVideoCapturePreview'),
+  showVideoCapturePreview: DEBUG_OVERLAY,
   startBlackout: rn('startBlackout'),
   startSpanWithOperation: rn('startSpan'),
   startTransactionWithName: rn('startTransaction'),

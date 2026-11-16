@@ -171,9 +171,6 @@ export interface Spec extends TurboModule {
   removeSecureActivity(className: string): void;
   /** Whether the activity is currently secure. Always `false` on iOS. */
   isSecureActivity(className: string): Promise<boolean>;
-  /** iOS: shows the debug overlay of what video capture is recording. No-op on Android. */
-  showVideoCapturePreview(): void;
-  hideVideoCapturePreview(): void;
 
   /**
    * Creates and uploads a bug report immediately, without showing any UI.
