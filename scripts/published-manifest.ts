@@ -501,3 +501,25 @@ export function checkRemovals(input: RemovalCheckInput): string[] {
   }
   return problems;
 }
+
+/**
+ * What an accessor that still writes a removed key means for the person fixing it. A platform's own
+ * accessor is simply dead: remove or deprecate it. A SHARED one (on the base class) serves both
+ * platforms, so deprecating it would break the platform that still has the option; it has to be moved to
+ * that platform's class, or removed if both SDKs dropped the option.
+ */
+export function describeLiveAccessor(
+  name: string,
+  owner: 'base' | 'android' | 'ios',
+  platform: Platform,
+): string {
+  if (owner !== 'base') {
+    return `${name} still writes it`;
+  }
+  const other = platform === 'android' ? 'iOS' : 'Android';
+  const own = platform === 'android' ? 'IOSLaunchOptions' : 'AndroidLaunchOptions';
+  return (
+    `${name} still writes it, and is shared by both platforms (BugseeLaunchOptions): if only the ${platform} SDK ` +
+    `dropped the option, move it to ${own}, since ${other} still has it; if both did, remove it`
+  );
+}

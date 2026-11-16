@@ -39,6 +39,7 @@ import {
   checkBaseline,
   checkPublished,
   checkRemovals,
+  describeLiveAccessor,
   manifestUrl,
   parseManifest,
   type Platform,
@@ -125,7 +126,7 @@ function liveKeys(platform: Platform): Map<string, string> {
   }
   for (const accessor of accessorsFor(accessors, platform)) {
     if (accessor.deprecated === undefined) {
-      live.set(accessor.key, `${accessor.name} still writes it`);
+      live.set(accessor.key, describeLiveAccessor(accessor.name, accessor.owner, platform));
     }
   }
   return live;

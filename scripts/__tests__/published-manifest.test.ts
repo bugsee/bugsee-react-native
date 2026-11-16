@@ -5,6 +5,7 @@ import {
   checkBaseline,
   checkPublished,
   checkRemovals,
+  describeLiveAccessor,
   manifestUrl,
   parseBaseline,
   parseManifest,
@@ -673,5 +674,24 @@ describe('checkRemovals', () => {
   it('reports a stale acknowledgement next to a real removal', () => {
     const problems = removal({ current: without('b'), acknowledged: [ack('a')] });
     expect(problems).toHaveLength(2);
+  });
+});
+
+describe('describeLiveAccessor', () => {
+  it('says a platform\'s own accessor still writes the key', () => {
+    expect(describeLiveAccessor('captureAVPlayer', 'ios', 'ios')).toBe('captureAVPlayer still writes it');
+    expect(describeLiveAccessor('videoMode', 'android', 'android')).toBe('videoMode still writes it');
+  });
+
+  it('says a shared accessor must be moved to the platform that still has the option, not deprecated', () => {
+    const text = describeLiveAccessor('foo', 'base', 'android');
+    expect(text).toContain('foo still writes it, and is shared by both platforms (BugseeLaunchOptions)');
+    expect(text).toContain('if only the android SDK dropped the option, move it to IOSLaunchOptions, since iOS still has it');
+    expect(text).toContain('if both did, remove it');
+  });
+
+  it('names the other platform\'s class and name for each platform', () => {
+    expect(describeLiveAccessor('foo', 'base', 'ios')).toContain('move it to AndroidLaunchOptions, since Android still has it');
+    expect(describeLiveAccessor('foo', 'base', 'ios')).toContain('only the ios SDK dropped');
   });
 });
