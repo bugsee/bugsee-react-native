@@ -116,6 +116,7 @@ const JAVA_TYPES: Record<string, ManifestOption['type']> = {
   'Double': 'float',
   'String': 'string',
   'Map': 'map',
+  'HashMap': 'map',
   'List': 'list',
 };
 

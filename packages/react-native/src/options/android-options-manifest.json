@@ -3,7 +3,7 @@
   "sdk": "android",
   "sdkVersion": "7.4.2",
   "buildConfiguration": "release",
-  "generatedAt": "2026-11-16T05:30:59Z",
+  "generatedAt": "2026-11-16T08:27:30Z",
   "options": [
     {
       "key": "com.bugsee.option.config.duration",
@@ -627,7 +627,7 @@
     },
     {
       "key": "com.bugsee.option.$$WRAPPER",
-      "type": "string",
+      "type": "map",
       "default": null,
       "module": "bugsee-android",
       "hidden": true

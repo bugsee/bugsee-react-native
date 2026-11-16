@@ -13,7 +13,9 @@ await Bugsee.launch('<your app token>', options);
 ```
 
 The tables are checked against the SDK versions pinned in `native-versions.json` (Android 7.4.2, iOS 7.0.0):
-a test fails when either SDK registers an option this package has no accessor for. Options a
+a test fails when either SDK registers an option this package has no accessor for, and `yarn check:options-manifests`
+(run in CI and before every publish) compares the option manifest each SDK release published at
+`download.bugsee.com/sdk/options/<platform>/<version>.json` with this package's fixtures and fails on any difference. Options a
 *newer* SDK adds are reachable with `options.setCustomOption(key, value)` until the package catches up.
 
 ## Keys the SDK drops
