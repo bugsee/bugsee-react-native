@@ -16,6 +16,9 @@ export interface SdkMethod {
  * `void added() {}`, and an extraction that misses a method writes an incomplete inventory the parity
  * test then passes.
  *
+ * Java does not fix the order of modifiers, so `final`, `synchronized`, `native` and `strictfp` may sit
+ * between `public` and `static` as well as after it (`public final static void x()`).
+ *
  * Annotations are allowed in front of `public` (`@Deprecated public static void old()`) and among the
  * signature's words (`public static @Nullable String name()`), with or without arguments. Everything
  * between `static` and the name is a run of words or annotations each followed by whitespace, so `=`,
@@ -23,7 +26,7 @@ export interface SdkMethod {
  * a mention inside a comment (` * public static ...`) is not one either.
  */
 const ANDROID_DECLARATION =
-  /^[ \t]*((?:@\w+(?:\([^)]*\))?\s+)*)public\s+static\s+(?:(?:@\w+(?:\([^)]*\))?|[\w<>[\],.?]+)\s+)+(\w+)\s*\(/gm;
+  /^[ \t]*((?:@\w+(?:\([^)]*\))?\s+)*)public\s+(?:(?:final|synchronized|native|strictfp)\s+)*static\s+(?:(?:@\w+(?:\([^)]*\))?|[\w<>[\],.?]+)\s+)+(\w+)\s*\(/gm;
 
 const ANNOTATIONS_ONLY = /^(?:@\w+(?:\([^)]*\))?\s*)+$/;
 

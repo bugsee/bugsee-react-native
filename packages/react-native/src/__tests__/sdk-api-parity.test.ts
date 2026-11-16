@@ -102,6 +102,11 @@ describe('the extractors', () => {
         public static @Nullable String annotated() { return null; }
         public static @Size(max = 3) String annotatedWithArgument() { return null; }
         public static final synchronized void withModifiers() {}
+        public final static void modifierBeforeStatic() {}
+        public synchronized static void synchronizedBeforeStatic() {}
+        public final synchronized static void twoBeforeStatic() {}
+        public native static void nativeBeforeStatic();
+        public final static int NOT_A_METHOD = 3;
         public static Map<String, Foo> genericReturn() { return null; }
         public static final int FIELD = compute(1);
         public static class Nested {
@@ -116,11 +121,15 @@ describe('the extractors', () => {
       { name: 'deprecatedSplit', deprecated: true },
       { name: 'genericReturn', deprecated: false },
       { name: 'genericSplit', deprecated: false },
+      { name: 'modifierBeforeStatic', deprecated: false },
       { name: 'modifiersSplit', deprecated: false },
       { name: 'nameOnNextLine', deprecated: false },
+      { name: 'nativeBeforeStatic', deprecated: false },
       { name: 'oldSameLine', deprecated: true },
       { name: 'single', deprecated: false },
+      { name: 'synchronizedBeforeStatic', deprecated: false },
       { name: 'twoAnnotations', deprecated: true },
+      { name: 'twoBeforeStatic', deprecated: false },
       { name: 'withModifiers', deprecated: false },
     ]);
   });
