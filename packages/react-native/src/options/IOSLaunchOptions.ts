@@ -60,18 +60,6 @@ export class IOSLaunchOptions extends BugseeLaunchOptions {
   }
 
   /**
-   * The fatal signals the crash reporter intercepts, as the iOS SDK's
-   * `BugseeCrashSignals` bit set: ABRT 1, SEGV 2, BUS 4, ILL 8, FPE 16, TRAP 32. Unset
-   * leaves the SDK default (every signal). Added in 7.0.0-beta7.
-   */
-  get crashSignals(): number | undefined {
-    return this.$get('com.bugsee.option.capture.crash-signals');
-  }
-  set crashSignals(value: number | undefined) {
-    this.$set('com.bugsee.option.capture.crash-signals', value);
-  }
-
-  /**
    * Record the device and network names.
    */
   get captureDeviceAndNetworkNames(): boolean | undefined {

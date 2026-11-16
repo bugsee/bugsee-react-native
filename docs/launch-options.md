@@ -12,7 +12,7 @@ options.triggerByShake = false; // shake-to-report is ON by default in both SDKs
 await Bugsee.launch('<your app token>', options);
 ```
 
-The tables are checked against the SDK versions pinned in `native-versions.json` (Android 7.4.2, iOS 7.0.0):
+The tables are checked against the SDK versions pinned in `native-versions.json` (Android 7.6.0, iOS 7.1.0):
 a test fails when either SDK registers an option this package has no accessor for, and `yarn check:options-manifests`
 (run in CI and before every publish) compares the option manifest each SDK release published at
 `download.bugsee.com/sdk/options/<platform>/<version>.json` with this package. It fails when an SDK publishes an option
@@ -49,9 +49,9 @@ iOS, does nothing on Android, and reports nothing on either. `launch()` and `rel
 | `reportingDefaultCrashPriority` | `com.bugsee.option.reporting.defaults.crash-priority` | `enum IssueSeverity` | iOS, Android | `Blocker` | Default priority of crash reports; see `IssueSeverity`. |
 | `reportingDefaultErrorPriority` | `com.bugsee.option.reporting.defaults.error-priority` | `enum IssueSeverity` | iOS, Android | `High` | Default priority of error reports; see `IssueSeverity`. |
 | `triggerByBroadcast` | `com.bugsee.option.reporting.triggers.broadcast` | `boolean` | Android | `false` | Let a broadcast open the report dialog. |
-| `triggerByNotification` | `com.bugsee.option.reporting.triggers.notification-bar` | `boolean` | Android | `true` | Let the user open the report dialog from the notification bar. The SDK default is on. |
+| `triggerByNotification` | `com.bugsee.option.reporting.triggers.notification-bar` | `boolean` | Android | `false` | Let the user open the report dialog from the notification bar. The SDK default is on. |
 | `triggerByScreenshot` | `com.bugsee.option.reporting.triggers.screenshot` | `boolean` | iOS, Android | `false` | Let the user open the report dialog by taking a screenshot. |
-| `triggerByShake` | `com.bugsee.option.reporting.triggers.shake` | `boolean` | iOS, Android | `true` | Let the user open the report dialog by shaking the device. **The SDK default is on:** set this to `false` to turn shake-to-report off. |
+| `triggerByShake` | `com.bugsee.option.reporting.triggers.shake` | `boolean` | iOS, Android | `false` | Let the user open the report dialog by shaking the device. **The SDK default is on:** set this to `false` to turn shake-to-report off. |
 | `reportingUIDescriptionRequired` | `com.bugsee.option.reporting.ui.description-required` | `boolean` | iOS, Android | `false` | Make the Description field mandatory in the report dialog. |
 | `reportingUIEmailRequired` | `com.bugsee.option.reporting.ui.email-required` | `boolean` | iOS, Android | `false` | Make the Email field mandatory in the report dialog. |
 | `reportingUILabelsEnabled` | `com.bugsee.option.reporting.ui.labels-enabled` | `boolean` | iOS, Android | `false` | Show the Labels field in the report dialog. |
@@ -70,7 +70,7 @@ iOS, does nothing on Android, and reports nothing on either. `launch()` and `rel
 | `captureBreadcrumbsExtras` | `com.bugsee.option.capture.breadcrumbs.extras` | `boolean` | iOS, Android | `false` | Attach the extra detail of automatically collected device-event breadcrumbs. |
 | `captureCameraPreview` | `com.bugsee.option.capture.camera-preview` | `boolean` | iOS | `false` | Capture camera preview layers. Read the iOS SDK's privacy and overhead notes before enabling. |
 | `crashHandlerType` | `com.bugsee.option.capture.crash-handler-type` | `enum BugseeCrashHandlerType` | iOS | `MachAndBSD` | How the crash reporter intercepts crashes; see `CrashHandlerType`. Unset leaves the SDK default, `CrashHandlerType.MachAndBSD`. |
-| `crashSignals` | `com.bugsee.option.capture.crash-signals` | `int` | iOS | `128` | The fatal signals the crash reporter intercepts, as the iOS SDK's `BugseeCrashSignals` bit set: ABRT 1, SEGV 2, BUS 4, ILL 8, FPE 16, TRAP 32. Unset leaves the SDK default (every signal). Added in 7.0.0-beta7. |
+| `crashSignals` | `com.bugsee.option.capture.crash-signals` | `int` | iOS, Android | `128` | The fatal signals the native crash handler intercepts, as a bit set: ABRT 1, SEGV 2, BUS 4, ILL 8, FPE 16, TRAP 32 (the same layout on both platforms). Unset leaves the SDK default (every signal). Leave SEGV and BUS out when the app hosts a Mono runtime. On Android it is read once, when the native handler is first armed in the process. iOS 7.0.0-beta7, Android 7.6.0. |
 | `captureDeviceAndNetworkNames` | `com.bugsee.option.capture.device-network-names` | `boolean` | iOS | `false` | Record the device and network names. |
 | `captureDiskSpace` | `com.bugsee.option.capture.disk-space` | `boolean` | iOS | `false` | Record free disk space. |
 | `captureLogs` | `com.bugsee.option.capture.logs` | `boolean` | iOS, Android | `true` | Capture logs. Lines sent with `Bugsee.log()` are always recorded. |

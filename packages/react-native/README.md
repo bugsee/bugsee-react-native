@@ -9,8 +9,7 @@ added.
 
 ## Status: beta
 
-This is a beta (`7.0.0-beta3`), built on the 7.x native SDKs, and the iOS SDK it
-bundles is itself a beta. `latest` and `beta` both point at it for now, so a plain
+This is a beta (`7.0.0-beta4`), built on the 7.x native SDKs (Android 7.6.0, iOS 7.1.0). `latest` and `beta` both point at it for now, so a plain
 `yarn add @bugsee/react-native` installs it; the `@beta` form in [Install](#install)
 keeps following betas once a stable release exists. The API can still change
 between betas.
@@ -103,7 +102,7 @@ option you leave unset takes the SDK's own default.
 
 ```ts
 const options = createDefaultLaunchOptions();
-options.triggerByShake = false;        // shake-to-report is ON by default in both SDKs
+options.triggerByShake = true;         // shake-to-report is OFF by default (iOS 7.1.0, Android 7.6.0)
 options.triggerByScreenshot = false;
 options.reportingUIEmailRequired = true;
 ```

@@ -13,6 +13,7 @@ import { ANDROID_ONLY_KEYS, IOS_ONLY_KEYS, SHARED_KEYS } from '../keys';
  */
 const SHARED: [string, string, unknown][] = [
   ['captureLogs', 'com.bugsee.option.capture.logs', false],
+  ['crashSignals', 'com.bugsee.option.capture.crash-signals', 7],
   ['captureLogsLevel', 'com.bugsee.option.capture.logs.level', 2],
   ['captureNetwork', 'com.bugsee.option.capture.network', false],
   ['captureNetworkBodySizeLimit', 'com.bugsee.option.capture.network.body-size-limit', 7],
@@ -69,7 +70,6 @@ const IOS: [string, string, unknown][] = [
   ['captureBluetoothStatus', 'com.bugsee.option.capture.bluetooth-status', false],
   ['captureCameraPreview', 'com.bugsee.option.capture.camera-preview', false],
   ['crashHandlerType', 'com.bugsee.option.capture.crash-handler-type', 2],
-  ['crashSignals', 'com.bugsee.option.capture.crash-signals', 7],
   ['captureDeviceAndNetworkNames', 'com.bugsee.option.capture.device-network-names', false],
   ['captureDiskSpace', 'com.bugsee.option.capture.disk-space', false],
   ['captureOSLogs', 'com.bugsee.option.capture.logs.oslog', false],
