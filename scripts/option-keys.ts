@@ -204,6 +204,12 @@ function parseJavaLiteral(raw: string): unknown {
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   if (/^-?\d+$/.test(raw)) return Number(raw);
+  // `1024 * 20`: the SDK writes some sizes as a product of integer literals. Left as text it published
+  // as the string "1024 * 20" where the SDK's own manifest says 20480.
+  const product = /^(-?\d+(?:\s*\*\s*-?\d+)+)$/.exec(raw);
+  if (product) {
+    return (product[1] as string).split('*').reduce((total, factor) => total * Number(factor.trim()), 1);
+  }
   if (/^-?\d*\.\d+f?$/.test(raw)) return Number(raw.replace(/f$/, ''));
   const quoted = /^"(.*)"$/.exec(raw);
   if (quoted) return quoted[1];

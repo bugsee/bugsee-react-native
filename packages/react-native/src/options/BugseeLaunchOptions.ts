@@ -280,7 +280,7 @@ export abstract class BugseeLaunchOptions {
 
   /**
    * Disk space, in megabytes, that reports waiting to be sent may occupy. Past it the
-   * oldest reports are deleted whole. The SDKs' defaults can differ; the wrapper sets neither.
+   * oldest reports are deleted whole.
    */
   get maxDataSize(): number | undefined {
     return this.$get('com.bugsee.option.config.max-data-size');

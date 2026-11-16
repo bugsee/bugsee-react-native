@@ -3,7 +3,7 @@
   "sdk": "android",
   "sdkVersion": "7.4.2",
   "buildConfiguration": "release",
-  "generatedAt": "2026-11-16T08:27:30Z",
+  "generatedAt": "2026-11-16T08:35:15Z",
   "options": [
     {
       "key": "com.bugsee.option.config.duration",
@@ -298,7 +298,7 @@
     {
       "key": "com.bugsee.option.capture.network.body-size-limit",
       "type": "int",
-      "default": "1024 * 20",
+      "default": 20480,
       "module": "bugsee-android",
       "hidden": false
     },

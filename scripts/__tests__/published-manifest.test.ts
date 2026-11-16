@@ -1,8 +1,12 @@
 import {
+  ENUM_TS_NAMES,
   MANIFEST_BASE,
+  checkAccessors,
   checkPublished,
   manifestUrl,
   parseManifest,
+  type Accessor,
+  type AccessorCheckInput,
   type CheckInput,
   type PublishedManifest,
   type PublishedOption,
@@ -88,18 +92,16 @@ describe('checkPublished', () => {
     expect(problems[0]).toContain('option-keys.json');
   });
 
-  it('reports a key the package lists and the SDK does not register', () => {
-    const problems = checkPublished(input({ knownKeys: ['a', 'b', 'gone'] }));
-    expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain('lists gone for android');
-    expect(problems[0]).toContain('silently ignored');
+  it('does not complain about a key this package lists and the SDK does not register', () => {
+    // The package can have options of its own that the SDK ignores and only the wrapper acts on.
+    expect(checkPublished(input({ knownKeys: ['a', 'b', 'wrapper-only'] }))).toEqual([]);
   });
 
   it('lists several problems in key order', () => {
     const problems = checkPublished(
       input({ published: manifest([option('z'), option('y')]), knownKeys: ['b', 'a'] }),
     );
-    expect(problems.map((p) => p.match(/\b(registers|lists) (\w+)/)?.[2])).toEqual(['y', 'z', 'a', 'b']);
+    expect(problems.map((p) => p.match(/\bregisters (\w+)/)?.[1])).toEqual(['y', 'z']);
   });
 
   it('leaves hidden internals out of the key comparison, in both directions', () => {
@@ -129,9 +131,26 @@ describe('checkPublished', () => {
       ]);
     });
 
-    it('reports an option the published manifest lacks', () => {
-      expect(checkPublished(committed([option('a'), option('b'), option('x')]))).toEqual([
-        'android-options-manifest.json has x, which the published manifest does not',
+    it('does not complain about an option the committed manifest has and the SDK does not', () => {
+      expect(checkPublished(committed([option('a'), option('b'), option('x')]))).toEqual([]);
+    });
+
+    it('reports a default that differs', () => {
+      const published = manifest([option('a'), option('b', { default: 20480 })]);
+      const problems = checkPublished({ ...input({ published }), committed: [option('a'), option('b', { default: '1024 * 20' })] });
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain('differs from the published manifest for b');
+      expect(problems[0]).toContain('20480');
+    });
+
+    it('reads an absent default as null, as the SDK manifests write it', () => {
+      const published = manifest([option('a'), option('b', { default: null })]);
+      expect(checkPublished({ ...input({ published }), committed: [option('a'), option('b')] })).toEqual([]);
+    });
+
+    it('names the committed file in its messages', () => {
+      expect(checkPublished({ ...input(), committed: [option('a')], committedName: 'ios-options-manifest.json' })).toEqual([
+        'ios-options-manifest.json is missing b',
       ]);
     });
 
@@ -193,6 +212,213 @@ describe('checkPublished', () => {
       expect(checkPublished({ ...input({ published }), committed: [option('a'), option('b')] })).toEqual([
         'android-options-manifest.json is missing $$X',
       ]);
+    });
+  });
+});
+
+describe('checkAccessors', () => {
+  const accessor = (key: string, type: string, extra: Partial<Accessor> = {}): Accessor => ({
+    name: `${key}Accessor`,
+    key,
+    type,
+    hasSetter: true,
+    owner: 'base',
+    ...extra,
+  });
+  const check = (extra: Partial<AccessorCheckInput> = {}): string[] =>
+    checkAccessors({
+      platform: 'android',
+      pinnedVersion: '7.4.2',
+      published: manifest([option('flag'), option('count', { type: 'int', default: 3 })]),
+      accessors: [accessor('flag', 'boolean'), accessor('count', 'number')],
+      noAccessor: {},
+      enums: {},
+      withheld: {},
+      ...extra,
+    });
+
+  it('is empty when every published option has a fitting accessor with a setter', () => {
+    expect(check()).toEqual([]);
+  });
+
+  it('names a missing option with its type and default, and where to add it', () => {
+    const problems = check({ accessors: [accessor('flag', 'boolean')] });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('MISSING OPTION count (int, default 3)');
+    expect(problems[0]).toContain('the android SDK 7.4.2 manifest');
+    expect(problems[0]).toContain('AndroidLaunchOptions (or BugseeLaunchOptions)');
+    expect(problems[0]).toContain('noAccessor.ts');
+  });
+
+  it('names the iOS class for an iOS manifest', () => {
+    expect(check({ platform: 'ios', accessors: [] })[0]).toContain('IOSLaunchOptions');
+  });
+
+  it('shows a missing enum option as its enum and constant default', () => {
+    const published = manifest([option('mode', { type: 'enum', default: 'V2', enum: { name: 'VideoMode', values: { V2: 2 } } })]);
+    expect(check({ published, accessors: [] })[0]).toContain('MISSING OPTION mode (enum VideoMode, default "V2")');
+  });
+
+  it('shows a missing option with no default as null', () => {
+    expect(check({ published: manifest([option('flag')]), accessors: [] })[0]).toContain('default null');
+  });
+
+  it('reports every missing option, in key order', () => {
+    const problems = check({ accessors: [] });
+    expect(problems.map((p) => p.match(/MISSING OPTION (\w+)/)?.[1])).toEqual(['count', 'flag']);
+  });
+
+  it('skips an option that deliberately has no accessor', () => {
+    expect(check({ accessors: [accessor('flag', 'boolean')], noAccessor: { count: 'internal' } })).toEqual([]);
+  });
+
+  it('ignores a hidden option', () => {
+    const published = manifest([option('flag'), option('$$X', { hidden: true })]);
+    expect(check({ published, accessors: [accessor('flag', 'boolean')] })).toEqual([]);
+  });
+
+  it('does not complain about an accessor for an option the SDK does not register', () => {
+    // An option of the wrapper's own: sent, ignored by the SDK, acted on in React Native.
+    expect(check({ accessors: [accessor('flag', 'boolean'), accessor('count', 'number'), accessor('rn-only', 'string')] })).toEqual([]);
+  });
+
+  it('reports a getter with no setter', () => {
+    const problems = check({ accessors: [accessor('flag', 'boolean', { hasSetter: false }), accessor('count', 'number')] });
+    expect(problems).toEqual(['flag' + 'Accessor (flag) has a getter but no setter, so the option cannot be set']);
+  });
+
+  it.each([
+    ['boolean', 'number'],
+    ['int', 'string'],
+    ['float', 'boolean'],
+    ['string', 'number'],
+  ])('reports a %s option declared %s', (sdkType, declared) => {
+    const published = manifest([option('x', { type: sdkType })]);
+    const problems = check({ published, accessors: [accessor('x', declared)] });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain(`is declared ${declared}, but the SDK type is ${sdkType}`);
+  });
+
+  it.each([
+    ['int', 'number'],
+    ['float', 'number'],
+    ['string', 'string'],
+    ['boolean', 'boolean'],
+  ])('accepts a %s option declared %s', (sdkType, declared) => {
+    expect(check({ published: manifest([option('x', { type: sdkType })]), accessors: [accessor('x', declared)] })).toEqual([]);
+  });
+
+  it('accepts a union that includes the SDK type', () => {
+    expect(check({ published: manifest([option('x', { type: 'int' })]), accessors: [accessor('x', 'number | undefined')] })).toEqual([]);
+    expect(check({ published: manifest([option('x', { type: 'int' })]), accessors: [accessor('x', 'Level | number')] })).toEqual([]);
+  });
+
+  it('reports an option type this package cannot represent', () => {
+    const problems = check({ published: manifest([option('x', { type: 'map' })]), accessors: [accessor('x', 'object')] });
+    expect(problems[0]).toContain('is a map option, which this package cannot represent');
+  });
+
+  describe('enums', () => {
+    const published = (name: string, values: Record<string, unknown>) =>
+      manifest([option('level', { type: 'enum', enum: { name, values } })]);
+
+    it('accepts an enum whose constants match, by value', () => {
+      expect(
+        check({
+          published: published('LogLevel', { Error: 1, Warning: 2 }),
+          accessors: [accessor('level', 'LogLevel')],
+          enums: { LogLevel: { Error: 1, Warning: 2 } },
+        }),
+      ).toEqual([]);
+    });
+
+    it('compares numeric enums by value, since the SDKs name members differently', () => {
+      expect(
+        check({
+          platform: 'ios',
+          published: published('BugseeSeverityLevel', { Low: 1, Blocker: 5 }),
+          accessors: [accessor('level', 'IssueSeverity')],
+          enums: { IssueSeverity: { VeryLow: 1, Blocker: 5 } },
+        }),
+      ).toEqual([]);
+    });
+
+    it('accepts a union with a plain number, the shape two older accessors keep', () => {
+      expect(
+        check({
+          published: published('LogLevel', { Error: 1 }),
+          accessors: [accessor('level', 'LogLevel | number')],
+          enums: { LogLevel: { Error: 1 } },
+        }),
+      ).toEqual([]);
+    });
+
+    it('reports a constant the SDK has and the package lacks', () => {
+      const problems = check({
+        published: published('LogLevel', { Error: 1, Warning: 2, Verbose: 5 }),
+        accessors: [accessor('level', 'LogLevel')],
+        enums: { LogLevel: { Error: 1, Warning: 2 } },
+      });
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain('LogLevel has the constants [1, 2] but LogLevel in the SDK has [1, 2, 5]');
+    });
+
+    it('reports a constant the package has and the SDK lacks', () => {
+      expect(
+        check({
+          published: published('LogLevel', { Error: 1 }),
+          accessors: [accessor('level', 'LogLevel')],
+          enums: { LogLevel: { Error: 1, Extra: 9 } },
+        }),
+      ).toHaveLength(1);
+    });
+
+    it('does not count a member the package withholds on purpose', () => {
+      expect(
+        check({
+          published: published('FrameRate', { Low: 1, Raw: 4 }),
+          accessors: [accessor('level', 'FrameRate')],
+          enums: { FrameRate: { Low: 1 } },
+          withheld: { FrameRate: { Raw: 4 } },
+        }),
+      ).toEqual([]);
+    });
+
+    it('compares a string-valued enum by constant name, which is what crosses the bridge', () => {
+      const leak = published('MemoryLeakMode', { FAST: 'Fast', DEEP: 'Deep' });
+      expect(
+        check({ published: leak, accessors: [accessor('level', 'MemoryLeakMode')], enums: { MemoryLeakMode: { Fast: 'FAST', Deep: 'DEEP' } } }),
+      ).toEqual([]);
+      expect(
+        check({ published: leak, accessors: [accessor('level', 'MemoryLeakMode')], enums: { MemoryLeakMode: { Fast: 'FAST' } } }),
+      ).toHaveLength(1);
+    });
+
+    it('reports an accessor not declared as the enum', () => {
+      const problems = check({
+        published: published('LogLevel', { Error: 1 }),
+        accessors: [accessor('level', 'number')],
+        enums: { LogLevel: { Error: 1 } },
+      });
+      expect(problems[0]).toContain('is declared number, but the SDK type is the enum LogLevel (LogLevel)');
+    });
+
+    it('reports an SDK enum this package has no TypeScript name for', () => {
+      expect(check({ published: published('BugseeNew', { A: 1 }), accessors: [accessor('level', 'number')] })[0]).toContain(
+        'the SDK enum BugseeNew, which has no TypeScript enum here (add it to ENUM_TS_NAMES)',
+      );
+    });
+
+    it('reports a TypeScript enum that enums.ts does not export', () => {
+      expect(
+        check({ published: published('LogLevel', { Error: 1 }), accessors: [accessor('level', 'LogLevel')], enums: {} })[0],
+      ).toContain('uses LogLevel, which is not exported from enums.ts');
+    });
+
+    it('maps each SDK enum name to one TypeScript enum', () => {
+      expect(ENUM_TS_NAMES.BugseeSeverityLevel).toBe('IssueSeverity');
+      expect(ENUM_TS_NAMES.BugseeStyle).toBe('ReportingUIStyle');
+      expect(ENUM_TS_NAMES.IssueSeverity).toBe('IssueSeverity');
     });
   });
 });

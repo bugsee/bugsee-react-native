@@ -1,5 +1,6 @@
 import {
   ANDROID_ONLY_KEYS,
+  RN_OPTION_KEYS,
   IOS_ONLY_KEYS,
   SHARED_KEYS,
   keysFor,
@@ -43,5 +44,19 @@ describe('the extracted key surface', () => {
       expect(keysFor('ios').has(key)).toBe(true);
       expect(keysFor('android').has(key)).toBe(true);
     }
+  });
+});
+
+describe('options the wrapper defines for itself', () => {
+  it('are accepted on both platforms, so the unknown-key warning stays quiet for them', () => {
+    for (const key of RN_OPTION_KEYS) {
+      expect(keysFor('ios').has(key)).toBe(true);
+      expect(keysFor('android').has(key)).toBe(true);
+    }
+  });
+
+  it('never collide with a key an SDK registers', () => {
+    const sdk = new Set([...SHARED_KEYS, ...IOS_ONLY_KEYS, ...ANDROID_ONLY_KEYS]);
+    expect(RN_OPTION_KEYS.filter((key) => sdk.has(key))).toEqual([]);
   });
 });
