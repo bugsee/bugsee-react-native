@@ -101,6 +101,11 @@ jobs:
       - name: Release gate (metadata, one version, peer ranges)
         run: node scripts/check-publishable.mjs
 
+      # Never publish options the pinned SDKs do not agree with: a key the SDK does not register is
+      # silently ignored, and one it added without an accessor is unreachable.
+      - name: Option manifests (published by each pinned SDK release)
+        run: yarn check:options-manifests
+
       # Inputs go in through the environment, never interpolated into the script text: a `${{ }}`
       # inside `run:` is textually pasted into the shell.
       - name: Dry-run publish

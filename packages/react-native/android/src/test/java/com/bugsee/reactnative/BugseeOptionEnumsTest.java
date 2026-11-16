@@ -174,4 +174,24 @@ public class BugseeOptionEnumsTest {
     public void knowsExactlyTheEnumTypedKeys() {
         assertEquals(7, BugseeOptionEnums.enumKeys().size());
     }
+    /** Stands in for an option enum with no number, like the leak module's MemoryLeakMode. */
+    private enum Unnumbered {
+        DEEP_DEBUG_ONLY
+    }
+
+    @Test
+    public void wireForAnswersTheInternalValueForANumericOptionEnum() {
+        assertEquals(20.0, (Double) BugseeOptionEnums.wireFor(VideoMode.Fullscreen), 0.0);
+        assertEquals(1.0, (Double) BugseeOptionEnums.wireFor(IssueSeverity.VeryLow), 0.0);
+    }
+
+    /**
+     * wireValue answers -1 for an enum it does not know, which JS would read as
+     * a real setting. The constant name is also what JS sends to set such an
+     * option, so the value round-trips.
+     */
+    @Test
+    public void wireForAnswersTheConstantNameForAnEnumWithNoNumber() {
+        assertEquals("DEEP_DEBUG_ONLY", BugseeOptionEnums.wireFor(Unnumbered.DEEP_DEBUG_ONLY));
+    }
 }

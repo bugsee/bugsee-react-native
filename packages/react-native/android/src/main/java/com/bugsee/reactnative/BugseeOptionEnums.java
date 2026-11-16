@@ -125,6 +125,21 @@ final class BugseeOptionEnums {
         return -1;
     }
 
+    /**
+     * What an enum constant travels back to JS as: its internal value for the
+     * five numeric option enums, and its constant NAME for any other.
+     *
+     * <p>The other enums (the leak module's {@code MemoryLeakMode}) have no
+     * number, and {@link #wireValue} answers -1 for them, which JS would read as
+     * a real setting. Their constant name is also what JS sends to set them, so
+     * the value round-trips.
+     */
+    @NonNull
+    static Object wireFor(@NonNull final Enum<?> constant) {
+        final double value = wireValue(constant);
+        return value >= 0 ? (Object) value : constant.name();
+    }
+
     /** DirectBuffers, at 21, is the largest value any option enum carries. */
     private static final int MAX_ENUM_VALUE = 64;
 

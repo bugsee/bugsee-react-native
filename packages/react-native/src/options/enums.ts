@@ -75,6 +75,34 @@ export const CrashHandlerType = {
 export type CrashHandlerType = (typeof CrashHandlerType)[keyof typeof CrashHandlerType];
 
 /**
+ * How deep Android's leak detector looks. Android only, and honoured only when
+ * the app depends on `com.bugsee:bugsee-android-leak`.
+ *
+ * Unlike the others these cross the bridge as the Android enum's constant
+ * NAME: the SDK's `Map` launch path resolves a string against `name()`, and the
+ * module has no numeric value to send.
+ */
+export const MemoryLeakMode = {
+  Fast: 'FAST',
+  DeepDebugOnly: 'DEEP_DEBUG_ONLY',
+  DeepEverywhere: 'DEEP_EVERYWHERE',
+} as const;
+export type MemoryLeakMode = (typeof MemoryLeakMode)[keyof typeof MemoryLeakMode];
+
+/**
+ * Appearance of the report dialog. iOS only. These are the `BugseeStyle`
+ * values in declaration order; checked against the header through
+ * `ios-enums.json`.
+ */
+export const ReportingUIStyle = {
+  Light: 0,
+  Dusk: 1,
+  BasedOnStatusBar: 2,
+  System: 3,
+} as const;
+export type ReportingUIStyle = (typeof ReportingUIStyle)[keyof typeof ReportingUIStyle];
+
+/**
  * SDK enum members this package deliberately does not expose, with the value
  * they carry natively.
  *

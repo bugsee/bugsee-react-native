@@ -3,7 +3,7 @@
   "sdk": "android",
   "sdkVersion": "7.4.2",
   "buildConfiguration": "release",
-  "generatedAt": "2026-10-13T15:48:14Z",
+  "generatedAt": "2026-11-16T08:35:15Z",
   "options": [
     {
       "key": "com.bugsee.option.config.duration",
@@ -298,7 +298,7 @@
     {
       "key": "com.bugsee.option.capture.network.body-size-limit",
       "type": "int",
-      "default": "1024 * 20",
+      "default": 20480,
       "module": "bugsee-android",
       "hidden": false
     },
@@ -627,7 +627,7 @@
     },
     {
       "key": "com.bugsee.option.$$WRAPPER",
-      "type": "string",
+      "type": "map",
       "default": null,
       "module": "bugsee-android",
       "hidden": true
@@ -641,6 +641,56 @@
       "deprecated": {
         "since": "7.1.2"
       }
+    },
+    {
+      "default": false,
+      "hidden": false,
+      "key": "com.bugsee.option.crash-ndk.tombstone-logs",
+      "module": "bugsee-android-ndk",
+      "type": "boolean"
+    },
+    {
+      "default": true,
+      "hidden": false,
+      "key": "com.bugsee.option.detect.crash-ndk",
+      "module": "bugsee-android-ndk",
+      "type": "boolean"
+    },
+    {
+      "default": true,
+      "hidden": false,
+      "key": "com.bugsee.option.detect.memory_leaks",
+      "module": "bugsee-android-leak",
+      "type": "boolean"
+    },
+    {
+      "default": 1,
+      "hidden": false,
+      "key": "com.bugsee.option.detect.memory_leaks.deep_sample_rate",
+      "module": "bugsee-android-leak",
+      "type": "float"
+    },
+    {
+      "default": "FAST",
+      "enum": {
+        "name": "MemoryLeakMode",
+        "values": {
+          "DEEP_DEBUG_ONLY": "DeepDebugOnly",
+          "DEEP_EVERYWHERE": "DeepEverywhere",
+          "FAST": "Fast"
+        }
+      },
+      "hidden": false,
+      "key": "com.bugsee.option.detect.memory_leaks.mode",
+      "module": "bugsee-android-leak",
+      "type": "enum"
+    },
+    {
+      "default": false,
+      "hidden": false,
+      "key": "com.bugsee.option.detect.thread_leaks",
+      "module": "bugsee-android-leak",
+      "type": "boolean"
     }
   ]
 }

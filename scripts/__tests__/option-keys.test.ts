@@ -266,6 +266,13 @@ describe('parseAndroidDescriptors', () => {
     ['lowercase float', 'float.class', '0.5f', 'float', 0.5],
     ['lowercase double', 'double.class', '1.5', 'float', 1.5],
     ['Map', 'Map.class', 'null', 'map', null],
+    // Android declares `$$WRAPPER` as HashMap.class and publishes it as a map; reading it as a string
+    // is what the published-manifest check caught.
+    ['HashMap', 'HashMap.class', 'null', 'map', null],
+    // The SDK writes the network body limit as `1024 * 20`; its manifest says 20480.
+    ['product of integers', 'Integer.class', '1024 * 20', 'int', 20480],
+    ['product without spaces', 'Integer.class', '2*3*4', 'int', 24],
+    ['negative factor', 'Integer.class', '-2 * 5', 'int', -10],
     ['List', 'List.class', 'null', 'list', null],
     // Each of these pins one literal-parsing regex to the exact text it is
     // meant to match, not merely a substring of it -- the literal is left as

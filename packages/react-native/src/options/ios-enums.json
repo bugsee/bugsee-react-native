@@ -10,5 +10,11 @@
     "BugseeCrashHandlerTypeBSD": 1,
     "BugseeCrashHandlerTypeMach": 2,
     "BugseeCrashHandlerTypeMachAndBSD": 3
+  },
+  "ReportingUIStyle": {
+    "BugseeStyleLight": 0,
+    "BugseeStyleDusk": 1,
+    "BugseeStyleBasedOnStatusBar": 2,
+    "BugseeStyleSystem": 3
   }
 }

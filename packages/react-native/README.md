@@ -95,6 +95,30 @@ running, or a token the backend rejects — without that being an error worth
 throwing on. Capture comes up asynchronously, so poll `getStatus()` rather
 than assuming a resolved `launch` means recording has begun.
 
+### Launch options
+
+Every option either native SDK accepts has a typed accessor on the options object, shared ones on both
+platforms and platform-only ones on the Android or iOS object. Nothing is defaulted by the wrapper: an
+option you leave unset takes the SDK's own default.
+
+```ts
+const options = createDefaultLaunchOptions();
+options.triggerByShake = false;        // shake-to-report is ON by default in both SDKs
+options.triggerByScreenshot = false;
+options.reportingUIEmailRequired = true;
+```
+
+- **Wrong keys are not silent.** The Android SDK drops a key it does not know and the iOS SDK ignores it, so a
+  6.x name such as `ShakeToReport` (which iOS still maps) would otherwise do nothing on Android. `launch` and
+  `relaunch` log one `console.warn` per unknown key and name the key to use.
+- **`launch` while the SDK is already running ignores the options** you pass: an iOS session that is
+  already up, or an Android process the SDK relaunched itself after the OS killed it. Check `getStatus()` first.
+- **`relaunch(options)` restarts with exactly the options you pass.** Options you omit return to the SDK
+  default; the previous launch's are not kept.
+
+The full list, with keys, types and platforms, is in
+[`docs/launch-options.md`](https://github.com/bugsee/bugsee-react-native/blob/main/docs/launch-options.md).
+
 ### Reporting render errors
 
 Wrap part of the tree (or the whole app) in `<ErrorBoundary>` to report an error thrown while rendering

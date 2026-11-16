@@ -27,11 +27,29 @@ export const ANDROID_ONLY_KEYS: readonly string[] = keys.android;
  */
 export const UNDECLARED_KEYS: Readonly<Record<'ios' | 'android', readonly string[]>> = {
   ios: ['endpoint'],
-  android: ['com.bugsee.option.$$ENDPOINT'],
+  // `$$DEBUG` and `$$WRAPPER` are internal: the wrapper owns them (it registers
+  // itself as the wrapper), and an app has no business setting them.
+  android: [
+    'com.bugsee.option.$$ENDPOINT',
+    'com.bugsee.option.$$DEBUG',
+    'com.bugsee.option.$$WRAPPER',
+  ],
 };
+
+export { NO_ACCESSOR } from './noAccessor';
+
+/**
+ * Options this package defines for itself: sent in the launch options, ignored by the native SDKs, and
+ * acted on by the wrapper alone. Listing one here keeps the unknown-key warning quiet for it.
+ *
+ * The published-manifest check never complains about a key that is here or in an accessor and absent
+ * from an SDK's manifest: it only complains about what an SDK publishes that this package lacks.
+ */
+export const RN_OPTION_KEYS: readonly string[] = [];
 
 export function keysFor(platform: 'ios' | 'android'): ReadonlySet<string> {
   return new Set([
+    ...RN_OPTION_KEYS,
     ...SHARED_KEYS,
     ...(platform === 'ios' ? IOS_ONLY_KEYS : ANDROID_ONLY_KEYS),
     ...UNDECLARED_KEYS[platform],
