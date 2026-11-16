@@ -55,6 +55,15 @@ describe('describeUnknownKey', () => {
     ).toContain('Did you mean "com.bugsee.option.reporting.triggers.shake"?');
   });
 
+  it('treats Object.prototype member names as ordinary unknown keys, not 6.x names', () => {
+    for (const key of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      const message = describeUnknownKey('android', key);
+      expect(message).toContain('is not a launch option');
+      expect(message).not.toContain('6.x');
+      expect(message).not.toContain('native code');
+    }
+  });
+
   it('offers no suggestion when nothing is close', () => {
     expect(describeUnknownKey('ios', 'zzzzzzzzzzzzzzzz')).not.toContain('Did you mean');
   });

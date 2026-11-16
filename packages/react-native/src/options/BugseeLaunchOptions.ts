@@ -88,12 +88,13 @@ export abstract class BugseeLaunchOptions {
   }
 
   /**
-   * Least severe level captured; see {@link LogLevel}.
+   * Least severe level captured; see {@link LogLevel}. Also accepts a plain `number`, which this
+   * accessor always took, so a level read from config still compiles.
    */
-  get captureLogsLevel(): LogLevel | undefined {
+  get captureLogsLevel(): LogLevel | number | undefined {
     return this.$get('com.bugsee.option.capture.logs.level');
   }
-  set captureLogsLevel(value: LogLevel | undefined) {
+  set captureLogsLevel(value: LogLevel | number | undefined) {
     this.$set('com.bugsee.option.capture.logs.level', value);
   }
 
