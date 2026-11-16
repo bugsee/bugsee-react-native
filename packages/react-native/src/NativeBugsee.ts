@@ -150,7 +150,30 @@ export interface Spec extends TurboModule {
   getStatus(): Promise<number>;
   /** The options the SDK reports as being in effect. */
   getLaunchOptions(): Promise<CodegenTypes.UnsafeObject>;
+  /**
+   * Only the options the host app supplied to `launch`, without the SDK's
+   * defaults that {@link getLaunchOptions} merges them over. What `relaunch()`
+   * with no argument replays.
+   */
+  getHostLaunchOptions(): Promise<CodegenTypes.UnsafeObject>;
   testCrash(): void;
+
+  /**
+   * Android: forgets the stored MediaProjection (fullscreen capture) consent so
+   * the user is asked again. No-op on iOS, which has no such permission.
+   */
+  resetVideoCapturePermission(): void;
+  /**
+   * Android: hides every window of the activity with this fully qualified class
+   * name from capture. No-op on iOS.
+   */
+  addSecureActivity(className: string): void;
+  removeSecureActivity(className: string): void;
+  /** Whether the activity is currently secure. Always `false` on iOS. */
+  isSecureActivity(className: string): Promise<boolean>;
+  /** iOS: shows the debug overlay of what video capture is recording. No-op on Android. */
+  showVideoCapturePreview(): void;
+  hideVideoCapturePreview(): void;
 
   /**
    * Creates and uploads a bug report immediately, without showing any UI.
