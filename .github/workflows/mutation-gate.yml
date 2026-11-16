@@ -68,7 +68,7 @@ jobs:
       # For Stryker's instrumenter (to re-derive the plan and check that no
       # mutant went missing) and mutation-testing-metrics (to score).
       - run: yarn install --immutable
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v8.0.2
         with:
           pattern: mutation-${{ inputs.gate }}-shard-*
           path: reports/mutation/${{ inputs.gate }}
