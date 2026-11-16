@@ -56,6 +56,7 @@ import {
   readBaseline,
   readEnums,
   readNoAccessor,
+  readReliesOnInternal,
 } from './cli-options-sources.ts';
 
 const dirFlag = process.argv.indexOf('--dir');
@@ -100,6 +101,7 @@ try {
 const accessors = readAccessors();
 const { enums, withheld } = await readEnums();
 const noAccessor = await readNoAccessor();
+const reliesOnInternal = await readReliesOnInternal();
 const manifests: Partial<Record<Platform, PublishedManifest>> = {};
 let failed = false;
 
@@ -168,6 +170,7 @@ for (const platform of ['android', 'ios'] as const) {
         current: published,
         acknowledged: baseline.acknowledgedRemovals,
         accessorsByKey: new Map(accessors.map((accessor) => [accessor.key, accessor.name])),
+        relied: new Set(Object.keys(reliesOnInternal)),
       });
       report(`${platform} ${previousVersion} -> ${version}`, removals);
       if (removals.length === 0) {

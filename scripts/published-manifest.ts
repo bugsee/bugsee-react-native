@@ -442,15 +442,20 @@ export interface RemovalCheckInput {
   acknowledged: readonly AcknowledgedRemoval[];
   /** Accessors by the key they write, to say what is left behind. */
   accessorsByKey: ReadonlyMap<string, string>;
+  /**
+   * Internal options this package's code depends on (`RELIES_ON_INTERNAL`: the endpoint override). A
+   * removed INTERNAL option matters only when it is one of these or an accessor writes it.
+   */
+  relied: ReadonlySet<string>;
 }
 
 /**
  * Every option the previous pin's manifest has and the current one lacks, unless it was acknowledged,
  * plus every acknowledgement that no longer matches a removal. Names the option, and the accessor still
- * writing it.
+ * writing it. An internal (hidden) option is reported only when this package depends on it.
  */
 export function checkRemovals(input: RemovalCheckInput): string[] {
-  const { platform, previousVersion, currentVersion, previous, current, acknowledged, accessorsByKey } = input;
+  const { platform, previousVersion, currentVersion, previous, current, acknowledged, accessorsByKey, relied } = input;
   const here = acknowledged.filter((entry) => entry.platform === platform);
   const acknowledgedKeys = new Set(here.map((entry) => entry.key));
   const currentKeys = new Set(current.options.map((option) => option.key));
@@ -466,8 +471,14 @@ export function checkRemovals(input: RemovalCheckInput): string[] {
       continue;
     }
     const accessor = accessorsByKey.get(option.key);
+    const depends = accessor !== undefined || relied.has(option.key);
+    // An internal option this package never touches cannot affect it. The wrapper contract is internal
+    // too ($$ENDPOINT, $$WRAPPER), and losing one of those does, so those are reported.
+    if (option.hidden === true && !depends) {
+      continue;
+    }
     const left = accessor === undefined ? '' : ` ${accessor} still writes it.`;
-    const internal = option.hidden === true ? ' (an internal option)' : '';
+    const internal = option.hidden === true ? ' (an internal option this package relies on)' : '';
     problems.push(
       `REMOVED OPTION ${option.key}${internal} was in the ${platform} ${previousVersion} manifest and is absent ` +
         `from ${currentVersion}.${left} Remove or deprecate its accessor and re-extract the fixtures, or, if ` +

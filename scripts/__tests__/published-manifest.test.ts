@@ -551,6 +551,7 @@ describe('checkRemovals', () => {
       current: manifest([option('a'), option('b'), option('c')], { sdk: 'ios', sdkVersion: '7.0.0' }),
       acknowledged: [],
       accessorsByKey: new Map(),
+      relied: new Set(),
       ...extra,
     });
   const without = (...keys: string[]): PublishedManifest =>
@@ -586,10 +587,36 @@ describe('checkRemovals', () => {
     expect(removal({ current: without('b') })[0]).not.toContain('still writes it');
   });
 
-  it('marks a removed internal option as such', () => {
+  describe('an internal (hidden) option', () => {
     const previous = manifest([option('a'), option('$$X', { hidden: true })]);
-    const [problem] = removal({ previous, current: manifest([option('a')]) });
-    expect(problem).toContain('REMOVED OPTION $$X (an internal option)');
+    const current = manifest([option('a')]);
+
+    it('is not reported when this package does not touch it', () => {
+      expect(removal({ previous, current })).toEqual([]);
+    });
+
+    it('is reported when this package relies on it without an accessor, such as the endpoint override', () => {
+      const [problem] = removal({ previous, current, relied: new Set(['$$X']) });
+      expect(problem).toContain('REMOVED OPTION $$X (an internal option this package relies on)');
+    });
+
+    it('is reported when an accessor writes it, naming the accessor', () => {
+      const [problem] = removal({ previous, current, accessorsByKey: new Map([['$$X', 'someAccessor']]) });
+      expect(problem).toContain('$$X (an internal option this package relies on)');
+      expect(problem).toContain('someAccessor still writes it.');
+    });
+
+    it('can be acknowledged like any other', () => {
+      expect(removal({ previous, current, relied: new Set(['$$X']), acknowledged: [ack('$$X')] })).toEqual([]);
+    });
+
+    it('is not mistaken for stale when it was removed and this package does not touch it', () => {
+      expect(removal({ previous, current, acknowledged: [ack('$$X')] })).toEqual([]);
+    });
+  });
+
+  it('reports an ordinary removed option even when this package depends on nothing else', () => {
+    expect(removal({ current: without('b'), relied: new Set(['unrelated']) })).toHaveLength(1);
   });
 
   it('does not mention internal for an ordinary option', () => {

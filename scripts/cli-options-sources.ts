@@ -72,6 +72,14 @@ export async function readEnums(): Promise<{
   return { enums, withheld };
 }
 
+/** The internal SDK options this package's code depends on (RELIES_ON_INTERNAL). */
+export async function readReliesOnInternal(): Promise<Record<string, string>> {
+  const module = (await import(pathToFileURL(join(optionsDir, 'noAccessor.ts')).href)) as {
+    RELIES_ON_INTERNAL: Record<string, string>;
+  };
+  return module.RELIES_ON_INTERNAL;
+}
+
 export async function readNoAccessor(): Promise<Record<string, string>> {
   const module = (await import(pathToFileURL(join(optionsDir, 'noAccessor.ts')).href)) as {
     NO_ACCESSOR: Record<string, string>;
