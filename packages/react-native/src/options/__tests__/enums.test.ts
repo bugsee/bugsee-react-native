@@ -5,6 +5,8 @@ import {
   FrameRate,
   IssueSeverity,
   LogLevel,
+  MemoryLeakMode,
+  ReportingUIStyle,
   VideoMode,
   VideoQuality,
   WITHHELD_FROM_JS,
@@ -114,5 +116,25 @@ describe('CrashHandlerType matches the iOS SDK', () => {
       Object.entries(ios).map(([member, value]) => [member.replace(/^BugseeCrashHandlerType/, ''), value])
     );
     expect(CrashHandlerType).toEqual(bare);
+  });
+});
+
+describe('ReportingUIStyle matches the iOS SDK', () => {
+  it('has the members and values of BugseeStyle', () => {
+    const ios = (iosFixture as Record<string, Members>).ReportingUIStyle ?? {};
+    const bare = Object.fromEntries(
+      Object.entries(ios).map(([member, value]) => [member.replace(/^BugseeStyle/, ''), value])
+    );
+    expect(ReportingUIStyle).toEqual(bare);
+  });
+});
+
+describe('MemoryLeakMode', () => {
+  // Android's `MemoryLeakMode` (bugsee-android-leak) is a string-valued enum
+  // whose constants the Map launch path resolves BY NAME, so the wire value is
+  // the Java constant name. The extractor reads numeric enums only; pinned
+  // here against Android 7.4.2's `FAST`, `DEEP_DEBUG_ONLY`, `DEEP_EVERYWHERE`.
+  it('sends the Java constant names', () => {
+    expect(Object.values(MemoryLeakMode)).toEqual(['FAST', 'DEEP_DEBUG_ONLY', 'DEEP_EVERYWHERE']);
   });
 });

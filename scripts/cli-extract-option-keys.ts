@@ -2,9 +2,11 @@
  * Regenerates the committed option-key fixture from the native SDK sources.
  *
  * Usage: cli-extract-option-keys.ts [iosSdkRoot] [androidSdkRoot]
- * Defaults to the sibling Bugsee checkouts.
+ * Defaults to the sibling Bugsee checkouts. Point both at checkouts of the PINNED
+ * versions (native-versions.json): the key lists gate what the wrapper warns about,
+ * so a newer SDK tree would bless options the pinned release silently drops.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { readObjcEnum } from './ios-enums.ts';
 import { join } from 'node:path';
 import {
@@ -26,9 +28,19 @@ const androidSource = join(
   'library/src/main/java/com/bugsee/library/contracts/options/Options.java',
 );
 
+// Android declares its options in three modules. The extension holders matter:
+// NDK crash detection is bundled by this package and the leak module is one
+// dependency away, and a key missing from this list would draw the unknown-key
+// warning for an option the SDK honours.
+const androidSources = [
+  androidSource,
+  join(androidRoot, 'ndk/src/main/java/com/bugsee/library/contracts/options/NdkOptions.java'),
+  join(androidRoot, 'leak/src/main/java/com/bugsee/library/contracts/options/LeakOptions.java'),
+];
+
 const keys = splitByPlatform(
   parseIosKeys(readFileSync(iosSource, 'utf8')),
-  parseAndroidKeys(readFileSync(androidSource, 'utf8')),
+  parseAndroidKeys(androidSources.map((file) => readFileSync(file, 'utf8')).join('\n')),
 );
 
 const out = join(
@@ -63,6 +75,7 @@ writeFileSync(enumsOut, `${JSON.stringify(enums, null, 2)}\n`);
 const iosEnumHeaders = {
   IssueSeverity: ['BugseeConstants.h', 'BugseeSeverityLevel'],
   CrashHandlerType: ['BugseeConstants.h', 'BugseeCrashHandlerType'],
+  ReportingUIStyle: ['BugseeConstants.h', 'BugseeStyle'],
 } as const;
 const iosEnums = Object.fromEntries(
   Object.entries(iosEnumHeaders).map(([name, [header, objcName]]) => {
@@ -101,19 +114,33 @@ const nativeVersions = JSON.parse(
   readFileSync(join(import.meta.dirname, '..', 'native-versions.json'), 'utf8'),
 ) as { android: { sdk: string }; ios: { sdk: string } };
 
-const manifest: OptionsManifest = {
-  manifestVersion: 1,
-  sdk: 'android',
-  sdkVersion: nativeVersions.android.sdk,
-  buildConfiguration: 'release',
-  generatedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
-  options: parseAndroidDescriptors(
+// The core library's options come from its descriptors. The extension modules (NDK, leak)
+// register theirs elsewhere, so reading OptionsDescriptors.java alone would leave out options
+// the wrapper exposes. The SDK's golden manifest covers every module, so the extension rows
+// are taken from it when the SDK tree has one.
+const goldenPath = join(androidRoot, 'options-manifest/options-manifest.golden.json');
+const extensionOptions: OptionsManifest['options'] = existsSync(goldenPath)
+  ? (JSON.parse(readFileSync(goldenPath, 'utf8')) as { options: OptionsManifest['options'] })
+      .options.filter((option) => option.module !== 'bugsee-android')
+  : [];
+const options: OptionsManifest['options'] = [
+  ...parseAndroidDescriptors(
     readFileSync(join(
       androidRoot, 'library/src/main/java/com/bugsee/library/options/OptionsDescriptors.java',
     ), 'utf8'),
     androidConstants,
     enums,
   ),
+  ...extensionOptions,
+];
+
+const manifest: OptionsManifest = {
+  manifestVersion: 1,
+  sdk: 'android',
+  sdkVersion: nativeVersions.android.sdk,
+  buildConfiguration: 'release',
+  generatedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+  options,
 };
 const manifestOut = join(
   import.meta.dirname, '..', 'packages', 'react-native', 'src', 'options',

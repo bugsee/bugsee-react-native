@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { Platform } from 'react-native';
 import NativeBugsee from './NativeBugsee';
 import { PACKAGE_VERSION } from './version';
 import { wrap } from './viewtree/anchor';
@@ -32,6 +33,7 @@ import { addNetworkEvent as recordNetworkEvent } from './network/add';
 import type { AddedNetworkEvent } from './network/add';
 import { type IssueSeverity, LogLevel } from './options/enums';
 import { BugseeLaunchOptions } from './options/BugseeLaunchOptions';
+import { warnUnknownOptions } from './options/unknownKeys';
 import { labelsArgument, severityArgument } from './report/fields';
 import {
   assertEventOrTraceName,
@@ -118,11 +120,22 @@ export type LaunchOptions = Record<string, unknown>;
  */
 export type LaunchOptionsInput = BugseeLaunchOptions | LaunchOptions;
 
-/** The native payload for either form. An options object is serialised here, once, so callers never have to. */
+/**
+ * The native payload for either form. An options object is serialised here, once, so callers never have to.
+ *
+ * Also warns about keys the running platform's SDK would silently drop. Both SDKs ignore an unknown key
+ * without any error, so a misspelt or 6.x-style name (`ShakeToReport`) otherwise leaves the setting
+ * unapplied with nothing to say so. The launch itself is unchanged.
+ */
 function nativeOptionsOf(options: LaunchOptionsInput): LaunchOptions {
-  return options instanceof BugseeLaunchOptions
-    ? BugseeLaunchOptions.serialize(options)
-    : options;
+  const native =
+    options instanceof BugseeLaunchOptions
+      ? BugseeLaunchOptions.serialize(options)
+      : options;
+  if (Platform.OS === 'ios' || Platform.OS === 'android') {
+    warnUnknownOptions(Platform.OS, native);
+  }
+  return native;
 }
 
 class Bugsee {

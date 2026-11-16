@@ -5,6 +5,7 @@ import type { OptionsManifest } from '../option-keys';
 import enumFixture from '../../packages/react-native/src/options/option-enums.json';
 import { readNativeVersions } from '../native-versions';
 import { ANDROID_ONLY_KEYS, SHARED_KEYS } from '../../packages/react-native/src/options/keys';
+import { MemoryLeakMode } from '../../packages/react-native/src/options/enums';
 
 /**
  * The option-manifest parity gate (plan Task 2.7).
@@ -66,8 +67,15 @@ describe('the manifest describes the SDK we actually target', () => {
 });
 
 describe('every enum-typed option can be coerced', () => {
+  // String-valued enums (MemoryLeakMode) need no table entry: the SDK's Map path
+  // resolves a constant-name String itself, so the wrapper forwards it untouched.
+  // The TS constants are checked against the manifest's constant names below.
   const manifestEnumKeys = manifest.options
-    .filter((o) => o.type === 'enum')
+    .filter(
+      (o) =>
+        o.type === 'enum' &&
+        Object.values(o.enum?.values ?? {}).every((v) => typeof v === 'number'),
+    )
     .map((o) => o.key);
 
   it('finds enum options to check', () => {
@@ -90,6 +98,12 @@ describe('the TypeScript enum values match the manifest', () => {
   it.each([...new Map(manifestEnums.map((e) => [e.name, e])).values()])(
     '$name',
     (declared) => {
+      if (declared.name === 'MemoryLeakMode') {
+        // The manifest maps each Java constant NAME to its display string; the
+        // Map launch path takes the name, which is what the wrapper sends.
+        expect(Object.values(MemoryLeakMode).sort()).toEqual(Object.keys(declared.values).sort());
+        return;
+      }
       const ours = (enumFixture as Record<string, Record<string, number>>)[
         declared.name
       ];

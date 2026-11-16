@@ -875,8 +875,13 @@ const TS_IDENTIFIER_NAMES = new Set(['name', 'key', 'field', 'method', 'kind', '
  * Bodies not checked: the two that forward a native rejection's own message
  * (the native rules keep it value-free), and the `badArgument` helpers, which
  * only forward their parameter -- every CALL of `badArgument` is checked.
+ * `emitUnknownOptionWarning` is the one sink of the unknown-launch-option
+ * warning; its message is built by `describeUnknownKey` from the developer's
+ * own option key (an identifier, as the rules above allow) and the wrapper's
+ * own key tables -- never from an option VALUE, which that function does not
+ * receive.
  */
-const TS_AUDITED_FUNCTIONS = ['toReportError', 'toAttributeError', 'badArgument'];
+const TS_AUDITED_FUNCTIONS = ['toReportError', 'toAttributeError', 'badArgument', 'emitUnknownOptionWarning'];
 
 const TS_SINKS =
   /\bnew\s+\w*Error\s*\(|\bbadArgument\s*\(|\breject\s*\(|\bconsole\s*(?:\.\s*\w+|\[[^\]]*\])\s*\(/g;

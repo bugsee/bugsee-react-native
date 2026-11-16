@@ -1483,8 +1483,14 @@ public class BugseeModule extends NativeBugseeSpec
                 result.putString(entry.getKey(), (String) value);
             } else if (value instanceof Enum) {
                 // Enums go back as the number they arrived as -- their
-                // internal value, which is what both platforms speak.
-                result.putDouble(entry.getKey(), BugseeOptionEnums.wireValue(value));
+                // internal value, which is what both platforms speak -- or, for
+                // an enum with no number (MemoryLeakMode), as its constant name.
+                final Object wire = BugseeOptionEnums.wireFor((Enum<?>) value);
+                if (wire instanceof Double) {
+                    result.putDouble(entry.getKey(), (Double) wire);
+                } else {
+                    result.putString(entry.getKey(), (String) wire);
+                }
             }
             // Anything else has no JS representation; omitted rather than
             // stringified, which would read as a value the app could set back.
