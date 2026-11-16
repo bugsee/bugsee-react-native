@@ -14,8 +14,9 @@
  *    option are the SDK's;
  *  - no option the PREVIOUS pin's manifest has is missing from the current one (scripts/sdk-baseline.json
  *    names the previous version). That is the one place a removal can be seen: this package may have
- *    options of its own, so comparing against its set proves nothing. A removal is either dealt with (the
- *    accessor removed or deprecated) or acknowledged in the baseline with the reason.
+ *    options of its own, so comparing against its set proves nothing. A removal is dealt with when nothing
+ *    is left for it (the accessor removed or deprecated and the fixtures re-extracted), or acknowledged in
+ *    the baseline with the reason when React Native keeps the key as an option of its own.
  *
  * It is deliberately one-directional. An option this package has and the SDK does not publish is fine:
  * the package can have options of its own, sent to the SDK (which ignores them) and acted on only in
@@ -116,6 +117,20 @@ function report(label: string, problems: string[]): void {
   }
 }
 
+/** What this package still has for each key on a platform: a live accessor, or an entry in the key list. */
+function liveKeys(platform: Platform): Map<string, string> {
+  const live = new Map<string, string>();
+  for (const key of [...keys.shared, ...keys[platform]]) {
+    live.set(key, 'option-keys.json still lists it');
+  }
+  for (const accessor of accessorsFor(accessors, platform)) {
+    if (accessor.deprecated === undefined) {
+      live.set(accessor.key, `${accessor.name} still writes it`);
+    }
+  }
+  return live;
+}
+
 for (const platform of ['android', 'ios'] as const) {
   const version = pinned[platform].sdk;
   const label = `${platform} ${version}`;
@@ -169,7 +184,7 @@ for (const platform of ['android', 'ios'] as const) {
         previous,
         current: published,
         acknowledged: baseline.acknowledgedRemovals,
-        accessorsByKey: new Map(accessors.map((accessor) => [accessor.key, accessor.name])),
+        live: liveKeys(platform),
         relied: new Set(Object.keys(reliesOnInternal)),
       });
       report(`${platform} ${previousVersion} -> ${version}`, removals);

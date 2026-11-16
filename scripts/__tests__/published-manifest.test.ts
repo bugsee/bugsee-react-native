@@ -550,7 +550,7 @@ describe('checkRemovals', () => {
       previous: manifest([option('a'), option('b'), option('c')], { sdk: 'ios', sdkVersion: '7.0.0-beta6' }),
       current: manifest([option('a'), option('b'), option('c')], { sdk: 'ios', sdkVersion: '7.0.0' }),
       acknowledged: [],
-      accessorsByKey: new Map(),
+      live: new Map([['a', 'x'], ['b', 'x'], ['c', 'x'], ['d', 'x']]),
       relied: new Set(),
       ...extra,
     });
@@ -578,13 +578,28 @@ describe('checkRemovals', () => {
     expect(problems.map((p) => p.match(/REMOVED OPTION (\w+)/)?.[1])).toEqual(['a', 'c']);
   });
 
-  it('says which accessor still writes the removed option', () => {
-    const [problem] = removal({ current: without('b'), accessorsByKey: new Map([['b', 'detectAndReportKill']]) });
-    expect(problem).toContain('detectAndReportKill still writes it.');
+  it('says what is still left for the removed option', () => {
+    const [problem] = removal({ current: without('b'), live: new Map([['b', 'detectAndReportKill still writes it']]) });
+    expect(problem).toContain('absent from 7.0.0. detectAndReportKill still writes it. Remove or deprecate');
   });
 
-  it('says nothing about an accessor when there is none', () => {
-    expect(removal({ current: without('b') })[0]).not.toContain('still writes it');
+  describe('a removal that was dealt with', () => {
+    it('is not reported once nothing is left for the key: the accessor is gone and the fixtures re-extracted', () => {
+      expect(removal({ current: without('b'), live: new Map([['a', 'x'], ['c', 'x']]) })).toEqual([]);
+    });
+
+    it('is reported while only a key-list entry is left, so the fixtures must be re-extracted', () => {
+      const [problem] = removal({ current: without('b'), live: new Map([['b', 'option-keys.json still lists it']]) });
+      expect(problem).toContain('option-keys.json still lists it.');
+    });
+
+    it('is reported while a live accessor is left', () => {
+      expect(removal({ current: without('b'), live: new Map([['b', 'oldAccessor still writes it']]) })).toHaveLength(1);
+    });
+
+    it('only counts what is left for the removed key, not for the others', () => {
+      expect(removal({ current: without('b'), live: new Map([['a', 'x']]) })).toEqual([]);
+    });
   });
 
   describe('an internal (hidden) option', () => {
@@ -601,7 +616,7 @@ describe('checkRemovals', () => {
     });
 
     it('is reported when an accessor writes it, naming the accessor', () => {
-      const [problem] = removal({ previous, current, accessorsByKey: new Map([['$$X', 'someAccessor']]) });
+      const [problem] = removal({ previous, current, live: new Map([['$$X', 'someAccessor still writes it']]) });
       expect(problem).toContain('$$X (an internal option this package relies on)');
       expect(problem).toContain('someAccessor still writes it.');
     });
@@ -621,6 +636,12 @@ describe('checkRemovals', () => {
 
   it('does not mention internal for an ordinary option', () => {
     expect(removal({ current: without('b') })[0]).not.toContain('internal option');
+  });
+
+  it('says nothing about what is left when it only depends on the key being relied on', () => {
+    const previous = manifest([option('$$X', { hidden: true })]);
+    const [problem] = removal({ previous, current: manifest([]), live: new Map(), relied: new Set(['$$X']) });
+    expect(problem).toContain('absent from 7.0.0. Remove or deprecate');
   });
 
   it('accepts a removal that was acknowledged', () => {
