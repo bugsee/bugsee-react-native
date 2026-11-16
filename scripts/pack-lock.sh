@@ -5,7 +5,8 @@
 # around `npm pack`: prepack/postpack stage and unstage native-versions.json inside the package
 # directory, so one run's postpack would delete the file under another's pack.
 #
-#   pack_lock_acquire <lock dir> [seconds]   waits (default 300 s); returns 1 on timeout
+#   pack_lock_acquire <lock dir> [seconds]   waits (default 300 s); returns 1 on timeout, or when the owner
+#                                            cannot be recorded (the lock is then given back)
 #   pack_lock_release                        idempotent; safe to call from an EXIT trap AND explicitly
 #
 # Why release checks ownership. The original release was a bare `rmdir "$lock"` under `set -e`. It
@@ -30,7 +31,17 @@ pack_lock_acquire() {
     if mkdir "$lock" 2>/dev/null; then
       PACK_LOCK_DIR="$lock"
       PACK_LOCK_TOKEN="$$.$RANDOM$RANDOM"
-      printf '%s\n' "$PACK_LOCK_TOKEN" > "$lock/owner"
+      # Called as `pack_lock_acquire ... || exit 1`, where set -e does not apply inside, so a failed write
+      # must be handled here: a lock with no owner could never be released by its holder, and every later
+      # run would wait the full time and fail with a message blaming someone else.
+      if ! printf '%s\n' "$PACK_LOCK_TOKEN" > "$lock/owner"; then
+        rm -f "$lock/owner" 2>/dev/null || true
+        rmdir "$lock" 2>/dev/null || true
+        PACK_LOCK_DIR=""
+        PACK_LOCK_TOKEN=""
+        echo "FAIL: could not record the owner in $lock" >&2
+        return 1
+      fi
       return 0
     fi
     waited=$((waited + 1))
@@ -38,6 +49,16 @@ pack_lock_acquire() {
   done
   echo "FAIL: could not take $lock (stale lock? remove it)" >&2
   return 1
+}
+
+# A warning that cannot be missed. ci-each-version.sh prints each run's log inside a collapsed group only
+# after every run finished, and a run that warned still exits 0, so a plain line on stderr would sit
+# unseen in a green job. On GitHub Actions it is also an annotation, which shows on the run's summary.
+pack_lock_warn() {
+  echo "warning: $1" >&2
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::warning title=pack-install lock::$1"
+  fi
 }
 
 pack_lock_release() {
@@ -53,9 +74,9 @@ pack_lock_release() {
     return 0
   fi
   if [[ -e "$lock" ]]; then
-    echo "warning: $lock is held by another run now; left it alone" >&2
+    pack_lock_warn "$lock is held by another run now; left it alone"
   else
-    echo "warning: $lock was removed while it was held, so the pack was not serialized" >&2
+    pack_lock_warn "$lock was removed while it was held, so the pack was not serialized. Nothing in this repository removes it: please report this run"
   fi
   return 0
 }
