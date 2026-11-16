@@ -84,6 +84,33 @@ describe('parseAccessors', () => {
     expect(found.map((f) => [f.name, f.doc])).toEqual([['a', 'First.'], ['b', '']]);
   });
 
+  it('takes only the comment directly above an accessor, not the class comment and members before it', () => {
+    const source = `
+/** Launch options for Android. */
+export class AndroidLaunchOptions {
+  /** The endpoint override. */
+  get endpoint(): string | undefined {
+    return this.$get(ANDROID_ENDPOINT_KEY);
+  }
+  private readonly nativeOptions = new Map<string, unknown>();
+${accessor('first', 'boolean', 'k1', '/**\n   * First one.\n   */')}
+}`;
+    const [found] = parseAccessors(source, 'android');
+    expect(found?.name).toBe('first');
+    expect(found?.doc).toBe('First one.');
+  });
+
+  it('does not take a @deprecated from a comment it must not reach', () => {
+    const source = `
+/** @deprecated Class-level, not an accessor's. */
+export class X {
+  private x = 1;
+${accessor('a', 'boolean', 'ka')}
+}`;
+    expect(parseAccessors(source, 'base')[0]).toMatchObject({ name: 'a', doc: '' });
+    expect(parseAccessors(source, 'base')[0]?.deprecated).toBeUndefined();
+  });
+
   it('finds a getter with no setter, which a check then reports', () => {
     const source = `
   get lonely(): boolean | undefined {

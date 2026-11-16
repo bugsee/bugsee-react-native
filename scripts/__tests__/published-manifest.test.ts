@@ -59,12 +59,50 @@ describe('parseManifest', () => {
     ['not JSON', '{ nope'],
     ['null', 'null'],
     ['a number', '3'],
-    ['no sdk', JSON.stringify({ sdkVersion: '1', options: [] })],
-    ['no version', JSON.stringify({ sdk: 'ios', options: [] })],
-    ['no options', JSON.stringify({ sdk: 'ios', sdkVersion: '1' })],
-    ['options that are not a list', JSON.stringify({ sdk: 'ios', sdkVersion: '1', options: {} })],
+    ['a list', '[]'],
+    ['no sdk', JSON.stringify({ manifestVersion: 1, sdkVersion: '1', options: [] })],
+    ['no version', JSON.stringify({ manifestVersion: 1, sdk: 'ios', options: [] })],
+    ['no options', JSON.stringify({ manifestVersion: 1, sdk: 'ios', sdkVersion: '1' })],
+    ['options that are not a list', JSON.stringify({ manifestVersion: 1, sdk: 'ios', sdkVersion: '1', options: {} })],
   ])('refuses %s, naming the source', (_name, text) => {
     expect(() => parseManifest(text, 'the-source')).toThrow(/the-source/);
+  });
+
+  it.each([
+    ['a later version', 2],
+    ['no version', undefined],
+    ['a version that is a string', '1'],
+  ])('refuses %s, saying which version it found', (_name, version) => {
+    const text = JSON.stringify({ manifestVersion: version, sdk: 'ios', sdkVersion: '1', options: [] });
+    expect(() => parseManifest(text, 'the-source')).toThrow(/manifestVersion .*this check reads version 1/);
+  });
+
+  it('names the version it found', () => {
+    expect(() => parseManifest(JSON.stringify({ manifestVersion: 2, sdk: 'a', sdkVersion: '1', options: [] }), 's')).toThrow(
+      's is manifestVersion 2; this check reads version 1',
+    );
+  });
+
+  const withRow = (row: unknown): string =>
+    JSON.stringify({ manifestVersion: 1, sdk: 'ios', sdkVersion: '1', options: [{ key: 'a', type: 'boolean' }, row] });
+
+  it.each([
+    ['a row that is not an object', 'x', /option #1 is not an object/],
+    ['a row that is a list', [], /option #1 is not an object/],
+    ['a row with no key', { type: 'boolean' }, /option #1 has no key/],
+    ['a row with an empty key', { key: '', type: 'boolean' }, /option #1 has no key/],
+    ['a row with no type', { key: 'b' }, /option #1 \(b\) has no type/],
+    ['a hidden flag that is not a boolean', { key: 'b', type: 'boolean', hidden: 'yes' }, /\(b\) has a hidden flag that is not a boolean/],
+    ['an enum with no name', { key: 'b', type: 'enum', enum: { values: {} } }, /\(b\) has an enum without a name and values/],
+    ['an enum with no values', { key: 'b', type: 'enum', enum: { name: 'E' } }, /\(b\) has an enum without a name and values/],
+    ['an enum that is not an object', { key: 'b', type: 'enum', enum: 'E' }, /\(b\) has an enum without a name and values/],
+  ])('refuses %s, naming the row', (_name, row, message) => {
+    expect(() => parseManifest(withRow(row), 'the-source')).toThrow(message);
+  });
+
+  it('accepts a row with a hidden flag, a deprecation and an enum', () => {
+    const text = withRow({ key: 'b', type: 'enum', hidden: false, deprecated: { since: '1' }, enum: { name: 'E', values: { A: 1 } } });
+    expect(parseManifest(text, 's').options).toHaveLength(2);
   });
 });
 

@@ -39,7 +39,41 @@ export function manifestUrl(base: string, platform: Platform, version: string): 
   return `${base.replace(/\/+$/, '')}/${platform}/${version}.json`;
 }
 
-/** Rejects anything that is not a version-1 manifest, rather than comparing against a half-read one. */
+/** What this check reads: the only manifest format it understands. */
+export const SUPPORTED_MANIFEST_VERSION = 1;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** The reason an option row is unusable, or undefined when it is a version-1 row. */
+function rowProblem(row: unknown): string | undefined {
+  if (!isObject(row)) {
+    return 'is not an object';
+  }
+  if (typeof row.key !== 'string' || row.key === '') {
+    return 'has no key';
+  }
+  if (typeof row.type !== 'string') {
+    return `(${row.key}) has no type`;
+  }
+  if (row.hidden !== undefined && typeof row.hidden !== 'boolean') {
+    return `(${row.key}) has a hidden flag that is not a boolean`;
+  }
+  if (row.enum !== undefined) {
+    const named = isObject(row.enum) && typeof row.enum.name === 'string' && isObject(row.enum.values);
+    if (!named) {
+      return `(${row.key}) has an enum without a name and values`;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Rejects anything that is not a manifest this check can read, rather than comparing against a
+ * half-understood one. Version 1 is the only format: a later one may rename `hidden`, `deprecated` or
+ * `enum`, and comparing it as version 1 would pass differences it cannot see.
+ */
 export function parseManifest(text: string, source: string): PublishedManifest {
   let parsed: unknown;
   try {
@@ -47,17 +81,27 @@ export function parseManifest(text: string, source: string): PublishedManifest {
   } catch {
     throw new Error(`${source} is not valid JSON`);
   }
-  const manifest = parsed as Partial<PublishedManifest> | null;
   if (
-    manifest === null ||
-    typeof manifest !== 'object' ||
-    typeof manifest.sdk !== 'string' ||
-    typeof manifest.sdkVersion !== 'string' ||
-    !Array.isArray(manifest.options)
+    !isObject(parsed) ||
+    typeof parsed.sdk !== 'string' ||
+    typeof parsed.sdkVersion !== 'string' ||
+    !Array.isArray(parsed.options)
   ) {
     throw new Error(`${source} is not an option manifest (needs sdk, sdkVersion and options)`);
   }
-  return manifest as PublishedManifest;
+  if (parsed.manifestVersion !== SUPPORTED_MANIFEST_VERSION) {
+    throw new Error(
+      `${source} is manifestVersion ${JSON.stringify(parsed.manifestVersion)}; ` +
+        `this check reads version ${SUPPORTED_MANIFEST_VERSION}`,
+    );
+  }
+  for (const [index, row] of parsed.options.entries()) {
+    const problem = rowProblem(row);
+    if (problem !== undefined) {
+      throw new Error(`${source}: option #${index} ${problem}`);
+    }
+  }
+  return parsed as unknown as PublishedManifest;
 }
 
 /** The fields the committed manifest and the published one must agree on, in a comparable form. */
