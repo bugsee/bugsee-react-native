@@ -5,7 +5,7 @@ do not have to depend on this package.
 
 ## Status: beta
 
-At the same version as `@bugsee/react-native` (`7.0.0-beta3`); the npm `latest` and `beta` tags
+At the same version as `@bugsee/react-native` (`7.0.0-beta4`); the npm `latest` and `beta` tags
 both point at it for now. Install both with `@beta` to keep following betas. The two must be the
 same release.
 
@@ -25,7 +25,7 @@ yarn add @bugsee/react-native@beta @bugsee/react-native-feedback@beta
 
 No Expo config plugin. Autolinking adds `bugsee-android-feedback` on Android.
 On iOS the podspec vendors the `bugsee/feedback-spm` sources for the same
-`7.0.0` pin as the core SDK, and React Native 0.87 resolves that
+`7.1.0` pin as the core SDK, and React Native 0.87 resolves that
 package through Swift Package Manager. There is no `spm_dependency`: that
 helper does not embed the framework.
 

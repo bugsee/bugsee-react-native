@@ -290,6 +290,21 @@ export abstract class BugseeLaunchOptions {
   }
 
   /**
+   * The fatal signals the native crash handler intercepts, as a bit set: ABRT 1, SEGV 2,
+   * BUS 4, ILL 8, FPE 16, TRAP 32 (the same layout on both platforms). Unset leaves the SDK
+   * default, 128 (the "let the SDK choose" bit, which resolves to every signal; it counts only on
+   * its own). Leave SEGV and BUS out when the app hosts a Mono runtime. On Android
+   * it is read once, when the native handler is first armed in the process. iOS 7.0.0-beta7,
+   * Android 7.6.0.
+   */
+  get crashSignals(): number | undefined {
+    return this.$get('com.bugsee.option.capture.crash-signals');
+  }
+  set crashSignals(value: number | undefined) {
+    this.$set('com.bugsee.option.capture.crash-signals', value);
+  }
+
+  /**
    * Most reports kept waiting to be sent. Android 7.3.0, iOS 7.0.0.
    */
   get maxPendingReports(): number | undefined {
@@ -501,8 +516,8 @@ export abstract class BugseeLaunchOptions {
   }
 
   /**
-   * Let the user open the report dialog by shaking the device. **The SDK default is on:**
-   * set this to `false` to turn shake-to-report off.
+   * Let the user open the report dialog by shaking the device. **The SDK default is off
+   * (Android 7.6.0, iOS 7.1.0; on before):** set this to `true` to turn shake-to-report on.
    */
   get triggerByShake(): boolean | undefined {
     return this.$get('com.bugsee.option.reporting.triggers.shake');

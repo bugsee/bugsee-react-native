@@ -293,7 +293,7 @@ export class AndroidLaunchOptions extends BugseeLaunchOptions {
   }
 
   /**
-   * Let the user open the report dialog from the notification bar. The SDK default is on.
+   * Let the user open the report dialog from the notification bar. The SDK default is off (Android 7.6.0; on before).
    */
   get triggerByNotification(): boolean | undefined {
     return this.$get('com.bugsee.option.reporting.triggers.notification-bar');
