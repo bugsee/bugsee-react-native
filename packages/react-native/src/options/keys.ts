@@ -36,25 +36,20 @@ export const UNDECLARED_KEYS: Readonly<Record<'ios' | 'android', readonly string
   ],
 };
 
+export { NO_ACCESSOR } from './noAccessor';
+
 /**
- * Keys an SDK registers that have NO first-class accessor on purpose. The
- * coverage test requires every known key to have an accessor or an entry here
- * with a reason, so a new SDK option cannot be silently left unreachable.
+ * Options this package defines for itself: sent in the launch options, ignored by the native SDKs, and
+ * acted on by the wrapper alone. Listing one here keeps the unknown-key warning quiet for it.
  *
- * Keys whose accessor has a different shape than "one setter, one key" (the
- * endpoint override) are covered by {@link UNDECLARED_KEYS}.
+ * The published-manifest check never complains about a key that is here or in an accessor and absent
+ * from an SDK's manifest: it only complains about what an SDK publishes that this package lacks.
  */
-export const NO_ACCESSOR: Readonly<Record<string, string>> = {
-  'com.bugsee.option.config.data-encryption':
-    'declared in the iOS SDK\'s private header (BGSOptionsPrivate.h), not its public API',
-  'com.bugsee.option.$$DEBUG': 'internal',
-  'com.bugsee.option.$$WRAPPER': 'internal; the wrapper registers itself',
-  'com.bugsee.option.$$ENDPOINT': 'reached through the `endpoint` accessor',
-  endpoint: 'reached through the `endpoint` accessor',
-};
+export const RN_OPTION_KEYS: readonly string[] = [];
 
 export function keysFor(platform: 'ios' | 'android'): ReadonlySet<string> {
   return new Set([
+    ...RN_OPTION_KEYS,
     ...SHARED_KEYS,
     ...(platform === 'ios' ? IOS_ONLY_KEYS : ANDROID_ONLY_KEYS),
     ...UNDECLARED_KEYS[platform],
