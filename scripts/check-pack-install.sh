@@ -53,10 +53,11 @@ mkdir -p "$WORK/tarballs"
 # step, and is released only by the run that took it.
 # shellcheck source=scripts/pack-lock.sh
 source "$REPO/scripts/pack-lock.sh"
-pack_lock_acquire "${TMPDIR:-/tmp}/bugsee-pack-install.lock.d" 300 || exit 1
-# A kill between taking the lock and releasing it must not leave it behind. The
-# release is idempotent, so this and the explicit one below can both run.
+# Set BEFORE the lock is taken, so a signal between mkdir and the end of acquire cannot leave it
+# behind. The release does nothing without a token and is idempotent, so this and the explicit one
+# below can both run.
 trap 'pack_lock_release; [[ -n "${PACK_INSTALL_DIR:-}" ]] || rm -rf "$WORK"' EXIT
+pack_lock_acquire "${TMPDIR:-/tmp}/bugsee-pack-install.lock.d" 300 || exit 1
 PACK_RC=0
 for pkg in react-native react-native-feedback; do
   (cd "$REPO/packages/$pkg" && npm pack --silent --pack-destination "$WORK/tarballs" >/dev/null) || { PACK_RC=1; break; }
