@@ -43,8 +43,9 @@ export interface DocInput {
   noAccessor: Readonly<Record<string, string>>;
 }
 
-function cell(text: string): string {
-  return text.replace(/\|/g, '\\|');
+/** Text for a table cell: the backslash first, so an escape written in the text is not undone by ours. */
+export function cell(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 }
 
 /** The default cell: one value when the platforms agree, both labelled when they differ. */
