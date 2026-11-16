@@ -57,6 +57,22 @@ export const LEGACY_OPTION_KEYS: Readonly<Record<string, string>> = {
   PerformanceAdaptiveSampling: 'com.bugsee.option.performance.adaptive-sampling',
 };
 
+/**
+ * The 6.x names the iOS SDK itself maps onto 7.x keys (its `legacyKeyAliases`, read from the 7.0.0
+ * source). Only these keep working on iOS; every other name in {@link LEGACY_OPTION_KEYS} is ignored
+ * there as well. Copied rather than derived because the SDK does not publish it.
+ */
+const IOS_MAPPED_LEGACY_KEYS: ReadonlySet<string> = new Set([
+  'MaxRecordingTime', 'WifiOnlyUpload', 'NotifyFlushDelay', 'MaxDataSize',
+  'CrashReport', 'DetectAppExit', 'MonitorNetwork', 'bodySizeLimit', 'SanitizeNetworkData',
+  'VideoEnabled', 'ScreenshotEnabled', 'VideoScale', 'FrameRate', 'ViewHierarchyEnabled', 'CaptureLogs',
+  'ShakeToReport', 'ScreenshotToReport',
+  'BugseeDefaultCrashPriority', 'BugseeDefaultBugPriority', 'BugseeDefaultErrorPriority',
+  'ReportSummaryRequired', 'ReportDescriptionRequired', 'ReportEmailRequired',
+  'ReportLabelsEnabled', 'ReportLabelsRequired', 'BugseeReportPrioritySelector', 'BugseeStyle',
+  'PerformanceMonitoring', 'PerformanceSampleRate', 'PerformanceAdaptiveSampling',
+]);
+
 /** Edit distance, capped: a distance past `limit` is as good as any other. */
 function distance(a: string, b: string, limit: number): number {
   if (Math.abs(a.length - b.length) > limit) {
@@ -99,6 +115,29 @@ export function unknownOptionKeys(
   return Object.keys(options).filter((key) => !known.has(key));
 }
 
+/**
+ * What happens to a 6.x name on this platform, and what to use instead. The advice depends on the
+ * platform twice over: the iOS SDK maps only some of these names, and the 7.x key a name points at may
+ * exist on the other platform only (`NotificationBarTrigger` is Android's, `BugseeStyle` is iOS's).
+ */
+function describeLegacyKey(platform: Platform, key: string, replacement: string): string {
+  const sdk = platform === 'ios' ? 'iOS' : 'Android';
+  const usable = keysFor(platform).has(replacement);
+  if (!usable) {
+    return (
+      `[Bugsee] "${key}" is a 6.x option name, and the ${sdk} SDK has no equivalent 7.x option ` +
+      `("${replacement}" is ${platform === 'ios' ? 'Android' : 'iOS'}-only), so it has no effect.`
+    );
+  }
+  const effect =
+    platform === 'android'
+      ? 'The Android SDK ignores it, so the setting has NO effect there'
+      : IOS_MAPPED_LEGACY_KEYS.has(key)
+        ? 'The iOS SDK still maps it, but the Android SDK ignores it'
+        : 'Neither SDK maps it, so the setting has NO effect';
+  return `[Bugsee] "${key}" is a 6.x option name. ${effect}. Use "${replacement}" (or its accessor on the launch options object).`;
+}
+
 /** One sentence naming the key, what the SDK does with it, and what to use. */
 export function describeUnknownKey(platform: Platform, key: string): string {
   const sdk = platform === 'ios' ? 'iOS' : 'Android';
@@ -108,11 +147,7 @@ export function describeUnknownKey(platform: Platform, key: string): string {
     ? LEGACY_OPTION_KEYS[key]
     : undefined;
   if (legacy !== undefined) {
-    const effect =
-      platform === 'android'
-        ? 'The Android SDK ignores it, so the setting has NO effect there'
-        : 'The iOS SDK still maps it, but the Android SDK ignores it';
-    return `[Bugsee] "${key}" is a 6.x option name. ${effect}. Use "${legacy}" (or its accessor on the launch options object).`;
+    return describeLegacyKey(platform, key, legacy);
   }
   const suggestion = closestKey(platform, key);
   const hint = suggestion === undefined ? '' : ` Did you mean "${suggestion}"?`;

@@ -49,6 +49,47 @@ describe('describeUnknownKey', () => {
     expect(describeUnknownKey('ios', 'ShakeToReport')).toMatch(/Android SDK ignores it/);
   });
 
+  it('reports that neither SDK maps a 6.x name the iOS SDK has no alias for', () => {
+    // ShakeToTrigger, VideoQuality and LogLevel are 6.x Android names; the iOS alias table lacks them.
+    for (const key of ['ShakeToTrigger', 'VideoQuality', 'LogLevel', 'HandleAnr']) {
+      const message = describeUnknownKey('ios', key);
+      expect(message).toContain('Neither SDK maps it');
+      expect(message).not.toContain('iOS SDK still maps it');
+    }
+  });
+
+  it('does not send a platform to a 7.x key only the other platform has', () => {
+    // NotificationBarTrigger -> notification-bar is Android-only; BugseeStyle -> ui.style is iOS-only.
+    const onIos = describeUnknownKey('ios', 'NotificationBarTrigger');
+    expect(onIos).toContain('no equivalent 7.x option');
+    expect(onIos).toContain('Android-only');
+    expect(onIos).not.toContain('Use "');
+    expect(onIos).not.toContain('still maps');
+
+    const onAndroid = describeUnknownKey('android', 'BugseeStyle');
+    expect(onAndroid).toContain('no equivalent 7.x option');
+    expect(onAndroid).toContain('iOS-only');
+    expect(onAndroid).not.toContain('Use "');
+
+    expect(describeUnknownKey('ios', 'VideoMode')).toContain('no equivalent 7.x option');
+  });
+
+  it('only recommends a key the running platform accepts', () => {
+    for (const platform of ['ios', 'android'] as const) {
+      for (const key of Object.keys(LEGACY_OPTION_KEYS)) {
+        const recommended = /Use "([^"]+)"/.exec(describeUnknownKey(platform, key))?.[1];
+        if (recommended !== undefined) {
+          expect(keysFor(platform).has(recommended)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('still says a mapped 6.x name works on iOS but not Android, and an Android name is ignored on both', () => {
+    expect(describeUnknownKey('ios', 'ScreenshotToReport')).toContain('iOS SDK still maps it');
+    expect(describeUnknownKey('android', 'ShakeToTrigger')).toContain('Android SDK ignores it');
+  });
+
   it('suggests the nearest key for a typo', () => {
     expect(
       describeUnknownKey('android', 'com.bugsee.option.reporting.triggers.shak'),
