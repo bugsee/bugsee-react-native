@@ -84,6 +84,35 @@ describe('the extractors', () => {
     ]);
   });
 
+  it('read a declaration split across lines, which a line-by-line reading missed', () => {
+    const source = `
+      public final class Bugsee {
+        public static void single() {}
+        public static
+            void modifiersSplit() {}
+        public static void
+            nameOnNextLine() {}
+        public static <T extends Extension>
+            T genericSplit(Class<T> type) { return null; }
+        @Deprecated
+        public static
+            void deprecatedSplit() {}
+        public static final int FIELD = compute(1);
+        public static class Nested {
+          void notAMethod() {}
+        }
+        // public static void inAComment() {}
+        /* public static void inABlockComment() {} */
+      }`;
+    expect(parseAndroidApi(source)).toEqual([
+      { name: 'deprecatedSplit', deprecated: true },
+      { name: 'genericSplit', deprecated: false },
+      { name: 'modifiersSplit', deprecated: false },
+      { name: 'nameOnNextLine', deprecated: false },
+      { name: 'single', deprecated: false },
+    ]);
+  });
+
   it('read the class methods and properties of the iOS Bugsee interface only', () => {
     const header = `
       @interface Other : NSObject
