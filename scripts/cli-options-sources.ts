@@ -3,7 +3,13 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseAccessors, type AccessorInfo } from './option-accessors.ts';
-import { parseManifest, type PublishedManifest, type PublishedOption } from './published-manifest.ts';
+import {
+  parseBaseline,
+  parseManifest,
+  type PublishedManifest,
+  type SdkBaseline,
+  type PublishedOption,
+} from './published-manifest.ts';
 
 export const root = join(import.meta.dirname, '..');
 export const optionsDir = join(root, 'packages', 'react-native', 'src', 'options');
@@ -17,6 +23,11 @@ export const pinned = readJson<{ android: { sdk: string }; ios: { sdk: string } 
 export const keys = readJson<{ shared: string[]; ios: string[]; android: string[] }>(
   join(optionsDir, 'option-keys.json'),
 );
+
+/** The pin before the current one, and the removals already dealt with (scripts/sdk-baseline.json). */
+export function readBaseline(): SdkBaseline {
+  return parseBaseline(readFileSync(join(root, 'scripts', 'sdk-baseline.json'), 'utf8'), 'scripts/sdk-baseline.json');
+}
 
 export const fixtureName = (platform: 'android' | 'ios'): string => `${platform}-options-manifest.json`;
 
@@ -59,6 +70,14 @@ export async function readEnums(): Promise<{
     Object.entries(module).filter(([name]) => name !== 'WITHHELD_FROM_JS'),
   ) as Record<string, Record<string, unknown>>;
   return { enums, withheld };
+}
+
+/** The internal SDK options this package's code depends on (RELIES_ON_INTERNAL). */
+export async function readReliesOnInternal(): Promise<Record<string, string>> {
+  const module = (await import(pathToFileURL(join(optionsDir, 'noAccessor.ts')).href)) as {
+    RELIES_ON_INTERNAL: Record<string, string>;
+  };
+  return module.RELIES_ON_INTERNAL;
 }
 
 export async function readNoAccessor(): Promise<Record<string, string>> {

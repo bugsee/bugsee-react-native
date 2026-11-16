@@ -1,0 +1,5 @@
+{
+  "android": { "previous": "7.4.1", "current": "7.4.2" },
+  "ios": { "previous": "7.0.0-beta7", "current": "7.0.0" },
+  "acknowledgedRemovals": []
+}
