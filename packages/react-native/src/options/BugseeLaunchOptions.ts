@@ -292,7 +292,8 @@ export abstract class BugseeLaunchOptions {
   /**
    * The fatal signals the native crash handler intercepts, as a bit set: ABRT 1, SEGV 2,
    * BUS 4, ILL 8, FPE 16, TRAP 32 (the same layout on both platforms). Unset leaves the SDK
-   * default (every signal). Leave SEGV and BUS out when the app hosts a Mono runtime. On Android
+   * default, 128 (the "let the SDK choose" bit, which resolves to every signal; it counts only on
+   * its own). Leave SEGV and BUS out when the app hosts a Mono runtime. On Android
    * it is read once, when the native handler is first armed in the process. iOS 7.0.0-beta7,
    * Android 7.6.0.
    */

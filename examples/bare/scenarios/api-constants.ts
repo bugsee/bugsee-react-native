@@ -19,6 +19,8 @@ const P = 'com.bugsee.option.';
 export const READBACK_SHARED: Readonly<Record<string, unknown>> = {
   [`${P}capture.breadcrumbs`]: true,
   [`${P}capture.breadcrumbs.extras`]: true,
+  /** ABRT | SEGV | ILL; the SDK default is 128, the "let the SDK choose" bit (every signal). */
+  [`${P}capture.crash-signals`]: 11,
   [`${P}capture.logs`]: false,
   [`${P}capture.logs.level`]: 2,
   [`${P}capture.network`]: false,
@@ -60,7 +62,8 @@ export const READBACK_SHARED: Readonly<Record<string, unknown>> = {
   [`${P}reporting.defaults.crash-priority`]: 2,
   [`${P}reporting.defaults.error-priority`]: 1,
   [`${P}reporting.triggers.screenshot`]: true,
-  [`${P}reporting.triggers.shake`]: false,
+  /** Off by default since iOS 7.1.0 and Android 7.6.0: flipped here. */
+  [`${P}reporting.triggers.shake`]: true,
   [`${P}reporting.ui.description-required`]: true,
   [`${P}reporting.ui.email-required`]: true,
   [`${P}reporting.ui.labels-enabled`]: true,
@@ -99,7 +102,8 @@ export const READBACK_ANDROID: Readonly<Record<string, unknown>> = {
   [`${P}detect.hang.sampling`]: false,
   [`${P}performance.upload-mode`]: 'realtime',
   [`${P}reporting.triggers.broadcast`]: true,
-  [`${P}reporting.triggers.notification-bar`]: false,
+  /** Off by default since Android 7.6.0: flipped here. */
+  [`${P}reporting.triggers.notification-bar`]: true,
 };
 
 export const READBACK_IOS: Readonly<Record<string, unknown>> = {
@@ -110,8 +114,6 @@ export const READBACK_IOS: Readonly<Record<string, unknown>> = {
   [`${P}capture.camera-preview`]: true,
   /** BSD: the SDK default is MachAndBSD (3). */
   [`${P}capture.crash-handler-type`]: 1,
-  /** ABRT | SEGV | ILL; the SDK default is every signal. */
-  [`${P}capture.crash-signals`]: 11,
   [`${P}capture.device-network-names`]: true,
   [`${P}capture.disk-space`]: true,
   [`${P}capture.logs.oslog`]: true,
@@ -143,6 +145,7 @@ export const ACCESSOR_KEYS = {
     captureLogsLevel: `${P}capture.logs.level`,
     captureNetwork: `${P}capture.network`,
     captureBreadcrumbs: `${P}capture.breadcrumbs`,
+    crashSignals: `${P}capture.crash-signals`,
     captureVideo: `${P}capture.video`,
     detectAndReportCrash: `${P}detect.crash`,
     detectAndReportHang: `${P}detect.hang`,
@@ -161,7 +164,6 @@ export const ACCESSOR_KEYS = {
   },
   ios: {
     captureAVPlayer: `${P}capture.avplayer`,
-    crashSignals: `${P}capture.crash-signals`,
     crashHandlerType: `${P}capture.crash-handler-type`,
     captureDiskSpace: `${P}capture.disk-space`,
   },
