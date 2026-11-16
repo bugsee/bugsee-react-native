@@ -4,6 +4,7 @@ jest.mock('../NativeBugsee', () => require('../__mocks__/native').nativeMock);
 import * as pkg from '../index';
 import Bugsee from '../index';
 import api from '../../../../scripts/sdk-api.json';
+import nativeVersions from '../../../../native-versions.json';
 import { ANDROID, IOS, type Mapping } from '../../../../scripts/sdk-api-map';
 import { parseAndroidApi, parseIosApi } from '../../../../scripts/sdk-api';
 
@@ -19,6 +20,17 @@ const platforms = [
   ['android', api.android, ANDROID],
   ['ios', api.ios, IOS],
 ] as const;
+
+describe('the snapshot describes the pinned SDKs', () => {
+  it('was extracted at the versions in native-versions.json', () => {
+    // A native-versions bump fails here until `cli-extract-sdk-api.ts` is re-run against the new
+    // release, which is when a method the release added gets its mapping or exemption.
+    expect(api.sdk).toEqual({
+      android: nativeVersions.android.sdk,
+      ios: nativeVersions.ios.sdk,
+    });
+  });
+});
 
 describe.each(platforms)('%s SDK API parity', (_platform, methods, map) => {
   const names = methods.map((m) => m.name);

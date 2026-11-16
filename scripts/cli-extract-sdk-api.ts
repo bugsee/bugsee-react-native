@@ -17,6 +17,14 @@ const android = parseAndroidApi(readFileSync(
 const ios = parseIosApi(readFileSync(
   join(iosRoot, 'BugseeDev/BugseeLib/BugseeLib/Bugsee.h'), 'utf8'));
 
+// Recorded so a test can tell when the snapshot no longer describes the pinned SDKs.
+const pinned = JSON.parse(
+  readFileSync(join(import.meta.dirname, '..', 'native-versions.json'), 'utf8'),
+) as { android: { sdk: string }; ios: { sdk: string } };
+
 const out = join(import.meta.dirname, 'sdk-api.json');
-writeFileSync(out, `${JSON.stringify({ android, ios }, null, 2)}\n`);
+writeFileSync(
+  out,
+  `${JSON.stringify({ sdk: { android: pinned.android.sdk, ios: pinned.ios.sdk }, android, ios }, null, 2)}\n`,
+);
 console.log(`android ${android.length} methods, ios ${ios.length} -> ${out}`);
