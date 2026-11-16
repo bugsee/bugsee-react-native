@@ -494,8 +494,34 @@ public class BugseeModule extends NativeBugseeSpec
     }
 
     @Override
+    public void getHostLaunchOptions(final Promise promise) {
+        // Only what the app itself supplied, not the SDK's defaults.
+        promise.resolve(toWritableMap(Bugsee.getHostLaunchOptions()));
+    }
+
+    @Override
     public void testCrash() {
         Bugsee.testCrash();
+    }
+
+    @Override
+    public void resetVideoCapturePermission() {
+        Bugsee.resetVideoCapturePermission();
+    }
+
+    @Override
+    public void addSecureActivity(final String className) {
+        Bugsee.addSecureActivity(className);
+    }
+
+    @Override
+    public void removeSecureActivity(final String className) {
+        Bugsee.removeSecureActivity(className);
+    }
+
+    @Override
+    public void isSecureActivity(final String className, final Promise promise) {
+        promise.resolve(Bugsee.isSecureActivity(className));
     }
 
     /**

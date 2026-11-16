@@ -182,13 +182,21 @@ class Bugsee {
   }
 
   /**
-   * Restarts an already-launched session with a new set of options.
+   * Restarts an already-launched session.
+   *
+   * With **no argument** it keeps the options the app supplied: it replays
+   * {@link getHostLaunchOptions}, the SDK's own record of them, so a plain
+   * `relaunch()` does not reset every setting. (The native SDKs' bare relaunch
+   * restarts with defaults.) With an argument, including `{}`, it restarts with
+   * exactly those options: whatever you leave out returns to the SDK default.
    *
    * Installs the console patch after the native call resolves, same as
    * {@link launch}. A second install does not wrap again.
    */
-  async relaunch(options: LaunchOptionsInput = {}): Promise<boolean> {
-    const nativeOptions = nativeOptionsOf(options);
+  async relaunch(options?: LaunchOptionsInput): Promise<boolean> {
+    const nativeOptions = nativeOptionsOf(
+      options === undefined ? await this.getHostLaunchOptions() : options,
+    );
     this.registerWrapper();
     installExceptionHandlers();
     applyExceptionCaptureFromOptions(nativeOptions);
@@ -781,6 +789,42 @@ class Bugsee {
   /** The options the SDK reports as being in effect. */
   async getLaunchOptions(): Promise<Record<string, unknown>> {
     return (await NativeBugsee.getLaunchOptions()) as Record<string, unknown>;
+  }
+
+  /**
+   * Only the options the app supplied to `launch`/`relaunch`, without the SDK's
+   * defaults that {@link getLaunchOptions} merges them over. Never contains a key
+   * the SDK did not accept. This is what `relaunch()` with no argument replays.
+   */
+  async getHostLaunchOptions(): Promise<Record<string, unknown>> {
+    return (await NativeBugsee.getHostLaunchOptions()) as Record<string, unknown>;
+  }
+
+  /**
+   * Android: forgets the stored fullscreen-capture (MediaProjection) consent, so the
+   * user is asked again at the next fullscreen capture. No-op on iOS.
+   */
+  resetVideoCapturePermission(): void {
+    NativeBugsee.resetVideoCapturePermission();
+  }
+
+  /**
+   * Android: hides every window of the activity with this fully qualified class name
+   * (for example `com.example.MainActivity`) from video and screenshots. Works before
+   * `launch()`. No-op on iOS; use `<BugseeSecure>` or `setSecureRectangles` there.
+   */
+  addSecureActivity(className: string): void {
+    NativeBugsee.addSecureActivity(className);
+  }
+
+  /** Android: undoes {@link addSecureActivity}. No-op on iOS. */
+  removeSecureActivity(className: string): void {
+    NativeBugsee.removeSecureActivity(className);
+  }
+
+  /** Android: whether the activity is secure. Always `false` on iOS. */
+  async isSecureActivity(className: string): Promise<boolean> {
+    return NativeBugsee.isSecureActivity(className);
   }
 
   /**

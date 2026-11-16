@@ -34,8 +34,9 @@ iOS, does nothing on Android, and reports nothing on either. `launch()` and `rel
 - `launch(token, options)` starts the SDK with `options`. If the SDK is **already running** (iOS, or an Android process the
   SDK relaunched itself after the OS killed it) the new options are **ignored**. Do not treat `true` as proof they were applied:
   check `getStatus()` before the call if the difference matters. Android SDK 7.5.1 resolves `false` in this case, earlier SDKs `true`.
-- `relaunch(options)` restarts with **exactly** the options you pass. Anything you leave out goes back to the SDK default;
-  it does **not** keep what the previous launch set. Pass the full set each time.
+- `relaunch()` with **no argument** keeps your options: it replays `getHostLaunchOptions()`, the SDK's record of what the
+  app supplied. (The native SDKs' bare relaunch restarts with defaults.) `relaunch(options)`, including `relaunch({})`,
+  restarts with **exactly** the options you pass; anything you leave out goes back to the SDK default.
 
 ## Reference
 
