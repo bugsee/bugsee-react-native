@@ -41,6 +41,11 @@ if (!existsSync(goldenPath)) {
   );
 }
 
+// Every fixture is computed first and written together at the end, so a failure anywhere (an enum a
+// header no longer declares, a golden manifest that does not parse) leaves no fixture regenerated
+// and the others stale.
+const pending: [path: string, content: string][] = [];
+
 const iosSource = join(iosRoot, 'BugseeDev/BugseeLib/BugseeLib/BugseeOptions.m');
 const androidSource = join(
   androidRoot,
@@ -66,7 +71,7 @@ const out = join(
   import.meta.dirname, '..', 'packages', 'react-native', 'src', 'options',
   'option-keys.json',
 );
-writeFileSync(out, `${JSON.stringify(keys, null, 2)}\n`);
+pending.push([out, `${JSON.stringify(keys, null, 2)}\n`]);
 
 // The option enums, read from the same sources. These cross the bridge as
 // numbers, so a wrong one is honoured by the SDK as a different setting.
@@ -82,7 +87,7 @@ const enumsOut = join(
   import.meta.dirname, '..', 'packages', 'react-native', 'src', 'options',
   'option-enums.json',
 );
-writeFileSync(enumsOut, `${JSON.stringify(enums, null, 2)}\n`);
+pending.push([enumsOut, `${JSON.stringify(enums, null, 2)}\n`]);
 
 // The SAME enums read from the iOS headers, so the two platforms can be
 // compared. Extracted rather than hand-copied because the value that matters
@@ -115,7 +120,7 @@ const iosEnumsOut = join(
   import.meta.dirname, '..', 'packages', 'react-native', 'src', 'options',
   'ios-enums.json',
 );
-writeFileSync(iosEnumsOut, `${JSON.stringify(iosEnums, null, 2)}\n`);
+pending.push([iosEnumsOut, `${JSON.stringify(iosEnums, null, 2)}\n`]);
 
 // An Android manifest in the shape bugsee/specs sdk/options/manifest.md
 // defines, so that swapping to the SDK's own published manifest is a change of
@@ -159,7 +164,10 @@ const manifestOut = join(
   import.meta.dirname, '..', 'packages', 'react-native', 'src', 'options',
   'android-options-manifest.json',
 );
-writeFileSync(manifestOut, `${JSON.stringify(manifest, null, 2)}\n`);
+pending.push([manifestOut, `${JSON.stringify(manifest, null, 2)}\n`]);
+for (const [path, content] of pending) {
+  writeFileSync(path, content);
+}
 console.log(`android manifest: ${manifest.options.length} options -> ${manifestOut}`);
 
 console.log(
