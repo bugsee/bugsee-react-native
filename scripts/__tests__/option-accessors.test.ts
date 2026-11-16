@@ -1,4 +1,4 @@
-import { parseAccessors, readDoc } from '../option-accessors';
+import { escapeRegExp, parseAccessors, readDoc } from '../option-accessors';
 
 const accessor = (name: string, type: string, key: string, doc = ''): string => `
   ${doc}
@@ -9,6 +9,18 @@ const accessor = (name: string, type: string, key: string, doc = ''): string => 
     this.$set('${key}', value);
   }
 `;
+
+describe('escapeRegExp', () => {
+  it.each(['a.b', 'a+b', 'a*b', 'a?b', '^a$', 'a|b', '(a)', '[a]', '{a}', 'a\\b', '$$X'])('matches %s literally', (text) => {
+    expect(new RegExp(`^${escapeRegExp(text)}$`).test(text)).toBe(true);
+  });
+
+  it('does not let a metacharacter match something else', () => {
+    expect(new RegExp(`^${escapeRegExp('a.b')}$`).test('aXb')).toBe(false);
+    expect(new RegExp(`^${escapeRegExp('a|b')}$`).test('a')).toBe(false);
+    expect(new RegExp(`^${escapeRegExp('a\\b')}$`).test('a\b')).toBe(false);
+  });
+});
 
 describe('readDoc', () => {
   it('has no doc and no deprecation when there is no comment', () => {

@@ -1,4 +1,4 @@
-import { defaultCell, formatDefault, readHead, renderDoc, REFERENCE_MARKER } from '../launch-options-doc';
+import { cell, defaultCell, formatDefault, readHead, renderDoc, REFERENCE_MARKER } from '../launch-options-doc';
 import type { AccessorInfo } from '../option-accessors';
 import type { PublishedManifest, PublishedOption } from '../published-manifest';
 
@@ -39,6 +39,21 @@ describe('formatDefault', () => {
     [{ type: 'string' }, 'unset'],
   ])('writes %j as %s', (partial, expected) => {
     expect(formatDefault({ key: 'k', ...partial })).toBe(expected);
+  });
+});
+
+describe('cell', () => {
+  it('escapes a pipe so it cannot split the cell', () => {
+    expect(cell('a | b')).toBe('a \\| b');
+  });
+
+  it('escapes a backslash first, so a written \\| is not read as an escaped pipe', () => {
+    expect(cell('a\\b')).toBe('a\\\\b');
+    expect(cell('a\\|b')).toBe('a\\\\\\|b');
+  });
+
+  it('leaves plain text alone', () => {
+    expect(cell('plain text')).toBe('plain text');
   });
 });
 

@@ -44,6 +44,11 @@ export function readDoc(raw: string | undefined): { doc: string; deprecated?: st
   return { doc: text.slice(0, at).trim(), deprecated: text.slice(at + '@deprecated'.length).trim() };
 }
 
+/** The text as a regular expression that matches it literally. */
+export function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 const GETTER =
   /(?:\/\*\*([\s\S]*?)\*\/\s*)?get (\w+)\(\): ([^{]*?) \| undefined \{\s*return this\.\$get\('([^']+)'\);\s*\}/g;
 
@@ -52,7 +57,7 @@ export function parseAccessors(source: string, owner: Owner): AccessorInfo[] {
   for (const match of source.matchAll(GETTER)) {
     const [, rawDoc, name, type, key] = match as unknown as [string, string | undefined, string, string, string];
     const setter = new RegExp(
-      `set ${name}\\(value: [^)]*\\) \\{\\s*this\\.\\$set\\('${key.replace(/[$.]/g, '\\$&')}', value\\);`,
+      `set ${escapeRegExp(name)}\\(value: [^)]*\\) \\{\\s*this\\.\\$set\\('${escapeRegExp(key)}', value\\);`,
     );
     accessors.push({
       name,
