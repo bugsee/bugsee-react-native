@@ -97,6 +97,12 @@ describe('the extractors', () => {
         @Deprecated
         public static
             void deprecatedSplit() {}
+        @Deprecated public static void oldSameLine() {}
+        @Deprecated @Nullable public static void twoAnnotations() {}
+        public static @Nullable String annotated() { return null; }
+        public static @Size(max = 3) String annotatedWithArgument() { return null; }
+        public static final synchronized void withModifiers() {}
+        public static Map<String, Foo> genericReturn() { return null; }
         public static final int FIELD = compute(1);
         public static class Nested {
           void notAMethod() {}
@@ -105,11 +111,17 @@ describe('the extractors', () => {
         /* public static void inABlockComment() {} */
       }`;
     expect(parseAndroidApi(source)).toEqual([
+      { name: 'annotated', deprecated: false },
+      { name: 'annotatedWithArgument', deprecated: false },
       { name: 'deprecatedSplit', deprecated: true },
+      { name: 'genericReturn', deprecated: false },
       { name: 'genericSplit', deprecated: false },
       { name: 'modifiersSplit', deprecated: false },
       { name: 'nameOnNextLine', deprecated: false },
+      { name: 'oldSameLine', deprecated: true },
       { name: 'single', deprecated: false },
+      { name: 'twoAnnotations', deprecated: true },
+      { name: 'withModifiers', deprecated: false },
     ]);
   });
 
