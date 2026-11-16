@@ -8,6 +8,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { readObjcEnum } from './ios-enums.ts';
+import { assertAtPinnedVersion } from './sdk-version.ts';
 import { join } from 'node:path';
 import {
   parseAndroidDescriptors,
@@ -21,6 +22,24 @@ import {
 const home = process.env.HOME ?? '';
 const [iosRoot = join(home, 'Projects/Bugsee/ios/sdk'),
        androidRoot = join(home, 'Projects/Bugsee/android/sdk')] = process.argv.slice(2);
+
+// Everything that can refuse runs before the first write, so a refusal never leaves some of the
+// generated fixtures regenerated and others stale.
+const nativeVersions = JSON.parse(
+  readFileSync(join(import.meta.dirname, '..', 'native-versions.json'), 'utf8'),
+) as { android: { sdk: string }; ios: { sdk: string } };
+assertAtPinnedVersion('ios', iosRoot, nativeVersions.ios.sdk);
+assertAtPinnedVersion('android', androidRoot, nativeVersions.android.sdk);
+
+// No golden manifest means the generated manifest would lose the NDK and leak options while the key
+// list (read from their sources) still includes them, so the two artifacts would disagree.
+const goldenPath = join(androidRoot, 'options-manifest/options-manifest.golden.json');
+if (!existsSync(goldenPath)) {
+  throw new Error(
+    `${goldenPath} is missing. Point the extractor at an Android SDK checkout that has ` +
+      'options-manifest/options-manifest.golden.json (every pinned release does).',
+  );
+}
 
 const iosSource = join(iosRoot, 'BugseeDev/BugseeLib/BugseeLib/BugseeOptions.m');
 const androidSource = join(
@@ -110,23 +129,10 @@ const androidConstants = Object.fromEntries(
     .map((m) => [m[1] as string, m[2] as string]),
 );
 
-const nativeVersions = JSON.parse(
-  readFileSync(join(import.meta.dirname, '..', 'native-versions.json'), 'utf8'),
-) as { android: { sdk: string }; ios: { sdk: string } };
-
 // The core library's options come from its descriptors. The extension modules (NDK, leak)
 // register theirs elsewhere, so reading OptionsDescriptors.java alone would leave out options
 // the wrapper exposes. The SDK's golden manifest covers every module, so the extension rows
-// are taken from it when the SDK tree has one.
-const goldenPath = join(androidRoot, 'options-manifest/options-manifest.golden.json');
-// No golden manifest means the generated manifest would lose the NDK and leak options while the key
-// list (read from their sources above) still includes them, so the two artifacts would disagree.
-if (!existsSync(goldenPath)) {
-  throw new Error(
-    `${goldenPath} is missing. Point the extractor at an Android SDK checkout that has ` +
-      'options-manifest/options-manifest.golden.json (every pinned release does).',
-  );
-}
+// are taken from it (its presence was checked up front, before anything was written).
 const extensionOptions: OptionsManifest['options'] = (
   JSON.parse(readFileSync(goldenPath, 'utf8')) as { options: OptionsManifest['options'] }
 ).options.filter((option) => option.module !== 'bugsee-android');
