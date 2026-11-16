@@ -3,7 +3,9 @@
  * platform subclasses, so a check can compare what this package declares with what the SDKs publish.
  *
  * It reads the source, not the compiled classes, because the declared TYPE of an accessor exists only
- * there. The accessors are uniform (`get x(): T | undefined { return this.$get('key'); }` and the
+ * there. A doc comment is the one directly above its getter: the pattern for it cannot run past a
+ * comment end, or the first accessor of a file would swallow the class comment and every member that is
+ * not an accessor. The accessors are uniform (`get x(): T | undefined { return this.$get('key'); }` and the
  * matching setter), which is what makes this a reading and not a TypeScript parser: an accessor that
  * deviates from the shape is not found, and the check then reports its option as missing rather than
  * passing it unseen.
@@ -50,7 +52,7 @@ export function escapeRegExp(text: string): string {
 }
 
 const GETTER =
-  /(?:\/\*\*([\s\S]*?)\*\/\s*)?get (\w+)\(\): ([^{]*?) \| undefined \{\s*return this\.\$get\('([^']+)'\);\s*\}/g;
+  /(?:\/\*\*((?:(?!\*\/)[\s\S])*?)\*\/\s*)?get (\w+)\(\): ([^{]*?) \| undefined \{\s*return this\.\$get\('([^']+)'\);\s*\}/g;
 
 export function parseAccessors(source: string, owner: Owner): AccessorInfo[] {
   const accessors: AccessorInfo[] = [];

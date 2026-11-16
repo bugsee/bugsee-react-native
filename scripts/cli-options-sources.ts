@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseAccessors, type AccessorInfo } from './option-accessors.ts';
-import type { PublishedManifest, PublishedOption } from './published-manifest.ts';
+import { parseManifest, type PublishedManifest, type PublishedOption } from './published-manifest.ts';
 
 export const root = join(import.meta.dirname, '..');
 export const optionsDir = join(root, 'packages', 'react-native', 'src', 'options');
@@ -20,8 +20,13 @@ export const keys = readJson<{ shared: string[]; ios: string[]; android: string[
 
 export const fixtureName = (platform: 'android' | 'ios'): string => `${platform}-options-manifest.json`;
 
+/**
+ * A committed copy of a manifest, read as strictly as the published one: a file that is `{}` or has
+ * malformed rows must fail the check, not turn the comparison against it into a no-op.
+ */
 export function readFixture(platform: 'android' | 'ios'): PublishedManifest {
-  return readJson<PublishedManifest>(join(optionsDir, fixtureName(platform)));
+  const name = fixtureName(platform);
+  return parseManifest(readFileSync(join(optionsDir, name), 'utf8'), name);
 }
 
 export function fixtureOptions(platform: 'android' | 'ios'): PublishedOption[] {
