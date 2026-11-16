@@ -23,7 +23,8 @@ yarn add @bugsee/react-native@beta
 ## Developing
 
 This is a Yarn 4 workspace. `yarn install`, then `yarn lint`, `yarn typecheck` and `yarn test`.
-Release notes are in [`docs/release-notes.md`](docs/release-notes.md). Design notes live in [`docs/design`](docs/design); the cross-platform wrapper
+Release notes are in [`docs/release-notes.md`](docs/release-notes.md).
+Design notes live in [`docs/design`](docs/design); the cross-platform wrapper
 [workbook](docs/cross-platform-wrapper-workbook.md) explains the native contract.
 
 ## Releasing
