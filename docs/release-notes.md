@@ -15,8 +15,9 @@ Native SDKs: **Android 7.6.0** (Gradle plugin 4.0.8), **iOS 7.1.0**. npm dist-ta
 - **The notification-bar trigger is off by default on Android** (`triggerByNotification`, Android 7.6.0).
   Set it to `true` to keep it.
 - **`crashSignals` is now a shared option.** Both SDKs register `com.bugsee.option.capture.crash-signals`
-  (same bit layout: ABRT 1, SEGV 2, BUS 4, ILL 8, FPE 16, TRAP 32; default 128, the "let the SDK choose"
-  bit, which resolves to every signal). The accessor moved from the iOS-only options class to the shared
+  (same bit layout: ABRT 1, SEGV 2, BUS 4, ILL 8, FPE 16, TRAP 32). The default is 128, the "let the SDK
+  choose" bit, which means every signal only when it is the whole value; combined with other bits it is
+  dropped and only the signal bits count. The accessor moved from the iOS-only options class to the shared
   one, so it is now available on Android too. On Android it is read once, when the native handler is armed.
 - The bundled iOS SDK is now a stable release (7.1.0), no longer a beta.
 
