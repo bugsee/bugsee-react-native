@@ -49,16 +49,14 @@ mkdir -p "$WORK/tarballs"
 # prepack/postpack stage and unstage native-versions.json inside the package
 # directory, which parallel runs of this script (scripts/ci-each-version.sh)
 # share: one run's postpack would delete the file under another's pack. A
-# mkdir lock (flock is not on macOS) serializes just this step.
-PACK_LOCK="${TMPDIR:-/tmp}/bugsee-pack-install.lock.d"
-PACK_LOCK_HELD=0
-for _ in $(seq 1 300); do
-  if mkdir "$PACK_LOCK" 2>/dev/null; then PACK_LOCK_HELD=1; break; fi
-  sleep 1
-done
-[[ "$PACK_LOCK_HELD" -eq 1 ]] || { echo "FAIL: could not take $PACK_LOCK (stale lock? remove it)" >&2; exit 1; }
-# A kill between mkdir and rmdir must not leave the lock behind.
-trap 'rmdir "$PACK_LOCK" 2>/dev/null; [[ -n "${PACK_INSTALL_DIR:-}" ]] || rm -rf "$WORK"' EXIT
+# mkdir lock (scripts/pack-lock.sh; flock is not on macOS) serializes just this
+# step, and is released only by the run that took it.
+# shellcheck source=scripts/pack-lock.sh
+source "$REPO/scripts/pack-lock.sh"
+pack_lock_acquire "${TMPDIR:-/tmp}/bugsee-pack-install.lock.d" 300 || exit 1
+# A kill between taking the lock and releasing it must not leave it behind. The
+# release is idempotent, so this and the explicit one below can both run.
+trap 'pack_lock_release; [[ -n "${PACK_INSTALL_DIR:-}" ]] || rm -rf "$WORK"' EXIT
 PACK_RC=0
 for pkg in react-native react-native-feedback; do
   (cd "$REPO/packages/$pkg" && npm pack --silent --pack-destination "$WORK/tarballs" >/dev/null) || { PACK_RC=1; break; }
@@ -67,7 +65,7 @@ done
 # runs. Parallel first-time `npx --yes` installs into ~/.npm/_npx corrupt each
 # other (TAR_ENTRY_ERROR ENOENT); once warm, later runs only read it.
 [[ "$PACK_RC" -eq 0 ]] && { npx --yes "@react-native-community/cli@${RN_CLI_VERSION:-20.2.0}" --version >/dev/null || { echo "FAIL: npx warm-up" >&2; PACK_RC=1; }; }
-rmdir "$PACK_LOCK"
+pack_lock_release
 if [[ -n "${PACK_INSTALL_DIR:-}" ]]; then trap - EXIT; else trap 'rm -rf "$WORK"' EXIT; fi
 [[ "$PACK_RC" -eq 0 ]] || { echo "FAIL: npm pack or npx warm-up (see above)" >&2; exit 1; }
 CORE_TGZ="$(ls "$WORK"/tarballs/bugsee-react-native-[0-9]*.tgz)"
