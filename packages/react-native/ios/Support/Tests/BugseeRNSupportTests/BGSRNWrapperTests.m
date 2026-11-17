@@ -58,7 +58,7 @@
 - (void)testWithoutJsRuntimeCarriesOnlyTypeAndVersion {
   BGSRNWrapper *wrapper = [BGSRNWrapper wrapperWithoutJsRuntime];
   XCTAssertEqualObjects(wrapper.wrapperType, @"react_native");
-  XCTAssertEqualObjects(wrapper.wrapperVersion, @"7.0.0-beta4");
+  XCTAssertEqualObjects(wrapper.wrapperVersion, @"7.0.0-beta5");
   XCTAssertNil(wrapper.wrapperBuild);
   XCTAssertEqual(wrapper.context.count, (NSUInteger)0);
 }
