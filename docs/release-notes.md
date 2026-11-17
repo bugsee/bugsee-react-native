@@ -21,7 +21,6 @@ plugin declares by default and what the README tells bare apps to apply.
   block.
 - Uploads honour the JVM proxy settings, secrets such as the app token stay out of build logs, and the
   plugin falls back to an installed `bugsee-cli` when the download fails.
-- Native crash capture keeps working when the Bugsee SDK is declared in another module.
 
 If you pin the plugin yourself, use 4.1.1: `id 'com.bugsee.android.gradle' version '4.1.1' apply false`.
 
