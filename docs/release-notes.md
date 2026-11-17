@@ -21,7 +21,6 @@ plugin declares by default and what the README tells bare apps to apply.
   block.
 - Uploads honour the JVM proxy settings, secrets such as the app token stay out of build logs, and the
   plugin falls back to an installed `bugsee-cli` when the download fails.
-- Native crash capture keeps working when the Bugsee SDK is declared in another module.
 
 If you pin the plugin yourself, use 4.1.1: `id 'com.bugsee.android.gradle' version '4.1.1' apply false`.
 
@@ -50,7 +49,6 @@ Launch options were synchronized from the option manifests the two SDKs publishe
 Native SDKs and options
 - Adopt iOS SDK 7.0.0 (#182), then 7.1.0, and Android SDK 7.6.0 (#194).
 - A typed accessor for every option either SDK registers (#189).
-- iOS imports the wrapper contract from `Bugsee.SPI` (#178).
 
 Reporting and capture
 - Exceptions: `ErrorBoundary` honours `detect.crash`, and a crash after a handled report is kept (#156).
@@ -64,8 +62,7 @@ Reporting and capture
 Filters and privacy
 - Log, network and breadcrumb filters fail closed on a 9 s deadline (iOS log/network/breadcrumb, Android
   breadcrumb) (#160), and after a JS reload until the new runtime installs its filter (#161).
-- Auto-launch: `attach()` registers the wrapper identity, with an opt-in fail-closed filter hold at
-  process start (#162).
+- Auto-launch: an opt-in fail-closed filter hold at process start (#162).
 - Breadcrumbs: an opt-in URL scrubber for http crumbs (#164).
 - Network filter scope and per-platform built-in redaction are documented (#159).
 
