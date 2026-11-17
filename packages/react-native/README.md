@@ -603,6 +603,9 @@ plugins {
 }
 ```
 
+Plugin 4.1.x needs the Android Gradle Plugin 8.6 or newer and Gradle 8.7 or newer (Gradle 9 is
+supported); on older ones the build fails early with a message saying so.
+
 `android/app/build.gradle` — apply it, and for native crash symbols add the
 NDK module at the SDK version the package pins. No `ndk.debugSymbolLevel` is
 needed for Bugsee ([Native symbols](#native-symbols-android)); set one only
