@@ -295,7 +295,7 @@ export abstract class BugseeLaunchOptions {
    * default, 128 (the "let the SDK choose" bit, which resolves to every signal; it counts only on
    * its own). Leave SEGV and BUS out when the app hosts a Mono runtime. On Android
    * it is read once, when the native handler is first armed in the process. iOS 7.0.0-beta7,
-   * Android 7.6.0.
+   * Android 7.5.0.
    */
   get crashSignals(): number | undefined {
     return this.$get('com.bugsee.option.capture.crash-signals');
