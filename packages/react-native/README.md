@@ -9,7 +9,7 @@ added.
 
 ## Status: beta
 
-This is a beta (`7.0.0-beta4`), built on the 7.x native SDKs (Android 7.6.0, iOS 7.1.0). `latest` and `beta` both point at it for now, so a plain
+This is a beta (`7.0.0-beta5`), built on the 7.x native SDKs (Android 7.6.0, iOS 7.1.0). `latest` and `beta` both point at it for now, so a plain
 `yarn add @bugsee/react-native` installs it; the `@beta` form in [Install](#install)
 keeps following betas once a stable release exists. The API can still change
 between betas.
@@ -599,7 +599,7 @@ against (`android.gradlePlugin` in
 
 ```groovy
 plugins {
-    id 'com.bugsee.android.gradle' version '4.0.8' apply false
+    id 'com.bugsee.android.gradle' version '4.1.1' apply false
 }
 ```
 
