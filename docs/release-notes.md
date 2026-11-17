@@ -4,6 +4,27 @@ Newest first. The npm packages `@bugsee/react-native` and `@bugsee/react-native-
 the same version. Each version also has a GitHub release with the packed tarballs and the generated list
 of merged pull requests.
 
+## 7.0.0-beta5
+
+Native SDKs: **Android 7.6.0** (Gradle plugin **4.1.1**), **iOS 7.1.0**. npm dist-tags `beta` and `latest`.
+
+### Gradle plugin 4.1.1
+
+The package now builds against Bugsee Gradle plugin 4.1.1 (it was 4.0.8). This is what the Expo config
+plugin declares by default and what the README tells bare apps to apply.
+
+- The plugin requires **AGP 8.6 or newer and Gradle 8.7 or newer** (Gradle 9 is supported) and fails
+  early with a readable message otherwise.
+- Native symbols are still uploaded from the unstripped libraries, and an upload that did not change is
+  skipped on the next build.
+- Opt in to failing the build when an upload does not complete with `failOnUploadError` in the `bugsee { }`
+  block.
+- Uploads honour the JVM proxy settings, secrets such as the app token stay out of build logs, and the
+  plugin falls back to an installed `bugsee-cli` when the download fails.
+- Native crash capture keeps working when the Bugsee SDK is declared in another module.
+
+If you pin the plugin yourself, use 4.1.1: `id 'com.bugsee.android.gradle' version '4.1.1' apply false`.
+
 ## 7.0.0-beta4
 
 Native SDKs: **Android 7.6.0** (Gradle plugin 4.0.8), **iOS 7.1.0**. npm dist-tags `beta` and `latest`.

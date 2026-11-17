@@ -9,7 +9,7 @@ added.
 
 ## Status: beta
 
-This is a beta (`7.0.0-beta4`), built on the 7.x native SDKs (Android 7.6.0, iOS 7.1.0). `latest` and `beta` both point at it for now, so a plain
+This is a beta (`7.0.0-beta5`), built on the 7.x native SDKs (Android 7.6.0, iOS 7.1.0). `latest` and `beta` both point at it for now, so a plain
 `yarn add @bugsee/react-native` installs it; the `@beta` form in [Install](#install)
 keeps following betas once a stable release exists. The API can still change
 between betas.
@@ -599,9 +599,12 @@ against (`android.gradlePlugin` in
 
 ```groovy
 plugins {
-    id 'com.bugsee.android.gradle' version '4.0.8' apply false
+    id 'com.bugsee.android.gradle' version '4.1.1' apply false
 }
 ```
+
+Plugin 4.1.x needs the Android Gradle Plugin 8.6 or newer and Gradle 8.7 or newer (Gradle 9 is
+supported); on older ones the build fails early with a message saying so.
 
 `android/app/build.gradle` — apply it, and for native crash symbols add the
 NDK module at the SDK version the package pins. No `ndk.debugSymbolLevel` is
