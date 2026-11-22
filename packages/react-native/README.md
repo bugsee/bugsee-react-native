@@ -112,11 +112,20 @@ options.reportingUIEmailRequired = true;
   `relaunch` log one `console.warn` per unknown key and name the key to use.
 - **`launch` while the SDK is already running ignores the options** you pass: an iOS session that is
   already up, or an Android process the SDK relaunched itself after the OS killed it. Check `getStatus()` first.
-- **`relaunch(options)` restarts with exactly the options you pass.** Options you omit return to the SDK
-  default; the previous launch's are not kept.
+- **`relaunch()` keeps your options; `relaunch(options)` replaces them.** With no argument it replays
+  `getHostLaunchOptions()`, the options the app supplied, so nothing resets. With an argument, including `{}`,
+  it restarts with exactly those options and whatever you leave out returns to the SDK default.
 
 The full list, with keys, types and platforms, is in
 [`docs/launch-options.md`](https://github.com/bugsee/bugsee-react-native/blob/main/docs/launch-options.md).
+
+### Methods that exist on one platform
+
+`getHostLaunchOptions()` returns only what your app supplied to `launch`. Android-only: `resetVideoCapturePermission()`,
+`addSecureActivity(className)`, `removeSecureActivity(className)`, `isSecureActivity(className)`. iOS treats
+these as no-ops. Which native methods
+this package does not expose, and why, is in
+[`docs/native-api-parity.md`](https://github.com/bugsee/bugsee-react-native/blob/main/docs/native-api-parity.md).
 
 ### Reporting render errors
 

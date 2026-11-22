@@ -1432,10 +1432,38 @@ static NSDictionary *BGSRNResolvedLaunchOptions(NSDictionary *options) {
   });
 }
 
+- (void)getHostLaunchOptions:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject {
+  BGSRNRunOnMain(^{
+    // Only what the app itself supplied, not the SDK's defaults.
+    resolve([Bugsee getHostLaunchOptions] ?: @{});
+  });
+}
+
 - (void)testCrash {
   BGSRNRunOnMain(^{
     [Bugsee testCrash];
   });
+}
+
+#pragma mark - Android-only and iOS-only calls
+
+// iOS has no MediaProjection consent and no secure activities: these are
+// no-ops here, and isSecureActivity answers NO.
+
+- (void)resetVideoCapturePermission {
+}
+
+- (void)addSecureActivity:(NSString *)className {
+}
+
+- (void)removeSecureActivity:(NSString *)className {
+}
+
+- (void)isSecureActivity:(NSString *)className
+                 resolve:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject {
+  resolve(@NO);
 }
 
 /// A handled JS exception. `payloadJson` is the Task 7.1a payload, forwarded

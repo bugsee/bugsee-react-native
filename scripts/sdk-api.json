@@ -1,0 +1,490 @@
+{
+  "sdk": {
+    "android": "7.4.2",
+    "ios": "7.0.0"
+  },
+  "android": [
+    {
+      "name": "addBreadcrumb",
+      "deprecated": false
+    },
+    {
+      "name": "addNetworkEvent",
+      "deprecated": false
+    },
+    {
+      "name": "addSecureActivity",
+      "deprecated": false
+    },
+    {
+      "name": "addSecureRectangle",
+      "deprecated": false
+    },
+    {
+      "name": "addSecureView",
+      "deprecated": false
+    },
+    {
+      "name": "addSecureViews",
+      "deprecated": true
+    },
+    {
+      "name": "addSecureWebView",
+      "deprecated": false
+    },
+    {
+      "name": "captureViewHierarchy",
+      "deprecated": false
+    },
+    {
+      "name": "clearAllAttributes",
+      "deprecated": false
+    },
+    {
+      "name": "clearAttribute",
+      "deprecated": false
+    },
+    {
+      "name": "clearUserIdentifier",
+      "deprecated": false
+    },
+    {
+      "name": "createReport",
+      "deprecated": false
+    },
+    {
+      "name": "deleteCollectedDataOnDevice",
+      "deprecated": false
+    },
+    {
+      "name": "endBlackout",
+      "deprecated": false
+    },
+    {
+      "name": "event",
+      "deprecated": false
+    },
+    {
+      "name": "ext",
+      "deprecated": false
+    },
+    {
+      "name": "getActiveSpan",
+      "deprecated": false
+    },
+    {
+      "name": "getAllAttributes",
+      "deprecated": false
+    },
+    {
+      "name": "getAllSecureRectangles",
+      "deprecated": false
+    },
+    {
+      "name": "getAppearance",
+      "deprecated": false
+    },
+    {
+      "name": "getAttribute",
+      "deprecated": false
+    },
+    {
+      "name": "getDefaultNetworkSanitizer",
+      "deprecated": false
+    },
+    {
+      "name": "getExchangeFactory",
+      "deprecated": false
+    },
+    {
+      "name": "getHostLaunchOptions",
+      "deprecated": false
+    },
+    {
+      "name": "getLaunched",
+      "deprecated": false
+    },
+    {
+      "name": "getLaunchOptions",
+      "deprecated": false
+    },
+    {
+      "name": "getStatus",
+      "deprecated": false
+    },
+    {
+      "name": "getUserIdentifier",
+      "deprecated": false
+    },
+    {
+      "name": "getVideoFrameConsumer",
+      "deprecated": false
+    },
+    {
+      "name": "isBlackout",
+      "deprecated": false
+    },
+    {
+      "name": "isSecureActivity",
+      "deprecated": false
+    },
+    {
+      "name": "launch",
+      "deprecated": false
+    },
+    {
+      "name": "log",
+      "deprecated": false
+    },
+    {
+      "name": "logException",
+      "deprecated": false
+    },
+    {
+      "name": "logUnhandledException",
+      "deprecated": false
+    },
+    {
+      "name": "notify",
+      "deprecated": false
+    },
+    {
+      "name": "onUncaughtException",
+      "deprecated": false
+    },
+    {
+      "name": "registerExt",
+      "deprecated": false
+    },
+    {
+      "name": "relaunch",
+      "deprecated": false
+    },
+    {
+      "name": "removeAllSecureRectangles",
+      "deprecated": false
+    },
+    {
+      "name": "removeSecureActivity",
+      "deprecated": false
+    },
+    {
+      "name": "removeSecureRectangle",
+      "deprecated": false
+    },
+    {
+      "name": "removeSecureView",
+      "deprecated": false
+    },
+    {
+      "name": "resetVideoCapturePermission",
+      "deprecated": false
+    },
+    {
+      "name": "setAttribute",
+      "deprecated": false
+    },
+    {
+      "name": "setBreadcrumbFilter",
+      "deprecated": false
+    },
+    {
+      "name": "setLifecycleEventsListener",
+      "deprecated": false
+    },
+    {
+      "name": "setLogEventFilter",
+      "deprecated": false
+    },
+    {
+      "name": "setLogFilter",
+      "deprecated": true
+    },
+    {
+      "name": "setNetworkEventFilter",
+      "deprecated": false
+    },
+    {
+      "name": "setReportHandler",
+      "deprecated": false
+    },
+    {
+      "name": "setUserIdentifier",
+      "deprecated": false
+    },
+    {
+      "name": "setWrapper",
+      "deprecated": false
+    },
+    {
+      "name": "showReportDialog",
+      "deprecated": false
+    },
+    {
+      "name": "startBlackout",
+      "deprecated": false
+    },
+    {
+      "name": "startSpan",
+      "deprecated": false
+    },
+    {
+      "name": "startTransaction",
+      "deprecated": false
+    },
+    {
+      "name": "stop",
+      "deprecated": false
+    },
+    {
+      "name": "testCrash",
+      "deprecated": false
+    },
+    {
+      "name": "trace",
+      "deprecated": false
+    },
+    {
+      "name": "upload",
+      "deprecated": false
+    }
+  ],
+  "ios": [
+    {
+      "name": "addBreadcrumb",
+      "deprecated": false
+    },
+    {
+      "name": "addNetworkEvent",
+      "deprecated": false
+    },
+    {
+      "name": "addSecureRectangle",
+      "deprecated": false
+    },
+    {
+      "name": "addSecureView",
+      "deprecated": false
+    },
+    {
+      "name": "addSecureWebView",
+      "deprecated": false
+    },
+    {
+      "name": "captureViewHierarchy",
+      "deprecated": false
+    },
+    {
+      "name": "clearAllAttributes",
+      "deprecated": false
+    },
+    {
+      "name": "clearAttribute",
+      "deprecated": false
+    },
+    {
+      "name": "clearUserIdentifier",
+      "deprecated": false
+    },
+    {
+      "name": "createReportWithCompletion",
+      "deprecated": false
+    },
+    {
+      "name": "defaultNetworkSanitizer",
+      "deprecated": false
+    },
+    {
+      "name": "delegate",
+      "deprecated": false
+    },
+    {
+      "name": "deleteCollectedDataOnDevice",
+      "deprecated": false
+    },
+    {
+      "name": "endBlackout",
+      "deprecated": false
+    },
+    {
+      "name": "event",
+      "deprecated": false
+    },
+    {
+      "name": "ext",
+      "deprecated": false
+    },
+    {
+      "name": "getActiveSpan",
+      "deprecated": false
+    },
+    {
+      "name": "getAllAttributes",
+      "deprecated": false
+    },
+    {
+      "name": "getAllSecureRectangles",
+      "deprecated": false
+    },
+    {
+      "name": "getAppearance",
+      "deprecated": false
+    },
+    {
+      "name": "getAttribute",
+      "deprecated": false
+    },
+    {
+      "name": "getExchangeFactory",
+      "deprecated": false
+    },
+    {
+      "name": "getHostLaunchOptions",
+      "deprecated": false
+    },
+    {
+      "name": "getLaunchOptions",
+      "deprecated": false
+    },
+    {
+      "name": "getUserIdentifier",
+      "deprecated": false
+    },
+    {
+      "name": "hideVideoCapturePreview",
+      "deprecated": false
+    },
+    {
+      "name": "isBlackout",
+      "deprecated": false
+    },
+    {
+      "name": "launched",
+      "deprecated": false
+    },
+    {
+      "name": "launchWithToken",
+      "deprecated": false
+    },
+    {
+      "name": "log",
+      "deprecated": false
+    },
+    {
+      "name": "logError",
+      "deprecated": false
+    },
+    {
+      "name": "logException",
+      "deprecated": false
+    },
+    {
+      "name": "logUnhandledException",
+      "deprecated": false
+    },
+    {
+      "name": "notifyWithTitle",
+      "deprecated": false
+    },
+    {
+      "name": "relaunch",
+      "deprecated": false
+    },
+    {
+      "name": "relaunchWithDictionaryOptions",
+      "deprecated": false
+    },
+    {
+      "name": "relaunchWithOptions",
+      "deprecated": false
+    },
+    {
+      "name": "removeAllSecureRectangles",
+      "deprecated": false
+    },
+    {
+      "name": "removeSecureRectangle",
+      "deprecated": false
+    },
+    {
+      "name": "removeSecureView",
+      "deprecated": false
+    },
+    {
+      "name": "setAttribute",
+      "deprecated": false
+    },
+    {
+      "name": "setBreadcrumbFilter",
+      "deprecated": false
+    },
+    {
+      "name": "setLogEventFilter",
+      "deprecated": false
+    },
+    {
+      "name": "setNetworkEventFilter",
+      "deprecated": false
+    },
+    {
+      "name": "setReportHandler",
+      "deprecated": false
+    },
+    {
+      "name": "setUserIdentifier",
+      "deprecated": false
+    },
+    {
+      "name": "sharedInstance",
+      "deprecated": false
+    },
+    {
+      "name": "showReportDialog",
+      "deprecated": false
+    },
+    {
+      "name": "showReportDialogWithSummary",
+      "deprecated": false
+    },
+    {
+      "name": "showVideoCapturePreview",
+      "deprecated": false
+    },
+    {
+      "name": "startBlackout",
+      "deprecated": false
+    },
+    {
+      "name": "startSpanWithOperation",
+      "deprecated": false
+    },
+    {
+      "name": "startTransactionWithName",
+      "deprecated": false
+    },
+    {
+      "name": "status",
+      "deprecated": false
+    },
+    {
+      "name": "stop",
+      "deprecated": false
+    },
+    {
+      "name": "testCrash",
+      "deprecated": false
+    },
+    {
+      "name": "trace",
+      "deprecated": false
+    },
+    {
+      "name": "uploadReport",
+      "deprecated": false
+    },
+    {
+      "name": "uploadWithSummary",
+      "deprecated": false
+    }
+  ]
+}
