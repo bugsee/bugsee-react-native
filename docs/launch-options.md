@@ -18,7 +18,12 @@ a test fails when either SDK registers an option this package has no accessor fo
 `download.bugsee.com/sdk/options/<platform>/<version>.json` with this package. It fails when an SDK publishes an option
 this package lacks (named in the message), or an option whose type, default or enum constants differ. It does not
 complain about an option this package has and the SDK does not publish: the package may define options of its own,
-which the SDK ignores. The tables below are generated from the accessors and those manifests
+which the SDK ignores. The same check also compares the pinned release's manifest with the one for the **previous pin**
+(`scripts/sdk-baseline.json`) and fails on any option the newer one no longer has: the SDK removed it, and its accessor and
+docs are now dead. That is the one place a removal can be seen, because this package's own option set cannot show it. When
+`native-versions.json` moves, set `previous` to the old `current` and `current` to the new pin in that file; a removal is
+either dealt with (accessor removed or deprecated) or acknowledged there, with the reason. The tables below are generated
+from the accessors and those manifests
 (`node scripts/cli-generate-launch-options-doc.ts`), and the check fails when they are stale. Options a
 *newer* SDK adds are reachable with `options.setCustomOption(key, value)` until the package catches up.
 
