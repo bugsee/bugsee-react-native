@@ -81,6 +81,32 @@ test ! -e "${lock}"`);
     expect(existsSync(lock)).toBe(false);
   });
 
+  it('gives the lock back when the owner cannot be recorded, instead of leaking it', () => {
+    // A write that fails after mkdir (read-only temp dir, ENOSPC). `printf` is overridden so that the
+    // test does not depend on file permissions, which root ignores. The redirect still creates `owner`.
+    const result = run(`printf() { return 1; }
+pack_lock_acquire "${lock}" 5 && echo "acquired" || echo "acquire returned $?"
+test ! -e "${lock}" && echo "no lock left behind"
+unset -f printf
+pack_lock_acquire "${lock}" 1 && echo "free again"`);
+    expect(result.stdout).toContain('acquire returned 1');
+    expect(result.stdout).not.toContain('\nacquired');
+    expect(result.stdout).toContain('no lock left behind');
+    expect(result.stdout).toContain('free again');
+    expect(result.stderr).toContain(`could not record the owner in ${lock}`);
+  });
+
+  it('does not report a lock it gave back as held by another run on a later release', () => {
+    const result = run(`printf() { return 1; }
+pack_lock_acquire "${lock}" 5 || true
+unset -f printf
+pack_lock_release
+echo done`);
+    expect(result.stdout).toContain('done');
+    expect(result.stderr).not.toContain('held by another run');
+    expect(result.stderr).not.toContain('was removed while it was held');
+  });
+
   it('does not fail the run when the lock has been removed while held', () => {
     // What the old `rmdir "$lock"` died on, under set -e.
     const result = run(`pack_lock_acquire "${lock}" 5
@@ -90,6 +116,49 @@ echo survived`);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('survived');
     expect(result.stderr).toContain('was removed while it was held');
+  });
+
+  describe('a lost lock is surfaced where a green job would show it', () => {
+    const lost = `pack_lock_acquire "${'${LOCK}'}" 5
+rm -rf "${'${LOCK}'}"
+pack_lock_release`;
+
+    it('prints a GitHub Actions warning annotation on stdout when running there', () => {
+      const result = run(lost.replace(/\$\{LOCK\}/g, lock), { GITHUB_ACTIONS: 'true' });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('::warning title=pack-install lock::');
+      expect(result.stdout).toContain('was removed while it was held');
+      expect(result.stdout).toContain('please report this run');
+    });
+
+    it('also annotates the case of a lock another run now holds', () => {
+      const result = run(
+        `pack_lock_acquire "${lock}" 5
+rm -rf "${lock}"
+mkdir "${lock}"
+echo other > "${lock}/owner"
+pack_lock_release`,
+        { GITHUB_ACTIONS: 'true' },
+      );
+      expect(result.stdout).toContain('::warning title=pack-install lock::');
+      expect(result.stdout).toContain('is held by another run now');
+    });
+
+    it('prints no annotation outside GitHub Actions, only the stderr line', () => {
+      const env = { ...process.env } as Record<string, string>;
+      delete env.GITHUB_ACTIONS;
+      const result = spawnSync('bash', ['-c', `set -euo pipefail\nsource "${lib}"\n${lost.replace(/\$\{LOCK\}/g, lock)}`], {
+        encoding: 'utf8',
+        env: { ...env, PACK_LOCK_POLL: '0.02' },
+      });
+      expect(result.stdout).not.toContain('::warning');
+      expect(result.stderr).toContain('was removed while it was held');
+    });
+
+    it('keeps the stderr line on Actions too, for a run read outside the annotations', () => {
+      const result = run(lost.replace(/\$\{LOCK\}/g, lock), { GITHUB_ACTIONS: 'true' });
+      expect(result.stderr).toContain('warning: ');
+    });
   });
 
   it('never removes a lock another run took after ours was lost', () => {
@@ -164,6 +233,14 @@ describe('check-pack-install.sh takes the lock through the library', () => {
   it('releases from the EXIT trap as well as explicitly', () => {
     expect(source).toMatch(/trap 'pack_lock_release;[^']*' EXIT/);
     expect(source.match(/^pack_lock_release$/gm)).toHaveLength(1);
+  });
+
+  it('installs the EXIT trap before it takes the lock, so a signal in between cannot leak it', () => {
+    const trapAt = source.search(/trap 'pack_lock_release;[^']*' EXIT/);
+    const acquireAt = source.indexOf('pack_lock_acquire "');
+    expect(trapAt).toBeGreaterThan(-1);
+    expect(acquireAt).toBeGreaterThan(-1);
+    expect(trapAt).toBeLessThan(acquireAt);
   });
 
   it('sources the library from the repo, not the working directory', () => {
