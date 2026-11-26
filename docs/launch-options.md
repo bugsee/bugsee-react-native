@@ -12,7 +12,7 @@ options.triggerByShake = true; // shake-to-report is OFF by default (iOS 7.1.0, 
 await Bugsee.launch('<your app token>', options);
 ```
 
-The tables are checked against the SDK versions pinned in `native-versions.json` (Android 7.6.0, iOS 7.1.0):
+The tables are checked against the SDK versions pinned in `native-versions.json` (Android 7.6.1, iOS 7.1.0):
 a test fails when either SDK registers an option this package has no accessor for, and `yarn check:options-manifests`
 (run in CI and before every publish) compares the option manifest each SDK release published at
 `download.bugsee.com/sdk/options/<platform>/<version>.json` with this package. It fails when an SDK publishes an option
