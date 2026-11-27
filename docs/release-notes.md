@@ -4,6 +4,15 @@ Newest first. The npm packages `@bugsee/react-native` and `@bugsee/react-native-
 the same version. Each version also has a GitHub release with the packed tarballs and the generated list
 of merged pull requests.
 
+## 7.0.0-beta6
+
+Native SDKs: **Android 7.6.1** (Gradle plugin **4.1.1**), **iOS 7.1.0**. npm dist-tags `beta` and `latest`.
+
+- Bugsee Android SDK 7.6.1: screen capture of private surfaces is copied with PixelCopy, and a session
+  is created on every launch.
+- Nothing changes in the launch options or the JavaScript API, and the Gradle plugin stays at 4.1.1,
+  the latest release.
+
 ## 7.0.0-beta5
 
 Native SDKs: **Android 7.6.0** (Gradle plugin **4.1.1**), **iOS 7.1.0**. npm dist-tags `beta` and `latest`.
